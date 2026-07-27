@@ -3335,9 +3335,8 @@ fn scan_command(
         ));
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
-        && let Meaning::UnexpandablePrimitive(primitive) = command.meaning()
         && let Some(request) = processor
-            .scan_canonical_math_request(primitive)
+            .scan_canonical_math_request(&command)
             .map_err(command_error)?
     {
         return Ok(ScannedStep::Math(request));
@@ -5165,6 +5164,14 @@ fn scan_unclassified_primitive(
 ///   unconditional named arm for this case, so it cannot arrive here. If it
 ///   does, that arm was narrowed without updating this classifier, which is
 ///   exactly the defect this function exists to catch.
+/// - `insert_dollar_sign` recovery: this meaning is a member of TeX82
+///   §1046's "math-only cases in non-math modes" table (`math_given` and the
+///   `sup_mark`/`sub_mark` character categories). Each is dispatched
+///   correctly by `scan_command`'s math gates whenever `mode` actually is
+///   `Math`/`DisplayMath`, so reaching this function proves `mode` is not
+///   math; §1047's `insert_dollar_sign` recovers it through the same
+///   `recover_missing_math_shift` the primitive classifier's identical
+///   bucket uses.
 /// - `Err(ExecError::UnimplementedMeaning { .. })`: canonical main control
 ///   has no routing for this meaning yet, or the meaning should be
 ///   unreachable by a gullet invariant and the error names the broken
@@ -5234,12 +5241,18 @@ fn scan_unclassified_meaning(
         // difference is that the character code is already known and needs
         // no `scan_char_num`.
         Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode { value: ch as i32 }),
-        // TeX82 §1154's `mmode+math_given: set_math_char(cur_chr)` and
-        // §1046's `non_math(math_given): insert_dollar_sign`. Unlike
-        // `char_given` above, `math_given` carries a full math code rather
-        // than a character, so it has no already-dispatched `ScannedStep` to
-        // reuse.
-        Meaning::MathCharGiven(_) => Err(unimplemented_meaning(&command, meaning, mode)),
+        // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
+        // recovery the whole math-only vocabulary takes outside math mode.
+        // Reaching this arm proves `mode` is not `Math`/`DisplayMath`:
+        // §1154's `mmode+math_given` is dispatched by `scan_command`'s
+        // `scan_canonical_math_request` gate, which consumes the meaning
+        // before its outer match runs.
+        Meaning::MathCharGiven(_) => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
         // TeX82 §370's `@<Complain about an undefined macro@>`: `expand`
         // reports "Undefined control sequence" and then does nothing at all,
         // so proceeding without consuming anything is the specified

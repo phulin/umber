@@ -760,6 +760,108 @@ fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_sou
     assert!(universe.nodes(inner_list).iter().any(|node| matches!(node, tex_state::node_arena::NodeRef::MathNoad(noad) if matches!(noad.kind, tex_state::math::NoadKind::RightDelimiter { .. }))));
 }
 
+/// TeX82 §1154 lists exactly seven `main_control` cases that reach §1155's
+/// `set_math_char`: `mmode+letter`, `mmode+other_char`, `mmode+char_given`,
+/// `mmode+char_num`, `mmode+math_char_num`, `mmode+math_given`, and
+/// `mmode+delim_num`. `math_given` -- a `\mathchardef` target, defined by
+/// §1224 through §436's `scan_fifteen_bit_int` -- differs from
+/// `math_char_num` only in that the fifteen-bit scan already happened at
+/// definition time, so the use site scans nothing and hands `cur_chr`
+/// straight to `set_math_char`. Both must therefore build byte-identical
+/// noads, including §1155's `var_code` branch, which replaces class 7's
+/// family with `cur_fam` when `fam_in_range`.
+///
+/// §1151's `scan_math` repeats the same seven cases for a math *field*, so an
+/// unbraced `\mathinner\ldotp` must resolve its `math_given` field exactly as
+/// `\mathinner\mathchar"613A` resolves its `math_char_num` one.
+#[test]
+fn canonical_math_given_builds_the_same_noads_as_math_char_num() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    register_source(
+        &mut control,
+        br#"\mathchardef\ldotp="613A \mathchardef\vari="7141 \fam=3
+            \mathchar"613A \ldotp \mathchar"7141 \vari
+            \mathinner\mathchar"613A \mathinner\ldotp"#,
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
+        .expect("math material freezes");
+    let nodes = universe.nodes(content);
+    assert_eq!(nodes.len(), 6, "each math char becomes one noad");
+    let noad = |index: usize| match nodes.get(index).expect("noad") {
+        tex_state::node_arena::NodeRef::MathNoad(noad) => noad,
+        other => panic!("expected a math noad, found {other:?}"),
+    };
+
+    // `\mathchar"613A` and the `\mathchardef`'d `\ldotp` with the same code.
+    assert_eq!(noad(0).kind, noad(1).kind);
+    assert!(matches!(
+        noad(1).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Punct)
+    ));
+    let (tex_state::math::MathField::MathChar(plain), tex_state::math::MathField::MathChar(given)) =
+        (noad(0).nucleus, noad(1).nucleus)
+    else {
+        panic!("both forms build a math-char nucleus");
+    };
+    assert_eq!((plain.family, plain.character), (1, ':'));
+    assert_eq!((given.family, given.character), (plain.family, plain.character));
+
+    // §1155's `if c>=var_code then ... fam(nucleus(p)):=cur_fam` applies to
+    // `math_given` exactly as it does to `math_char_num`: class 7 becomes an
+    // `ord_noad` in the current `\fam`, not family 1.
+    assert_eq!(noad(2).kind, noad(3).kind);
+    assert!(matches!(
+        noad(3).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord)
+    ));
+    let (
+        tex_state::math::MathField::MathChar(plain_var),
+        tex_state::math::MathField::MathChar(given_var),
+    ) = (noad(2).nucleus, noad(3).nucleus)
+    else {
+        panic!("both forms build a math-char nucleus");
+    };
+    assert_eq!((plain_var.family, plain_var.character), (3, 'A'));
+    assert_eq!(
+        (given_var.family, given_var.character),
+        (plain_var.family, plain_var.character)
+    );
+
+    // §1151's `math_given: c:=cur_chr` field case, which must resolve
+    // identically to the `math_char_num` case one noad earlier.
+    assert!(matches!(
+        noad(5).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
+    ));
+    assert_eq!(noad(4).kind, noad(5).kind);
+    assert_eq!(
+        core::mem::discriminant(&noad(4).nucleus),
+        core::mem::discriminant(&noad(5).nucleus),
+        "a math_given field takes the same §1151 path as a math_char_num one"
+    );
+}
+
+/// TeX82 §1046 lists `non_math(math_given)` beside `non_math(math_char_num)`
+/// among the "Math-only cases in non-math modes", so §1045 routes it to
+/// §1047's `insert_dollar_sign` rather than to any list-building case.
+#[test]
+fn canonical_math_given_outside_math_mode_inserts_a_dollar_sign() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    register_source(&mut control, br#"\mathchardef\ldotp="613A \ldotp$"#);
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        terminal_text(&universe).contains("Missing $ inserted"),
+        "a math_given outside math mode takes §1047's insert_dollar_sign"
+    );
+}
+
 #[test]
 fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     // TeX82's `scan_dimen` (§455) reads one token past a unit like `pt` to
