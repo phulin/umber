@@ -4327,7 +4327,11 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
         br"\vrule width1pt height2pt depth0pt\hrule width3pt height4pt depth1pt\end",
     );
 
-    let start = step_observations(&mut control, &mut universe, "vertical rule starts a paragraph");
+    let start = step_observations(
+        &mut control,
+        &mut universe,
+        "vertical rule starts a paragraph",
+    );
     assert_backed_up_paragraph_start(&start, "vmode+vrule");
 
     let spec = step_observations(&mut control, &mut universe, "redelivered vertical rule");
@@ -4351,7 +4355,10 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
             break;
         }
     }
-    assert!(scanned(&horizontal, "dimension", "196608"), "{horizontal:?}");
+    assert!(
+        scanned(&horizontal, "dimension", "196608"),
+        "{horizontal:?}"
+    );
 }
 
 // The rest of §1090's shared vertical-mode case, each checked the same way:
