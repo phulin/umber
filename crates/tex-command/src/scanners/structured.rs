@@ -2696,11 +2696,15 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Scans TeX82's raw `\let` operand sequence.
+    /// Scans TeX82 §1221's raw `\let` operand sequence.
     ///
-    /// `future` selects `future_let`: the first two raw tokens following the
-    /// target are restored in their original order after the second token's
-    /// meaning has been captured.
+    /// `future` selects `future_let`, whose §1221 body is `get_token;
+    /// q:=cur_tok; get_token; back_input; cur_tok:=q; back_input`. Both halves
+    /// are ordinary §325 `back_input` calls, so the two tokens are restored on
+    /// two separate backup levels -- the second token's level pushed first and
+    /// the saved first token's on top of it, which rereads them in their
+    /// original order. The meaning defined afterwards is the second token's,
+    /// because §325 "doesn't affect `cur_cmd`, `cur_chr`".
     pub fn scan_let_assignment(
         &mut self,
         future: bool,
@@ -2714,7 +2718,8 @@ impl CommandProcessor<'_> {
             let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
             let source = second.control_sequence();
             let meaning = second.meaning();
-            self.replay_raw_commands([first, second]);
+            self.back_input(second)?;
+            self.back_input_saved(first)?;
             (source, meaning)
         } else {
             let mut source = self.get_token()?.ok_or(CommandError::input_invariant())?;
@@ -2850,22 +2855,6 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn replay_raw_commands(&mut self, commands: [crate::CurrentCommand; 2]) {
-        for command in &commands {
-            self.undo_alignment_delivery(command);
-        }
-        self.command.push_token_level(
-            crate::input::TokenPayload::BackedUp(crate::input::SharedBackedUpBuffer::new(
-                commands.map(|command| crate::input::BackedUpToken {
-                    spelling: command.spelling(),
-                    source_provenance: command.source_provenance(),
-                }),
-            )),
-            crate::input::TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),
-            crate::input::RetirementBehavior::Pop,
-            crate::input::ReplayTrace::BackedUp,
-        );
-    }
 }
 
 fn provenance(scanned: &ScannedToks) -> StructuredProvenance {
