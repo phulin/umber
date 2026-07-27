@@ -63,15 +63,29 @@ away from.
    Run this from the repository root. It is hermetic (no corpus,
    distribution, or live TeX tool required) and never invokes a reference
    engine.
-   - Exit `0`: no divergence in the committed fixture registry.
-   - Exit `1`: prints the divergence total, the root-site total, a per-fixture
-     accounting, and then the ordered worklist -- `fixture <name> diverged at
-     event <index>` followed by the expected event, the actual observed event,
-     and source context. Exact recurrences of one root site are collapsed into
-     one entry; `--ungrouped` prints one entry per divergence. Compare a fix
-     against the divergence total, not the root-site total. See "Grouped
-     worklist and run accounting" in
-     [Testing Infrastructure](testing_infrastructure.md).
+   Every run that happened prints its report and ends with a `VERDICT:` line
+   naming the outcome and the status carrying it. Read the status before the
+   totals; only two of the four mean the totals are exact.
+   - Exit `0` (`CLEAN`): every registered fixture was compared to exhaustion
+     and none diverged.
+   - Exit `1` (`DIVERGED`): every registered fixture was compared to
+     exhaustion, so the divergence total is exact. Prints the divergence
+     total, the root-site total, a per-fixture accounting, and then the
+     ordered worklist -- `fixture <name> diverged at event <index>` followed
+     by the expected event, the actual observed event, and source context.
+     Exact recurrences of one root site are collapsed into one entry;
+     `--ungrouped` prints one entry per divergence. Compare a fix against the
+     divergence total, not the root-site total. See "Grouped worklist and run
+     accounting" in [Testing Infrastructure](testing_infrastructure.md).
+   - Exit `2` (`PARTIAL`): a registered fixture was never compared (its
+     document trace is not generated on this checkout) or a fixture's
+     comparison stopped at its `--max-divergences` budget. Every total is a
+     LOWER BOUND, and a total of `0` does not mean convergence. Never rank or
+     dispatch from a partial worklist: run
+     `scripts/build-tex82-document-traces.sh` and/or raise the budget first.
+   - Exit `3`: the run could not be performed at all -- a usage error, an
+     unreadable suite, or a document registry inconsistent with its committed
+     pin. Nothing was compared.
    - Exit `101`: a Rust panic reached before any semantic mismatch; the panic
      message and `file:line` (rerun with `RUST_BACKTRACE=1` for a full
      backtrace) is itself the diagnosis and takes priority over a

@@ -636,8 +636,16 @@ engine.
 
 It reports a ranked WORKLIST, not just the first divergence:
 
-- Exit `0`: it prints nothing; no divergence against the fixture registry.
-- Exit `1`: prints up to `--max-divergences` ordered divergences (default
+Every run that happened prints its report, ending with a `VERDICT:` line
+naming the outcome and the exit status carrying it. The status answers one
+question: whether the printed totals are the whole truth.
+
+- Exit `0` (`CLEAN`): every registered fixture was compared to exhaustion and
+  none diverged. The report is still printed, because a check that prints
+  nothing cannot be told apart from a check that did not run.
+- Exit `1` (`DIVERGED`): every registered fixture was compared to exhaustion,
+  so the divergence total is exact. Prints up to `--max-divergences` ordered
+  divergences (default
   `DEFAULT_MAX_DIVERGENCES` = 20) per fixture, in stream order across every
   registered fixture, collapsed into one entry per root site (see "Grouped
   worklist" below). Two entry shapes share this ordered list:
@@ -685,6 +693,22 @@ It reports a ranked WORKLIST, not just the first divergence:
     divergence budget. A panic outside a fixture's replay proper (fixture
     loading, suite/contract validation, argument parsing) is not contained
     and still aborts the process with the ordinary Rust panic exit code.
+- Exit `2` (`PARTIAL`): the run did not compare everything it registers, so
+  every printed total is a LOWER BOUND rather than a total, and a total of `0`
+  would not mean convergence. Two conditions earn it, and the verdict names
+  which applied and to which fixtures: a registered document trace that is not
+  generated on this checkout (regenerate with
+  `scripts/build-tex82-document-traces.sh`), and a fixture whose
+  `--max-divergences` budget stopped its comparison early (raise the budget).
+  This status exists because `umber2-johp.168` found a fresh checkout
+  reporting `4 ordered divergence(s)` where the true count was `160`: three of
+  the four registered fixtures had never been compared, and nothing in the
+  exit status distinguished that from convergence. Never rank or dispatch from
+  a partial worklist.
+- Exit `3`: the run could not be performed at all -- a usage error, an
+  unreadable suite, or a document registry inconsistent with its committed
+  pin. It is kept distinct from exit `1` so "the tool refused to run" is never
+  read as "the tool ran and produced this worklist".
 
 See `docs/command_semantic_fixtures.md` and `docs/alignment_brace_semantics.md`
 for the fixture registry and event schema this replays and compares against,
@@ -770,6 +794,20 @@ Two bounds the report used to leave a reader to infer are now printed.
   `not compared -- trace not generated on this checkout`, in addition to the
   stderr notice, so a fixture that never ran cannot read like a clean one.
   Compared fixtures with no divergence are listed with an explicit `0`.
+
+Both bounds also decide the exit status, because a reader who checks only
+`$?` is exactly the reader a partial run misleads. Either one makes the run
+`PARTIAL` (exit `2`) no matter what the divergence total says, and the report
+closes with a `VERDICT:` line repeating the outcome, the status, and which
+fixtures were left short:
+
+```text
+VERDICT: PARTIAL (exit 2) -- this run did not compare everything it
+  registers, so 1 ordered divergence(s) is a LOWER BOUND, not a
+  total, and a total of 0 would not mean convergence.
+  never compared (3): plain, story, gentle
+  generate the missing traces with scripts/build-tex82-document-traces.sh
+```
 
 #### Stream alignment
 
@@ -919,6 +957,22 @@ repeats; then derives a fully validated `tex-oracle` fixture through
 `fonts/`. It performs no network I/O. A partial (`--document`) run prints its
 records instead of rewriting the contract, so the pinned file can never
 describe a half-regenerated tree.
+
+No run that generates zero traces exits `0`. On a fresh checkout the pinned
+oracle or the external inputs are absent, and that is expected rather than
+broken -- but it means the tracer's worklist will be short by three documents,
+so it gets its own status instead of being folded into either success or
+failure:
+
+- `0`: every selected document was regenerated (and, for a full run, the
+  contract was rewritten). The final line names how many.
+- `1`: generation ran and failed -- an oracle run, a determinism comparison,
+  or a fixture bootstrap did not hold.
+- `2`: the command line is wrong.
+- `3`: a prerequisite is absent, so nothing ran. Run
+  `scripts/build-tex82-oracle.sh` and `scripts/setup-conformance-tests.sh`,
+  then rerun. Separated from `1` so a caller can tell "not set up yet" from
+  "set up, and broken".
 
 Identity is pinned in the committed
 `tests/tex82-document-trace-manifest.txt`:
