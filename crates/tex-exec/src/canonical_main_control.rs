@@ -1681,6 +1681,7 @@ impl CanonicalMainControl {
             _ => None,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
+        let artifact_count = stores.world().artifact_commits().len();
         let result = apply_scanned_step(
             scanned.clone(),
             stores,
@@ -1761,6 +1762,9 @@ impl CanonicalMainControl {
             }
             if let Some(effect) = effect {
                 observer.committed(CommandObservation::Effect(effect));
+            }
+            for shipout in committed_shipout_observations(artifact_count, stores) {
+                observer.committed(CommandObservation::Effect(shipout));
             }
             for observation in self.page_output_observations.drain(..) {
                 observer.committed(observation);
@@ -6674,6 +6678,29 @@ fn canonical_pdf_image_page_box(
     }
 }
 
+/// TeX82 §640's `dvi_out(eop); incr(total_pages)` is the one place a page
+/// reaches the `.dvi` file, and §638's `ship_out` is the one routine that
+/// reaches it.  The shipout effect therefore belongs to the page commit, not
+/// to any command: §1075's `box_end` reaches `ship_out` for an explicit
+/// `\shipout`, and §1012's `fire_up` reaches it again through §1025 for every
+/// page the page builder ejects with a null `\output`.  Deriving the
+/// observation from the committed-artifact delta covers both entry points --
+/// and any later one -- by construction, so no command needs to know that it
+/// happened to ship a page.
+///
+/// `total_pages` is incremented before the trace, so the published number is
+/// the one-based ordinal of the page just committed.
+#[cfg(any(test, feature = "instrumentation"))]
+fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<EffectRecord> {
+    (before..stores.world().artifact_commits().len())
+        .map(|committed| EffectRecord {
+            kind: "shipout",
+            detail: format!("dvi\0{}", committed.saturating_add(1)),
+            tokens: None,
+        })
+        .collect()
+}
+
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
@@ -6720,14 +6747,6 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                 _ => None,
             }
         }
-        ScannedStep::BoxRegister {
-            ships_out: true, ..
-        }
-        | ScannedStep::BoxEndGroup { ships_out: true } => Some(EffectRecord {
-            kind: "shipout",
-            detail: format!("dvi\0{}", stores.world().artifact_commits().len()),
-            tokens: None,
-        }),
         // TeX82 §1335's `final_cleanup` and §1333's
         // `close_files_and_terminate` run once `its_all_over` has returned
         // true, so the job-termination effect belongs to that step and to no

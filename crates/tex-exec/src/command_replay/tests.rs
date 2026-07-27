@@ -2854,7 +2854,9 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
     observations.0.clear();
     // TeX82 §1054: the paragraph is on the page, so the retried stop is not
     // "all over" -- it is backed up again while §994's `build_page` ejects
-    // the residual page.
+    // the residual page. §1012's `fire_up` reaches §638's `ship_out` through
+    // §1025's null-`\output` case, so §640's page commit publishes a shipout
+    // effect here even though no `\shipout` command was ever executed.
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
@@ -2871,6 +2873,7 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
                 CommandObservation::Input(backup_retirement),
                 CommandObservation::Input(backup),
                 CommandObservation::Recovery(recovery),
+                CommandObservation::Effect(shipout),
             ] if retirement.transition == InputTransition::Retire
                 && retirement.reason == InputReason::Recovery
                 && raw.command == "stop"
@@ -2879,6 +2882,8 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
                 && backup_retirement.reason == InputReason::Backup
                 && backup.transition == InputTransition::Backup
                 && recovery.kind == RecoveryKind::Backup
+                && shipout.kind == "shipout"
+                && shipout.detail == "dvi\u{0}1"
         ),
         "unexpected residual-page ejection observations: {:?}",
         observations.0
