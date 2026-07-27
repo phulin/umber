@@ -41,7 +41,9 @@ pub use compare::{
     find_divergences,
 };
 pub use group::{RootSite, group};
-pub use report::{ComparisonReport, FixtureState, FixtureSummary};
+pub use report::{
+    ComparisonReport, EXIT_NOT_RUN, FixtureState, FixtureSummary, RunOutcome,
+};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
@@ -93,6 +95,13 @@ impl Default for RunOptions {
 /// to `options.max_divergences` ordered divergences *per fixture* instead of
 /// only the first.
 ///
+/// Returns the [`ComparisonReport`] for any run that happened, diverging or
+/// not; the `Err` arm is reserved for a run that could not be performed.
+/// "Found no divergence" is therefore not a success *value* the caller can
+/// confuse with "compared nothing": the report carries its own
+/// [`ComparisonReport::outcome`], and a run that skipped a registered fixture
+/// is [`RunOutcome::Partial`], never [`RunOutcome::Clean`].
+///
 /// Two registries are replayed, in this order: the committed, hermetic
 /// fixtures under `tests/corpus/command/tex82`, then the generated-on-demand
 /// full-document traces described by [`documents`]. Committed fixtures come
@@ -114,7 +123,7 @@ impl Default for RunOptions {
 pub fn run_repository(
     repository: impl AsRef<Path>,
     options: RunOptions,
-) -> Result<(), RunnerError> {
+) -> Result<ComparisonReport, RunnerError> {
     let repository = repository.as_ref();
     let suite = validate_tex82_command_trace_suite(repository)
         .map_err(|error| RunnerError::Suite(error.to_string()))?;
@@ -159,11 +168,7 @@ pub fn run_repository(
         )?;
     }
 
-    if report.divergences.is_empty() {
-        Ok(())
-    } else {
-        Err(RunnerError::Comparison(Box::new(report)))
-    }
+    Ok(report)
 }
 
 fn collect_fixture_divergences(
@@ -227,7 +232,7 @@ const USAGE: &str = "expected --repository <path>, --max-divergences <n>, \
 /// prove a reported realignment is not an artifact of an over-generous bound.
 /// `--ungrouped` restores the one-entry-per-divergence worklist, so the
 /// grouped report can always be checked against the list it summarizes.
-pub fn run_cli() -> Result<(), RunnerError> {
+pub fn run_cli() -> Result<ComparisonReport, RunnerError> {
     let mut arguments = env::args_os().skip(1);
     let mut repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut options = RunOptions::default();
@@ -412,7 +417,6 @@ pub enum RunnerError {
     /// with its committed pin, or unreadable.
     Document(String),
     Replay(String),
-    Comparison(Box<ComparisonReport>),
 }
 
 impl fmt::Display for RunnerError {
@@ -423,7 +427,6 @@ impl fmt::Display for RunnerError {
             | Self::Document(error)
             | Self::Replay(error) => formatter.write_str(error),
             Self::Fixture(fixture, error) => write!(formatter, "fixture {fixture}: {error}"),
-            Self::Comparison(report) => write!(formatter, "{report}"),
         }
     }
 }
