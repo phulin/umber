@@ -1284,6 +1284,61 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
     }
 }
 
+/// TeX82 §774 `init_align` runs `scan_spec(align_group,false)`, so an
+/// alignment takes §645's `to`/`spread` clause exactly as `\hbox` does.
+/// Reaching §403's mandatory left brace without scanning the clause first
+/// rejects the `t` of `to` as a missing brace.
+#[test]
+fn alignment_preamble_opening_scans_the_scan_spec_clause() {
+    for (body, expected) in [
+        (r"{#\cr", ScannedPackingSpec::Natural),
+        (
+            r"to 12pt{#\cr",
+            ScannedPackingSpec::Exactly(Scaled::from_raw(12 * Scaled::UNITY)),
+        ),
+        (
+            r"spread 3pt{#\cr",
+            ScannedPackingSpec::Spread(Scaled::from_raw(3 * Scaled::UNITY)),
+        ),
+    ] {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(1);
+        command.begin_alignment(alignment);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(body.as_bytes().to_vec()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let cr = universe.intern("cr").symbol();
+        universe.set_meaning(
+            cr,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let packing = processor
+                .scan_alignment_preamble_opening()
+                .unwrap_or_else(|_| panic!("scan_spec accepts `{body}`"));
+            assert_eq!(packing, expected, "`{body}` packing specification");
+            processor
+                .begin_alignment_preamble_scan()
+                .unwrap_or_else(|_| panic!("`{body}` preamble scans"));
+        }
+        let preamble = command
+            .take_completed_alignment_preamble(alignment)
+            .unwrap_or_else(|_| panic!("`{body}` freezes a preamble"));
+        assert_eq!(preamble.columns.len(), 1, "`{body}` column count");
+    }
+}
+
 #[test]
 fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
     let mut command = CommandState::default();
@@ -1343,10 +1398,7 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor
             .scan_alignment_preamble_opening()
-            .expect("opening brace validates and backs up");
-        processor
-            .replay_alignment_preamble_opening()
-            .expect("opening brace replays before preamble collection");
+            .expect("scan_spec consumes the opening brace");
         processor
             .begin_alignment_preamble_scan()
             .expect("preamble scans");
@@ -1442,10 +1494,7 @@ fn assert_missing_preamble_parameter(
             .with_observer(&mut recorder);
         processor
             .scan_alignment_preamble_opening()
-            .expect("opening brace validates and backs up");
-        processor
-            .replay_alignment_preamble_opening()
-            .expect("opening brace replays before preamble collection");
+            .expect("scan_spec consumes the opening brace");
         processor
             .begin_alignment_preamble_scan()
             .expect("missing parameter recovers through the v-template");
