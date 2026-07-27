@@ -158,7 +158,8 @@
         "No extension-only predicate or delimiter is admitted to the TeX82 classification."
       ],
       "stimulus": [
-        "Resolve and deliver every TeX82 predicate and delimiter primitive, including a redefinition of the public fi control sequence before incomplete-skip recovery."
+        "Resolve and deliver every TeX82 predicate and delimiter primitive, including a redefinition of the public fi control sequence before incomplete-skip recovery.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case classification-aliases observes this property directly."
       ],
       "expected_observations": [
         "Canonical command observations use if_test operands 0–16 and fi_or_else operands fi=2, else=3, and or=4.",
@@ -174,7 +175,8 @@
       ],
       "recovery_cases": [
         "An inserted frozen fi is unaffected by a live fi redefinition.",
-        "A delimiter delivered with no live condition is classified normally before extra-delimiter recovery."
+        "A delimiter delivered with no live condition is classified normally before extra-delimiter recovery.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case frozen-fi-after-public-fi-redefinition observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -191,9 +193,16 @@
       "status": "gap",
       "gap_bead": "umber2-johp.225",
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::tex82_predicate_aliases_preserve_classification",
-        "semantic case scanner-conditionals.tex::classification-aliases",
-        "recovery case scanner-conditionals.tex::frozen-fi-after-public-fi-redefinition"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "tex82_predicate_aliases_preserve_classification",
+          "cases": [
+            "17 predicate operands",
+            "fi/else/or delimiter operands",
+            "control-sequence aliases",
+            "redefined public fi recovery"
+          ]
+        }
       ]
     },
     {
@@ -205,7 +214,8 @@
         "The current source line is known at predicate entry."
       ],
       "stimulus": [
-        "Enter, complete, and pop nested conditions, including an outer operand whose expansion evaluates and closes an inner condition."
+        "Enter, complete, and pop nested conditions, including an outer operand whose expansion evaluates and closes an inner condition.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case stack-nesting-source-macro-token-list observes this property directly."
       ],
       "expected_observations": [
         "Each predicate pushes an evaluating frame with its kind and source line.",
@@ -221,7 +231,8 @@
       ],
       "recovery_cases": [
         "Recursive evaluation may temporarily place a newer frame above the saved frame without retargeting its limit change.",
-        "Job-finalization reporting belongs to the broader final_cleanup contract and is not claimed from §1335 by this shard."
+        "Job-finalization reporting belongs to the broader final_cleanup contract and is not claimed from §1335 by this shard.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case recursive-operand-frame-retargeting observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -238,9 +249,16 @@
       "status": "gap",
       "gap_bead": "umber2-johp.225",
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::condition_stack_preserves_lines_limits_and_input_independence",
-        "semantic case scanner-conditionals.tex::stack-nesting-source-macro-token-list",
-        "recovery case scanner-conditionals.tex::recursive-operand-frame-retargeting"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "condition_stack_preserves_lines_limits_and_input_independence",
+          "cases": [
+            "source-line capture",
+            "nested push and pop",
+            "stable outer-frame limit change",
+            "input-stack independence"
+          ]
+        }
       ]
     },
     {
@@ -252,7 +270,8 @@
         "The prior scanner status and the starting source line are available."
       ],
       "stimulus": [
-        "Skip text containing expandable macros, braces, nested conditions, inner delimiters, outer control sequences, and an EOF boundary."
+        "Skip text containing expandable macros, braces, nested conditions, inner delimiters, outer control sequences, and an EOF boundary.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case skipped-side-effects-and-braces observes this property directly."
       ],
       "expected_observations": [
         "Skipped expandable tokens are delivered raw and not expanded, while nested predicates increment and nested fi decrements the local depth.",
@@ -268,7 +287,8 @@
       ],
       "recovery_cases": [
         "An outer token during skipping is backed up and recovery inserts frozen fi.",
-        "EOF during skipping reports the skip start line before inserted-fi replay."
+        "EOF during skipping reports the skip start line before inserted-fi replay.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals-eof.tex case skipped-child-eof-frozen-fi observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -281,9 +301,16 @@
       "status": "gap",
       "gap_bead": "umber2-johp.225",
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::pass_text_does_not_expand_or_execute_skipped_tokens",
-        "semantic case scanner-conditionals.tex::skipped-side-effects-and-braces",
-        "recovery case scanner-conditionals-eof.tex::skipped-child-eof-frozen-fi"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "pass_text_does_not_expand_or_execute_skipped_tokens",
+          "cases": [
+            "raw expandable token",
+            "nested if and fi",
+            "literal and control-sequence braces",
+            "no skipped effects"
+          ]
+        }
       ]
     },
     {
@@ -295,7 +322,8 @@
         "Delimiter legality is compared against the live frame's canonical limit ordering."
       ],
       "stimulus": [
-        "Evaluate true and false booleans; zero, positive, exhausted, and negative ifcase indices; nested conditions during evaluation and skipping; and every delimiter at evaluating, else, or, fi, and empty-stack limits."
+        "Evaluate true and false booleans; zero, positive, exhausted, and negative ifcase indices; nested conditions during evaluation and skipping; and every delimiter at evaluating, else, or, fi, and empty-stack limits.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case ifcase-zero-positive-negative-boundaries observes this property directly."
       ],
       "expected_observations": [
         "False limbs record each stopped delimiter while still evaluating, then common_ending pops on fi or changes the frame to fi on else.",
@@ -312,7 +340,8 @@
       ],
       "recovery_cases": [
         "An or encountered while seeking a false boolean's else/fi is diagnosed as extra and skipping continues.",
-        "A delimiter above an evaluating limit inserts relax; above any completed limit it emits the matching Extra diagnostic and is ignored."
+        "A delimiter above an evaluating limit inserts relax; above any completed limit it emits the matching Extra diagnostic and is ignored.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case premature-and-extra-delimiters observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -337,10 +366,25 @@
       "status": "gap",
       "gap_bead": "umber2-johp.225",
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifcase_zero_negative_else_and_fi_boundaries",
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::conditional_delimiter_legality_matrix",
-        "semantic case scanner-conditionals.tex::ifcase-zero-positive-negative-boundaries",
-        "recovery case scanner-conditionals.tex::premature-and-extra-delimiters"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifcase_zero_negative_else_and_fi_boundaries",
+          "cases": [
+            "ifcase zero",
+            "positive selected limb",
+            "negative index",
+            "else and fi termination"
+          ]
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "conditional_delimiter_legality_matrix",
+          "cases": [
+            "evaluating premature delimiters",
+            "completed-limit extra delimiters",
+            "empty-stack delimiters"
+          ]
+        }
       ]
     },
     {
@@ -352,7 +396,8 @@
         "Typed mode, box, stream, scanner, and token services expose current state without transferring ownership to the condition stack."
       ],
       "stimulus": [
-        "Evaluate every predicate kind, including all signed mode families, inner and outer states, open and closed streams, and both constant predicates."
+        "Evaluate every predicate kind, including all signed mode families, inner and outer states, open and closed streams, and both constant predicates.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case mode-inner-eof-and-constant-truth-table observes this property directly."
       ],
       "expected_observations": [
         "Each predicate reaches its unique §501 arm and returns one boolean to the shared branch machine.",
@@ -368,7 +413,8 @@
       ],
       "recovery_cases": [
         "An invalid stream selector completes canonical four-bit scanner recovery before ifeof queries the recovered slot.",
-        "A delimiter reached during delegated operand evaluation uses evaluating-limit recovery before dispatch completes."
+        "A delimiter reached during delegated operand evaluation uses evaluating-limit recovery before dispatch completes.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case ifeof-four-bit-selector-recovery observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -383,9 +429,17 @@
         }
       ],
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::predicate_dispatch_covers_all_seventeen_kinds_and_state_queries",
-        "semantic case scanner-conditionals.tex::mode-inner-eof-and-constant-truth-table",
-        "recovery case scanner-conditionals.tex::ifeof-four-bit-selector-recovery"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries",
+          "cases": [
+            "all 17 dispatch arms",
+            "positive and negative mode families",
+            "inner and outer state",
+            "open and closed streams",
+            "constant predicates"
+          ]
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
@@ -399,7 +453,8 @@
         "Integer and normal-dimension scanners commit values before relation scanning."
       ],
       "stimulus": [
-        "Compare lesser, equal, and greater literal, register, parameter, and internal operands for both integer and dimension families."
+        "Compare lesser, equal, and greater literal, register, parameter, and internal operands for both integer and dimension families.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case ifnum-ifdim-three-relations observes this property directly."
       ],
       "expected_observations": [
         "The left operand is retained across relation and right-operand scanning.",
@@ -415,7 +470,8 @@
       ],
       "recovery_cases": [
         "A missing relation reports Missing = inserted, backs up the nonrelation token, and compares for equality.",
-        "Operand scanner recovery completes before relation truth is computed."
+        "Operand scanner recovery completes before relation truth is computed.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case missing-relation-inserts-equals observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -430,9 +486,16 @@
         }
       ],
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifnum_ifdim_relation_and_missing_equals_matrix",
-        "semantic case scanner-conditionals.tex::ifnum-ifdim-three-relations",
-        "recovery case scanner-conditionals.tex::missing-relation-inserts-equals"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifnum_ifdim_relation_and_missing_equals_matrix",
+          "cases": [
+            "integer less equal greater",
+            "dimension less equal greater",
+            "missing relation",
+            "backed-up nonrelation"
+          ]
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
@@ -446,7 +509,8 @@
         "The integer scanner supplies one canonical signed value."
       ],
       "stimulus": [
-        "Evaluate zero, positive and negative even values, and positive and negative odd values from literal and internal sources."
+        "Evaluate zero, positive and negative even values, and positive and negative odd values from literal and internal sources.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case ifodd-zero-positive-negative-parity observes this property directly."
       ],
       "expected_observations": [
         "Exactly one integer scanner result precedes the boolean branch.",
@@ -462,15 +526,23 @@
       ],
       "recovery_cases": [
         "Integer scanner recovery supplies its canonical fallback before parity is tested.",
-        "A premature delimiter during integer scanning follows evaluating-limit recovery and then completes the operand."
+        "A premature delimiter during integer scanning follows evaluating-limit recovery and then completes the operand.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case ifodd-premature-delimiter observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifodd_signed_parity_and_scanner_recovery_matrix",
-        "semantic case scanner-conditionals.tex::ifodd-zero-positive-negative-parity",
-        "recovery case scanner-conditionals.tex::ifodd-premature-delimiter"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifodd_signed_parity_and_scanner_recovery_matrix",
+          "cases": [
+            "zero",
+            "positive and negative even",
+            "positive and negative odd",
+            "integer scanner recovery"
+          ]
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
@@ -484,7 +556,8 @@
         "The aggregate box query distinguishes absent, horizontal-list, and vertical-list values."
       ],
       "stimulus": [
-        "Evaluate all three predicates over void, hbox, and vbox registers, including register selectors at the legal boundaries."
+        "Evaluate all three predicates over void, hbox, and vbox registers, including register selectors at the legal boundaries.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case box-predicate-void-hbox-vbox-matrix observes this property directly."
       ],
       "expected_observations": [
         "Ifvoid is true only for null; ifhbox and ifvbox are false for null and true only for their matching list type.",
@@ -500,7 +573,8 @@
       ],
       "recovery_cases": [
         "An out-of-range register selector completes canonical eight-bit scanner recovery before the box query.",
-        "A void register never dereferences a node-list type."
+        "A void register never dereferences a node-list type.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case box-register-selector-recovery observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -511,9 +585,16 @@
         }
       ],
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifvoid_ifhbox_ifvbox_register_kind_matrix",
-        "semantic case scanner-conditionals.tex::box-predicate-void-hbox-vbox-matrix",
-        "recovery case scanner-conditionals.tex::box-register-selector-recovery"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifvoid_ifhbox_ifvbox_register_kind_matrix",
+          "cases": [
+            "void register",
+            "empty and nonempty hbox",
+            "empty and nonempty vbox",
+            "selector recovery"
+          ]
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
@@ -527,7 +608,8 @@
         "The scanner status can be temporarily normalized while ifx reads outer meanings."
       ],
       "stimulus": [
-        "Compare characters, category variants, active characters after noexpand, noncharacter controls, equal/different primitive meanings, and macros varying flags, parameter text, replacement text, and storage identity."
+        "Compare characters, category variants, active characters after noexpand, noncharacter controls, equal/different primitive meanings, and macros varying flags, parameter text, replacement text, and storage identity.",
+        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case character-category-and-raw-ifx-matrix observes this property directly."
       ],
       "expected_observations": [
         "if compares character codes and ifcat compares categories after expanded delivery; noncharacters use the common relax/256 sentinel.",
@@ -543,7 +625,8 @@
       ],
       "recovery_cases": [
         "A delimiter encountered while either operand is being obtained follows evaluating-limit inserted-relax recovery.",
-        "A noncharacter operand to if/ifcat is normalized rather than diagnosed."
+        "A noncharacter operand to if/ifcat is normalized rather than diagnosed.",
+        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case token-predicate-premature-delimiter observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+planned-semantic-minifixture",
@@ -568,9 +651,17 @@
       "status": "gap",
       "gap_bead": "umber2-johp.225",
       "planned_coverage": [
-        "rust-unit crates/tex-command/src/conditionals/tests.rs::if_ifcat_and_ifx_complete_operand_matrix",
-        "semantic case scanner-conditionals.tex::character-category-and-raw-ifx-matrix",
-        "recovery case scanner-conditionals.tex::token-predicate-premature-delimiter"
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "if_ifcat_and_ifx_complete_operand_matrix",
+          "cases": [
+            "if character normalization",
+            "ifcat category normalization",
+            "noexpand active character",
+            "raw ifx meanings",
+            "macro flags and token text"
+          ]
+        }
       ]
     }
   ]
