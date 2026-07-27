@@ -808,7 +808,10 @@ fn canonical_math_given_builds_the_same_noads_as_math_char_num() {
         panic!("both forms build a math-char nucleus");
     };
     assert_eq!((plain.family, plain.character), (1, ':'));
-    assert_eq!((given.family, given.character), (plain.family, plain.character));
+    assert_eq!(
+        (given.family, given.character),
+        (plain.family, plain.character)
+    );
 
     // §1155's `if c>=var_code then ... fam(nucleus(p)):=cur_fam` applies to
     // `math_given` exactly as it does to `math_char_num`: class 7 becomes an
