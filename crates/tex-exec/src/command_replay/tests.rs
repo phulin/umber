@@ -1837,6 +1837,44 @@ fn production_driver_indent_in_display_math_appends_an_ord_sub_box() {
 }
 
 #[test]
+fn production_driver_vbox_in_display_math_appends_an_ord_sub_box() {
+    // TeX82 §1075's `box_end` reaches §1076's
+    // `<Append box |cur_box| to the current list, shifted by |box_context|>`
+    // for every non-register, non-`\shipout`, non-leader box. That module's
+    // third mode branch wraps the box in a fresh ordinary noad
+    // (`p:=new_noad; math_type(nucleus(p)):=sub_box`) rather than linking it
+    // into the mlist directly, because §727's `check_dimensions` updates
+    // `max_h`/`max_d` only from noads -- §726 routes a bare `vlist_node`
+    // straight to `done_with_node` -- and §762's `make_left_right` sizes
+    // `\left`/`\right` delimiters from exactly those maxima.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"$$\vbox{}");
+
+    for expectation in [
+        "paragraph start before math",
+        "display math entry",
+        "vbox opening",
+        "vbox completion",
+    ] {
+        assert_eq!(
+            control.step(&mut universe).expect(expectation),
+            MainControlStep::Continue
+        );
+    }
+
+    assert_eq!(control.current_mode(), crate::Mode::DisplayMath);
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::MathNoad(MathNoad {
+            kind: NoadKind::Normal(NoadClass::Ord),
+            nucleus: MathField::SubBox(_),
+            ..
+        })]
+    ));
+}
+
+#[test]
 fn production_driver_char_num_in_display_math_appends_a_math_char_noad() {
     // TeX82 §1154's `mmode+char_num` scans the character number and calls
     // `set_math_char` (§1155) exactly like an ordinary math-mode letter or

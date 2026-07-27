@@ -1,5 +1,6 @@
 use tex_lex::InputStack;
 use tex_state::glue::Order;
+use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -642,6 +643,32 @@ fn append_box_register(
     Ok(())
 }
 
+/// TeX82 §1076, `<Append box |cur_box| to the current list, shifted by
+/// |box_context|>`, the branch §1075's `box_end` takes for every
+/// non-register, non-`\shipout`, non-leader box: `\hbox`/`\vbox`/`\vtop`,
+/// `\vsplit`, `\box`/`\copy`, `\lastbox`, and the `\raise`/`\lower`/
+/// `\moveleft`/`\moveright` shifts of those.
+///
+/// The module has three mode branches, not two:
+///
+/// ```text
+/// if abs(mode)=vmode then begin append_to_vlist(cur_box); ... end
+/// else begin if abs(mode)=hmode then space_factor:=1000
+///   else begin p:=new_noad; math_type(nucleus(p)):=sub_box;
+///     info(nucleus(p)):=cur_box; cur_box:=p;
+///     end;
+///   link(tail):=cur_box; tail:=cur_box;
+///   end
+/// ```
+///
+/// In math mode the box is never linked into the mlist directly: it becomes
+/// the `sub_box` nucleus of a fresh ordinary noad. That wrapper is what makes
+/// the box visible to §727's `check_dimensions`, which updates `max_h`/`max_d`
+/// only from noads -- §726 sends a bare `hlist_node`/`vlist_node` straight to
+/// `done_with_node`. §762's `make_left_right` derives its `\left`/`\right`
+/// delimiter target from exactly those `max_h`/`max_d`, so an unwrapped box
+/// silently shrank the target and §706's `var_delimiter` returned the
+/// smallest variant instead of the size the box calls for.
 pub(crate) fn append_box_node_to_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -651,6 +678,15 @@ pub(crate) fn append_box_node_to_current_list(
         extract_box_migrations(stores, &mut node)
     } else {
         Vec::new()
+    };
+    let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
+        let nucleus = stores.freeze_node_list(std::slice::from_ref(&node));
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubBox(nucleus),
+        ))
+    } else {
+        node
     };
     append_node_to_current_list(nest, stores, node)?;
     for node in migrated {
