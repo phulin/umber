@@ -19,7 +19,7 @@
       "rationale": "Defines math fields/noads/choices and the complete mlist-to-hlist lowering rules for delimiters, fractions, accents, operators, scripts, styles, spacing, and penalties."
     },
     {
-      "modules": { "first": 1034, "last": 1044 },
+      "modules": { "first": 1032, "last": 1044 },
       "disposition": "property",
       "owner": "tex-exec::main-control",
       "property_ids": ["tex82.lists.text-material"],
@@ -32,7 +32,15 @@
       "owner": "tex-exec::main-control",
       "property_ids": ["tex82.lists.direct-material-and-groups"],
       "gap_bead": null,
-      "rationale": "Defines direct rule/glue/kern material before the main-control shard's save-stack brace dispatch and restoration boundary."
+      "rationale": "Defines direct rule/glue/kern material before the main-control shard's save-stack brace dispatch and restoration boundary; the same property separately owns §1070's post-unsave parameter clearing."
+    },
+    {
+      "modules": { "first": 1070, "last": 1070 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.lists.direct-material-and-groups"],
+      "gap_bead": null,
+      "rationale": "Clears group-reverting parameters after the save-stack restoration owned by the main-control shard."
     },
     {
       "modules": { "first": 1071, "last": 1087 },
@@ -97,14 +105,6 @@
       "property_ids": ["tex82.math.exit-and-display"],
       "gap_bead": null,
       "rationale": "Defines the only math exit, font validation, inline lowering, display/equation-number packing, spacing, and penalties before the alignment-owned display completion."
-    },
-    {
-      "modules": { "first": 1207, "last": 1207 },
-      "disposition": "context_only",
-      "owner": "tex-exec::math",
-      "property_ids": [],
-      "gap_bead": null,
-      "rationale": "Explains display-alignment error context after §1206, whose executable completion is owned by tex82.align.display-finish."
     }
   ],
   "properties": [
@@ -330,11 +330,11 @@
     },
     {
       "id": "tex82.lists.text-material",
-      "sections": [1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
+      "sections": [1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
       "claim": "Horizontal main control appends character and space material with TeX82 space-factor updates, boundary/ligature/kern processing, language whatsits, font-space caching, and xspace/xspaceskip scaling, while vertical-mode character material starts a paragraph and replays the triggering command.",
       "preconditions": [
         "A current mode, font, language, space factor, sfcode table, and font lig/kern program are live.",
-        "Expanded-command delivery and absolute-mode routing are governed by tex82.main-control.mode-dispatch (§§1029–1033); this property begins only after that non-owning dispatch boundary.",
+        "Expanded-command entry is governed by tex82.main-control.mode-dispatch (§§1029–1031); this property owns the inner-loop setup and text-material actions beginning at §1032.",
         "The current command is an ordinary character, char_given/char_num, spacer, or no_boundary dispatch."
       ],
       "stimulus": [
@@ -378,8 +378,8 @@
     },
     {
       "id": "tex82.lists.direct-material-and-groups",
-      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062],
-      "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes and invoke outer-vertical page building at the canonical boundary; save-stack brace dispatch and restoration are owned separately by tex82.group.brace-dispatch and tex82.group.unsave-restoration (§§1063–1070).",
+      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1070],
+      "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes and invoke outer-vertical page building at the canonical boundary; after separately owned save-stack brace dispatch and restoration (§§1063–1069), §1070 clears the parameters whose values revert at group exit.",
       "preconditions": [
         "Current mode/list and live glue or dimension parameters are available.",
         "Command-owned scanners retain failed-keyword and rejected-opener backup ordering."
@@ -402,7 +402,7 @@
       ],
       "recovery_cases": [
         "A failed optional rule keyword backs up the first nonkeyword command for main control.",
-        "Cross-mode illegal and off-save recovery are non-owning dependencies on the main-control and group properties and scan no direct-material operand here."
+        "Cross-mode illegal and off-save recovery are non-owning dependencies on the main-control and group properties (§§1045–1054 and §§1063–1069) and scan no direct-material operand here."
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
@@ -790,7 +790,7 @@
     {
       "id": "tex82.math.exit-and-display",
       "sections": [1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205],
-      "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page; display-alignment completion is owned separately by tex82.align.display-finish (§1206).",
+      "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page; display-alignment completion and its error context are owned separately by tex82.align.display-finish (§§1206–1207).",
       "preconditions": [
         "A balanced math-shift group contains a finished mlist and optional equation-number mlist.",
         "Live math fonts/parameters, display width/indent/skips/penalties, pre-display size/direction, and enclosing mode are available."
