@@ -207,6 +207,44 @@ pub fn meaning_command_name(meaning: tex_state::meaning::Meaning) -> String {
     super::canonical_command_identity(meaning).0
 }
 
+/// tex.web §307's `token_type` name for one input level.
+///
+/// §307 gives sixteen `token_type` codes, and the reference instrumentation's
+/// `umber_trace_input_name` spells exactly those sixteen. A source level has
+/// no `token_type` -- TeX names it by the file it is reading -- so it reports
+/// `None` and the transport supplies the active source's identity.
+///
+/// A level Umber owns that tex.web reads live has no code to report, so it is
+/// named under an `umber` marker rather than borrowing a neighbouring one, on
+/// the same reasoning that makes `parameter_mutation_key` write `umber<slot>`
+/// instead of a bare number.
+#[must_use]
+pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
+    use super::{InputReason, UmberReplayKind};
+    Some(match reason {
+        InputReason::Source => return None,
+        InputReason::Parameter => "parameter",
+        InputReason::AlignmentUTemplate => "u_template",
+        InputReason::AlignmentVTemplate => "v_template",
+        InputReason::Backup => "backup",
+        InputReason::Recovery => "recovery",
+        InputReason::Macro => "macro",
+        InputReason::OutputRoutine => "output",
+        InputReason::EveryPar => "every_par",
+        InputReason::EveryMath => "every_math",
+        InputReason::EveryDisplay => "every_display",
+        InputReason::EveryHBox => "every_hbox",
+        InputReason::EveryVBox => "every_vbox",
+        InputReason::EveryJob => "every_job",
+        InputReason::EveryCr => "every_cr",
+        InputReason::Mark => "mark",
+        InputReason::Write => "write",
+        InputReason::UmberReplay(UmberReplayKind::MathField) => "umber:math_field",
+        InputReason::UmberReplay(UmberReplayKind::Discretionary) => "umber:discretionary",
+        InputReason::UmberReplay(UmberReplayKind::AfterAssignment) => "umber:after_assignment",
+    })
+}
+
 /// tex.web §305's `scanner_status` name.
 ///
 /// The canonical vocabulary is the six documented values, not Umber's Rust

@@ -556,7 +556,7 @@ impl CommandProcessor<'_> {
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
     fn push_mark_text(&mut self, tokens: TokenListId) {
-        self.command.push_token_level(
+        let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens,
                 origins: OriginListId::EMPTY,
@@ -565,6 +565,15 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Push,
+            reason: InputReason::Mark,
+            level: level.0,
+            position: 0,
+        }));
     }
 
     /// Installs TeX82 §470 `conv_toks` output as an inserted recovery level.

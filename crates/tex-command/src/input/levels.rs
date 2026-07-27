@@ -172,23 +172,37 @@ pub(crate) enum ReplayTrace {
 }
 
 /// Canonical explanations for immutable stored token-list replay.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+///
+/// The first block is one tex.web §307 `token_type` each -- the token lists
+/// TeX82 installs with `begin_token_list` and names in its own input trace.
+/// The second block is Umber's own: replay levels the command state owns for
+/// material tex.web reads live, which therefore have no §307 identity to
+/// borrow.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum StoredReplayReason {
-    TokenList,
+    /// §307 `output_text=6`.
+    OutputRoutine,
+    /// §307 `every_par_text=7`.
     EveryPar,
+    /// §307 `every_math_text=8`.
     EveryMath,
+    /// §307 `every_display_text=9`.
+    EveryDisplay,
+    /// §307 `every_hbox_text=10`.
+    EveryHBox,
+    /// §307 `every_vbox_text=11`.
+    EveryVBox,
+    /// §307 `every_job_text=12`.
+    EveryJob,
+    /// §307 `every_cr_text=13`.
+    EveryCr,
+    /// §307 `mark_text=14`.
+    Mark,
+    /// §307 `write_text=15`.
+    Write,
     /// A completed math field, replayed while the executor constructs its
     /// typed field without acquiring a source cursor.
     MathField,
-    EveryDisplay,
-    EveryHBox,
-    EveryVBox,
-    EveryJob,
-    EveryCr,
-    EveryEof,
-    Mark,
-    OutputRoutine,
-    Write,
     Discretionary,
     AfterAssignment,
 }

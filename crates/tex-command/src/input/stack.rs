@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor,
-    TokenPayload,
+    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    TokenCursor, TokenPayload,
 };
 
 /// One committed input-lifecycle transition.
@@ -36,7 +36,10 @@ pub(crate) enum InputRetirementReason {
     AlignmentUTemplate,
     AlignmentVTemplate,
     Recovery,
-    TokenList,
+    /// A stored token list, carrying which one it is: tex.web names an input
+    /// level by its §307 `token_type`, so a retirement that reported only
+    /// "some token list" could not be named at the observation boundary.
+    TokenList(StoredReplayReason),
 }
 
 /// Canonical effect of exhausting or explicitly retiring one input level.
@@ -440,7 +443,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
             unreachable!("alignment template behavior must accompany its replay trace")
         }
         ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
-        ReplayTrace::Stored(_) => InputRetirementReason::TokenList,
+        ReplayTrace::Stored(reason) => InputRetirementReason::TokenList(*reason),
     }
 }
 

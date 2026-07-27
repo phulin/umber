@@ -725,7 +725,7 @@ impl CommandProcessor<'_> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
-            reason: InputReason::TokenList,
+            reason: InputReason::OutputRoutine,
             level: level.0,
             position: 0,
         }));
@@ -1721,8 +1721,30 @@ fn observed_retirement_reason(
         (_, InputRetirementReason::AlignmentUTemplate) => InputReason::AlignmentUTemplate,
         (_, InputRetirementReason::AlignmentVTemplate) => InputReason::AlignmentVTemplate,
         (_, InputRetirementReason::Recovery) => InputReason::Recovery,
-        (_, InputRetirementReason::TokenList) => InputReason::TokenList,
+        (_, InputRetirementReason::TokenList(stored)) => stored_input_reason(stored),
         (_, InputRetirementReason::Source) => InputReason::Source,
+    }
+}
+
+/// Names the tex.web §307 `token_type` one stored replay level reports.
+#[cfg(any(test, feature = "instrumentation"))]
+pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> InputReason {
+    use crate::input::StoredReplayReason as Stored;
+    use crate::observation::UmberReplayKind;
+    match reason {
+        Stored::OutputRoutine => InputReason::OutputRoutine,
+        Stored::EveryPar => InputReason::EveryPar,
+        Stored::EveryMath => InputReason::EveryMath,
+        Stored::EveryDisplay => InputReason::EveryDisplay,
+        Stored::EveryHBox => InputReason::EveryHBox,
+        Stored::EveryVBox => InputReason::EveryVBox,
+        Stored::EveryJob => InputReason::EveryJob,
+        Stored::EveryCr => InputReason::EveryCr,
+        Stored::Mark => InputReason::Mark,
+        Stored::Write => InputReason::Write,
+        Stored::MathField => InputReason::UmberReplay(UmberReplayKind::MathField),
+        Stored::Discretionary => InputReason::UmberReplay(UmberReplayKind::Discretionary),
+        Stored::AfterAssignment => InputReason::UmberReplay(UmberReplayKind::AfterAssignment),
     }
 }
 

@@ -1125,36 +1125,42 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
         InputTransition::Stop => tex_oracle::InputTransition::Stop,
         InputTransition::Backup | InputTransition::Recovery => tex_oracle::InputTransition::Push,
     };
+    // The reference instrumentation derives the coarse `reason` from the same
+    // tex.web §307 `token_type` it names the level with: `backed_up` reports
+    // `backup`, `inserted` reports `recovery`, `macro` reports `macro`, the
+    // two templates report `alignment_template`, and every remaining token
+    // type -- `parameter`, `output_text`, the `every_*` hooks, `mark_text`,
+    // and `write_text` -- reports `token_list`.
     let reason = match record.reason {
         CommandInputReason::Source => InputReason::Source,
         CommandInputReason::Backup => InputReason::Backup,
         CommandInputReason::Macro => InputReason::Macro,
-        CommandInputReason::Parameter
-        | CommandInputReason::TokenList
-        | CommandInputReason::Write => InputReason::TokenList,
         CommandInputReason::AlignmentUTemplate | CommandInputReason::AlignmentVTemplate => {
             InputReason::AlignmentTemplate
         }
         CommandInputReason::Recovery => InputReason::Recovery,
+        CommandInputReason::Parameter
+        | CommandInputReason::OutputRoutine
+        | CommandInputReason::EveryPar
+        | CommandInputReason::EveryMath
+        | CommandInputReason::EveryDisplay
+        | CommandInputReason::EveryHBox
+        | CommandInputReason::EveryVBox
+        | CommandInputReason::EveryJob
+        | CommandInputReason::EveryCr
+        | CommandInputReason::Mark
+        | CommandInputReason::Write
+        | CommandInputReason::UmberReplay(_) => InputReason::TokenList,
     };
     Event::Input(InputEvent {
         transition,
         reason,
-        name: match record.reason {
-            CommandInputReason::Backup => "backup".into(),
-            CommandInputReason::Macro => "macro".into(),
-            CommandInputReason::Parameter => "parameter".into(),
-            CommandInputReason::AlignmentUTemplate => "u_template".into(),
-            CommandInputReason::AlignmentVTemplate => "v_template".into(),
-            CommandInputReason::Recovery => "recovery".into(),
-            CommandInputReason::TokenList => "output".into(),
-            CommandInputReason::Write => "write".into(),
-            // TeX82's `end_file_reading` observer carries only the lifecycle
-            // transition.  The harness attaches the source identity while the
-            // source frame is still active, before it removes that frame from
-            // its parallel trace stack.
-            CommandInputReason::Source => active_source.into(),
-        },
+        // TeX82's `end_file_reading` observer carries only the lifecycle
+        // transition.  The harness attaches the source identity while the
+        // source frame is still active, before it removes that frame from
+        // its parallel trace stack.
+        name: canonical_names::input_level_name(record.reason)
+            .map_or_else(|| active_source.into(), Into::into),
     })
 }
 

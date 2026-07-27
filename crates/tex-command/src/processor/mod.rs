@@ -33,6 +33,8 @@ pub use alignment::{
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 pub(crate) use expand::{meaning_text, render_the_value, string_text};
+#[cfg(any(test, feature = "instrumentation"))]
+pub(crate) use next::stored_input_reason;
 #[cfg(test)]
 pub(crate) use status::{
     AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,

@@ -5,7 +5,7 @@ use tex_command::{
     CommandObserver, FontResource, InputReason, InputTransition, ObservedToken, RecoveryKind,
     RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
-use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::ids::TokenListId;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::node::Node;
@@ -1559,6 +1559,68 @@ fn production_driver_schedules_everypar_before_replayed_first_character() {
         control.step(&mut universe).expect("paragraph end"),
         MainControlStep::Continue
     );
+}
+
+/// tex.web §473 keeps `scan_toks`'s delimiting braces out of the collected
+/// list, and §1226 puts one enclosing pair back only for `output_routine_loc`.
+#[test]
+fn production_driver_encloses_only_the_output_routine_in_braces() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\everypar{\relax}\output={\relax}\everymath{}",
+    );
+
+    for context in ["everypar", "output", "everymath"] {
+        assert_eq!(
+            control.step(&mut universe).expect(context),
+            MainControlStep::Continue
+        );
+    }
+
+    let relax = universe.intern("relax").symbol();
+    let every_par = universe.tok_param(TokParam::EVERY_PAR);
+    assert_eq!(
+        universe.tokens(every_par),
+        [tex_state::token::Token::Cs(relax)],
+        "the braces around an \\everypar value are scan_toks delimiters"
+    );
+    let output = universe.tok_param(TokParam::OUTPUT);
+    assert_eq!(
+        universe.tokens(output),
+        [
+            tex_state::token::Token::Char {
+                ch: '{',
+                cat: tex_state::token::Catcode::BeginGroup,
+            },
+            tex_state::token::Token::Cs(relax),
+            tex_state::token::Token::Char {
+                ch: '}',
+                cat: tex_state::token::Catcode::EndGroup,
+            },
+        ],
+        "\\output alone is re-enclosed in braces"
+    );
+    let every_math = universe.tok_param(TokParam::EVERY_MATH);
+    assert!(universe.tokens(every_math).is_empty());
+}
+
+/// tex.web §1226 tests `link(def_ref)=null` before it encloses, so an empty
+/// `\output` reverts to the default rather than storing a brace pair.
+#[test]
+fn production_driver_leaves_an_empty_output_routine_empty() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\output={}");
+
+    assert_eq!(
+        control.step(&mut universe).expect("empty output"),
+        MainControlStep::Continue
+    );
+
+    let output = universe.tok_param(TokParam::OUTPUT);
+    assert!(universe.tokens(output).is_empty());
 }
 
 #[test]
@@ -3354,7 +3416,7 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
                 && backup.transition == InputTransition::Backup
                 && recovery.kind == RecoveryKind::Backup
                 && output.transition == InputTransition::Push
-                && output.reason == InputReason::TokenList
+                && output.reason == InputReason::OutputRoutine
         ),
         "unexpected output hand-off observations: {:?}",
         observations.0
@@ -3394,7 +3456,7 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
                 CommandObservation::Recovery(recovery),
                 CommandObservation::Input(output),
             ] if output_retirement.transition == InputTransition::Retire
-                && output_retirement.reason == InputReason::TokenList
+                && output_retirement.reason == InputReason::OutputRoutine
                 && raw.command == "stop"
                 && expanded.command == "stop"
                 && backup_retirement.transition == InputTransition::Retire
@@ -3402,7 +3464,7 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
                 && backup.transition == InputTransition::Backup
                 && recovery.kind == RecoveryKind::Backup
                 && output.transition == InputTransition::Push
-                && output.reason == InputReason::TokenList
+                && output.reason == InputReason::OutputRoutine
         ),
         "completed output routine must restore vertical final-stop retry: {:?}",
         observations.0

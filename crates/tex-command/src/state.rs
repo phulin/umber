@@ -41,6 +41,16 @@ pub struct CommandState {
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
     pub(crate) replay_completions: Vec<InputLevelId>,
+    /// Named token-list levels installed since the executor last drained
+    /// them, in push order.
+    ///
+    /// tex.web installs these inside `begin_token_list`, where its trace
+    /// observes them; Umber's executor asks command state to install them
+    /// after the borrowed command-processor episode has ended, so the record
+    /// waits here until the same operation publishes its other committed
+    /// observations.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) named_token_list_pushes: Vec<(InputLevelId, StoredReplayReason)>,
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.
@@ -134,52 +144,75 @@ impl CommandState {
     /// entirely inside command state; executor control never fabricates an
     /// input stack for token-list replay.
     pub fn push_everypar(&mut self, tokens: TracedTokenList) {
-        self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
-        );
+        self.push_named_token_list(tokens, StoredReplayReason::EveryPar);
     }
 
     /// Schedules the immutable math-entry hook after the stomach has entered
     /// the matching math-shift group.  The command machine owns this replay
     /// so macro expansion, origins, and retirement stay canonical.
     pub fn push_everymath(&mut self, tokens: TracedTokenList, display: bool) {
-        self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(if display {
-                crate::input::StoredReplayReason::EveryDisplay
+        self.push_named_token_list(
+            tokens,
+            if display {
+                StoredReplayReason::EveryDisplay
             } else {
-                crate::input::StoredReplayReason::EveryMath
-            }),
+                StoredReplayReason::EveryMath
+            },
         );
     }
 
     /// Schedules the immutable `\everyhbox` or `\everyvbox` payload after
     /// canonical replay has entered the corresponding box group and mode.
     pub fn push_everybox(&mut self, tokens: TracedTokenList, horizontal: bool) {
-        self.push_token_level(
+        self.push_named_token_list(
+            tokens,
+            if horizontal {
+                StoredReplayReason::EveryHBox
+            } else {
+                StoredReplayReason::EveryVBox
+            },
+        );
+    }
+
+    /// Installs one tex.web §307-named token list and records its push.
+    ///
+    /// This is `begin_token_list` for the executor-requested hooks: the level
+    /// carries the §307 `token_type` it was installed under, so both its push
+    /// and its eventual retirement report that identity rather than the one
+    /// token-list class every stored level used to share.
+    fn push_named_token_list(&mut self, tokens: TracedTokenList, reason: StoredReplayReason) {
+        let level = self.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_list(),
                 origins: tokens.origin_list(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
-            ReplayTrace::Stored(if horizontal {
-                crate::input::StoredReplayReason::EveryHBox
-            } else {
-                crate::input::StoredReplayReason::EveryVBox
-            }),
+            ReplayTrace::Stored(reason),
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.named_token_list_pushes.push((level, reason));
+    }
+
+    /// Takes the pushes of executor-requested named token lists, in order.
+    ///
+    /// The executor publishes them with the rest of the operation's committed
+    /// records, which is where tex.web's own trace has them: inside the
+    /// `new_graf`/`box_end`/`init_math` transition that installed the level.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn take_named_token_list_push_observations(&mut self) -> Vec<crate::InputRecord> {
+        self.named_token_list_pushes
+            .drain(..)
+            .map(|(level, reason)| crate::InputRecord {
+                transition: crate::InputTransition::Push,
+                reason: crate::processor::stored_input_reason(reason),
+                level: level.0,
+                position: 0,
+            })
+            .collect()
     }
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.

@@ -1897,6 +1897,17 @@ impl CanonicalMainControl {
             // in one place, so that the buffer is never borrowed while
             // command state is still being read.
             let mut records: Vec<CommandObservation> = Vec::new();
+            // tex.web observes a named token-list level inside
+            // `begin_token_list`, which runs in the middle of the transition
+            // that installs it (`new_graf`, `box_end`, `init_math`). Command
+            // state holds the push until the transition's borrow ends, so it
+            // is published ahead of the transition's own committed records.
+            records.extend(
+                self.command
+                    .take_named_token_list_push_observations()
+                    .into_iter()
+                    .map(CommandObservation::Input),
+            );
             let effect = applied_effect_observation(&scanned, stores);
             if suspends_alignment
                 && let Some(alignment) = self.command.alignment_suspend_observation()

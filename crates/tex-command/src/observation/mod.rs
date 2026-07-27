@@ -360,17 +360,70 @@ pub enum InputTransition {
 /// This accompanies retirement because TeX's observable input lifecycle
 /// distinguishes a backed-up token from a physical source even though both
 /// use the same retire transition.
+///
+/// tex.web splits the classification in two. §303's `state` separates a file
+/// or terminal level from a token-list level, and §307's `token_type` names
+/// _which_ of sixteen kinds of token list a token-list level is. Collapsing
+/// the nine `token_type` codes at and above `output_text` into one
+/// `TokenList` variant left the transport with nothing to name them from, so
+/// every stored level was reported as `\output`'s (`umber2-johp.191`). Each
+/// variant below is therefore exactly one `token_type`, and its code is
+/// stated; there is no variant that stands for more than one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputReason {
+    /// §303 `state<>token_list`: a file or the terminal.
     Source,
-    Backup,
-    Macro,
+    /// §307 `parameter=0`.
     Parameter,
+    /// §307 `u_template=1`.
     AlignmentUTemplate,
+    /// §307 `v_template=2`.
     AlignmentVTemplate,
+    /// §307 `backed_up=3`.
+    Backup,
+    /// §307 `inserted=4`.
     Recovery,
-    TokenList,
+    /// §307 `macro=5`.
+    Macro,
+    /// §307 `output_text=6`.
+    OutputRoutine,
+    /// §307 `every_par_text=7`.
+    EveryPar,
+    /// §307 `every_math_text=8`.
+    EveryMath,
+    /// §307 `every_display_text=9`.
+    EveryDisplay,
+    /// §307 `every_hbox_text=10`.
+    EveryHBox,
+    /// §307 `every_vbox_text=11`.
+    EveryVBox,
+    /// §307 `every_job_text=12`.
+    EveryJob,
+    /// §307 `every_cr_text=13`.
+    EveryCr,
+    /// §307 `mark_text=14`.
+    Mark,
+    /// §307 `write_text=15`.
     Write,
+    /// A replay level Umber's command state owns for material tex.web reads
+    /// live, which therefore has no §307 `token_type` to report.
+    ///
+    /// These are named under an `umber` marker for the same reason
+    /// `parameter_mutation_key` names a bank slot with no tex.web code that
+    /// way: reporting one of them as `output` would be indistinguishable
+    /// from -- and could silently agree with -- a real `\output` level.
+    UmberReplay(UmberReplayKind),
+}
+
+/// One replay level Umber owns that tex.web has no `token_type` for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UmberReplayKind {
+    /// A completed math field (tex.web §1151 `scan_math` reads it live).
+    MathField,
+    /// A `\discretionary` part (tex.web §1117 reads each part live).
+    Discretionary,
+    /// The `\afterassignment` token (tex.web §1269 `back_input`s it).
+    AfterAssignment,
 }
 
 /// One input transition with its deterministic aggregate provenance.
