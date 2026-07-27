@@ -9,7 +9,7 @@ use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
     scaled_from_decimal_parts, xn_over_d,
 };
-use tex_state::token::{OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::canonical_names::glue_order_name;
@@ -177,13 +177,29 @@ const fn raise_infinite_order(order: Order) -> Order {
     }
 }
 
-/// Recognizes TeX82 §448's decimal point.
+/// TeX82 §440's initial `radix:=0`: no numeric constant was scanned, so no
+/// decimal fraction may follow.
+const NO_RADIX: u8 = 0;
+
+/// TeX82 §444's `radix:=10`, the only base a decimal fraction may follow.
+const DECIMAL_RADIX: u8 = 10;
+
+/// Recognizes TeX82 §448's `point_token` and `continental_point_token`.
 ///
-/// `scan_dimen` aliases `continental_point_token` to `point_token` twice, so
-/// a comma introduces a decimal fraction exactly like a period: `3,5pt` is
-/// `3.5pt`, and a leading `,5pt` is `0.5pt`.
-const fn is_decimal_point(ch: char) -> bool {
-    matches!(ch, '.' | ',')
+/// §445 defines both as `other_token` plus a character, so this is a test on
+/// the whole token, not on its character alone: only a category-12 `.` or `,`
+/// introduces a decimal fraction. `scan_dimen` aliases
+/// `continental_point_token` to `point_token` twice, so a comma behaves
+/// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
+/// `0.5pt`.
+fn is_point_token(command: &CurrentCommand) -> bool {
+    matches!(
+        command.meaning(),
+        Meaning::CharToken {
+            ch: '.' | ',',
+            cat: Catcode::Other,
+        }
+    )
 }
 
 /// The outcome of TeX82 §449's internal-quantity fetch inside `scan_dimen`.
@@ -372,15 +388,25 @@ impl CommandProcessor<'_> {
                 _ => break command,
             }
         };
-        self.complete_integer(first, negative, provenance)
+        Ok(self.complete_integer(first, negative, provenance)?.0)
     }
 
+    /// TeX82 §440's `scan_int` body, from the token its
+    /// `<Get the next non-blank non-sign token>` left in hand.
+    ///
+    /// The second result is §440's `radix` global, which `scan_int`
+    /// initializes to zero and only §444's "Scan a numeric constant" sets:
+    /// 10 for a decimal constant (including §444's `vacuous` recovery, which
+    /// runs after `radix:=10`), 8 after `'`, and 16 after `"`. It stays zero
+    /// for an internal quantity and for §442's alphabetic character code.
+    /// §448 needs it because a decimal fraction may follow only a decimal
+    /// constant.
     fn complete_integer(
         &mut self,
         first: CurrentCommand,
         negative: bool,
         provenance: OriginId,
-    ) -> Result<ScannedScalar<i32>, CommandError> {
+    ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
         // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
         // false)`, so §413's §429 loop lowers every numeric level to an
         // integer: a dimension keeps its scaled representation, and glue or mu
@@ -388,65 +414,43 @@ impl CommandProcessor<'_> {
         // dimension step because `\z@` is a dimension register, not a numeric
         // literal; `\ifnum\parskip>0` and `\count0=\skip3` rely on the glue
         // step.
-        let value = match self.scan_something_internal(&first, InternalLevel::Integer, false)? {
-            InternalScan::Value(InternalValue::Integer(value)) => value,
-            InternalScan::Value(_) => {
-                unreachable!("TeX82 §429 lowers an int_val request to an integer")
-            }
-            // TeX82 §416: a font identifier or token list requested below
-            // `tok_val` prints "Missing number, treated as zero", backs the
-            // operand up, and yields zero.
-            InternalScan::NotANumber => {
-                self.back_input(first)?;
-                let scanned = ScannedScalar {
-                    value: 0,
-                    recovery: ScalarRecovery::InsertedZero,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                };
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "integer",
-                    value: scanned.value.to_string(),
-                    tokens: None,
-                }));
-                return Ok(scanned);
-            }
-            InternalScan::NotInternal => match first.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
-                    self.scan_radix_tail(ch, 10)?
+        let (value, radix) =
+            match self.scan_something_internal(&first, InternalLevel::Integer, false)? {
+                InternalScan::Value(InternalValue::Integer(value)) => (value, NO_RADIX),
+                InternalScan::Value(_) => {
+                    unreachable!("TeX82 §429 lowers an int_val request to an integer")
                 }
-                // TeX.web `scan_int` treats an apostrophe or double quote as
-                // an octal or hexadecimal introducer. The following digits
-                // still travel through `get_x_token`, so their deliveries are
-                // observable before the completed scanner result.
-                Meaning::CharToken { ch: '\'', .. } => self.scan_radix_tail('0', 8)?,
-                Meaning::CharToken { ch: '"', .. } => self.scan_radix_tail('0', 16)?,
-                // TeX's `\` character-code form consumes its following token
-                // through raw delivery: that token supplies a character code,
-                // rather than participating in ordinary expansion.  The
-                // optional following space remains an expanded scanner token.
-                Meaning::CharToken { ch: '`', .. } => self.scan_character_code()?,
-                _ => {
+                // TeX82 §416: a font identifier or token list requested below
+                // `tok_val` prints "Missing number, treated as zero", backs the
+                // operand up, and yields zero.
+                InternalScan::NotANumber => {
                     self.back_input(first)?;
-                    let scanned = ScannedScalar {
-                        value: 0,
-                        recovery: ScalarRecovery::InsertedZero,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    };
-                    #[cfg(any(test, feature = "instrumentation"))]
-                    self.observe(CommandObservation::Scanner(ScannerRecord {
-                        kind: "integer",
-                        value: scanned.value.to_string(),
-                        tokens: None,
-                    }));
-                    return Ok(scanned);
+                    return Ok((self.inserted_zero_integer(provenance), NO_RADIX));
                 }
-            },
-        };
+                InternalScan::NotInternal => match first.meaning() {
+                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
+                        (self.scan_radix_tail(ch, DECIMAL_RADIX)?, DECIMAL_RADIX)
+                    }
+                    // TeX.web `scan_int` treats an apostrophe or double quote as
+                    // an octal or hexadecimal introducer. The following digits
+                    // still travel through `get_x_token`, so their deliveries are
+                    // observable before the completed scanner result.
+                    Meaning::CharToken { ch: '\'', .. } => (self.scan_radix_tail('0', 8)?, 8),
+                    Meaning::CharToken { ch: '"', .. } => (self.scan_radix_tail('0', 16)?, 16),
+                    // TeX's `\` character-code form consumes its following token
+                    // through raw delivery: that token supplies a character code,
+                    // rather than participating in ordinary expansion.  The
+                    // optional following space remains an expanded scanner token.
+                    // §442 never enters §444, so `radix` stays zero.
+                    Meaning::CharToken { ch: '`', .. } => (self.scan_character_code()?, NO_RADIX),
+                    _ => {
+                        // §444's `vacuous` case. `radix:=10` is assigned before
+                        // the accumulation loop, so it survives §446's recovery.
+                        self.back_input(first)?;
+                        return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
+                    }
+                },
+            };
         let scanned = ScannedScalar {
             value: if negative {
                 value.saturating_neg()
@@ -464,7 +468,27 @@ impl CommandProcessor<'_> {
             value: scanned.value.to_string(),
             tokens: None,
         }));
-        Ok(scanned)
+        Ok((scanned, radix))
+    }
+
+    /// TeX82 §416's and §446's shared outcome: the offending token has
+    /// already been backed up, "Missing number, treated as zero" is reported,
+    /// and the scan publishes zero.
+    fn inserted_zero_integer(&mut self, provenance: OriginId) -> ScannedScalar<i32> {
+        let scanned = ScannedScalar {
+            value: 0,
+            recovery: ScalarRecovery::InsertedZero,
+            provenance: ScalarProvenance {
+                primary: provenance,
+            },
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "integer",
+            value: scanned.value.to_string(),
+            tokens: None,
+        }));
+        scanned
     }
 
     /// Scans a dimension or an internal dimension quantity.
@@ -561,8 +585,9 @@ impl CommandProcessor<'_> {
                         Order::Normal,
                     ));
                 }
-                // TeX82 §448's other branch: `back_input`, then `scan_int` owns
-                // the integer part.
+                // TeX82 §448's other branch: `back_input`, then either
+                // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
+                // numeric part, and the unit scan always follows.
                 InternalScan::NotInternal => {
                     match self.scan_dimension_constant(first, allow_infinite, mu, provenance)? {
                         Some((units, flip)) => {
@@ -607,18 +632,47 @@ impl CommandProcessor<'_> {
         Ok((scanned, order))
     }
 
-    /// TeX82 §448's non-internal branch of `scan_dimen`: `back_input`, then
-    /// `scan_int` (or §452's decimal fraction) owns the numeric part, and
-    /// §453's unit scan completes it.
+    /// TeX82 §448's non-internal branch of `scan_dimen`, which tex.web writes
+    /// as
     ///
-    /// The backup and the integer scanner's own redelivery of that token are
-    /// both observable, so the hand-off stays a real backup/replay cycle
-    /// rather than passing the already-delivered command straight through.
+    /// ```text
+    /// back_input;
+    /// if cur_tok=continental_point_token then cur_tok:=point_token;
+    /// if cur_tok<>point_token then scan_int
+    /// else begin radix:=10; cur_val:=0; end;
+    /// if cur_tok=continental_point_token then cur_tok:=point_token;
+    /// if (radix=10)and(cur_tok=point_token) then <Scan decimal fraction>;
+    /// ```
     ///
-    /// `None` is §444's `vacuous` case: `scan_int` found no digit at all, so
-    /// §446's "Express astonishment that no number was here" backs the
-    /// offending token up a second time (`back_error`) and the caller reads
-    /// zero.
+    /// `back_input` does not disturb `cur_tok`, so the point test reads the
+    /// token that was just backed up **without fetching it again**. A leading
+    /// decimal point therefore never reaches `scan_int` at all: §448 assigns
+    /// `radix:=10; cur_val:=0` directly, and §452's `get_token` is the single
+    /// delivery that re-scans the point. Re-reading it through `get_x_token`
+    /// first would add an expanded delivery, a vacuous §444 integer scan with
+    /// §446's second backup, and a `scan_int` result TeX never computes --
+    /// six semantic events per leading-point dimension, which is what
+    /// `\vskip .5cm` produced.
+    ///
+    /// For every other token the integer part is `scan_int`'s (§440), whose
+    /// own `<Get the next non-blank non-sign token>` performs the replay. The
+    /// backup and that redelivery are both observable, so the hand-off stays
+    /// a real backup/replay cycle rather than passing the already-delivered
+    /// command straight through.
+    ///
+    /// `None` is §444's `vacuous` case, and `scan_int` itself is what reports
+    /// it: no number was there, so §446's "Express astonishment that no
+    /// number was here" has already backed the offending token up a second
+    /// time (`back_error`) and committed zero. Asking `scan_int` instead of
+    /// pre-testing the token for an ASCII digit is what keeps §444's octal
+    /// (`'`) and hexadecimal (`"`) introducers and §442's alphabetic constant
+    /// out of the vacuous bucket -- all three are legal dimension prefixes,
+    /// as §448's own `-'77 pt` example says.
+    ///
+    /// The `radix=10` conjunct is why `'77.5pt` has no fractional part:
+    /// §440 initializes `radix:=0` and only §444's decimal branch sets it to
+    /// 10, so an octal, hexadecimal, or alphabetic constant leaves a
+    /// following point to the unit scan.
     fn scan_dimension_constant(
         &mut self,
         first: CurrentCommand,
@@ -626,16 +680,8 @@ impl CommandProcessor<'_> {
         mu: bool,
         provenance: ScalarProvenance,
     ) -> Result<Option<(ScannedUnits, bool)>, CommandError> {
+        let leading_point = is_point_token(&first);
         self.back_input(first)?;
-        let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        let Meaning::CharToken { ch, .. } = replayed.meaning() else {
-            self.back_input(replayed)?;
-            return Ok(None);
-        };
-        if !ch.is_ascii_digit() && !is_decimal_point(ch) {
-            self.back_input(replayed)?;
-            return Ok(None);
-        }
         // TeX82 `scan_dimen` delegates the integral prefix to `scan_int`.
         // Besides sharing radix and recovery rules, that ownership is
         // observable: `scan_int` backs up the decimal point before
@@ -643,24 +689,26 @@ impl CommandProcessor<'_> {
         // fractional digits. Keep that hand-off inside the command scanner
         // rather than collapsing it into a private decimal parser.
         self.last_integer_terminator = None;
-        let leading_decimal = is_decimal_point(ch);
-        let integer = self
-            .complete_integer(replayed, false, provenance.primary)?
-            .value;
-        let decimal = leading_decimal
-            || self
-                .last_integer_terminator
-                .as_ref()
-                .is_some_and(|command| {
-                    matches!(
-                        command.meaning(),
-                        Meaning::CharToken { ch, .. } if is_decimal_point(ch)
-                    )
-                });
+        let (integer, decimal) = if leading_point {
+            (0, true)
+        } else {
+            let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+            let (scanned, radix) = self.complete_integer(replayed, false, provenance.primary)?;
+            if scanned.recovery == ScalarRecovery::InsertedZero {
+                return Ok(None);
+            }
+            let decimal = radix == DECIMAL_RADIX
+                && self
+                    .last_integer_terminator
+                    .as_ref()
+                    .is_some_and(is_point_token);
+            (scanned.value, decimal)
+        };
         if decimal {
-            // The decimal point is replayed raw after `scan_int` backed it
-            // up. A unit stays in the backed-up input for the keyword scanner
-            // instead.
+            // §452: "|point_token| is being re-scanned". It is `get_token`,
+            // not `get_x_token`, so the point is delivered raw exactly once
+            // and never expanded. A unit stays in the backed-up input for the
+            // keyword scanner instead.
             let _ = self.get_next()?;
         }
         self.scan_units_after_integer(integer, decimal, allow_infinite, mu)
