@@ -917,19 +917,30 @@ If nothing confirms inside the window, the divergence is structural and one
 anchor resync is attempted: both streams are scanned forward over every
 high-salience boundary -- an input-stack push/retire/stop, or the first
 delivery attributed to a new source line -- inside the scan bound, and the
-streams rejoin at the shared boundary with the least total skip that carries
-the same confirmation. If that also fails, comparison of that fixture stops
-and says so. The bias is deliberate: cascade noise is visible, but a real
-defect hidden behind an over-eager realignment is not.
+streams rejoin at the most identifying shared boundary that carries the same
+confirmation. If that also fails, comparison of that fixture stops and says
+so. The bias is deliberate: cascade noise is visible, but a real defect
+hidden behind an over-eager realignment is not.
 
-Least total skip is not a tie-break detail. Rejoining at a costlier shared
-anchor lands the streams on a boundary they agree at only locally, and the
-next real key mismatch then has no shared anchor left inside the scan, so an
-inherited over-costly rejoin is reported as a structural fork that stops the
-fixture. Anchors are enumerated by oracle offset, and the cheapest pair is
-frequently not the first one visited: a distant oracle anchor paired with an
-immediate observed one undercuts a nearby oracle anchor paired with a far
-observed one.
+The two anchor kinds are not equally identifying, and the search ranks them
+in that order rather than by cost. A shared source line names the same
+physical position in the same named file on both sides, so it is evidence
+that the streams are at the same point in the _document_. An input push names
+only the shape of a boundary: every macro activation in a run carries the
+identical `Push/Macro macro` key and every backup the identical
+`Push/Backup backup`, so a shared one is evidence of nothing beyond "both
+sides pushed something". A shared line therefore wins over any anonymous
+boundary in reach, however much cheaper that boundary is; anonymous
+boundaries are used only when no line is shared inside the scan.
+
+Within one class, least total skip decides, and that is not a tie-break
+detail either. Rejoining at a costlier shared anchor lands the streams on a
+boundary they agree at only locally, and the next real key mismatch then has
+no shared anchor left inside the scan, so an inherited over-costly rejoin is
+reported as a structural fork that stops the fixture. Anchors are enumerated
+by oracle offset, and the cheapest pair is frequently not the first one
+visited: a distant oracle anchor paired with an immediate observed one
+undercuts a nearby oracle anchor paired with a far observed one.
 
 This is not a global minimum-edit-distance diff, and deliberately so. Myers
 is `O(ND)` and Gentle's trace is over 100 000 events; worse, a global minimum

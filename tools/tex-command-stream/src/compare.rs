@@ -23,7 +23,9 @@
 //!    anchor resync is attempted, scanning both streams forward over every
 //!    high-salience boundary (an input-stack push/retire, or a new source
 //!    line) within [`AlignmentTuning::anchor_scan`] events and rejoining at
-//!    the cheapest shared one that carries the same confirmation.
+//!    the most identifying shared one that carries the same confirmation --
+//!    a shared source line first, an anonymous nesting boundary only when no
+//!    line is shared in reach, and least total skip within either class.
 //! 4. If that also fails, comparison of the fixture stops and says so. An
 //!    over-eager realignment hides a real defect silently; cascade noise at
 //!    least stays visible. The bias is deliberately toward declaring a
@@ -563,6 +565,33 @@ enum AnchorKey<'a> {
     Line { source: &'a str, line: u32 },
 }
 
+/// How much of the document an anchor kind actually identifies.
+///
+/// The two anchor kinds are not equally identifying, and treating them as if
+/// they were is what lets a rejoin land the streams on different parts of the
+/// document. A [`AnchorKey::Line`] names a physical position in a named source
+/// file, so a shared one is positive evidence that both streams are at the
+/// *same point in the document*. An [`AnchorKey::Input`] names only the shape
+/// of a nesting boundary: every macro push in the run carries the identical
+/// key `Push/Macro macro`, and so does every backup push, so a shared one is
+/// evidence of nothing beyond "both sides pushed something".
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum AnchorClass {
+    /// A shared source position: the same line of the same file on both sides.
+    Position,
+    /// A shared nesting boundary of the same shape, at an unknown position.
+    Shape,
+}
+
+impl AnchorKey<'_> {
+    fn class(&self) -> AnchorClass {
+        match self {
+            Self::Line { .. } => AnchorClass::Position,
+            Self::Input { .. } => AnchorClass::Shape,
+        }
+    }
+}
+
 struct Aligner<'a> {
     fixture: &'a str,
     expected: Vec<&'a Event>,
@@ -772,18 +801,28 @@ impl<'a> Aligner<'a> {
         true
     }
 
-    /// The one structural fallback: rejoin both streams at the cheapest shared
-    /// high-salience boundary, still requiring the usual confirmation.
+    /// The one structural fallback: rejoin both streams at the most
+    /// identifying shared boundary in reach, still requiring the usual
+    /// confirmation.
     ///
-    /// "Cheapest" is the least total skip, and the search is exhaustive over
-    /// the anchors inside [`AlignmentTuning::anchor_scan`] on each side. That
-    /// matters more than it looks: a rejoin that costs more than the true
-    /// minimum lands the streams on a boundary they only *locally* agree at,
-    /// and the next real key mismatch then has no shared anchor left in reach,
-    /// which reads as a structural fork rather than as the over-costly rejoin
-    /// it inherited. Both anchor lists are in ascending offset order, so once
-    /// a confirmed candidate exists every later candidate whose skip already
-    /// equals or exceeds it can be cut without a key comparison.
+    /// The two anchor classes are searched in [`AnchorClass`] order, and only
+    /// within one class does least total skip decide. Ranking every anchor by
+    /// skip alone was the defect this replaced: a rejoin's job is to put both
+    /// streams back at the *same point in the document*, and a nearby
+    /// `Push/Backup backup` says nothing about position, so it routinely
+    /// outbid the shared source line that did. The streams then continued from
+    /// two different places, every later structural divergence inherited that
+    /// offset, and once it exceeded [`AlignmentTuning::anchor_scan`] the
+    /// fixture had no shared anchor left in reach and was abandoned -- a fork
+    /// reported hundreds of thousands of events after the cheap rejoin that
+    /// caused it.
+    ///
+    /// Within a class the search is exhaustive over the anchors inside
+    /// [`AlignmentTuning::anchor_scan`] on each side, because a rejoin costing
+    /// more than that class's minimum has the same failure mode in miniature.
+    /// Both anchor lists are in ascending offset order, so once a confirmed
+    /// candidate exists every later candidate whose skip already equals or
+    /// exceeds it can be cut without a key comparison.
     fn anchor_resync(
         &self,
         expected_index: usize,
@@ -794,15 +833,40 @@ impl<'a> Aligner<'a> {
         let actual_anchors =
             collect_anchors(&self.actual_events, actual_index, self.tuning.anchor_scan);
 
+        [AnchorClass::Position, AnchorClass::Shape]
+            .into_iter()
+            .find_map(|class| {
+                self.cheapest_shared_anchor(
+                    expected_index,
+                    actual_index,
+                    &expected_anchors,
+                    &actual_anchors,
+                    class,
+                )
+            })
+    }
+
+    /// The least-total-skip confirmed rejoin over one anchor class.
+    fn cheapest_shared_anchor(
+        &self,
+        expected_index: usize,
+        actual_index: usize,
+        expected_anchors: &[(usize, AnchorKey<'a>)],
+        actual_anchors: &[(usize, AnchorKey<'a>)],
+        class: AnchorClass,
+    ) -> Option<(usize, usize, ResyncAnchor)> {
         let mut best: Option<(usize, usize, usize, ResyncAnchor)> = None;
-        for (expected_skip, expected_anchor) in &expected_anchors {
+        for (expected_skip, expected_anchor) in expected_anchors {
             if best
                 .as_ref()
                 .is_some_and(|(best, _, _, _)| *best <= *expected_skip)
             {
                 break;
             }
-            for (actual_skip, actual_anchor) in &actual_anchors {
+            if expected_anchor.class() != class {
+                continue;
+            }
+            for (actual_skip, actual_anchor) in actual_anchors {
                 let cost = expected_skip + actual_skip;
                 if best.as_ref().is_some_and(|(best, _, _, _)| *best <= cost) {
                     break;

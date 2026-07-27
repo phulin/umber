@@ -334,6 +334,61 @@ fn every_anchor_inside_the_scan_bound_is_a_candidate() {
     );
 }
 
+/// A rejoin's job is to put both streams back at the same point in the
+/// *document*, and only a source line says where that is. An input push names
+/// nothing but the shape of a boundary -- every macro activation in a run
+/// carries the identical `Push/Macro macro` key, and so does every backup --
+/// so ranking the two classes together by skip alone lets an anonymous
+/// boundary a few events away outbid the shared source line that actually
+/// locates the streams. Here the anonymous rejoin is less than half the cost
+/// and confirms just as well, and it is still the wrong one: taking it leaves
+/// the oracle inside material Umber never produced.
+#[test]
+fn a_shared_source_line_outranks_a_cheaper_anonymous_input_anchor() {
+    // The oracle runs 100 events Umber never produced (an output-routine
+    // episode has exactly this shape: no source location anywhere in it),
+    // pushes a backup, runs 99 more, and only then returns to case.tex line
+    // 42. Umber pushes the same backup immediately and reaches line 42 nine
+    // events later.
+    let mut expected = run("gap", 100);
+    expected.push(input("backup"));
+    expected.extend(run("decoy", 8));
+    expected.extend(run("interior", 91));
+    expected.push(command(42));
+    expected.extend(run("shared", 20));
+
+    let mut actual = vec![input("backup")];
+    actual.extend(run("decoy", 8));
+    actual.push(command(42));
+    actual.extend(run("shared", 20));
+
+    let entries = align(
+        &expected,
+        &actual,
+        AlignmentTuning {
+            window: 8,
+            ..AlignmentTuning::default()
+        },
+    );
+    assert_eq!(
+        entries[0].repair,
+        Repair::AnchorResync {
+            expected_skipped: 200,
+            actual_skipped: 9,
+            anchor: ResyncAnchor::Line {
+                source: "case.tex".into(),
+                line: 42,
+            },
+        },
+        "the backup rejoin costs 100 against the line rejoin's 209"
+    );
+    assert_eq!(
+        entries.len(),
+        1,
+        "rejoining at the shared line leaves nothing else to report"
+    );
+}
+
 /// Rejoining at anything but the least-total-skip shared anchor leaves the
 /// streams on a boundary they agree at only locally, and the next real key
 /// mismatch then finds no shared anchor in reach at all. The cheapest candidate
