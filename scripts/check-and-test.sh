@@ -4,54 +4,31 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-warn_missing_e2e_case() {
-  local case_name="$1"
-  local setup_hint="$2"
-  shift 2
-
+# Fail-fast preflight for the byte-exact end-to-end DVI conformance gates.
+#
+# The oracle list is read from `.gitignore` rather than restated here: that is
+# the same single source `assets::conformance_gate_registry_matches_gitignore`
+# binds the Rust gate registry to, so a new gate cannot leave this preflight
+# stale. Absence is only reported here; the gates themselves enforce it by
+# failing (see the End-to-End Conformance Gate Contract in
+# docs/testing_infrastructure.md).
+warn_missing_e2e_oracles() {
   local missing=()
-  local path
-  for path in "$@"; do
-    if [[ ! -f "$path" ]]; then
-      missing+=("${path#"$repo_root"/}")
-    fi
-  done
+  local entry
+  while read -r entry; do
+    [[ -f "${repo_root}${entry}" ]] || missing+=("${entry#/}")
+  done < <(grep -E '^/tests/corpus/e2e/.+\.expected\.dvi$' .gitignore || true)
 
   if (( ${#missing[@]} == 0 )); then
     return
   fi
 
-  printf 'check-and-test: warning: %s e2e conformance will be skipped; missing:' "$case_name" >&2
+  printf 'check-and-test: warning: end-to-end DVI conformance oracles are absent:' >&2
   printf ' %s' "${missing[@]}" >&2
-  printf '\ncheck-and-test: warning: %s\n' "$setup_hint" >&2
+  printf '\ncheck-and-test: warning: those gates will FAIL, not skip; run scripts/setup-conformance-tests.sh\n' >&2
 }
 
-warn_missing_e2e_case \
-  "Story" \
-  "run scripts/setup-conformance-tests.sh to install the Story/Gentle corpus" \
-  "$repo_root/third_party/corpus/story.tex" \
-  "$repo_root/third_party/corpus/plain.tex" \
-  "$repo_root/third_party/hyphen/hyphen.tex" \
-  "$repo_root/tests/corpus/e2e/story.expected.dvi"
-warn_missing_e2e_case \
-  "Gentle" \
-  "run scripts/setup-conformance-tests.sh to install the Story/Gentle corpus" \
-  "$repo_root/third_party/corpus/gentle.tex" \
-  "$repo_root/third_party/corpus/plain.tex" \
-  "$repo_root/third_party/hyphen/hyphen.tex" \
-  "$repo_root/tests/corpus/e2e/gentle.expected.dvi"
-warn_missing_e2e_case \
-  "TRIP" \
-  "run scripts/fetch-conformance-inputs.sh to install the TRIP/e-TRIP corpus" \
-  "$repo_root/third_party/trip/trip.tex" \
-  "$repo_root/third_party/trip/trip.tfm" \
-  "$repo_root/tests/corpus/e2e/trip.expected.dvi"
-warn_missing_e2e_case \
-  "e-TRIP" \
-  "run scripts/fetch-conformance-inputs.sh to install the TRIP/e-TRIP corpus" \
-  "$repo_root/third_party/trip/etrip.tex" \
-  "$repo_root/third_party/trip/trip.tfm" \
-  "$repo_root/tests/corpus/e2e/etrip.expected.dvi"
+warn_missing_e2e_oracles
 
 scripts/test-publish-texlive-r2.sh
 
