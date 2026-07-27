@@ -116,8 +116,9 @@ immutable material. `CanonicalMainControl` replays each frozen part as its own
 stored command level inside a `disc_group` restricted-horizontal episode,
 flushes and freezes the completed node list, then applies the typed `Disc`
 node. Group-local definitions and recovery remain live command/Universe state;
-the group's `\aftergroup` payload is returned to a command-owned replay level
-before the next part. This aggregate operation remains under one rollback
+the group's `\aftergroup` payload is backed up like any other group's (§33.9),
+because §1120's `build_discretionary` opens with a bare `unsave`. This
+aggregate operation remains under one rollback
 snapshot: it must not recreate an `InputStack` or expose raw group delimiters
 to the executor.
 
@@ -3341,7 +3342,7 @@ ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
 Executor-owned replay episodes (a discretionary part, an unbraced math
-field, an `\aftergroup` list) clear the label on entry and exit. TeX reaches those
+field) clear the label on entry and exit. TeX reaches those
 lists through `scan_left_brace`/`push_nest` and leaves them through
 `handle_right_brace`, never mid-character-run, so an episode's own last
 character must not park the enclosing context at the lookahead.
@@ -3517,6 +3518,41 @@ closer arrived.
 `\mathchoice` (§1172) keeps the absorbing `scan_math_group_episode`, because
 it is a genuinely different section: `append_choices` needs all four branches
 before any is built. It is not evidence that §1153 may absorb.
+
+### 33.9 `\aftergroup` is one backup per token, not one replay level
+
+`\aftergroup` never builds a token list. §280's `save_for_after` pushes an
+`insert_token` entry per token onto the save stack, and §282's
+`@<Clear off top level from save_stack@>` -- `unsave`'s body -- reaches
+`@<Insert token p into TeX's input@>` (§326) for each one:
+
+```
+begin t:=cur_tok; cur_tok:=p; back_input; cur_tok:=t;
+end
+```
+
+So every saved token gets its own complete §325 `back_input`: its own
+stack-conservation loop, its own one-token `backed_up` level, and its own
+recovery record. Packing the payload into a single stored replay level is a
+different object and is observed differently -- a macro body that ended with
+the group's closing brace stays on the stack instead of retiring first, and
+none of the backup pushes, recovery records, or backup retirements happen at
+all (`umber2-johp.198`; gentle.tex's `\f@@t`, whose
+`{\bgroup\aftergroup\@foot\let\next}` makes `\@foot` exactly such a token).
+
+§282 clears the level from the top down while `\aftergroup` saved from the
+bottom up, so the last-saved token is backed up first and ends up deepest.
+Rereading therefore restores save order, and the layer that hands the payload
+over in save order must back it up in reverse.
+
+Two `back_input` entry points exist because §325 says `cur_tok` is the token,
+not the delivery. `back_input_saved` is for a caller that still holds the
+`CurrentCommand`, because §342's alignment interception records transitions
+that set `align_state` outright rather than stepping it, and those must be
+reversed as recorded. `back_input_token` is for every caller whose token is
+not the live delivery -- §282's saved tokens, and §372's `\csname`, whose
+`cur_tok:=cur_cs+cs_token_flag` was never delivered at all -- and it derives
+the `align_state` change from the token's own category, exactly as §325 does.
 
 ## 34. End-state invariants
 
