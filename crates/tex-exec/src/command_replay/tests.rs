@@ -4209,7 +4209,7 @@ fn canonical_box_lifecycle_unboxing_and_leaders_do_not_reopen_input() {
 
 #[test]
 fn canonical_insert_builds_typed_ins_node_in_current_list() {
-    // TeX82 §968/§1096: `\insert<class>{...}` packages its body like a
+    // TeX82 §1099/§1100: `\insert<class>{...}` packages its body like a
     // natural `\vbox` and appends the resulting `ins_node` to whatever list
     // was open, not a side channel -- so it shows up as a plain child of the
     // enclosing `\vbox` here, carrying its own separate `content` list.
@@ -4255,7 +4255,7 @@ fn canonical_insert_builds_typed_ins_node_in_current_list() {
 
 #[test]
 fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
-    // TeX82 §968: `scan_eight_bit_int`'s own 0..=255 clamp ("Bad register
+    // TeX82 §1099: `scan_eight_bit_int`'s own 0..=255 clamp ("Bad register
     // code") and the additional `\insert255` rejection ("box 255 is
     // special") both recover as class 0 rather than aborting the run.
     let mut universe = Universe::new();
@@ -4295,7 +4295,7 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
 
 #[test]
 fn canonical_insert_at_outer_vertical_reaches_the_page_builder() {
-    // TeX82 §968: `if nest_ptr=0 then build_page` -- an `\insert` delivered
+    // TeX82 §1099: `if nest_ptr=0 then build_page` -- an `\insert` delivered
     // directly in outer vertical mode must hand its ins_node to the page
     // builder immediately, exercising §§980--987's insertion-class
     // accounting (`tex-exec::page_builder`) rather than merely constructing
@@ -4317,10 +4317,10 @@ fn canonical_insert_at_outer_vertical_reaches_the_page_builder() {
 
 #[test]
 fn canonical_vadjust_builds_adjust_node_migrated_out_of_its_enclosing_hbox() {
-    // TeX82 §968/§1096: `\vadjust{...}` shares `\insert`'s exact
+    // TeX82 §1099/§1100: `\vadjust{...}` shares `\insert`'s exact
     // `begin_insert_or_adjust`/`insert_group` construction with `class`
     // fixed at 255, but closes as an `adjust_node` holding only the packed
-    // content (no split parameters). §1096's own hpack (§649) then migrates
+    // content (no split parameters). §1100's own hpack (§649) then migrates
     // that `adjust_node` out of the enclosing `\hbox` when *that* box is
     // appended to the vlist -- `extract_box_migrations` unwraps it to its
     // bare content, exactly like tex.web's `Transfer node p to the
@@ -4644,7 +4644,7 @@ fn canonical_box_shift_illegal_mode_reports_and_never_scans_a_dimension() {
 
 #[test]
 fn canonical_box_shift_applies_to_box_register_and_last_box() {
-    // TeX82 §1076's `scan_box` accepts any `make_box` command, not just
+    // TeX82 §1084's `scan_box` accepts any `make_box` command, not just
     // `\hbox`/`\vbox`/`\vtop`: `\box`/`\copy` and `\lastbox` resolve to a
     // node immediately rather than opening a group, and the shift must
     // still apply to that immediate result. (A box-shift's own box can
@@ -4691,7 +4691,7 @@ fn canonical_box_shift_applies_to_box_register_and_last_box() {
 
 #[test]
 fn canonical_box_shift_missing_box_operand_recovers_and_replays_the_command() {
-    // TeX82 §1076's `scan_box` "A <box> was supposed to be here" recovery:
+    // TeX82 §1084's `scan_box` "A <box> was supposed to be here" recovery:
     // a non-`make_box` command is backed up and replayed normally, rather
     // than being consumed as (or silently dropping) the shift's operand.
     let mut universe = Universe::new();

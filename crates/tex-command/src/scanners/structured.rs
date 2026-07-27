@@ -315,7 +315,7 @@ pub struct ScannedInsertConstruction {
 
 /// The completed command-owned operand of a TeX82 §1073 box-shift prefix
 /// (`\raise`, `\lower`, `\moveleft`, `\moveright`): `scan_box`'s own
-/// `make_box` dispatch (§1076), scanned after the shift's dimension.
+/// `make_box` dispatch (§1084), scanned after the shift's dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScannedBoxShiftPayload {
     /// `scan_box`'s "A <box> was supposed to be here" recovery: the rejected
@@ -1870,14 +1870,14 @@ impl CommandProcessor<'_> {
         Ok(ScannedSetBoxAssignment { index })
     }
 
-    /// Scans the register operand of TeX82 §1071's `make_box(box_code)`.
+    /// Scans the register operand of TeX82 §1079's `make_box(box_code)`.
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
         Ok(ScannedBoxRegister {
             index: self.scan_integer()?.value,
         })
     }
 
-    /// Scans TeX82 §§1076--1081's `\\vsplit <number> to <dimen>` prefix.
+    /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
         let index = self.scan_integer()?.value;
         let missing_to = !self.scan_keyword("to")?.value;
@@ -2131,8 +2131,8 @@ impl CommandProcessor<'_> {
         Ok(ScannedBoxShift { delta, payload })
     }
 
-    /// Scans TeX82 §1076's `scan_box` operand for a box-shift prefix: `scan_box`
-    /// begins with "the next non-blank non-relax" token (§1076's own
+    /// Scans TeX82 §1084's `scan_box` operand for a box-shift prefix: `scan_box`
+    /// begins with "the next non-blank non-relax" token (§1084's own
     /// `get_x_token` loop), then requires `cur_cmd=make_box`. Since `box_context`
     /// here is always a signed dimension (bounded by `max_dimen`), it can never
     /// reach `leader_flag`, so `scan_box`'s rule-spec branch never applies to a

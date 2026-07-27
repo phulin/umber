@@ -413,16 +413,16 @@ area-free, extension-free job name through `CommandHostCapabilities`; it is a
 borrow-scoped environment fact, so snapshots retain neither a host path nor a
 fixture-derived conversion value.
 
-For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
+For TeX82 §§1075 and 1084, `\shipout` begins a typed box-completion episode:
 command control delivers the next `make_box` command and owns every scalar
 box-register scan, including its one-token terminator backup. On the closing
-brace, replay performs §1071's `box_end`/`ship_out(cur_box)` synchronously;
+brace, replay performs §1075's `box_end`/`ship_out(cur_box)` synchronously;
 the DVI-page effect is consequently published before that terminator backup
 retires on the next raw fetch. The executor receives the completed box node,
 not an input capability or a token to reread.
 
 Likewise, `\box` is observed as `make_box` with `cur_chr` 0 before command
-control invokes TeX82 §1071's `scan_int` for its box-register operand. That
+control invokes TeX82 §1079's `scan_int` for its box-register operand. That
 command-owned scan preserves raw digit delivery and any terminator backup;
 TeX82 §15 assigns the shared `make_box` command code, and §35 initializes
 `\box` with `box_code` (`0`). The executor consumes only the resulting typed
@@ -680,34 +680,40 @@ mode; the executor applies only the "Missing $ inserted" diagnostic text.
 TeX82 `\setbox` follows the same split in two phases. `CommandProcessor`
 scans the register integer and optional equals sign as a typed
 `ScannedSetBoxAssignment`, including the canonical backup of the equals
-delivery. The following `\vbox` remains an ordinary command delivery; replay
-validates and backs up its required opening brace through the processor, then
-opens, packages, and assigns the executor-owned box group.
+delivery. The following `\vbox` remains an ordinary command delivery; the
+processor scans its required opening brace, and replay opens, packages, and
+assigns the executor-owned box group.
 This keeps box construction from acquiring a raw-input API while retaining the
 observable scanner and backup ordering.
 
-For `\hbox`, `\vbox`, and `\vtop`, command processing also owns the optional
-`to`/`spread` packing clause and dimension before validating and backing up the
-opening brace. Replay enters the typed group and mode, schedules the matching
-immutable `\everyhbox`/`\everyvbox` command episode, and applies pure packing
-only after the body closes; scoped `\setbox` assignment then occurs at the
-same aggregate boundary.
-If the opener is malformed, the command scanner retains the rejected command
-through its normal backup and marks an inserted-brace recovery; replay enters
-the typed box group without fabricating a command event, so that backed-up
-command becomes the first box-body material.
+For `\hbox`, `\vbox`, and `\vtop`, command processing owns all of TeX82
+§645's `scan_spec` -- the optional `to`/`spread` packing clause and dimension,
+and then the mandatory opening brace, which §403's `scan_left_brace`
+*consumes*. That brace is never redelivered to main control: `scan_spec` runs
+`new_save_level(c)` before it, so the group it opens is exactly the one replay
+enters when it receives the construction. Replay enters the typed group and
+mode, schedules the matching immutable `\everyhbox`/`\everyvbox` command
+episode (§1083 begins that token list after the brace is gone), and applies
+pure packing only after the body closes; scoped `\setbox` assignment then
+occurs at the same aggregate boundary. An active box body therefore counts
+brace depth from one, with no opener still owed to it.
+If the opener is malformed, §403 recovers by backing up the rejected command
+and proceeding as though a brace had been read; replay enters the typed box
+group without fabricating a command event, so that backed-up command becomes
+the first box-body material.
 
-TeX82 §968's `\insert<class>{...}` (`begin_insert_or_adjust`) follows the same
-box-opener split, minus the packing clause: `CommandProcessor` owns the raw
-`scan_int` class-number scan (any_mode; the reserved-255 rejection and the
+TeX82 §1099's `\insert<class>{...}` (`begin_insert_or_adjust`) follows the
+same box-opener split, minus the packing clause: `CommandProcessor` owns the
+raw `scan_int` class-number scan (any_mode; the reserved-255 rejection and the
 ordinary 0..=255 range clamp both write a `Universe` diagnostic, so they are
-deferred to replay) and the same required-opening-brace validation
-`\hbox`/`\vbox`/`\vtop` use. Replay enters `GroupKind::Insert`/internal
-vertical mode, applies §968's `normal_paragraph` reset, and reuses the box
+deferred to replay) and the same mandatory-opening-brace scan
+`\hbox`/`\vbox`/`\vtop` use (§1099's own `new_save_level(insert_group);
+scan_left_brace`). Replay enters `GroupKind::Insert`/internal
+vertical mode, applies §1099's `normal_paragraph` reset, and reuses the box
 family's brace-matching bookkeeping (`active_boxes`/`BoxBeginGroup`/
 `BoxEndGroup`) purely for nested-brace counting -- an insertion body is not a
 box and schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
-dedicated branch (`finish_insert_or_adjust_group`): §1096's `end_graf`, then
+dedicated branch (`finish_insert_or_adjust_group`): §1100's `end_graf`, then
 TeX82's `vpack` macro (unconstrained depth, but the box's *current*
 `\vbadness`/`\vfuzz`, unlike an ordinary `\vbox`) packages the body, and the
 resulting `ins_node` is appended to whatever list was open when `\insert`
@@ -717,10 +723,11 @@ splitting and height accounting (`tex-exec::page_builder`) once the node
 reaches the page contribution list.
 
 `\vadjust{...}` (the exact same `begin_insert_or_adjust`/`handle_right_brace`
-procedures as `\insert` above, §968/§1096) shares that entire construction
+procedures as `\insert` above, §1099/§1100) shares that entire construction
 rather than duplicating it: tex.web's own
 `begin_insert_or_adjust` sets `cur_val:=255` directly for `\vadjust` instead
-of calling `scan_eight_bit_int`, so `scan_command` builds the same
+of calling `scan_eight_bit_int`, so both reach one
+`scan_insert_construction(is_vadjust)` that builds the same
 `ScannedInsertConstruction{class: 255, ..}` used for `\insert`, with a
 dedicated `is_vadjust` flag telling replay to skip the 0..=255 clamp and the
 "you can't `\insert255`" rejection -- both diagnostics are specific to a

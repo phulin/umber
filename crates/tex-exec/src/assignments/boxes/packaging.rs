@@ -57,7 +57,7 @@ pub(super) fn scan_box_value(
     context: TracedTokenWord,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
     // TeX82's scan_box starts with get_x_token's "next non-blank non-relax"
-    // loop (tex.web §1076).  This matters for format code that deliberately
+    // loop (tex.web §1084).  This matters for format code that deliberately
     // leaves a compatibility hook equal to \relax before the real box command.
     let traced = loop {
         let traced = next_non_space_traced_x(input, stores, execution)?
@@ -137,7 +137,7 @@ pub(super) fn scan_box_value(
 }
 
 /// TeX82's `scan_box` backs up a non-box command after reporting the error
-/// (tex.web §1076), leaving the destination box void while normal command
+/// (tex.web §1084), leaving the destination box void while normal command
 /// processing resumes with the rejected token.
 fn recover_missing_box(
     input: &mut InputStack,
