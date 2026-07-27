@@ -6289,3 +6289,47 @@ fn canonical_interaction_mode_assignment_is_ungrouped() {
         tex_state::InteractionMode::Batch
     );
 }
+
+/// TeX82 §1210 files `prefix` under `any_mode`, and §1211's
+/// `while cur_cmd=prefix` loop runs inside `prefixed_command` -- reached from
+/// the same `main_control` big case an alignment cell's body runs through.
+/// An alignment cell is bounded by §785's `align_peek` and §1130's `endv`,
+/// not dispatched by a narrowed main control of its own, so `\global` inside
+/// a cell must reach the assignment with its prefix intact
+/// (`umber2-johp.208`).
+#[test]
+fn alignment_cell_body_collects_the_global_prefix() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\halign{#\cr\begingroup\global\count9=5 \endgroup\cr}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(universe.count(9), 5);
+}
+
+/// The same for a `\noalign` body, which §785 opens as an ordinary
+/// `no_align_group` running plain `main_control` between its braces.
+#[test]
+fn noalign_body_collects_the_global_prefix() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\halign{#\cr\noalign{\begingroup\global\count9=5 \endgroup}a\cr}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(universe.count(9), 5);
+}
+
+/// §1045's `any_mode(ignore_spaces)` is the other command tex.web consumes
+/// above its big case, so it takes the same shared main-control step and must
+/// not reach `scan_command` from an alignment cell either.
+#[test]
+fn alignment_cell_body_handles_ignore_spaces() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#\cr\ignorespaces a\cr}\end");
+    run_to_end(&mut control, &mut universe);
+}

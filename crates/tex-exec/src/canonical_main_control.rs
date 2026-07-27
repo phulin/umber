@@ -2987,11 +2987,12 @@ fn scan_noalign_body(
             cat: Catcode::EndGroup,
             ..
         } => Ok(ScannedStep::NoAlignEndGroup { alignment }),
-        _ => scan_command(
+        // A `\noalign` body is ordinary main control between its braces
+        // (TeX82 §785's `no_align_group`), so it dispatches through the same
+        // §1030 `reswitch:`/§1211 prefix path as any other step.
+        _ => dispatch_main_control_command(
             processor,
             command,
-            false,
-            MeaningFlags::EMPTY,
             mode,
             false,
             boxes,
@@ -3057,11 +3058,13 @@ fn scan_alignment_delivery_step(
                 }
                 return Ok(ScannedStep::AlignmentCellFinish { alignment });
             }
-            scan_command(
+            // An alignment cell's body is ordinary main control bounded by
+            // §1130's `vmode+endv,hmode+endv: do_endv`, not a dispatcher of
+            // its own, so it takes
+            // the same §1030 `reswitch:`/§1211 prefix path as any other step.
+            dispatch_main_control_command(
                 processor,
                 command,
-                false,
-                MeaningFlags::EMPTY,
                 mode,
                 false,
                 boxes,
@@ -3112,12 +3115,58 @@ fn scan_step(
     let Some(delivery) = delivery.map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
-    let tex_command::CommandReplayDelivery::Command(mut command) = delivery else {
+    let tex_command::CommandReplayDelivery::Command(command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
             unreachable!();
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
+    dispatch_main_control_command(
+        processor,
+        command,
+        mode,
+        starts_paragraph,
+        boxes,
+        innermost_group,
+        job_is_all_over,
+        display_eq_no,
+    )
+}
+
+/// Dispatches one already-fetched command through TeX82 §1030's `reswitch:`
+/// label and the big case below it.
+///
+/// This is the shared tail of *every* main-control step, whatever fetched the
+/// command: §1030's own `get_x_token`, §1038's `main_loop_lookahead`, or an
+/// alignment cell's template-aware delivery. tex.web has no second dispatcher
+/// for alignment bodies -- §785's `align_peek` and §1130's `endv` case only
+/// bound a cell, and everything between those bounds runs through the same
+/// `main_control` big case -- so a caller that reaches `scan_command` without
+/// passing through here is dispatching a *narrowed* main control that silently
+/// drops whatever this function handles (`umber2-johp.208`).
+///
+/// Two things are handled here rather than in `scan_command` because tex.web
+/// handles them before its big case reaches an assignment:
+///
+/// - §1211 `prefixed_command`'s `while cur_cmd=prefix` loop. §1210 routes
+///   `any_mode(prefix)` -- so `\global`/`\long`/`\outer` (and e-TeX's
+///   `\protected`) are prefixes in every mode, never mode-dispatched
+///   primitives, and the accumulated `a` is what the assignment cases below
+///   consult. Hoisting the loop above `scan_command` keeps that single
+///   accumulation point, but only if every dispatch path runs it.
+/// - §1045's `any_mode(ignore_spaces): begin <Get the next non-blank non-call
+///   token>; goto reswitch; end`.
+#[allow(clippy::too_many_arguments)] // carries command-owned replay facts
+fn dispatch_main_control_command(
+    processor: &mut CommandProcessor<'_>,
+    mut command: tex_command::CurrentCommand,
+    mode: Mode,
+    starts_paragraph: bool,
+    boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
+    job_is_all_over: bool,
+    display_eq_no: bool,
+) -> Result<ScannedStep, ExecError> {
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
     // that command in place. `goto reswitch` is therefore not `back_input`,
@@ -3142,13 +3191,12 @@ fn scan_step(
             }
             command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
         }
-        // TeX82 §1045's `any_mode(ignore_spaces): begin <Get the next
-        // non-blank non-call token>; goto reswitch; end`. §406's helper is
-        // `repeat get_x_token until cur_cmd<>spacer` -- exactly
-        // `next_non_space` -- and the command it leaves in `cur_cmd` is then
-        // dispatched by the case itself. Backing it up instead would push a
-        // backup level, emit a recovery record, and deliver that command a
-        // second time, none of which TeX82 does (`umber2-johp.196`).
+        // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --
+        // exactly `next_non_space` -- and the command it leaves in `cur_cmd`
+        // is then dispatched by the case itself. Backing it up instead would
+        // push a backup level, emit a recovery record, and deliver that
+        // command a second time, none of which TeX82 does
+        // (`umber2-johp.196`).
         if matches!(
             command.meaning(),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces)
@@ -4843,6 +4891,11 @@ fn scan_off_save(
 ///   remove that arm without updating this classifier, which is exactly the
 ///   defect this function exists to catch -- panicking here is preferable to
 ///   silently reverting to the swallowed-primitive behavior.
+/// - `unreachable!()` for the prefixes and `\ignorespaces`: these have no
+///   `scan_command` arm at all and must not have one, because tex.web
+///   consumes them above its big case (§1211's prefix loop, §1045's
+///   `reswitch`). `dispatch_main_control_command` is where that happens, so
+///   reaching this function names a caller that bypassed it.
 /// - `Err(ExecError::UnimplementedPrimitive { .. })`: this primitive has no
 ///   dispatch at all yet in canonical main control, or is dispatched only
 ///   conditionally elsewhere (for example the math-noad family routed
@@ -4964,7 +5017,6 @@ fn scan_unclassified_primitive(
         | P::PdfTrailerId
         | P::PdfXForm
         | P::PdfXImage
-        | P::IgnoreSpaces
         | P::ItalicCorrection
         | P::NoBoundary
         | P::NonScript
@@ -5016,6 +5068,22 @@ fn scan_unclassified_primitive(
         | P::ErrorStopMode => unreachable!(
             "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
              scan_command dispatch arm and must never reach the exhaustive fallback"
+        ),
+        // Consumed by `dispatch_main_control_command` *before* the big case,
+        // exactly as tex.web consumes them: §1211 `prefixed_command`'s
+        // `while cur_cmd=prefix` loop absorbs `\global`/`\long`/`\outer` (and
+        // e-TeX's `\protected`) into the accumulator `a` that the assignment
+        // cases then read, and §1045's `any_mode(ignore_spaces)` re-enters
+        // §1030's `reswitch:` with the next non-blank non-call token. None of
+        // them is a mode-dispatched primitive -- §1210 files the prefixes
+        // under `any_mode` -- so `scan_command` has, and must have, no arm for
+        // them. Reaching this arm means some caller dispatched a command
+        // without going through `dispatch_main_control_command`, which is the
+        // narrowed-main-control defect of `umber2-johp.208`.
+        P::Global | P::Long | P::Outer | P::Protected | P::IgnoreSpaces => unreachable!(
+            "UnexpandablePrimitive::{primitive:?} is consumed by \
+             dispatch_main_control_command before scan_command; reaching \
+             scan_command means a caller bypassed the shared main-control step"
         ),
         // TeX82 §1046's `non_math(...)` table: each of these primitives is a
         // math-noad, math-style, or math-delimiter command whose *only*
@@ -5113,7 +5181,6 @@ fn scan_unclassified_primitive(
         | P::FontCharHt
         | P::FontCharIc
         | P::FontCharWd
-        | P::Global
         | P::GlobalDefs
         | P::GlueExpr
         | P::GlueShrink
@@ -5124,12 +5191,10 @@ fn scan_unclassified_primitive(
         | P::InterLinePenalties
         | P::InteractionMode
         | P::LetterspaceFont
-        | P::Long
         | P::Marks
         | P::MuExpr
         | P::MuToGlue
         | P::NumExpr
-        | P::Outer
         | P::PageDiscards
         | P::ParShapeDimen
         | P::ParShapeIndent
@@ -5166,7 +5231,6 @@ fn scan_unclassified_primitive(
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
         | P::PrevGraf
-        | P::Protected
         | P::QuitVMode
         | P::SetLanguage
         | P::ShowGroups
