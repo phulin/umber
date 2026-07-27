@@ -5415,9 +5415,7 @@ fn canonical_setbox_stores_every_immediately_resolved_box_source() {
 /// destination and leave the box in place (`umber2-johp.263`).
 #[test]
 fn canonical_setbox_from_lastbox_removes_the_box_instead_of_reappending_it() {
-    let stores = run_canonical_tex82(
-        r"\setbox13\hbox{\hbox to 10pt{}\global\setbox1\lastbox}\end",
-    );
+    let stores = run_canonical_tex82(r"\setbox13\hbox{\hbox to 10pt{}\global\setbox1\lastbox}\end");
 
     assert!(
         stores.box_reg(1).is_some(),
@@ -5445,5 +5443,8 @@ fn canonical_setbox_from_a_void_source_voids_the_destination() {
 
     assert!(stores.box_reg(1).is_none(), "void \\box voids the target");
     assert!(stores.box_reg(2).is_none(), "void \\copy voids the target");
-    assert!(stores.box_reg(3).is_none(), "void \\vsplit voids the target");
+    assert!(
+        stores.box_reg(3).is_none(),
+        "void \\vsplit voids the target"
+    );
 }
