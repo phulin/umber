@@ -44,6 +44,20 @@ Requires scripts/build-tex82-oracle.sh to have produced
 target/tex82-oracle/bin, and scripts/setup-conformance-tests.sh (or
 scripts/fetch-conformance-inputs.sh) to have populated third_party/corpus,
 third_party/hyphen, and third_party/fonts. It performs no network I/O.
+
+Exit statuses. No status means "nothing to do": a run that generates no trace
+never exits 0, because a caller that reads only the status must not be able to
+confuse "regenerated every document" with "regenerated none".
+
+  0  every selected document was regenerated (and, for a full run, the pinned
+     contract was rewritten)
+  1  generation ran and failed: an oracle run, a determinism comparison, or a
+     fixture bootstrap did not hold
+  2  the command line is wrong
+  3  a prerequisite is absent, so nothing ran. This is the expected status on
+     a fresh checkout; run scripts/build-tex82-oracle.sh and
+     scripts/setup-conformance-tests.sh, then rerun. It is separated from 1
+     so a caller can tell "not set up yet" from "set up, and broken"
 EOF
 }
 
@@ -61,6 +75,17 @@ done
 fail() {
   printf 'build-tex82-document-traces: %s\n' "$*" >&2
   exit 1
+}
+
+# A prerequisite this script cannot supply is absent, so no trace was
+# generated. Reported as its own status rather than as success: the caller's
+# worklist silently shrinks by however many documents this run did not
+# produce, and the only place that shrinkage is visible before the tracer runs
+# is here.
+missing_prerequisite() {
+  printf 'build-tex82-document-traces: %s\n' "$*" >&2
+  printf 'build-tex82-document-traces: no document trace was generated (exit 3).\n' >&2
+  exit 3
 }
 
 sha256_of() {
@@ -204,11 +229,12 @@ build_document() {
 }
 
 [[ -x "$instrumentable_executable" && -x "$clean_executable" ]] ||
-  fail "missing pinned oracle executables; run scripts/build-tex82-oracle.sh first"
-[[ -f "$build_record" ]] || fail "missing ${build_record}; run scripts/build-tex82-oracle.sh first"
-[[ -d "$texmfcnf" ]] || fail "missing pinned web2c configuration: ${texmfcnf}"
+  missing_prerequisite "missing pinned oracle executables; run scripts/build-tex82-oracle.sh first"
+[[ -f "$build_record" ]] ||
+  missing_prerequisite "missing ${build_record}; run scripts/build-tex82-oracle.sh first"
+[[ -d "$texmfcnf" ]] || missing_prerequisite "missing pinned web2c configuration: ${texmfcnf}"
 [[ -f "$hyphen" && -d "$fonts" ]] ||
-  fail 'missing external inputs; run scripts/setup-conformance-tests.sh first'
+  missing_prerequisite 'missing external inputs; run scripts/setup-conformance-tests.sh first'
 
 publish_contract=1
 if [[ "${#selected[@]}" -eq 0 ]]; then
@@ -227,6 +253,13 @@ for document in "${selected[@]}"; do
   document_record=""
 done
 
+# The only path to exit 0. Every earlier exit either names a missing
+# prerequisite (3) or a failure (1), so reaching here is a positive statement
+# that every selected document was regenerated -- not merely that nothing
+# raised an objection.
+[[ "${#records[@]}" -eq "${#selected[@]}" ]] ||
+  fail "generated ${#records[@]} of ${#selected[@]} selected document trace(s)"
+
 if [[ "$publish_contract" -eq 1 ]]; then
   {
     printf '# Pinned identities for generated-on-demand TeX82 full-document semantic traces.\n'
@@ -239,8 +272,11 @@ if [[ "$publish_contract" -eq 1 ]]; then
     printf 'contract-schema 1\n'
     printf '%s\n' "${records[@]}"
   } >"$contract"
-  printf 'wrote %s\n' "${contract#"${repo_root}/"}" >&2
+  printf 'regenerated %s document trace(s); wrote %s\n' \
+    "${#records[@]}" "${contract#"${repo_root}/"}" >&2
 else
-  printf 'partial run; %s left unchanged. Records:\n' "${contract#"${repo_root}/"}" >&2
+  printf 'regenerated %s of %s document trace(s) (--document selection); %s left unchanged.\n' \
+    "${#records[@]}" "${#all_documents[@]}" "${contract#"${repo_root}/"}" >&2
+  printf 'Records:\n' >&2
   printf '%s\n' "${records[@]}" >&2
 fi

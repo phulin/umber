@@ -182,6 +182,84 @@ fn a_clean_fixture_is_listed_with_zero_rather_than_omitted() {
     );
 }
 
+/// The defect this contract exists for (`umber2-johp.168`): a run that never
+/// compared three of four registered fixtures reported the same "no
+/// divergence" success as a run that compared all four.
+#[test]
+fn an_uncompared_fixture_makes_the_run_partial_rather_than_clean() {
+    let mut clean = report(true);
+    clean.divergences.clear();
+    clean.fixtures[0].state = FixtureState::Compared {
+        divergences: 0,
+        first_index: None,
+        budget_reached: false,
+    };
+    assert_eq!(clean.outcome(), RunOutcome::Clean);
+    assert_eq!(clean.outcome().exit_code(), 0);
+
+    let mut partial = clean.clone();
+    partial
+        .fixtures
+        .push(FixtureSummary::not_generated("tex82/document-absent-v1"));
+    assert_eq!(partial.outcome(), RunOutcome::Partial);
+    assert_eq!(partial.outcome().exit_code(), 2);
+    assert_ne!(partial.outcome().exit_code(), clean.outcome().exit_code());
+    assert_eq!(partial.divergence_count(), clean.divergence_count());
+
+    let rendered = partial.to_string();
+    assert!(rendered.contains("VERDICT: PARTIAL (exit 2)"), "{rendered}");
+    assert!(rendered.contains("LOWER BOUND"), "{rendered}");
+    assert!(
+        rendered.contains("never compared (1): tex82/document-absent-v1"),
+        "{rendered}"
+    );
+}
+
+/// A budget that stopped a fixture short also makes the total a lower bound,
+/// so it earns the same status as a fixture that never ran.
+#[test]
+fn a_reached_budget_makes_the_run_partial_too() {
+    let mut report = report(true);
+    assert_eq!(report.outcome(), RunOutcome::Diverged);
+    assert_eq!(report.outcome().exit_code(), 1);
+    assert!(report.to_string().contains("VERDICT: DIVERGED (exit 1)"));
+
+    report.fixtures[0].state = FixtureState::Compared {
+        divergences: 5,
+        first_index: Some(1),
+        budget_reached: true,
+    };
+    report.max_divergences = 5;
+    assert_eq!(report.outcome(), RunOutcome::Partial);
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("stopped at the --max-divergences 5 budget (1): tex82/case"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_clean_run_still_prints_a_verdict_rather_than_nothing() {
+    let report = ComparisonReport {
+        fixtures: vec![FixtureSummary {
+            name: "tex82/case".into(),
+            identity: IDENTITY.into(),
+            state: FixtureState::Compared {
+                divergences: 0,
+                first_index: None,
+                budget_reached: false,
+            },
+        }],
+        ..ComparisonReport::default()
+    };
+    let rendered = report.to_string();
+    assert!(rendered.contains("VERDICT: CLEAN (exit 0)"), "{rendered}");
+    assert!(
+        rendered.contains("every registered fixture was compared"),
+        "{rendered}"
+    );
+}
+
 #[test]
 fn the_long_index_list_wraps_without_dropping_an_occurrence() {
     let divergences: Vec<Divergence> = (0..200).map(|index| mismatch(index, 98)).collect();
@@ -196,7 +274,10 @@ fn the_long_index_list_wraps_without_dropping_an_occurrence() {
     let list = rendered
         .split("Every occurrence, by oracle event index:")
         .nth(1)
-        .expect("index list");
+        .expect("index list")
+        .split("\nVERDICT:")
+        .next()
+        .expect("index list before the verdict");
     let printed: Vec<usize> = list
         .split(|character: char| !character.is_ascii_digit())
         .filter(|token| !token.is_empty())

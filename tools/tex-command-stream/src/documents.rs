@@ -70,17 +70,20 @@ struct DocumentRecord {
 /// Loads every registered document trace whose generated fixture tree is
 /// present, verifying its pinned identity first.
 ///
-/// A missing contract file or a missing trace tree is not an error: this tier
-/// is generated on demand. A *present* tree whose identity disagrees with the
-/// contract is an error, because that is exactly the drift the pin exists to
-/// catch.
+/// A missing *trace tree* is not an error: this tier is generated on demand,
+/// and the caller reports each absent document as an uncompared fixture. A
+/// missing *contract file* is an error: the contract is committed, so its
+/// absence means the checkout cannot say what it was supposed to compare, and
+/// an empty registry read as "no documents are registered" is exactly the
+/// silent under-report the pin exists to prevent. A present tree whose
+/// identity disagrees with the contract is likewise an error.
 pub fn load_registry(repository: &Path) -> Result<DocumentRegistry, RunnerError> {
     let contract_path = repository.join(DOCUMENT_CONTRACT);
     if !contract_path.is_file() {
-        return Ok(DocumentRegistry {
-            traces: Vec::new(),
-            skipped: Vec::new(),
-        });
+        return Err(RunnerError::Document(format!(
+            "{DOCUMENT_CONTRACT} is absent; it is committed, so this checkout cannot say which \
+             document traces are registered"
+        )));
     }
     let records = parse_contract(&read(&contract_path)?)?;
     let mut traces = Vec::new();

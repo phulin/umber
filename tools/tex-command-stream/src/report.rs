@@ -1,4 +1,5 @@
-//! The rendered worklist: the per-fixture accounting and the ordered entries.
+//! The rendered worklist: the per-fixture accounting, the ordered entries, and
+//! the verdict the process exit status encodes.
 //!
 //! One run's report has to answer three questions at a glance: how many
 //! divergences the comparator found, how many distinct root sites those
@@ -6,6 +7,12 @@
 //! printed as separately labeled numbers because they are compared against
 //! different historical figures; the third is printed because every bound this
 //! epic has been bitten by was a bound nobody printed.
+//!
+//! The third question is also the one the exit status answers, because a
+//! reader who only checks the status is exactly the reader a partial run
+//! misleads. [`RunOutcome`] is that answer: "complete and clean", "complete
+//! and diverged", and "partial" are three different statuses, so no consumer
+//! can read "did not run" as "ran and found nothing".
 
 use std::fmt;
 
@@ -17,6 +24,46 @@ mod tests;
 
 /// Columns the ordered index list of a grouped entry wraps at.
 const INDEX_LIST_WIDTH: usize = 88;
+
+/// What one run means to a consumer reading nothing but the exit status.
+///
+/// The distinction that matters is not "found something" versus "found
+/// nothing": it is whether the numbers in the report are the whole truth.
+/// A run that never compared a registered fixture, or that stopped a
+/// fixture's comparison at its `--max-divergences` budget, reports a lower
+/// bound, and a lower bound of zero is indistinguishable from convergence
+/// unless the status says otherwise. So partiality gets its own status and
+/// outranks the divergence count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunOutcome {
+    /// Every registered fixture was compared to exhaustion and none diverged.
+    /// The only outcome that means the command core converges.
+    Clean,
+    /// Every registered fixture was compared to exhaustion and at least one
+    /// diverged. The printed totals are exact.
+    Diverged,
+    /// At least one registered fixture was never compared, or at least one
+    /// fixture's comparison stopped at its budget. Every printed total is a
+    /// lower bound; the run does not answer whether the core converges.
+    Partial,
+}
+
+impl RunOutcome {
+    /// The process exit status this outcome is reported as.
+    pub fn exit_code(self) -> u8 {
+        match self {
+            Self::Clean => 0,
+            Self::Diverged => 1,
+            Self::Partial => 2,
+        }
+    }
+}
+
+/// The status a run that could not be performed at all exits with: a usage
+/// error, an unreadable suite, or a registry inconsistent with its pin. Kept
+/// distinct from [`RunOutcome::Diverged`] so "the tool refused to run" is
+/// never read as "the tool ran and produced this worklist".
+pub const EXIT_NOT_RUN: u8 = 3;
 
 /// What one registered fixture contributed to the run.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,6 +143,50 @@ impl ComparisonReport {
     pub fn root_sites(&self) -> Vec<RootSite<'_>> {
         group(&self.divergences)
     }
+
+    /// Registered fixtures this run never compared, in replay order.
+    pub fn uncompared(&self) -> Vec<&str> {
+        self.fixtures
+            .iter()
+            .filter(|fixture| matches!(fixture.state, FixtureState::NotGenerated))
+            .map(|fixture| fixture.name.as_str())
+            .collect()
+    }
+
+    /// Registered fixtures whose comparison stopped at the per-fixture
+    /// `--max-divergences` budget, in replay order.
+    pub fn bounded(&self) -> Vec<&str> {
+        self.fixtures
+            .iter()
+            .filter(|fixture| {
+                matches!(
+                    fixture.state,
+                    FixtureState::Compared {
+                        budget_reached: true,
+                        ..
+                    }
+                )
+            })
+            .map(|fixture| fixture.name.as_str())
+            .collect()
+    }
+
+    /// Whether every registered fixture was compared to exhaustion, so the
+    /// printed totals are exact rather than lower bounds.
+    pub fn is_complete(&self) -> bool {
+        self.uncompared().is_empty() && self.bounded().is_empty()
+    }
+
+    /// The verdict this run is reported as, and the exit status it earns.
+    pub fn outcome(&self) -> RunOutcome {
+        if !self.is_complete() {
+            RunOutcome::Partial
+        } else if self.divergences.is_empty() {
+            RunOutcome::Clean
+        } else {
+            RunOutcome::Diverged
+        }
+    }
 }
 
 impl fmt::Display for ComparisonReport {
@@ -113,11 +204,65 @@ impl fmt::Display for ComparisonReport {
                 write!(formatter, "\n[{position}] {divergence}")?;
             }
         }
-        Ok(())
+        formatter.write_str("\n")?;
+        self.write_verdict(formatter)
     }
 }
 
 impl ComparisonReport {
+    /// The last line of the report, naming the outcome and the exit status
+    /// that carries it. A reader who scrolls to the bottom and a reader who
+    /// only inspects `$?` must reach the same conclusion, so the same three
+    /// words appear in both places.
+    fn write_verdict(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let outcome = self.outcome();
+        let code = outcome.exit_code();
+        let divergences = self.divergence_count();
+        match outcome {
+            RunOutcome::Clean => write!(
+                formatter,
+                "\nVERDICT: CLEAN (exit {code}) -- every registered fixture was compared to\n  \
+                 exhaustion and none diverged."
+            ),
+            RunOutcome::Diverged => write!(
+                formatter,
+                "\nVERDICT: DIVERGED (exit {code}) -- every registered fixture was compared to\n  \
+                 exhaustion; {divergences} ordered divergence(s) is the exact total."
+            ),
+            RunOutcome::Partial => {
+                write!(
+                    formatter,
+                    "\nVERDICT: PARTIAL (exit {code}) -- this run did not compare everything it\n  \
+                     registers, so {divergences} ordered divergence(s) is a LOWER BOUND, not a\n  \
+                     total, and a total of 0 would not mean convergence."
+                )?;
+                let uncompared = self.uncompared();
+                if !uncompared.is_empty() {
+                    write!(
+                        formatter,
+                        "\n  never compared ({}): {}\n  \
+                         generate the missing traces with \
+                         scripts/build-tex82-document-traces.sh",
+                        uncompared.len(),
+                        uncompared.join(", "),
+                    )?;
+                }
+                let bounded = self.bounded();
+                if !bounded.is_empty() {
+                    write!(
+                        formatter,
+                        "\n  stopped at the --max-divergences {} budget ({}): {}\n  \
+                         raise the budget to see the rest",
+                        self.max_divergences,
+                        bounded.len(),
+                        bounded.join(", "),
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn write_header(&self, formatter: &mut fmt::Formatter<'_>, sites: usize) -> fmt::Result {
         let divergences = self.divergence_count();
         if self.grouped {
