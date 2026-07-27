@@ -111,14 +111,18 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
-        let (expanded, parameter_text, highest_parameter, hash_brace, primary, malformed_parameter) =
+        // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
+        // with §479's `t`: `Some(highest)` selects the parameter-character
+        // rule and bounds a legal parameter number, `None` leaves parameter
+        // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
+        let (expanded, parameter_text, macro_parameters, hash_brace, primary, malformed_parameter) =
             match mode {
                 ScanToksMode::General { expanded } => {
                     // TeX scans the required opening brace through the ordinary
                     // expanded path even when the replacement text itself is
                     // collected unexpanded.
                     let primary = self.scan_left_brace(true)?.origin();
-                    (expanded, Vec::new(), 0, None, primary, false)
+                    (expanded, Vec::new(), None, None, primary, false)
                 }
                 ScanToksMode::GeneralAfterOpening { expanded, primary } => {
                     let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
@@ -127,21 +131,21 @@ impl CommandProcessor<'_> {
                     }
                     #[cfg(any(test, feature = "instrumentation"))]
                     self.observe_expanded_delivery(&opening);
-                    (expanded, Vec::new(), 0, None, primary, false)
+                    (expanded, Vec::new(), None, None, primary, false)
                 }
                 ScanToksMode::MacroDefinition { expanded } => {
                     let parameters = self.scan_parameter_text()?;
                     (
                         expanded,
                         parameters.tokens,
-                        parameters.highest_parameter,
+                        Some(parameters.highest_parameter),
                         parameters.hash_brace,
                         parameters.primary,
                         parameters.malformed_parameter,
                     )
                 }
             };
-        let replacement = self.collect_replacement(expanded, highest_parameter)?;
+        let replacement = self.collect_replacement(expanded, macro_parameters)?;
         let mut replacement = replacement;
         // TeX's `#{` parameter-text special case treats that left brace as a
         // delimiter and appends the same saved brace after the replacement
@@ -251,10 +255,18 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §477, "Scan and build the body of the token list".
+    ///
+    /// `macro_parameters` is §477's `macro_def` guard: only a macro
+    /// definition's body gives a parameter character its §479 meaning, and
+    /// then `Some(highest)` is §479's `t` -- the highest parameter number the
+    /// parameter text declared, and so the largest one a `#<digit>` may name.
+    /// A body scanned for any other purpose (`\message`, `\write`, `\toks`,
+    /// `\mark`, ...) stores parameter characters verbatim.
     fn collect_replacement(
         &mut self,
         expanded: bool,
-        highest_parameter: u8,
+        macro_parameters: Option<u8>,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
@@ -352,7 +364,9 @@ impl CommandProcessor<'_> {
 
             let spelling = command.spelling();
             let token = spelling.semantic_token();
-            if let Some(hash) = pending_parameter.take() {
+            if let Some((hash, highest_parameter)) = pending_parameter.take() {
+                // §479: a second parameter character stores that character
+                // once -- `##` is one parameter token in the body, not two.
                 if is_parameter(token) {
                     output.push(spelling);
                     continue;
@@ -374,8 +388,10 @@ impl CommandProcessor<'_> {
                 output.push(hash);
                 continue;
             }
-            if is_parameter(token) && highest_parameter != 0 {
-                pending_parameter = Some(spelling);
+            if let Some(highest_parameter) = macro_parameters
+                && is_parameter(token)
+            {
+                pending_parameter = Some((spelling, highest_parameter));
                 continue;
             }
             if is_begin_group(token) {
@@ -456,7 +472,7 @@ impl CommandProcessor<'_> {
     /// recursive expansion.
     fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
         let _ = self.scan_left_brace(false)?;
-        let raw = self.collect_replacement(false, 0)?;
+        let raw = self.collect_replacement(false, None)?;
         output.extend(raw);
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
@@ -918,6 +934,111 @@ mod tests {
                 .tokens(scanned.replacement_text.token_list()),
             &[
                 Token::Param(1),
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+            ]
+        );
+    }
+
+    /// TeX82 §477 gates the body's parameter-character rule on `macro_def`
+    /// alone, never on whether the parameter text declared a parameter, so a
+    /// parameterless definition still collapses `##` to one token. plain.tex's
+    /// `\m@ketabbox` (`\ialign\bgroup&\t@bbox##\t@bb@x\crcr`) is the canonical
+    /// witness.
+    #[test]
+    fn parameterless_macro_definition_still_collapses_doubled_hashes() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let scanned = processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("definition scans");
+        assert!(
+            processor
+                .state
+                .tokens(scanned.parameter_text.token_list())
+                .is_empty()
+        );
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            }]
+        );
+    }
+
+    /// The same rule is `macro_def`-gated: a general text scan (`\message`,
+    /// `\toks`, e-TeX `\unexpanded`) stores both parameter characters.
+    #[test]
+    fn general_text_keeps_both_parameter_characters() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let scanned = processor
+            .scan_toks(ScanToksMode::General { expanded: false })
+            .expect("general text scans");
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
                 Token::Char {
                     ch: '#',
                     cat: Catcode::Parameter,
