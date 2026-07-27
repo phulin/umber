@@ -368,18 +368,21 @@ const US9: &str = r########"    \entry{us9}{book}{}{}
     \endentry
 "########;
 fn run() -> (Vec<u8>, Vec<String>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("truncation.bcf").unwrap(),
+            VirtualPath::user("truncation.bcf").expect("valid virtual path"),
             CONTROL.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
-        .register_user(VirtualPath::user("truncation.bib").unwrap(), DATA.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("truncation.bib").expect("valid virtual path"),
+            DATA.to_vec(),
+        )
+        .expect("unique registered file");
     let output = BibCommand::parse(["--noconf", "--nolog", "truncation.bcf"])
-        .unwrap()
+        .expect("valid command line")
         .execute(&files.snapshot());
     let order = output
         .result()

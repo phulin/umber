@@ -6,10 +6,13 @@ const CONFIG: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool-testconfig.conf");
 
 fn config() -> ConfigurationFile {
-    parse_config_bytes(CONFIG, XmlLimits::default()).unwrap()
+    parse_config_bytes(CONFIG, XmlLimits::default()).expect("committed configuration parses")
 }
 fn model() -> Vec<TemplateElement> {
-    match config().value("datamodel").unwrap() {
+    match config()
+        .value("datamodel")
+        .expect("configured option value")
+    {
         ConfigValue::Tree(v) => v.clone(),
         _ => unreachable!(),
     }
@@ -43,7 +46,7 @@ fn assertion_003_options_3() {
         .templates
         .into_iter()
         .find(|v| v.name == "tool")
-        .unwrap();
+        .expect("committed tool template");
     assert_eq!(template.kind, "sortingtemplate");
     assert_eq!(
         template.elements,

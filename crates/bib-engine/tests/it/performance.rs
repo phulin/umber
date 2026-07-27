@@ -7,6 +7,9 @@ use bib_engine::{
 
 #[test]
 #[ignore = "explicit classic BST performance tier"]
+// A performance budget is measured against the host clock by definition, so
+// this is one of the few places outside `tex-state::World` that may read one.
+#[allow(clippy::disallowed_methods)]
 fn classic_native_session_performance_budget() {
     const RUNS: usize = 16;
     const SESSION_BUDGET: Duration = Duration::from_secs(5);

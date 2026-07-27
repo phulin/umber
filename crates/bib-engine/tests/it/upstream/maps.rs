@@ -1,6 +1,5 @@
 //! Native translations of upstream `t/maps.t` at commit 74252e6.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use bib_engine::{
@@ -23,7 +22,7 @@ pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
     provisioner
         .register_user(
             control_path.clone(),
-            fs::read(corpus.join(&control_name)).expect("committed upstream control fixture"),
+            crate::fixtures::read(corpus.join(&control_name)),
         )
         .expect("register control fixture");
 
@@ -48,11 +47,12 @@ pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
                             request: request.key().clone(),
                             virtual_path: format!(
                                 "/texlive/bib/{}",
-                                fixture.file_name().unwrap().to_string_lossy()
+                                fixture
+                                    .file_name()
+                                    .expect("fixture path names a file")
+                                    .to_string_lossy()
                             ),
-                            bytes: fs::read(&fixture).unwrap_or_else(|error| {
-                                panic!("read requested fixture {}: {error}", fixture.display())
-                            }),
+                            bytes: crate::fixtures::read(&fixture),
                             expected_digest: None,
                         })
                         .expect("provision committed fixture");

@@ -10,13 +10,19 @@ const EXPECTED: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/full-dot.dot");
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
-        .register_user(VirtualPath::user("full-dot.bcf").unwrap(), CONTROL.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("full-dot.bcf").expect("valid virtual path"),
+            CONTROL.to_vec(),
+        )
+        .expect("unique registered file");
     files
-        .register_user(VirtualPath::user("full-dot.bib").unwrap(), DATA.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("full-dot.bib").expect("valid virtual path"),
+            DATA.to_vec(),
+        )
+        .expect("unique registered file");
     BibCommand::parse([
         "--noconf",
         "--nolog",
@@ -25,7 +31,7 @@ fn run() -> BibCommandOutput {
         "--output-file=actual.dot",
         "full-dot.bcf",
     ])
-    .unwrap()
+    .expect("valid command line")
     .execute(&files.snapshot())
 }
 

@@ -10,20 +10,26 @@ const EXPECTED: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/full-bbl.bbl");
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
-        .register_user(VirtualPath::user("full-bbl.bcf").unwrap(), CONTROL.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("full-bbl.bcf").expect("valid virtual path"),
+            CONTROL.to_vec(),
+        )
+        .expect("unique registered file");
     files
-        .register_user(VirtualPath::user("full-bbl.bib").unwrap(), DATA.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("full-bbl.bib").expect("valid virtual path"),
+            DATA.to_vec(),
+        )
+        .expect("unique registered file");
     BibCommand::parse([
         "--noconf",
         "--nolog",
         "--output-file=actual.bbl",
         "full-bbl.bcf",
     ])
-    .unwrap()
+    .expect("valid command line")
     .execute(&files.snapshot())
 }
 

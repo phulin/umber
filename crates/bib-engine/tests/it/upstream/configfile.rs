@@ -14,7 +14,7 @@ const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/general.bcf");
 
 fn parsed() -> bib_input::ConfigurationFile {
-    parse_config_bytes(CONFIG, XmlLimits::default()).unwrap()
+    parse_config_bytes(CONFIG, XmlLimits::default()).expect("committed configuration parses")
 }
 
 fn item(attributes: &[(&str, &str)]) -> StructuredValue {
@@ -38,7 +38,7 @@ fn assertion_001_options_1_from_cmdline() {
             ConfigurationLayer::Command,
             [("mincrossrefs".into(), ConfigValue::Scalar("7".into()))],
         )
-        .unwrap();
+        .expect("layer accepts the option override");
     assert_eq!(
         resolved.resolve("mincrossrefs"),
         Some(&ConfigValue::Scalar("7".into()))
@@ -47,10 +47,11 @@ fn assertion_001_options_1_from_cmdline() {
 
 #[test]
 fn assertion_002_options_2_from_cmdline() {
-    let command = BibCommand::parse(["--configfile=biber-test.conf", "general.bcf"]).unwrap();
+    let command = BibCommand::parse(["--configfile=biber-test.conf", "general.bcf"])
+        .expect("valid command line");
     assert_eq!(
         command.job().options().configuration(),
-        Some(&VirtualPath::user("biber-test.conf").unwrap())
+        Some(&VirtualPath::user("biber-test.conf").expect("valid virtual path"))
     );
 }
 
@@ -101,7 +102,8 @@ fn assertion_006_options_6_from_config_file() {
 
 #[test]
 fn assertion_007_options_7_from_bcf() {
-    let control = parse_control_bytes(CONTROL, XmlLimits::default()).unwrap();
+    let control =
+        parse_control_bytes(CONTROL, XmlLimits::default()).expect("committed BCF fixture parses");
     let actual = control.resolve_option(bib_input::OptionComponent::Processor, "sortcase", None);
     let expected = bib_input::ControlOptionValue::Single(StructuredValue {
         content: "0".into(),
@@ -115,7 +117,7 @@ fn assertion_007_options_7_from_bcf() {
 fn assertion_008_options_8_from_defaults() {
     assert_eq!(
         BibCommand::parse(["general.bcf"])
-            .unwrap()
+            .expect("valid command line")
             .job()
             .options()
             .configuration()
@@ -134,20 +136,23 @@ fn assertion_009_options_9_from_config_file() {
             ConfigurationLayer::UserConfiguration,
             [(
                 "sourcemap".into(),
-                config.value("sourcemap").unwrap().clone(),
+                config
+                    .value("sourcemap")
+                    .expect("configured option value")
+                    .clone(),
             )],
         )
-        .unwrap();
+        .expect("layer accepts the option override");
     resolved
         .push(
             ConfigurationLayer::ControlFile,
             [("sourcemap".into(), ConfigValue::Tree(Vec::new()))],
         )
-        .unwrap();
+        .expect("layer accepts the option override");
     assert_eq!(resolved.merged_list("sourcemap").len(), 2);
 }
 
 #[test]
 fn assertion_010_validation_of_biber_test_conf() {
-    validate_config_bytes(CONFIG, XmlLimits::default()).unwrap();
+    validate_config_bytes(CONFIG, XmlLimits::default()).expect("committed configuration validates");
 }

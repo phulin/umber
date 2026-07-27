@@ -52,29 +52,32 @@ const BO1: &str = r########"@BOOK{bo1,
 
 "########;
 fn run() -> (Vec<u8>, Vec<String>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("bibtex-output.bcf").unwrap(),
+            VirtualPath::user("bibtex-output.bcf").expect("valid virtual path"),
             CONTROL.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
         .register_user(
-            VirtualPath::user("examples.bib").unwrap(),
+            VirtualPath::user("examples.bib").expect("valid virtual path"),
             EXAMPLES.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
-        .register_user(VirtualPath::user("tool.bib").unwrap(), TOOL.to_vec())
-        .unwrap();
+        .register_user(
+            VirtualPath::user("tool.bib").expect("valid virtual path"),
+            TOOL.to_vec(),
+        )
+        .expect("unique registered file");
     let output = BibCommand::parse([
         "--noconf",
         "--nolog",
         "--output-format=bibtex",
         "bibtex-output.bcf",
     ])
-    .unwrap()
+    .expect("valid command line")
     .execute(&files.snapshot());
     let order = output
         .result()

@@ -63,8 +63,12 @@ fn warnings_for<'a>(result: &'a bib_engine::BibResult, key: &str) -> Vec<&'a str
 }
 
 fn field_missing(result: &bib_engine::BibResult, key: &str, field: &str) -> bool {
-    entry(result, 0, key)
-        .is_some_and(|entry| entry.fields().get(&FieldId::new(field).unwrap()).is_none())
+    entry(result, 0, key).is_some_and(|entry| {
+        entry
+            .fields()
+            .get(&FieldId::new(field).expect("valid field name"))
+            .is_none()
+    })
 }
 
 #[test]

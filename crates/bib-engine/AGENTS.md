@@ -20,6 +20,9 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `src/session/tests.rs`: retry, no-progress, typed-query, and cold/cache parity tests.
 - `src/tool.rs`: synthetic-section tool mode and in-process alternate-output routing.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.
+- `tests/it/fixtures.rs`: the suite's one host-filesystem seam, and the single
+  declared place the `clippy.toml` host-I/O policy is relaxed for reads of
+  committed fixtures.
 - `tests/it/foundation.rs`: public foundation-boundary tests.
 - `tests/it/scaffold.rs`: fixture-manifest, translated-suite census, and
   compatibility-allowance audit.

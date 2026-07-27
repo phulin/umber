@@ -131,21 +131,21 @@ const EXPECTED_LOOP: &str = r###"    \entry{loopkey:a}{book}{}{}
 const EXPECTED_SORT: &str = r###"mm,,,vonБулгаков   Павел Георгиевич  РРозенфельдБорис-ZZ AбрамовичvonAхмедов    Ашраф Ахмедович   ,1980,0,Мухаммад ибн муса ал-Хорезми. Около 783 – около 850"###;
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("biblatexml.bcf").unwrap(),
+            VirtualPath::user("biblatexml.bcf").expect("valid virtual path"),
             CONTROL.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
         .register_user(
-            VirtualPath::user("biblatexml.bltxml").unwrap(),
+            VirtualPath::user("biblatexml.bltxml").expect("valid virtual path"),
             DATA.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     BibCommand::parse(["--noconf", "--nolog", "biblatexml.bcf"])
-        .unwrap()
+        .expect("valid command line")
         .execute(&files.snapshot())
 }
 fn output() -> Vec<u8> {
@@ -169,12 +169,14 @@ fn assertion_001_biblatexml_1() {
 }
 #[test]
 fn assertion_002_citekey_aliases_1() {
-    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).unwrap();
+    let data = parse_biblatexml_bytes(DATA, XmlLimits::default())
+        .expect("committed BibLaTeXML fixture parses");
     assert_eq!(data.canonical_id("bltx1a1"), Some("bltx1"));
 }
 #[test]
 fn assertion_003_citekey_aliases_2() {
-    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).unwrap();
+    let data = parse_biblatexml_bytes(DATA, XmlLimits::default())
+        .expect("committed BibLaTeXML fixture parses");
     assert_eq!(data.canonical_id("bltx1a2"), Some("bltx1"));
 }
 #[test]
@@ -183,17 +185,17 @@ fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
     let result = run();
     let first = result
         .result()
-        .unwrap()
+        .expect("successful bibliography run")
         .document()
         .sections()
         .next()
-        .unwrap()
+        .expect("processed section")
         .lists()
         .next()
-        .unwrap()
+        .expect("data list")
         .entries()
         .next()
-        .unwrap();
+        .expect("list entry");
     assert_eq!(first.as_str(), EXPECTED_SORT);
 }
 #[test]

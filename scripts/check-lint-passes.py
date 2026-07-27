@@ -46,20 +46,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PASSES = (
     {
         "name": "union",
-        "summary": "default members, all targets, dev-dependency feature union",
-        "args": ("--all-targets",),
-        "select": "default-members",
+        # `--workspace` rather than the workspace's default members: a test
+        # target only the exhaustive selection builds is still a target this
+        # repository compiles, and one selected by no pass is one the lint
+        # policy does not actually apply to (umber2-johp.201).
+        "summary": "every workspace member, all targets, dev-dependency feature union",
+        "args": ("--workspace", "--all-targets"),
+        "select": "workspace",
         "features": {
             "tex-command": ["instrumentation"],
             "tex-exec": ["instrumentation"],
             "tex-state": ["default", "testing"],
             "umber": ["default"],
         },
-        # Widening this pass to `--workspace --all-targets` is the obvious next
-        # step and is not free: the test targets of the non-default members are
-        # linted by no pass, and they do not currently pass the workspace lint
-        # policy (umber2-johp.201). Their lib and bin targets are covered by the
-        # shipping pass below.
         "quarantine": {},
     },
     {

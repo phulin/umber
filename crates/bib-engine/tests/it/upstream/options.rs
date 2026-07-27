@@ -116,7 +116,7 @@ fn global_option<'a>(result: &'a bib_engine::BibResult, name: &str) -> Option<&'
         .document()
         .configuration()
         .options()
-        .resolve(&OptionId::new(name).unwrap())
+        .resolve(&OptionId::new(name).expect("valid option name"))
 }
 
 fn entry_option<'a>(
@@ -126,7 +126,7 @@ fn entry_option<'a>(
 ) -> Option<&'a OptionValue> {
     entry(result, 0, key)?
         .options()
-        .resolve(&OptionId::new(name).unwrap())
+        .resolve(&OptionId::new(name).expect("valid option name"))
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn assertion_006_global_labelyear_setting() {
             entry
                 .fields()
                 .iter()
-                .find(|field| field.id() == &FieldId::new("year").unwrap())
+                .find(|field| field.id() == &FieldId::new("year").expect("valid field name"))
                 .map(|field| field.id().as_str())
         }),
         Some("year")
