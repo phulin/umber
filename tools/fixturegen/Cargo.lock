@@ -884,6 +884,7 @@ dependencies = [
  "chrono",
  "flate2",
  "serde",
+ "smallvec",
  "tex-arith",
  "tex-content",
  "tex-fonts",
