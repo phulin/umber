@@ -238,6 +238,30 @@ all three workflows and the live TeX82 fixture comparison pass.
 `--validate-only` performs the same hermetic identity, schema, and fixture
 audit preflight without acquiring or building tools.
 
+### Acquiring the pinned TeX Live 2025 source archive
+
+`scripts/build-tex82-oracle.sh` fetches the pinned
+`texlive-20250308-source.tar.xz` from the single host recorded in
+`tests/trip-reference-manifest.txt`, `ftp.math.utah.edu`. That host fails TLS
+verification on some networks:
+
+```text
+curl: (60) unable to get local issuer certificate
+```
+
+The same failure has been observed on `ctan.math.utah.edu` from
+`scripts/fetch-conformance-inputs.sh`. The byte-identical archive is served by
+the Chemnitz TUG mirror:
+
+```text
+https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/texlive-20250308-source.tar.xz
+```
+
+Drop it at `third_party/texlive-source/`; the script's SHA-512 pin verifies it,
+after which `--offline` works. The scripts are not mirror-aware, so a host that
+fails verification currently blocks acquisition entirely rather than falling
+back (tracked as `umber2-johp.170`).
+
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
 
@@ -363,6 +387,63 @@ install the pinned qpdf and Poppler versions and run
 warning are fatal. `UMBER_PDF_VALIDATOR`, `UMBER_PDF_RENDERER`, and
 `UMBER_PDF_EXTRACTOR` may select explicit executable paths.
 
+## End-to-End Conformance Gate Contract
+
+The four byte-exact end-to-end DVI gates (`story`, `gentle`, `trip`, `etrip`)
+compare Umber's assembled DVI against an oracle produced by a real reference
+engine. Those `tests/corpus/e2e/<name>.expected.dvi` oracles derive from
+third-party documents, are gitignored on purpose, and must never be committed.
+That licensing decision stands. Its consequence must not: an absent oracle used
+to make each gate print `skipping ...` and return, and libtest discards a
+passing test's captured output, so the notice was invisible without
+`--nocapture`. A fresh worktree therefore reported a clean suite while the
+epic's flagship byte-exact Story DVI parity result never executed.
+
+The contract now is:
+
+- **A run that skips a gate is never indistinguishable from a run that passes
+  it.** When every required asset is present, the gate writes a confirmation
+  line to the process's real stderr handle:
+
+  ```text
+  conformance gate `story`: running against tests/corpus/e2e/story.expected.dvi
+  ```
+
+  That write bypasses libtest's output capture, so it appears without
+  `--nocapture`. Grep for it to prove a gate executed.
+- **Absence fails, loudly and actionably.** The gate panics with a report
+  naming every missing asset, why it is missing, and the exact commands that
+  materialize it.
+- **Skipping is structurally unreachable from a gate body.** Every gate is
+  registered in `assets::GATES` in
+  `crates/umber/tests/it/e2e_conformance/assets.rs` and reaches its assets only
+  through `assets::with_gate`, which has no caller-visible skip path. Two
+  meta-tests hold that shape:
+  `conformance_gate_registry_matches_gitignore` requires the registry and the
+  gitignored `/tests/corpus/e2e/*.expected.dvi` entries to be in exact
+  correspondence, and `conformance_gate_registry_is_reachable` requires every
+  registered gate to have a real `with_gate` call site. Adding a sibling gate
+  with a private presence check of its own fails both.
+- **The single non-failing absence path is explicit.** Setting
+  `UMBER_CONFORMANCE_ORACLES=optional` downgrades absence to the same report
+  written to real stderr, again uncapturable. Any other value for that variable
+  is rejected rather than silently treated as "required". A run that sets it has
+  forfeited the byte-exact parity results and must not be reported as clean; do
+  not set it in CI or in agent runs.
+
+`scripts/check-and-test.sh` preflights the oracles before starting the workspace
+gate and warns that absent ones will cause failures, not skips. Its list is read
+from `.gitignore`, the same single source the registry meta-test binds to, so
+the preflight cannot go stale when a gate is added.
+
+Story and Gentle additionally verify their oracle against the
+`expected_ref_dvi_sha256` pin in `tests/corpus-manifest.txt` inside
+`parity_harness::run_named_fixture_document`, so a stale or foreign oracle fails
+with a hash-drift message rather than a confusing DVI mismatch. TRIP and e-TRIP
+oracles are deliberately not digest-pinned: they are regenerated from whatever
+local pdfTeX is installed, and pinning one host's engine build would turn an
+ordinary version difference into a spurious parity failure.
+
 ## External Document Corpus
 
 External document inputs live outside committed fixtures. The line-oriented
@@ -430,10 +511,10 @@ is. It is kept alongside, not instead of, the legacy `e2e_conformance_story`
 test while the migration is in progress; both share the exact same staged
 fixture directory (`parity_harness::run_named_fixture_document`, the same
 `plain.tex`/`story.tex`/`hyphen.tex`/TFM staging the legacy in-process runner
-consumes) and the same `plain_inputs_available` oracle-presence check, so it
-skips with an explicit message when the locally generated `tests/corpus/e2e`
-oracle or external corpus inputs are absent, exactly like every other e2e
-case, and never reports a failure for a missing local oracle.
+consumes) and the same registered `story` gate, so both reach their assets
+through `assets::with_gate` and neither can skip silently. See the
+[End-to-End Conformance Gate Contract](#end-to-end-conformance-gate-contract)
+above for what an absent oracle does.
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story_canonical -- --nocapture
@@ -778,8 +859,10 @@ canonical command-core architecture it exercises.
 ## TRIP Corpus
 
 The original Knuth TeX82 TRIP and e-TeX V2 e-TRIP workloads are end-to-end DVI
-conformance tests that run conditionally when their local inputs and oracles
-are present:
+conformance tests governed by the
+[End-to-End Conformance Gate Contract](#end-to-end-conformance-gate-contract):
+they run when their local inputs and oracles are present and fail with an
+actionable report when they are not.
 
 ```bash
 scripts/fetch-conformance-inputs.sh
@@ -799,9 +882,8 @@ format-loaded TRIP phases in process.
 Cargo conformance tests do not launch Umber as a subprocess. Story and Gentle
 call the engine directly through the staged fixture callback; TRIP and e-TRIP
 share one in-process two-phase format helper.
-`scripts/check-and-test.sh` checks these conditional corpus prerequisites before
-starting the workspace gate and prints a warning naming every e2e case that
-will be skipped and each missing file.
+`scripts/check-and-test.sh` preflights the gitignored e2e oracles before
+starting the workspace gate and warns that absent ones will fail their gates.
 
 The Umber integration test gates only the final DVI. Generated logs, terminal
 photo, and `tripos.tex` remain diagnostic outputs in the separate diagnostic
