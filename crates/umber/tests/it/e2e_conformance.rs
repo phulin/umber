@@ -22,12 +22,10 @@ use umber::{
     CanonicalResourceWorld, CanonicalSessionError, EngineMode, EngineSession, dvi_from_page_plans,
 };
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("resolve repository root")
-}
+#[path = "e2e_conformance/assets.rs"]
+mod assets;
+
+use assets::GateAssets;
 
 fn target_dir(repo_root: &Path) -> PathBuf {
     env::var_os("CARGO_TARGET_DIR")
@@ -226,26 +224,9 @@ fn run_file_in_process(
     })
 }
 
-fn plain_inputs_available(root: &Path, document: &str, fixture: &Path) -> bool {
-    let corpus = root.join("third_party/corpus");
-    corpus.join(document).is_file()
-        && corpus.join("plain.tex").is_file()
-        && root.join("third_party/hyphen/hyphen.tex").is_file()
-        && fixture.is_file()
-}
-
-fn run_plain_fixture_case(document: &str, fixture_name: &str) {
-    let root = repo_root();
-    let fixture = root
-        .join("tests/corpus/e2e")
-        .join(format!("{fixture_name}.expected.dvi"));
-    if !plain_inputs_available(&root, document, &fixture) {
-        eprintln!(
-            "skipping {document} end-to-end conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
-        );
-        return;
-    }
-    run_named_fixture_document(&root, document, &fixture, |path| {
+fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
+    let fixture_name = gate.name;
+    run_named_fixture_document(&gate.repo_root, document, &gate.oracle, |path| {
         let run = run_file_in_process(path, None, EngineMode::Tex82)?;
         let macro_stats = run.macro_provenance;
         let invocations = macro_stats.invocations();
@@ -271,12 +252,12 @@ fn run_plain_fixture_case(document: &str, fixture_name: &str) {
 
 #[test]
 fn e2e_conformance_story() {
-    run_plain_fixture_case("story.tex", "story");
+    assets::with_gate("story", |gate| run_plain_fixture_case("story.tex", gate));
 }
 
 #[test]
 fn e2e_conformance_gentle() {
-    run_plain_fixture_case("gentle.tex", "gentle");
+    assets::with_gate("gentle", |gate| run_plain_fixture_case("gentle.tex", gate));
 }
 
 /// Adds an extension inferred from the resource kind (`.tex` for input
@@ -388,19 +369,14 @@ fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
     dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())
 }
 
-fn run_plain_fixture_case_canonical(document: &str, fixture_name: &str) {
-    let root = repo_root();
-    let fixture = root
-        .join("tests/corpus/e2e")
-        .join(format!("{fixture_name}.expected.dvi"));
-    if !plain_inputs_available(&root, document, &fixture) {
-        eprintln!(
-            "skipping canonical {document} end-to-end conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
-        );
-        return;
-    }
-    run_named_fixture_document(&root, document, &fixture, run_file_in_process_canonical)
-        .unwrap_or_else(|error| panic!("{error:#}"));
+fn run_plain_fixture_case_canonical(document: &str, gate: &GateAssets) {
+    run_named_fixture_document(
+        &gate.repo_root,
+        document,
+        &gate.oracle,
+        run_file_in_process_canonical,
+    )
+    .unwrap_or_else(|error| panic!("{error:#}"));
 }
 
 /// Protects `umber2-johp`'s first canonical/reference byte-identical DVI
@@ -409,28 +385,21 @@ fn run_plain_fixture_case_canonical(document: &str, fixture_name: &str) {
 /// pdfTeX's output after only the same preamble-comment normalization the
 /// legacy `e2e_conformance_story` test above already tolerates. Kept
 /// alongside (not replacing) the legacy test while the `umber2-johp`
-/// migration is in progress; both are oracle-presence-conditional in the
-/// same way (see `plain_inputs_available` above).
+/// migration is in progress; both reach the same registered `story` gate
+/// through `assets::with_gate`, so neither can skip silently.
 #[test]
 fn e2e_conformance_story_canonical() {
-    run_plain_fixture_case_canonical("story.tex", "story");
+    assets::with_gate("story", |gate| {
+        run_plain_fixture_case_canonical("story.tex", gate);
+    });
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
-fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str, etex: bool) {
-    let root = repo_root();
-    let trip_dir = root.join("third_party/trip");
-    let fixture = root
-        .join("tests/corpus/e2e")
-        .join(format!("{fixture_name}.expected.dvi"));
-    let source = trip_dir.join(source_name);
-    let tfm = trip_dir.join("trip.tfm");
-    if !source.is_file() || !tfm.is_file() || !fixture.is_file() {
-        eprintln!(
-            "skipping {fixture_name} conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
-        );
-        return;
-    }
+fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
+    let root = &gate.repo_root;
+    let fixture_name = gate.name;
+    let fixture = &gate.oracle;
+    let source = root.join("third_party/trip").join(source_name);
 
     let temp = tempfile::tempdir().expect("create two-phase conformance directory");
     let source_bytes = fs::read(&source).expect("read conformance source");
@@ -446,7 +415,11 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
     };
     let input = temp.path().join(local_name);
     fs::write(&input, source_bytes).expect("stage conformance source");
-    fs::copy(&tfm, temp.path().join(format!("{fixture_name}.tfm"))).expect("stage conformance TFM");
+    fs::copy(
+        root.join("third_party/trip/trip.tfm"),
+        temp.path().join(format!("{fixture_name}.tfm")),
+    )
+    .expect("stage conformance TFM");
 
     let engine = if etex {
         EngineMode::ETex
@@ -463,21 +436,21 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
     let dvi = loaded
         .dvi
         .unwrap_or_else(|| panic!("{fixture_name} did not produce DVI"));
-    let actual = target_dir(&root)
+    let actual = target_dir(root)
         .join("conformance-artifacts")
         .join(format!("{fixture_name}.dvi"));
     fs::create_dir_all(actual.parent().expect("artifact parent"))
         .expect("create conformance artifact directory");
     fs::write(&actual, dvi).expect("write conformance artifact");
-    let expected_dvi = fs::read(&fixture).expect("read conformance DVI oracle");
+    let expected_dvi = fs::read(fixture).expect("read conformance DVI oracle");
     let actual_dvi = fs::read(&actual).expect("read conformance DVI artifact");
     let expected_normalized =
         normalized_dvi_for_comparison(&expected_dvi).expect("normalize conformance DVI oracle");
-    let expected_name = format!("tests/corpus/e2e/{fixture_name}.expected.dvi");
+    let expected_name = format!("{}/{fixture_name}.expected.dvi", assets::ORACLE_DIR);
     let expected_identity = format!("sha256:{:x}", Sha256::digest(&expected_normalized));
     let actual_identity = format!("sha256:{:x}", Sha256::digest(&format));
     write_trip_triage_artifact(
-        &target_dir(&root).join("conformance-triage"),
+        &target_dir(root).join("conformance-triage"),
         TripTriageInput {
             label: fixture_name,
             phase: "format-loaded",
@@ -505,9 +478,9 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
     )
     .expect("write bounded TRIP triage artifact");
     compare_dvi_files(
-        &fixture,
+        fixture,
         &actual,
-        &target_dir(&root).join("conformance-triage"),
+        &target_dir(root).join("conformance-triage"),
         fixture_name,
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
@@ -515,10 +488,14 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
 
 #[test]
 fn e2e_conformance_trip() {
-    run_two_phase_fixture("trip.tex", "trip.tex", "trip", false);
+    assets::with_gate("trip", |gate| {
+        run_two_phase_fixture("trip.tex", "trip.tex", false, gate);
+    });
 }
 
 #[test]
 fn e2e_conformance_etrip() {
-    run_two_phase_fixture("etrip.tex", "etrip-local.tex", "etrip", true);
+    assets::with_gate("etrip", |gate| {
+        run_two_phase_fixture("etrip.tex", "etrip-local.tex", true, gate);
+    });
 }
