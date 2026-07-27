@@ -637,6 +637,17 @@ if old_state<>align_state then
 write_ln(umber_trace_file,'}}}');
 end;
 
+{The one place an |align_state| assignment is observed. TeX82 \S324 and \S788
+both assign a fixed new value, but neither reaches it from a fixed old one:
+\S324's guard is |align_state>500000|, not |align_state=1000000|. Reading the
+prior value here keeps |previous_align_state| a fact about the run rather than
+a fact about the common case.}
+procedure umber_set_align_state(@!new_state:integer);
+var @!old_state:integer;
+begin old_state:=align_state; align_state:=new_state;
+umber_trace_alignment(6,old_state,0);
+end;
+
 procedure umber_trace_alignment_delimiter(@!command_code,
   @!character_code:integer);
 begin
@@ -1011,8 +1022,7 @@ else if token_type=u_template then
   else fatal_error("(interwoven alignment preambles are not allowed)");
 @y
 else if token_type=u_template then
-  if align_state>500000 then
-    begin align_state:=0; umber_trace_alignment(6,1000000,0); end
+  if align_state>500000 then umber_set_align_state(0)
   else fatal_error("(interwoven alignment preambles are not allowed)");
 @z
 
@@ -1617,8 +1627,7 @@ umber_trace_alignment(6,align_state,0);
 if cur_cmd=omit then align_state:=0
 else  begin back_input; begin_token_list(u_part(cur_align),u_template);
 @y
-if cur_cmd=omit then
-  begin align_state:=0; umber_trace_alignment(6,1000000,0); end
+if cur_cmd=omit then umber_set_align_state(0)
 else  begin back_input; begin_token_list(u_part(cur_align),u_template);
 @z
 
