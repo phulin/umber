@@ -3442,10 +3442,24 @@ is pushed, no recovery record is written, and the command is delivered exactly
 once. `back_input` is a different operation with a different observable
 signature, and the two are not interchangeable.
 
-`scan_step` owns that label. It fetches once, collects §1211's prefixes, and
-loops; a case that reswitches assigns the command it fetched and continues,
-re-entering prefix collection exactly as tex.web's case re-enters through
-`prefix`. The canonical scan owns one such case: TeX82 §1045's
+`dispatch_main_control_command` owns that label, and every main-control step
+runs through it whatever fetched the command: `scan_step`'s own `get_x_token`,
+§1038's `main_loop_lookahead`, or an alignment cell's
+`get_x_alignment_delivery`. It collects §1211's prefixes and loops; a case that
+reswitches assigns the command it fetched and continues, re-entering prefix
+collection exactly as tex.web's case re-enters through `prefix`.
+
+That one owner is load-bearing, not tidiness. tex.web has no second dispatcher
+for an alignment body -- §785's `align_peek` and §1130's
+`vmode+endv,hmode+endv: do_endv` only bound a cell, and §1210 files
+`any_mode(prefix)` under the modeless cases -- so a caller that reaches the big
+case without passing through here is running a _narrowed_ main control that
+silently drops whatever the label consumes. When the alignment paths did
+exactly that, `\global` inside a cell reached the exhaustive fallback as an
+unimplemented primitive and `\ignorespaces` reached an `unreachable!()`
+(`umber2-johp.208`).
+
+The canonical scan owns one such case: TeX82 §1045's
 `any_mode(ignore_spaces)`, whose body is `<Get the next non-blank non-call
 token>; goto reswitch`. §406 spells that helper as
 `repeat get_x_token until cur_cmd<>spacer`, which is `next_non_space`, so
