@@ -1,10 +1,10 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
     GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, WideScaled, XOverN, XnOverD,
-    font_units_to_scaled, half, mult_and_add, nx_plus_y, round_decimal_fraction, saturating_add,
-    saturating_mul, saturating_sub, scale_true_dimension_parts, scaled_from_decimal_parts,
-    text_accent_delta, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
-    tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
+    font_units_to_scaled, half, mult_and_add, nx_plus_y, print_scaled, round_decimal_fraction,
+    saturating_add, saturating_mul, saturating_sub, scale_true_dimension_parts,
+    scaled_from_decimal_parts, text_accent_delta, tfm_design_size_from_fix_word,
+    tfm_fix_word_to_scaled, tfm_font_size, tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
 
 #[test]
@@ -557,4 +557,33 @@ fn tfm_slant_fix_word_uses_tex_arithmetic_shift_semantics() {
         tfm_slant_fix_word_to_scaled_ratio([0xff, 0xff, 0xff, 0xef]),
         Scaled::from_raw(-2)
     );
+}
+
+#[test]
+fn print_scaled_emits_tex_webs_shortest_round_tripping_decimal() {
+    for (raw, expected) in [
+        (0, "0.0"),
+        (Scaled::UNITY, "1.0"),
+        (163_840, "2.5"),
+        (-163_840, "-2.5"),
+        (19_516_436, "297.79718"),
+        (950_279, "14.5001"),
+        (622_600, "9.50012"),
+        (1, "0.00002"),
+        (-1, "-0.00002"),
+    ] {
+        assert_eq!(print_scaled(Scaled::from_raw(raw)), expected, "{raw}sp");
+    }
+}
+
+#[test]
+fn print_scaled_round_trips_through_round_decimal_fraction() {
+    for raw in [0, 1, 2, 12_345, 65_535, 163_840, 19_516_436, i32::MAX] {
+        let text = print_scaled(Scaled::from_raw(raw));
+        let (integer, fraction) = text.split_once('.').expect("a fraction is always printed");
+        let digits: Vec<u8> = fraction.bytes().map(|byte| byte - b'0').collect();
+        let integer: i32 = integer.parse().expect("integer part parses");
+        let reconstructed = integer * Scaled::UNITY + round_decimal_fraction(&digits);
+        assert_eq!(reconstructed, raw, "{text}");
+    }
 }

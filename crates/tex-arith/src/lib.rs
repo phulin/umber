@@ -682,6 +682,44 @@ pub fn round_decimal_fraction(digits: &[u8]) -> i32 {
     (a + 1) / 2
 }
 
+/// tex.web §103's `print_scaled`: the decimal text TeX prints for a scaled
+/// quantity.
+///
+/// This is the exact inverse of [`round_decimal_fraction`]: it emits the
+/// simplest decimal that reads back as the same scaled value, always with at
+/// least one digit after the point. The unit (`pt`, `mu`, ...) belongs to the
+/// caller, exactly as in tex.web, where `print_scaled` is followed by a
+/// separate `print("pt")`.
+#[must_use]
+pub fn print_scaled(value: Scaled) -> String {
+    let mut remainder = i64::from(value.raw());
+    let mut text = String::new();
+    if remainder < 0 {
+        text.push('-');
+        remainder = -remainder;
+    }
+    let unity = i64::from(Scaled::UNITY);
+    text.push_str(&(remainder / unity).to_string());
+    text.push('.');
+    let mut fraction = 10 * (remainder % unity) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > unity {
+            // tex.web: `s:=s+@'100000-50000`, rounding the final digit.
+            fraction += 0o100_000 - 50_000;
+        }
+        text.push(char::from(
+            b'0' + u8::try_from(fraction / unity).expect("scaled digit fits u8"),
+        ));
+        fraction = 10 * (fraction % unity);
+        delta *= 10;
+        if fraction <= delta {
+            break;
+        }
+    }
+    text
+}
+
 /// Converts a nonnegative scanned decimal value and physical unit to sp.
 ///
 /// `integer` is the part before the decimal point. `fraction` is the result of

@@ -12,7 +12,7 @@ Prefer putting exact TeX.web arithmetic here when it is domain-neutral and reuse
 
 - `AGENTS.md`: crate-local guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: package metadata for the dependency-free `tex-arith` crate.
-- `src/lib.rs`: public scaled-point types, dimension/unit conversions, arithmetic helpers, TFM conversion math, and module tests hook.
+- `src/lib.rs`: public scaled-point types, dimension/unit conversions, arithmetic helpers, tex.web §103's `print_scaled` decimal rendering, TFM conversion math, and module tests hook.
 - `src/scaled_tests.rs`: crate-internal tests for scaled arithmetic, unit conversion, rounding, overflow, and TFM sizing behavior.
 
 ## Boundaries

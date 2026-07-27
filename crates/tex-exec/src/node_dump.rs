@@ -696,31 +696,7 @@ fn format_rule_dimension(value: Option<Scaled>) -> String {
 }
 
 fn format_scaled_without_unit(value: Scaled) -> String {
-    let mut raw = i64::from(value.raw());
-    let mut out = String::new();
-    if raw < 0 {
-        out.push('-');
-        raw = -raw;
-    }
-    let unity = i64::from(Scaled::UNITY);
-    out.push_str(&(raw / unity).to_string());
-    out.push('.');
-    let mut scaled = 10 * (raw % unity) + 5;
-    let mut delta = 10;
-    loop {
-        if delta > unity {
-            scaled += 0o100000 - 50_000;
-        }
-        out.push(char::from(
-            b'0' + u8::try_from(scaled / unity).expect("scaled digit fits u8"),
-        ));
-        scaled = 10 * (scaled % unity);
-        delta *= 10;
-        if scaled <= delta {
-            break;
-        }
-    }
-    out
+    tex_state::scaled::print_scaled(value)
 }
 
 pub(crate) fn format_scaled_for_diagnostics(value: Scaled) -> String {
