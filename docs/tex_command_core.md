@@ -420,7 +420,7 @@ observation infer either from a generic expandable meaning.
 Likewise, TeX82's classic text conversions are observed as the shared
 `convert` command while `CurrentCommand` retains their §35 selector:
 `\number`, `\romannumeral`, `\string`, `\meaning`, `\fontname`, and
-`\jobname` use selectors 0 through 5. TeX82 §27's `conv_toks` continues to
+`\jobname` use selectors 0 through 5. TeX82 §470's `conv_toks` continues to
 own their respective operand scans and inserted-token lifecycle; the command
 identity is selected at raw delivery, rather than projected later from a
 generic expandable primitive. Startup filename scanning installs the selected
@@ -1479,6 +1479,7 @@ enum TokenPayload {
 
 enum TokenBehavior {
     Ordinary,
+    Recovery,
     MacroBody(MacroActivation),
     Parameter,
     BackedUp(BackupTreatment),
@@ -1507,6 +1508,20 @@ levels. Exact-byte and Unicode source cursors use this identical enum.
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
 demonstrably change retirement behavior. Trace reasons never select expansion
 semantics.
+
+`ReplayTrace::Inserted` is the one exception, and it is not an explanation but
+TeX82 §307's `inserted` token type: the level §323's `ins_list` installs, which
+retires as a recovery rather than as a token list. It is a token _type_, not a
+storage strategy, and every expansion that hands tokens back to the scanner
+reaches the input stack through that same macro -- §470's `conv_toks` renders a
+fresh transient buffer, §467's `ins_the_toks` shares §465's already immutable
+copy of a token register, parameter, or font identifier. Nesting the type under
+a payload-shaped `Transient` reason tied the two together, and §467's level was
+installed as an ordinary stored token list instead: it published no push at all
+and retired as a token list rather than a recovery (`umber2-johp.188`). §386's
+`begin_token_list(cur_mark[cur_chr], mark_text)` is the contrasting case and
+keeps an ordinary stored reason, because a mark's text is the stored list
+itself and is never a copy handed back through `ins_list`.
 
 Exhaustion commits against the exact `InputLevelId`. Ordinary, terminal-stop,
 and `\scantokens` levels pop once; popping releases only the cursor's ownership
@@ -1829,10 +1844,17 @@ builder. Presentation is deferred, but the recovery token sequence and future
 state match the canonical batch engine.
 
 Observer recovery kind records the TeX82 insertion operation, separately from
-the inserted token identity. Thus frozen-`\cr` recovery preserves the
-inaccessible control-sequence spelling while classifying the TeX82 recovery
-operation as `InsertedToken`; consumers must not infer the operation kind from
-the token's spelling.
+the inserted token identity, and TeX82 reports that operation at two distinct
+seams. §325's `back_input`, reached through §327's `ins_error`, reports one
+inserted operation whatever it inserts: §336's frozen `\fi` and §379's frozen
+`\relax` are both `InsertedToken` even though each token is an inaccessible
+control sequence, so consumers must not infer the operation kind from the
+token's spelling. §323's `begin_token_list(p, inserted)` reports instead which
+side of §289's `cs_token_flag` split the inserted list's leading token falls
+on. §339's runaway recovery therefore classifies its frozen `\cr` and `\par`
+as `InsertedControlSequence` while a `}` stays `InsertedToken`, and §470's
+conversion text and §467's `\the` copy are classified from that one token
+rather than by a constant chosen per call site.
 
 The supported transcript-parity target is deterministic batch/nonstop
 operation. Interactive deletion and insertion prompts are host UI and are not
