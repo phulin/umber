@@ -28,6 +28,20 @@ Scope: working a semantic or byte-level divergence between Umber's canonical
    but never a source of expected results. Do not consult its behavior to
    decide what canonical code should do.
 
+### Reading an oracle trace by event index
+
+The tracer's event index equals the `sequence` field of the oracle event, which
+is the `events.jsonl` line number **minus 2**. To look up the divergence the
+tracer reports at event `N`, read line `N + 2`. Verify the mapping against two
+independent divergences before relying on it; it has been stated inverted in a
+dispatch prompt, and an off-by-two lands on a neighboring event that is usually
+plausible enough to reason from without noticing.
+
+Every event index is relative to the commit it was measured on. An index quoted
+from a bd issue body, a dispatch prompt, or an agent report is only valid
+against that report's base: composing two fixes during a rebase moves later
+indices. Re-measure on your own base before relying on one.
+
 ## 2. Diagnosis order
 
 Fixed order; do not skip a step or substitute ad hoc instrumentation for it.
