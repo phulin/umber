@@ -185,6 +185,18 @@ the pinned upstream biber compatibility suite, audited by
 `tests/it/scaffold.rs`; the verdict line states the count rather than hiding it
 behind a total.
 
+### Conditional Semantic Minifixtures
+
+The eight TeX82 conditionals properties not blocked by box-register selector recovery have an independently runnable, fixture-only semantic tier:
+
+```bash
+cargo test -q -p tex-command-stream --test it conditionals_semantic
+```
+
+The single integration binary compiles the hand-authored inputs under `tests/corpus/command-semantic/conditionals`, drives each one through instrumented `tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile, and compares a short exact projection of committed `tex_command::CommandObservation` records. The projections cover predicate and delimiter classification, frozen-fi recovery, nested condition-stack transitions, skipping status and side-effect suppression, `ifcase` delimiter stops, mode/inner/stream/constant results, ordered scalar scans, signed oddness, and expanded-versus-raw token predicates.
+
+The tier is hermetic and normally completes in a few hundredths of a second. It invokes no live TeX, loads no format or fonts, and neither discovers nor reads the generated long-document trace registry. The corpus README binds every input to its TeX82 property and numbered `tex.web` sections. TeX82 §505 box-register semantics remain outside this tier until their explicit selector-recovery gap is resolved.
+
 ### What The Clippy Gate Covers
 
 One `cargo clippy` invocation lints one feature resolution, and Cargo unifies

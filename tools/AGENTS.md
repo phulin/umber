@@ -48,6 +48,8 @@ portable `tex-oracle` schema, and reports a ranked worklist of up to
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.
 
+The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/conditionals_semantic.rs` owns the fast TeX82 conditionals semantic-minifixture tier, driving tiny compile-time fixture bytes through instrumented `CanonicalMainControl` and comparing only short exact command-observation projections. Its source corpus and canonical provenance live under `tests/corpus/command-semantic/conditionals`.
+
 Comparison is a two-tier keyed sequence alignment, not an index-parallel
 scan: `src/compare.rs` splits each event into an identity key and a payload,
 reports a payload-only difference once without desynchronizing, and repairs a

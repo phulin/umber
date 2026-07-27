@@ -1,0 +1,12 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\~=13
+\def~{}\def\a#1{#1x}\def\b#1{#1x}\def\c#1{#1y}
+\if aa\count0=1\fi
+\if ab\count1=9\else\count1=1\fi
+\ifcat ab\count2=1\fi
+\ifcat a1\count3=9\else\count3=1\fi
+\if\noexpand~\noexpand~\count4=1\fi
+\if\relax\count\count5=1\fi
+\ifx\iftrue\iftrue\count6=1\fi
+\ifx\iftrue\iffalse\count7=9\else\count7=1\fi
+\ifx\a\b\count8=1\fi
+\ifx\a\c\count9=9\else\count9=1\fi

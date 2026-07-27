@@ -179,7 +179,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case frozen-fi-after-public-fi-redefinition observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/observation/mod.rs",
@@ -192,10 +192,14 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "tex82_predicate_aliases_preserve_classification"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "classification_minifixture_matches_tex82_sections_210_487_491"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -228,7 +232,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case recursive-operand-frame-retargeting observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -241,10 +245,14 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "condition_stack_preserves_lines_limits_and_input_independence"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "stack_lifecycle_minifixture_matches_tex82_sections_489_495_497"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -277,7 +285,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals-eof.tex case skipped-child-eof-frozen-fi observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -286,10 +294,14 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "pass_text_does_not_expand_or_execute_skipped_tokens"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "skipped_text_minifixture_matches_tex82_sections_493_494"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -323,7 +335,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case premature-and-extra-delimiters observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -348,10 +360,14 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "conditional_delimiter_legality_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "branch_delimiter_minifixture_matches_tex82_sections_498_500_509_510"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -384,7 +400,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case ifeof-four-bit-selector-recovery observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -397,11 +413,15 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "predicate_dispatch_minifixture_matches_tex82_section_501"
         }
       ],
       "planned_coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.conditionals.ordered-relations",
@@ -433,7 +453,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case missing-relation-inserts-equals observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -446,11 +466,15 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "ifnum_ifdim_relation_and_missing_equals_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "ordered_relations_minifixture_matches_tex82_section_503"
         }
       ],
       "planned_coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.conditionals.odd-integer",
@@ -482,16 +506,20 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case ifodd-premature-delimiter observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "ifodd_signed_parity_and_scanner_recovery_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "odd_integer_minifixture_matches_tex82_section_504"
         }
       ],
       "planned_coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.conditionals.box-register-kind",
@@ -578,7 +606,7 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case token-predicate-premature-delimiter observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -599,10 +627,14 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "if_ifcat_and_ifx_complete_operand_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
+          "test": "token_predicates_minifixture_matches_tex82_sections_506_508"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     }
   ]

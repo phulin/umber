@@ -1,0 +1,10 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\$=3
+\ifvmode\count0=1\fi
+\ifhmode\count1=9\else\count1=1\fi
+\ifmmode\count2=9\else\count2=1\fi
+\ifinner\count3=9\else\count3=1\fi
+\hbox{\ifhmode\count4=1\fi\ifinner\count5=1\fi}
+$\ifmmode\count9=1\fi\ifinner\count10=1\fi$
+\ifeof0\count6=1\fi
+\iftrue\count7=1\fi
+\iffalse\count8=9\else\count8=1\fi
