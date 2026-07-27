@@ -355,6 +355,128 @@ fn canonical_character_run_lookahead_delivers_later_characters_raw_only() {
     );
 }
 
+/// TeX82 §1030's two fetch labels do not agree about the `end_template` that
+/// closes an alignment cell's ⟨v_j⟩ template.
+///
+/// §380's `get_x_token` disposes of it in place -- `cur_cs:=frozen_endv;
+/// cur_cmd:=endv; goto done` -- while §380's `x_token` has no such case and
+/// calls §366 `expand`, whose §375 module is
+/// `cur_tok:=cs_token_flag+frozen_endv; back_input`. So a cell whose last
+/// item is an ordinary character, which parks main control at §1038's
+/// `main_loop_lookahead`, reaches `endv` through a backup level and a second
+/// raw delivery that the `big_switch` form never produces.
+///
+/// §342 inserts the ⟨v_j⟩ template inside `get_next` and jumps back to its own
+/// `restart`, so the fetch that triggered it is still in progress and main
+/// control is still parked at §1038. Umber routes that push out to the
+/// executor, and must not let the round trip demote `x_token` to
+/// `get_x_token` (`umber2-johp.257`).
+#[test]
+fn canonical_alignment_cell_ending_in_a_character_reaches_endv_through_a_backup() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox0=\vbox{\f\halign{#\cr AB\cr}}",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    assert_eq!(
+        end_template_to_endv_shape(&observations.0),
+        vec![
+            "raw end_template",
+            "push backup",
+            "backup frozen_endv",
+            "raw endv",
+            "expanded endv",
+        ],
+        "§375 backs a frozen_endv token up for x_token's own get_next to reread"
+    );
+}
+
+/// §1030's `big_switch` form of the same cell: an empty cell parks main
+/// control nowhere, so `get_x_alignment_delivery` is `get_x_token` and §380's
+/// in-place rewrite applies with no backup level and no raw `endv` at all.
+#[test]
+fn canonical_empty_alignment_cell_reaches_endv_without_a_backup() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox0=\vbox{\f\halign{#\cr\cr}}",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    assert_eq!(
+        end_template_to_endv_shape(&observations.0),
+        vec!["raw end_template", "expanded endv"],
+        "get_x_token rewrites the live command instead of backing a token up"
+    );
+}
+
+/// Labels the observations from the first raw `end_template` delivery through
+/// the `endv` it becomes, so the two forms of §380 can be compared directly.
+fn end_template_to_endv_shape(observations: &[CommandObservation]) -> Vec<&'static str> {
+    let start = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(delivery)
+                    if delivery.command == "end_template"
+                        && delivery.boundary == CommandDeliveryBoundary::Raw
+            )
+        })
+        .expect("the cell's v-template ends with a frozen end_template");
+    let mut shape = Vec::new();
+    for observation in &observations[start..] {
+        let label = match observation {
+            CommandObservation::Command(delivery) if delivery.command == "end_template" => {
+                "raw end_template"
+            }
+            CommandObservation::Command(delivery) if delivery.command == "endv" => {
+                match delivery.boundary {
+                    CommandDeliveryBoundary::Raw => "raw endv",
+                    CommandDeliveryBoundary::Expanded => "expanded endv",
+                }
+            }
+            CommandObservation::Input(input) if input.transition == InputTransition::Backup => {
+                "push backup"
+            }
+            CommandObservation::Recovery(recovery)
+                if recovery.kind == RecoveryKind::Backup
+                    && recovery.tokens == [ObservedToken::FrozenEndV] =>
+            {
+                "backup frozen_endv"
+            }
+            _ => continue,
+        };
+        shape.push(label);
+        if label == "expanded endv" {
+            break;
+        }
+    }
+    shape
+}
+
 /// §1036's `main_loop_move+2` answers a character the current font does not
 /// contain with `char_warning`, frees the would-be node, and jumps to
 /// `big_switch` rather than to the lookahead. §552 gives `\nullfont`

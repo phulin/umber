@@ -626,19 +626,6 @@ impl CanonicalMainControl {
         }
     }
 
-    /// Records which of TeX82 §1030's two fetch labels `main_control` is
-    /// parked at now that this step has been applied.
-    ///
-    /// §1034's `main_loop` is reached only from `hmode`, so the mode tested
-    /// is the one the step left behind: §1090's `vmode+letter` opens a
-    /// paragraph first and arrives in horizontal mode, while `mmode+letter`
-    /// (§1154) appends a math char and never enters the loop at all.
-    ///
-    /// A character the current font does not contain never reaches the
-    /// lookahead either: §1036's `main_loop_move+2` issues `char_warning`,
-    /// frees the would-be node, and jumps straight back to `big_switch`. With
-    /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
-    /// character at all exists -- that is every character in the document.
     /// Lends the whole command machine at once, for helpers that build their
     /// own processor rather than being handed one. A caller that must keep
     /// another of main control's fields borrowed at the same time builds the
@@ -652,8 +639,42 @@ impl CanonicalMainControl {
         }
     }
 
-    fn park_main_control(&mut self, character: Option<char>, stores: &Universe) {
-        self.main_loop_active = character.is_some_and(|character| {
+    /// Takes TeX82 §1030's parking decision for the step just scanned, and
+    /// clears the outgoing parking so nested episodes run from `big_switch`.
+    ///
+    /// Every step driver takes this before applying its step and gives it back
+    /// to [`Self::resume_main_control_parking`] afterwards. The rule is stated
+    /// here once: three drivers used to spell it out inline, and a rule spelled
+    /// three times is a rule two of them can be missing.
+    fn suspend_main_control_parking(&mut self, scanned: &ScannedStep) -> MainControlParking {
+        let parking = MainControlParking {
+            character: scanned.main_loop_character(),
+            resumes_interrupted_fetch: matches!(scanned, ScannedStep::AlignmentTemplateEntered),
+        };
+        if !parking.resumes_interrupted_fetch {
+            self.main_loop_active = false;
+        }
+        parking
+    }
+
+    /// Records which of TeX82 §1030's two fetch labels `main_control` is
+    /// parked at now that this step has been applied.
+    ///
+    /// §1034's `main_loop` is reached only from `hmode`, so the mode tested
+    /// is the one the step left behind: §1090's `vmode+letter` opens a
+    /// paragraph first and arrives in horizontal mode, while `mmode+letter`
+    /// (§1154) appends a math char and never enters the loop at all.
+    ///
+    /// A character the current font does not contain never reaches the
+    /// lookahead either: §1036's `main_loop_move+2` issues `char_warning`,
+    /// frees the would-be node, and jumps straight back to `big_switch`. With
+    /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
+    /// character at all exists -- that is every character in the document.
+    fn resume_main_control_parking(&mut self, parking: MainControlParking, stores: &Universe) {
+        if parking.resumes_interrupted_fetch {
+            return;
+        }
+        self.main_loop_active = parking.character.is_some_and(|character| {
             matches!(
                 self.modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
@@ -842,10 +863,7 @@ impl CanonicalMainControl {
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        // Every case of §1030's big `case` statement other than the four
-        // `main_loop` entries ends at `goto big_switch`.
-        let main_loop_character = scanned.main_loop_character();
-        self.main_loop_active = false;
+        let parking = self.suspend_main_control_parking(&scanned);
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => return applied,
             ControlFlow::Continue(scanned) => scanned,
@@ -866,7 +884,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
-        self.park_main_control(main_loop_character, stores);
+        self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
@@ -1120,10 +1138,7 @@ impl CanonicalMainControl {
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        // Every case of §1030's big `case` statement other than the four
-        // `main_loop` entries ends at `goto big_switch`.
-        let main_loop_character = scanned.main_loop_character();
-        self.main_loop_active = false;
+        let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
@@ -1147,7 +1162,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
-        self.park_main_control(main_loop_character, stores);
+        self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
@@ -1943,10 +1958,7 @@ impl CanonicalMainControl {
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        // Every case of §1030's big `case` statement other than the four
-        // `main_loop` entries ends at `goto big_switch`.
-        let main_loop_character = scanned.main_loop_character();
-        self.main_loop_active = false;
+        let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
@@ -2012,7 +2024,7 @@ impl CanonicalMainControl {
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok() {
-            self.park_main_control(main_loop_character, stores);
+            self.resume_main_control_parking(parking, stores);
         }
         if result.is_ok() && fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
@@ -2466,9 +2478,39 @@ fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
             .is_some_and(|fraction| starts_left_ref(stores.nodes(fraction.numerator).first()))
 }
 
+/// TeX82 §1030's parking decision for one scanned step, taken before the step
+/// is applied and spent after it.
+///
+/// It is taken early because applying a step can run nested command episodes,
+/// and those start at `big_switch` however the enclosing step was fetched.
+#[derive(Clone, Copy)]
+struct MainControlParking {
+    /// The character this step appended, if it was one of §1030's four
+    /// `main_loop` entries.
+    character: Option<char>,
+    /// Whether the step was not a `main_control` case at all, but §342's
+    /// resumption of a `get_next` that is still in progress. Such a step
+    /// leaves parking exactly as it found it.
+    resumes_interrupted_fetch: bool,
+}
+
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    /// TeX82 §342 has just run §789's
+    /// ``@<Insert the ⟨v_j⟩ template and |goto restart|@>``.
+    ///
+    /// This is not a `main_control` step at all: §789 runs *inside* `get_next`
+    /// and jumps back to its own `restart` label, so the fetch that triggered
+    /// it is still in progress. Umber routes the push out to the executor
+    /// because the alignment's identity lives here, but must not treat the
+    /// round trip as a return to §1030's `big_switch` -- main control is still
+    /// parked wherever it was, and §1030's two fetch labels disagree about the
+    /// `end_template` that a ⟨v_j⟩ template is about to deliver: §380's
+    /// `get_x_token` rewrites it to `endv` in place, while §1038's `x_token`
+    /// reaches §366 `expand` and §375 backs up a separate `frozen_endv` token
+    /// to be reread.
+    AlignmentTemplateEntered,
     MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
@@ -3325,9 +3367,12 @@ fn scan_alignment_delivery_step(
         }
         Some(AlignmentDelivery::Event(event)) => {
             match event {
-                tex_command::AlignmentDeliveryEvent::EndTemplate(_) => processor
-                    .begin_alignment_v_template(alignment, event)
-                    .map_err(command_error)?,
+                tex_command::AlignmentDeliveryEvent::EndTemplate(_) => {
+                    processor
+                        .begin_alignment_v_template(alignment, event)
+                        .map_err(command_error)?;
+                    return Ok(ScannedStep::AlignmentTemplateEntered);
+                }
                 tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
                     // TeX82 §1132 selects this executor-owned align_group
                     // branch. Raw brace backup/correction and frozen-\cr
@@ -7055,6 +7100,7 @@ fn applied_mutation_observation(
         // `prefixed_command`, so the reference engine has
         // `umber_mutation_command` false throughout and emits nothing.
         ScannedStep::Continue
+        | ScannedStep::AlignmentTemplateEntered
         | ScannedStep::MissingMathShift
         | ScannedStep::EndOfInput
         | ScannedStep::End
@@ -7770,7 +7816,7 @@ fn apply_scanned_step(
     prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
-        ScannedStep::Continue => Ok(ReplayStep::Continue),
+        ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
         ScannedStep::MissingMathShift => {
             // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
             // input recovery (backing up the offending command behind an
