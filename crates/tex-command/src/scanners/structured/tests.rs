@@ -9,6 +9,7 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
+use crate::observation::RecoveryKind;
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandReplayDelivery, CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
@@ -692,7 +693,7 @@ fn math_delimiter_and_mu_requests_recover_and_consume_units() {
     );
     let (delimiter, material) = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        let delimiter = processor.scan_math_delimiter().expect("delimiter scans");
+        let delimiter = processor.scan_delimiter_number().expect("delimiter scans");
         let material = processor
             .scan_math_mu_material(false)
             .expect("mu kern scans");
@@ -707,80 +708,20 @@ fn math_delimiter_and_mu_requests_recover_and_consume_units() {
 }
 
 #[test]
-fn math_fraction_delimiters_and_family_recovery_are_command_owned() {
+fn generalized_fraction_delimiters_read_delimiter_codes_not_integers() {
+    // TeX82 §1182's `\abovewithdelims` family runs
+    // `scan_delimiter(...,false)` twice, so each delimiter is §1160's
+    // classified token -- here a letter/other_char whose `\delcode` is the
+    // value -- and never a bare `scan_twenty_seven_bit_int`. Scanning them as
+    // integers made `\abovewithdelims()3pt` read `()` as a vacuous number and
+    // consumed the fraction's own operands as digits.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    push(
-        &mut command,
-        [
-            Token::Char {
-                ch: '4',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '0',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '9',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '6',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Char {
-                ch: '4',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '0',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '9',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '7',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Char {
-                ch: '3',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: 'p',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: 't',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Char {
-                ch: '1',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '6',
-                cat: Catcode::Other,
-            },
-        ],
-    );
+    universe.set_delcode('(', 0x02_8300);
+    universe.set_delcode(')', 0x02_9301);
+    push(&mut command, text_tokens("()3pt 16"));
     let (fraction, family) = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         let fraction = processor
@@ -791,14 +732,98 @@ fn math_fraction_delimiters_and_family_recovery_are_command_owned() {
             .expect("family scans");
         (fraction, family)
     };
-    assert_eq!(fraction.left_delimiter.expect("left").code, 4096);
-    assert_eq!(fraction.right_delimiter.expect("right").code, 4097);
+    assert_eq!(
+        fraction.left_delimiter.expect("left").code,
+        0x02_8300
+    );
+    assert_eq!(
+        fraction.right_delimiter.expect("right").code,
+        0x02_9301
+    );
     assert_eq!(
         fraction.thickness,
         Some(tex_state::scaled::Scaled::from_raw(196_608))
     );
     assert_eq!(family.family, 0);
     assert!(family.recovered);
+}
+
+#[test]
+fn a_non_radical_delimiter_consumes_delimiter_in_place_and_backs_up_nothing_else() {
+    // TeX82 §1160's `delim_num` case runs `scan_twenty_seven_bit_int` on the
+    // command §404 already delivered, so `\left\delimiter"4266308` reads one
+    // delimiter and installs no backup level. Treating the whole `r=false`
+    // position as `scan_twenty_seven_bit_int` made `\delimiter` the first
+    // token of a `scan_int`, which §444's `vacuous` case backed up and
+    // redelivered.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let delimiter = universe.intern("delimiter").symbol();
+    universe.set_meaning(
+        delimiter,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter),
+    );
+    let mut tokens = vec![Token::Cs(delimiter)];
+    tokens.extend(text_tokens("\"4266308 x"));
+    push(&mut command, tokens);
+    let mut recorder = Recorder::default();
+    let (boundary, next) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        let boundary = processor
+            .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Left)
+            .expect("boundary scans");
+        let next = processor.get_x_token().expect("next token").expect("present");
+        (boundary, next)
+    };
+    assert_eq!(boundary.kind, MathDelimiterBoundaryKind::Left);
+    assert_eq!(boundary.delimiter.code, 0x0426_6308);
+    assert!(!boundary.delimiter.recovered);
+    assert!(matches!(
+        next.meaning(),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    ));
+    assert!(
+        !recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Recovery(record) if record.kind == RecoveryKind::Backup
+        )),
+        "§1160 consumes the delivered \\delimiter in place: {:?}",
+        recorder.0
+    );
+}
+
+#[test]
+fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
+    // TeX82 §1160's `othercases cur_val:=-1` and §1161's `back_error`: the
+    // rejected token returns to the input and the delimiter becomes null.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("  x"));
+    let (boundary, next) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let boundary = processor
+            .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Right)
+            .expect("boundary scans");
+        let next = processor.get_x_token().expect("next token").expect("present");
+        (boundary, next)
+    };
+    assert_eq!(boundary.delimiter.code, 0);
+    assert!(boundary.delimiter.recovered);
+    assert!(matches!(
+        next.meaning(),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    ));
 }
 
 fn processor<'a>(

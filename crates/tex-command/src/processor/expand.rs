@@ -110,6 +110,36 @@ impl CommandProcessor<'_> {
         result
     }
 
+    /// TeX82 §404's `<Get the next non-blank non-relax non-call token>`:
+    /// `repeat get_x_token until (cur_cmd<>spacer)and(cur_cmd<>relax)`.
+    ///
+    /// This is the shared spelling of that module, used by §403's
+    /// `scan_left_brace`, §1078, §1084, §1151's `scan_math`, §1160's
+    /// non-radical `scan_delimiter`, §1211's `prefixed_command`, §1226 and
+    /// §1270's `scan_optional_equals`. It differs from §406's
+    /// `<Get the next non-blank non-call token>` only by also skipping
+    /// `\relax`, and the two are not interchangeable: §1160 classifies the
+    /// token it stops on, so a `\relax` that reached it as a command rather
+    /// than as a skipped filler would scan as an invalid delimiter.
+    pub(crate) fn next_non_blank_non_relax_x_token(
+        &mut self,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok(None);
+            };
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                } | Meaning::Relax
+            ) {
+                return Ok(Some(command));
+            }
+        }
+    }
+
     /// Delivers one expanded command or the completion of an executor-owned
     /// stored replay episode.
     ///

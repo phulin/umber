@@ -90,7 +90,9 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_token_list_right_hand_side(&mut self) -> Result<TokenListRightHandSide, CommandError> {
-        let command = self.next_non_space_non_relax_x_token()?;
+        let command = self
+            .next_non_blank_non_relax_x_token()?
+            .ok_or_else(CommandError::input_invariant)?;
         let tokens = match command.meaning() {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_eight_bit_register_index()?;
@@ -131,19 +133,6 @@ impl CommandProcessor<'_> {
         ))
     }
 
-    fn next_non_space_non_relax_x_token(&mut self) -> Result<crate::CurrentCommand, CommandError> {
-        loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            match command.meaning() {
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }
-                | Meaning::Relax => continue,
-                _ => return Ok(command),
-            }
-        }
-    }
 }
 
 impl TokenListRightHandSide {

@@ -1361,7 +1361,7 @@ impl CommandProcessor<'_> {
     ) -> Result<MathDelimiterBoundary, CommandError> {
         Ok(MathDelimiterBoundary {
             kind,
-            delimiter: self.scan_math_delimiter()?,
+            delimiter: self.scan_delimiter(false)?,
         })
     }
 
@@ -1377,8 +1377,16 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Scans TeX82 §437's `scan_twenty_seven_bit_int` delimiter number.
-    pub fn scan_math_delimiter(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
+    /// Scans TeX82 §437's `scan_twenty_seven_bit_int` delimiter number: an
+    /// ordinary `scan_int` whose result is replaced by zero when it leaves
+    /// the 27-bit range.
+    ///
+    /// This is the whole delimiter operand only where tex.web calls
+    /// `scan_twenty_seven_bit_int` directly -- §1154's `mmode+delim_num` and
+    /// §1151's `scan_math` `delim_num` case -- and the `r=true` half of
+    /// §1160. Every other delimiter position goes through
+    /// [`Self::scan_delimiter`].
+    pub fn scan_delimiter_number(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::TwentySevenBit)?;
         Ok(ScannedMathDelimiter {
             code: scanned.value as u32,
@@ -1386,6 +1394,77 @@ impl CommandProcessor<'_> {
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
+        })
+    }
+
+    /// TeX82 §1160's `scan_delimiter(p, r)`.
+    ///
+    /// `radical` is tex.web's `r`, "tells if this delimiter follows
+    /// `\radical` or not". Only §1163's `math_radical` passes `true`, and
+    /// only then is the operand a bare `scan_twenty_seven_bit_int`. Every
+    /// other delimiter position -- §1191's `\left`/`\right`, §1192's
+    /// `\right` recovery, §1182's `\abovewithdelims` family and §1183's
+    /// ambiguous-fraction recovery -- passes `false`, where §1160 instead
+    /// fetches §404's next non-blank non-relax non-call token and classifies
+    /// it:
+    ///
+    /// ```text
+    /// letter,other_char: cur_val:=del_code(cur_chr);
+    /// delim_num: scan_twenty_seven_bit_int;
+    /// othercases cur_val:=-1
+    /// ```
+    ///
+    /// so `\left(` reads `(`'s `\delcode` and `\left\delimiter"426830A`
+    /// consumes the already-delivered `\delimiter` in place. Scanning the
+    /// `r=false` positions as if they were `r=true` made the fetched command
+    /// the first token of a `scan_int` instead: `\delimiter` is not a numeric
+    /// constant, so §444's `vacuous` case backed it up, published a zero
+    /// delimiter, and then re-delivered `\delimiter` to main control as an
+    /// independent §1154 math character.
+    ///
+    /// §1161 owns the negative result: `back_error` returns the rejected
+    /// token to the input and the delimiter becomes null. The `delim_num`
+    /// branch cannot reach it, because §437 has already clamped an
+    /// out-of-range code to zero.
+    pub fn scan_delimiter(&mut self, radical: bool) -> Result<ScannedMathDelimiter, CommandError> {
+        if radical {
+            return self.scan_delimiter_number();
+        }
+        let Some(command) = self.next_non_blank_non_relax_x_token()? else {
+            return Ok(ScannedMathDelimiter {
+                code: 0,
+                recovered: true,
+                provenance: StructuredProvenance {
+                    primary: OriginId::UNKNOWN,
+                },
+            });
+        };
+        let primary = command.origin();
+        let code = match command.meaning() {
+            Meaning::CharToken {
+                ch,
+                cat: Catcode::Letter | Catcode::Other,
+            } => self.state.delcode(ch),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
+                return self.scan_delimiter_number();
+            }
+            _ => -1,
+        };
+        if code < 0 {
+            // TeX82 §1161: "Missing delimiter (. inserted)" reports through
+            // `back_error`, which returns the offending token to the input
+            // before the error and leaves the null delimiter behind.
+            self.back_input(command)?;
+            return Ok(ScannedMathDelimiter {
+                code: 0,
+                recovered: true,
+                provenance: StructuredProvenance { primary },
+            });
+        }
+        Ok(ScannedMathDelimiter {
+            code: code as u32,
+            recovered: false,
+            provenance: StructuredProvenance { primary },
         })
     }
 
@@ -1417,8 +1496,8 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedMathFraction, CommandError> {
         let (left_delimiter, right_delimiter) = if with_delimiters {
             (
-                Some(self.scan_math_delimiter()?),
-                Some(self.scan_math_delimiter()?),
+                Some(self.scan_delimiter(false)?),
+                Some(self.scan_delimiter(false)?),
             )
         } else {
             (None, None)
@@ -1484,7 +1563,9 @@ impl CommandProcessor<'_> {
         };
         let request = match primitive {
             UnexpandablePrimitive::MathChar => Request::Character(self.scan_math_character()?),
-            UnexpandablePrimitive::Delimiter => Request::Delimiter(self.scan_math_delimiter()?),
+            UnexpandablePrimitive::Delimiter => {
+                Request::Delimiter(self.scan_delimiter_number()?)
+            }
             UnexpandablePrimitive::MathOrd => Request::TextField(Field::Ord),
             UnexpandablePrimitive::MathOp => Request::TextField(Field::Op),
             UnexpandablePrimitive::MathBin => Request::TextField(Field::Bin),
@@ -1517,7 +1598,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::AboveWithDelims => {
                 Request::Fraction(self.scan_math_fraction(MathFractionKind::Above, true)?)
             }
-            UnexpandablePrimitive::Radical => Request::Radical(self.scan_math_delimiter()?),
+            UnexpandablePrimitive::Radical => Request::Radical(self.scan_delimiter(true)?),
             UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => {
                 Request::Accent(self.scan_math_character()?)
             }
