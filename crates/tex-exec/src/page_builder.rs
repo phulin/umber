@@ -1,5 +1,6 @@
 //! TeX.web page-builder accounting for outer vertical contributions.
 
+use tex_state::diagnostic::Diagnostic;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{GlueKind, Node};
@@ -120,6 +121,9 @@ fn page_episode_key(stores: &Universe) -> PureMemoKey {
         hash.i32(stores.dimen_param(DimenParam::MAX_DEPTH).raw());
         hash.glue(stores.glue_param(GlueParam::TOP_SKIP));
         hash.i32(stores.int_param(IntParam::SAVING_V_DISCARDS));
+        // A traced episode prints; reuse must not silently swallow its text.
+        hash.i32(stores.int_param(IntParam::TRACING_PAGES));
+        hash.i32(stores.int_param(IntParam::TRACING_ONLINE));
         for class in &classes {
             hash.u16(*class);
             hash.i32(stores.count(*class));
@@ -210,7 +214,7 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
             }
             Node::Ins { .. } => {
                 if stores.page_contents() == PageContents::Empty {
-                    stores.freeze_page_specs(PageContents::InsertsOnly);
+                    freeze_page_specs(stores, PageContents::InsertsOnly);
                 }
                 let node = prepare_insertion(stores, &node)?.unwrap_or(node);
                 contribute_front_as(stores, node)?;
@@ -423,7 +427,7 @@ fn inverse_scaled_insertion_capacity(size: Scaled, count: i32) -> Result<Scaled,
 
 fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
     if stores.page_contents() == PageContents::Empty {
-        stores.freeze_page_specs(PageContents::BoxThere);
+        freeze_page_specs(stores, PageContents::BoxThere);
     } else {
         stores.set_page_contents(PageContents::BoxThere);
     }
@@ -562,6 +566,80 @@ fn add_glue_stretch(stores: &mut Universe, spec: GlueSpec) -> Result<(), ExecErr
     Ok(())
 }
 
+/// tex.web §987's `freeze_page_specs`, including the `\tracingpages` report
+/// its `stat` block prints.
+fn freeze_page_specs(stores: &mut Universe, contents: PageContents) {
+    stores.freeze_page_specs(contents);
+    if stores.int_param(IntParam::TRACING_PAGES) > 0 {
+        let mut diagnostic = stores.begin_diagnostic();
+        diagnostic.print_nl("%% goal height=");
+        let goal = diagnostic.state().page_dimension(PageDimension::Goal);
+        diagnostic.print_scaled(goal);
+        diagnostic.print(", max depth=");
+        let max_depth = diagnostic.state().page_max_depth();
+        diagnostic.print_scaled(max_depth);
+        diagnostic.end(false);
+    }
+}
+
+/// tex.web §1006's "Display the page break cost", reached from §1005 once the
+/// badness `b`, penalty `pi`, and cost `c` of a candidate breakpoint are known
+/// and before `least_page_cost` is updated, so the trailing `#` marks the
+/// champion the breakpoint is about to become.
+fn trace_page_break_cost(stores: &mut Universe, badness: i32, penalty: i32, cost: i32) {
+    let least_page_cost = stores.least_page_cost();
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic.print_nl("%");
+    diagnostic.print(" t=");
+    print_page_totals(&mut diagnostic);
+    diagnostic.print(" g=");
+    let goal = diagnostic.state().page_dimension(PageDimension::Goal);
+    diagnostic.print_scaled(goal);
+    diagnostic.print(" b=");
+    print_cost(&mut diagnostic, badness);
+    diagnostic.print(" p=");
+    diagnostic.print_int(penalty);
+    diagnostic.print(" c=");
+    print_cost(&mut diagnostic, cost);
+    if cost <= least_page_cost {
+        diagnostic.print_char('#');
+    }
+    diagnostic.end(false);
+}
+
+/// tex.web §985's `print_totals`.
+fn print_page_totals(diagnostic: &mut Diagnostic<'_>) {
+    let total = diagnostic.state().page_dimension(PageDimension::Total);
+    diagnostic.print_scaled(total);
+    for (dimension, unit) in [
+        (PageDimension::Stretch, ""),
+        (PageDimension::FilStretch, "fil"),
+        (PageDimension::FillStretch, "fill"),
+        (PageDimension::FilllStretch, "filll"),
+    ] {
+        let stretch = diagnostic.state().page_dimension(dimension);
+        if stretch.raw() != 0 {
+            diagnostic.print(" plus ");
+            diagnostic.print_scaled(stretch);
+            diagnostic.print(unit);
+        }
+    }
+    let shrink = diagnostic.state().page_dimension(PageDimension::Shrink);
+    if shrink.raw() != 0 {
+        diagnostic.print(" minus ");
+        diagnostic.print_scaled(shrink);
+    }
+}
+
+/// tex.web §1006 prints `awful_bad` as `*` rather than as its numeric value.
+fn print_cost(diagnostic: &mut Diagnostic<'_>, value: i32) {
+    if value == AWFUL_BAD {
+        diagnostic.print_char('*');
+    } else {
+        diagnostic.print_int(value);
+    }
+}
+
 fn check_break(stores: &mut Universe, penalty: i32) -> Result<(), ExecError> {
     if penalty >= INF_PENALTY {
         return Ok(());
@@ -583,6 +661,9 @@ fn check_break(stores: &mut Universe, penalty: i32) -> Result<(), ExecError> {
     };
     if stores.insert_penalties() >= INF_PENALTY {
         cost = AWFUL_BAD;
+    }
+    if stores.int_param(IntParam::TRACING_PAGES) > 0 {
+        trace_page_break_cost(stores, badness, penalty, cost);
     }
 
     let break_index = stores.current_page_len();

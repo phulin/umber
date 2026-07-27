@@ -3875,6 +3875,75 @@ fn page_builder_moves_box_and_updates_page_scalars() {
     assert_eq!(macro_text(&stores, "snapshot"), "100.0pt,11.0pt,2.0pt");
 }
 
+/// Concatenates only the text routed to one sink, so a diagnostic's
+/// destination is asserted rather than assumed.
+fn sink_text(stores: &Universe, wanted: PrintSink) -> String {
+    let mut text = String::new();
+    for record in stores.world().effect_records() {
+        if let EffectRecord::StreamWrite {
+            sink,
+            text: written,
+        } = record
+            && *sink == wanted
+        {
+            text.push_str(written);
+        }
+    }
+    text
+}
+
+/// tex.web §987's `%% goal height=` line and §1006's `% t=... c=...#` line.
+const TRACING_PAGES_SOURCE: &str = "\\tracingpages=1 \\topskip=10pt \\vsize=100pt \\maxdepth=2pt \
+     \\setbox0=\\hbox{}\\ht0=7pt \\dp0=3pt \\copy0 \\penalty100 ";
+
+#[test]
+fn tracingpages_reports_the_page_specs_and_break_cost_like_tex_web() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(TRACING_PAGES_SOURCE));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("traced page contributions execute");
+
+    assert_eq!(
+        sink_text(&stores, PrintSink::Log),
+        "%% goal height=100.0, max depth=2.0\n% t=11.0 g=100.0 b=10000 p=100 c=100000#\n"
+    );
+}
+
+#[test]
+fn tracingpages_is_off_by_default_and_online_routing_follows_tracingonline() {
+    for (prefix, log, terminal_and_log) in [
+        ("", "", ""),
+        (
+            "\\tracingonline=1 ",
+            "",
+            "%% goal height=100.0, max depth=2.0\n% t=11.0 g=100.0 b=10000 p=100 c=100000#\n",
+        ),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        install_unexpandable_primitives(&mut stores);
+        let source = if prefix.is_empty() {
+            TRACING_PAGES_SOURCE.replace("\\tracingpages=1 ", "")
+        } else {
+            format!("{prefix}{TRACING_PAGES_SOURCE}")
+        };
+        let mut input = InputStack::new(MemoryInput::new(source.as_str()));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("page contributions execute");
+
+        assert_eq!(sink_text(&stores, PrintSink::Log), log, "{source}");
+        assert_eq!(
+            sink_text(&stores, PrintSink::TerminalAndLog),
+            terminal_and_log,
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn page_builder_discards_glue_before_first_box() {
     let mut stores = Universe::new_with_plain_catcodes();
