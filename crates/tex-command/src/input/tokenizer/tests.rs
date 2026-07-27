@@ -173,7 +173,7 @@ fn m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines() {
             b"par".to_vec(),
             SourceControlSequenceKind::Paragraph,
             19,
-            20
+            19
         )
     );
     assert_eq!(
@@ -194,6 +194,98 @@ fn m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines() {
     );
     assert_eq!(
         state.next_exact_source_step(13, catcode),
+        SourceTokenizationStep::End
+    );
+}
+
+/// tex.web §351 locates the generated `\par` at `buffer[limit]`, which §362
+/// fills with `\endlinechar` at the *normalized* content end. A line whose
+/// only content is trailing spaces normalizes to empty, so the `\par` belongs
+/// to the first stripped space, never to the physical terminator bytes.
+#[test]
+fn blank_line_par_is_anchored_at_the_normalized_line_end() {
+    let mut state = state(b" \nA\n");
+
+    assert_eq!(
+        control(state.next_exact_source_step(13, classic_catcode)),
+        (b"par".to_vec(), SourceControlSequenceKind::Paragraph, 0, 0)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, classic_catcode)),
+        (b'A', Catcode::Letter, 2, 3)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, classic_catcode)),
+        (b' ', Catcode::Space, 3, 3)
+    );
+    assert_eq!(
+        state.next_exact_source_step(13, classic_catcode),
+        SourceTokenizationStep::End
+    );
+}
+
+/// tex.web §348 and §351 both finish a `car_ret` with `loc:=limit+1`, so an
+/// explicit catcode-5 character abandons the rest of its line and the token it
+/// produces is located at `buffer[limit]`, not at that character.
+#[test]
+fn explicit_car_ret_character_finishes_its_line() {
+    let catcode = |code: CharacterCode| match code.to_byte().expect("exact byte") {
+        b'X' => Catcode::EndLine,
+        other => classic_catcode(CharacterCode::from_byte(other)),
+    };
+    let mut state = state(b"aXb\nXb\nc\n");
+
+    assert_eq!(
+        character(state.next_exact_source_step(13, catcode)),
+        (b'a', Catcode::Letter, 0, 1)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, catcode)),
+        (b' ', Catcode::Space, 3, 3)
+    );
+    assert_eq!(
+        control(state.next_exact_source_step(13, catcode)),
+        (b"par".to_vec(), SourceControlSequenceKind::Paragraph, 6, 6)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, catcode)),
+        (b'c', Catcode::Letter, 7, 8)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, catcode)),
+        (b' ', Catcode::Space, 8, 8)
+    );
+    assert_eq!(
+        state.next_exact_source_step(13, catcode),
+        SourceTokenizationStep::End
+    );
+}
+
+/// With `\endlinechar` inactive tex.web §362 decrements `limit`, so the line's
+/// last retained character occupies `buffer[limit]` and anchors the space
+/// §348 emits for an explicit catcode-5 character.
+#[test]
+fn inactive_endlinechar_anchors_car_ret_at_the_last_retained_character() {
+    let catcode = |code: CharacterCode| match code.to_byte().expect("exact byte") {
+        b'X' => Catcode::EndLine,
+        other => classic_catcode(CharacterCode::from_byte(other)),
+    };
+    let mut state = state(b"aXb\nc\n");
+
+    assert_eq!(
+        character(state.next_exact_source_step(-1, catcode)),
+        (b'a', Catcode::Letter, 0, 1)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, catcode)),
+        (b' ', Catcode::Space, 2, 3)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, catcode)),
+        (b'c', Catcode::Letter, 4, 5)
+    );
+    assert_eq!(
+        state.next_exact_source_step(-1, catcode),
         SourceTokenizationStep::End
     );
 }
@@ -443,7 +535,7 @@ fn unicode_m_n_s_states_use_unicode_domain_space_par_and_endline() {
             vec!['p', 'a', 'r'],
             SourceControlSequenceKind::Paragraph,
             5,
-            6,
+            5,
             0,
             1
         )
