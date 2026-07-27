@@ -23,6 +23,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
 - `src/vertical_break.rs`: pure TeX.web `vert_break` page/split breakpoint costing over immutable vertical lists.
+- `src/vertical_break/tests/planned.rs`: direct TeX82 vertical-break depth, cost, forced-end, and tie-policy tests.
 - `src/linebreak/mod.rs`: line-breaking API, line-shape types, pass orchestration, breakpoint search, and demerit scoring.
 - `src/linebreak/post.rs`: post-line-break list surgery for broken lines, skips, migrated disc material, and penalties.
 - `src/linebreak/tests.rs`: unit tests for line dimensions, break selection, hyphenation hooks, penalties, and post-break output.

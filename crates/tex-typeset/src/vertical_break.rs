@@ -235,6 +235,8 @@ mod tests {
     use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Sign};
     use tex_state::scaled::GlueSetRatio;
 
+    mod planned;
+
     fn sp(raw: i32) -> Scaled {
         Scaled::from_raw(raw)
     }

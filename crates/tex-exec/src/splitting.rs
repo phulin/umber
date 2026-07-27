@@ -90,3 +90,6 @@ fn vertical_height(node: &Node) -> Scaled {
         _ => Scaled::from_raw(0),
     }
 }
+
+#[cfg(test)]
+mod tests;

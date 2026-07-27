@@ -364,7 +364,7 @@
         "Normal over-shrink clamps and diagnoses; arithmetic overflow fails loudly."
       ],
       "semantic_owner": "tex-typeset::packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
@@ -373,16 +373,15 @@
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
           "test": "hpack_reports_insufficient_normal_shrink_even_below_infinite_badness"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
           "test": "tex82_hpack_node_measurement_orders_and_adjustment_migration"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.boxes.vpack-and-vlist-append",
@@ -420,7 +419,7 @@
         "Infinite shrink and overfull/underfull states diagnose without reordering nodes."
       ],
       "semantic_owner": "tex-typeset::packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
@@ -429,16 +428,15 @@
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
           "test": "vtop_with_leading_glue_has_zero_height"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
           "test": "tex82_vpack_depth_and_append_to_vlist_baseline_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.math.noad-model",
@@ -779,16 +777,16 @@
         "An impossible vertical-list node kind fails loudly instead of being discarded."
       ],
       "semantic_owner": "tex-typeset::vertical-break",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
-          "path": "crates/tex-typeset/src/vertical_break/tests.rs",
+          "path": "crates/tex-exec/src/splitting/tests.rs",
           "test": "tex82_prune_page_top_prefix_and_split_skip_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.vertical.best-break",
@@ -821,7 +819,7 @@
         "Infinite shrink emits one diagnostic and becomes finite normal-order shrink before continuing."
       ],
       "semantic_owner": "tex-typeset::vertical-break",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/vertical_break.rs",
@@ -834,16 +832,15 @@
         {
           "path": "crates/tex-typeset/src/vertical_break.rs",
           "test": "reports_infinite_shrink_glue_that_enters_accounting"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-typeset/src/vertical_break/tests.rs",
+          "path": "crates/tex-typeset/src/vertical_break/tests/planned.rs",
           "test": "tex82_vert_break_cost_depth_and_tie_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.boxes.vsplit-kernel",
@@ -872,21 +869,20 @@
         "Void returns void; an hbox diagnoses and remains untouched."
       ],
       "semantic_owner": "tex-exec::boxes",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/assignments/boxes/vsplit/tests.rs",
           "test": "tex82_vsplit_marks_remainder_and_trivial_case_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.lists.text-material",
@@ -932,7 +928,7 @@
         "A vertical-mode trigger survives paragraph-start backup with provenance and expansion order intact."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -945,16 +941,15 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_noboundary_in_vertical_mode_starts_a_paragraph"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_text_material_space_factor_and_ligature_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.lists.direct-material-and-groups",
@@ -995,21 +990,20 @@
         "Cross-mode illegal and off-save recovery are non-owning dependencies on the main-control and group properties (§§1045–1054 and §§1063–1069) and scan no direct-material operand here."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_initex_replay_scans_complete_rule_specs_through_command_control"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.boxes.requests-and-lifecycle",
@@ -1058,7 +1052,7 @@
         "lastbox in forbidden outer vertical/page state and invalid vsplit targets recover without stealing unrelated material."
       ],
       "semantic_owner": "tex-exec::boxes",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1075,16 +1069,15 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_box_request_lifecycle_mode_and_recovery_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.paragraphs.boundaries",
@@ -1125,7 +1118,7 @@
         "A recovered triggering token retains provenance and runs only after everypar."
       ],
       "semantic_owner": "tex-exec::paragraphs",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1138,16 +1131,15 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_paragraph_page_builder_is_observer_neutral"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-exec/src/assignments/paragraph/tests.rs",
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_paragraph_entry_exit_mode_and_recovery_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.lists.structured-material",
@@ -1196,7 +1188,7 @@
         "Forbidden vadjust/unbox/italic/delete-last paths scan no extra operand beyond their canonical scanner boundary and preserve following input."
       ],
       "semantic_owner": "tex-exec::lists",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1213,16 +1205,15 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_italic_correction_uses_the_font_metric_amount"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_structured_list_material_mode_and_recovery_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.lists.discretionary-and-accent",
@@ -1266,7 +1257,7 @@
         "A noncharacter accent base is replayed exactly once; a missing mandatory discretionary brace follows frozen group recovery."
       ],
       "semantic_owner": "tex-exec::hmode-material",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1279,16 +1270,15 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "accent_scanner_returns_completed_operands_and_replays_noncharacter_base"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228",
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_discretionary_and_text_accent_boundary_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.math.entry-and-display-setup",

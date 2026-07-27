@@ -174,3 +174,6 @@ fn vertical_break_error(error: VerticalBreakError) -> ExecError {
         VerticalBreakError::ArithmeticOverflow => ExecError::ArithmeticOverflow,
     }
 }
+
+#[cfg(test)]
+mod tests;

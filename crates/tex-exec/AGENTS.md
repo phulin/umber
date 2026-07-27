@@ -22,6 +22,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
 - `src/assignments/admissibility.rs`: authoritative assignment-family and math-mode pass-through metadata.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
+- `src/assignments/boxes/vsplit/tests.rs`: direct TeX82 `\vsplit` void-box and wrong-box recovery tests.
 - `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM/OpenType selection loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
@@ -60,6 +61,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
 - `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, tex.web §§987/1005/1006's `\tracingpages` reporting, and detached page-episode reuse up to the output-routine barrier.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.
+- `src/splitting/tests.rs`: direct TeX82 split-top pruning and adjusted split-skip tests.
 - `src/transaction.rs`: lifetime-bound recursive execution transactions that restore mode and Universe roots unless explicitly committed.
 - `src/timing.rs`: process-local execution telemetry timer with an inert fallback for WASM hosts that do not provide `std::time::Instant`.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
