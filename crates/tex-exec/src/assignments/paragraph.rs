@@ -1,6 +1,7 @@
 use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::font::PdfFontCode;
+use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::{ContentHash, ParagraphShapeLine, PenaltyArrayKind, PureMemoKey, Universe};
@@ -80,9 +81,14 @@ pub(crate) fn ensure_horizontal_for_character(
     Ok(())
 }
 
-/// Performs TeX82 `new_graf` after command control has retained the
+/// Performs TeX82 §1091 `new_graf` after command control has retained the
 /// triggering command and scheduled `\everypar`.  Canonical main control
 /// owns that scheduling; this helper deliberately accepts no input source.
+///
+/// `new_graf` is reachable only from §1090's `vmode+...` cases, so this
+/// helper is only ever entered from (internal) vertical mode.  §1092 sends
+/// `hmode+start_par` and `mmode+start_par` to `indent_in_hmode` instead,
+/// which starts no paragraph and therefore pushes no `\everypar`.
 pub(crate) fn start_canonical_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -110,18 +116,47 @@ pub(crate) fn start_canonical_paragraph(
             }
             Ok(())
         }
-        Mode::Horizontal | Mode::RestrictedHorizontal => {
-            if indent {
-                append_indent_box(nest, stores)?;
-            }
-            Ok(())
-        }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
             token: tex_state::token::Token::Cs(stores.intern("par").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "canonical paragraph start",
         }),
+    }
+}
+
+/// TeX82 §1093 `indent_in_hmode`, which §1092 selects for both
+/// `hmode+start_par` and `mmode+start_par`.
+///
+/// Neither `\indent` nor `\noindent` begins a paragraph once one is already
+/// under way, so neither reaches §1091 `new_graf` and neither pushes
+/// `\everypar`.  `\noindent` (`cur_chr=0`) contributes nothing at all.
+/// `\indent` appends a `\parindent`-wide null box: in (restricted)
+/// horizontal mode directly, resetting the space factor to 1000, and in math
+/// mode wrapped in an ordinary noad whose nucleus is a `sub_box`.
+pub(crate) fn indent_in_hmode(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    indent: bool,
+) -> Result<(), ExecError> {
+    if !indent {
+        return Ok(());
+    }
+    match nest.current_mode() {
+        Mode::Math | Mode::DisplayMath => {
+            let box_node = make_indent_box(stores);
+            let list = stores.freeze_node_list(&[box_node]);
+            nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::SubBox(list),
+            )));
+            Ok(())
+        }
+        _ => {
+            flush_pending_hchars(nest, stores)?;
+            nest.current_list_mut().set_space_factor(1000);
+            append_indent_box(nest, stores)
+        }
     }
 }
 
@@ -163,12 +198,8 @@ fn start_paragraph(
             }
             Ok(())
         }
-        Mode::Horizontal | Mode::RestrictedHorizontal => {
-            if indent {
-                append_indent_box(nest, stores)?;
-            }
-            Ok(())
-        }
+        // §1092 `hmode+start_par`: `indent_in_hmode`, not `new_graf`.
+        Mode::Horizontal | Mode::RestrictedHorizontal => indent_in_hmode(nest, stores, indent),
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
             token: tex_state::token::Token::Cs(stores.intern("par").symbol()),

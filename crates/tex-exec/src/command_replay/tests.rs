@@ -1561,6 +1561,112 @@ fn production_driver_schedules_everypar_before_replayed_first_character() {
     );
 }
 
+/// Counts the `\everypar` token-list pushes a canonical run commits.
+fn everypar_push_count(source: &[u8]) -> usize {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observations
+        .0
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Push
+                        && record.reason == InputReason::EveryPar
+            )
+        })
+        .count()
+}
+
+/// tex.web §1090 routes only `vmode+start_par` to §1091 `new_graf`, the sole
+/// site that pushes `\everypar`. §1092 routes both `hmode+start_par` and
+/// `mmode+start_par` to §1093 `indent_in_hmode`, which appends the
+/// `\parindent` box without starting a paragraph.
+///
+/// So a paragraph opened by `\indent` and continued by a second `\indent`
+/// -- plain.tex's `\item`/`\textindent` shape -- replays `\everypar` exactly
+/// once, and a `\noindent` inside a live paragraph replays it not at all.
+#[test]
+fn indent_inside_a_live_paragraph_does_not_replay_everypar() {
+    assert_eq!(
+        everypar_push_count(br"\everypar{\relax}\indent a\par\end"),
+        1,
+        "the vertical-mode \\indent starts the paragraph"
+    );
+    assert_eq!(
+        everypar_push_count(br"\everypar{\relax}\indent a\indent b\par\end"),
+        1,
+        "the second \\indent is §1093 indent_in_hmode, not §1091 new_graf"
+    );
+    assert_eq!(
+        everypar_push_count(br"\everypar{\relax}\indent a\noindent b\par\end"),
+        1,
+        "\\noindent inside a paragraph contributes nothing at all"
+    );
+}
+
+/// §1093 appends the `\parindent`-wide null box for `\indent` in horizontal
+/// mode and resets the space factor to 1000, without pushing a new nest
+/// level; `\noindent` is inert there and touches neither.
+#[test]
+fn indent_in_horizontal_mode_appends_the_parindent_box_and_resets_space_factor() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    universe.set_dimen_param(DimenParam::PAR_INDENT, Scaled::from_raw(1_310_720));
+    register_source(
+        &mut control,
+        br"\indent\spacefactor=1234 \noindent\count1=\spacefactor \indent\count2=\spacefactor ",
+    );
+    loop {
+        match control
+            .step(&mut universe)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        universe.count(1),
+        1234,
+        "\\noindent in horizontal mode does nothing at all"
+    );
+    assert_eq!(
+        universe.count(2),
+        1000,
+        "\\indent in horizontal mode resets the space factor"
+    );
+    let widths: Vec<_> = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .map(|node| match node {
+            Node::HList(box_node) => box_node.width.raw(),
+            other => panic!("unexpected paragraph node {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        widths,
+        vec![1_310_720, 1_310_720],
+        "one indent box per \\indent, none for \\noindent, and no nested list"
+    );
+}
+
 /// tex.web §473 keeps `scan_toks`'s delimiting braces out of the collected
 /// list, and §1226 puts one enclosing pair back only for `output_routine_loc`.
 #[test]

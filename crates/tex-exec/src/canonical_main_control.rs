@@ -7978,22 +7978,20 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphIndent { indent } => {
-            if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
-                // TeX82 `main_control` routes `mmode+start_par` through
-                // `indent_in_hmode`: `\indent` contributes an ordinary
-                // noad whose nucleus is the paragraph-indent null box, while
-                // `\noindent` contributes nothing. It does not begin a
-                // paragraph from math mode.
-                if indent {
-                    let box_node = crate::assignments::make_indent_box(stores);
-                    let list = stores.freeze_node_list(&[box_node]);
-                    modes.current_list_mut().push(Node::MathNoad(MathNoad::new(
-                        NoadKind::Normal(NoadClass::Ord),
-                        MathField::SubBox(list),
-                    )));
-                }
-            } else {
+            // TeX82 §1090 routes only `vmode+start_par` to §1091 `new_graf`,
+            // the single site that pushes `\everypar`. §1092 routes both
+            // `hmode+start_par` and `mmode+start_par` to §1093
+            // `indent_in_hmode`, which appends the paragraph-indent box (as
+            // an ordinary `sub_box` noad in math mode) without beginning a
+            // paragraph -- so an `\indent` inside a paragraph already under
+            // way must not replay `\everypar` a second time.
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
                 start_canonical_paragraph(command.state, modes, stores, indent)?;
+            } else {
+                crate::assignments::indent_in_hmode(modes, stores, indent)?;
             }
             Ok(ReplayStep::Continue)
         }

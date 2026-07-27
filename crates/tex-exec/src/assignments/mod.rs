@@ -87,7 +87,7 @@ pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
     ParagraphBreakResult, display_line_dimensions, end_paragraph, end_paragraph_with_consumer,
-    ensure_horizontal_for_character, interrupt_canonical_paragraph_for_display,
+    ensure_horizontal_for_character, indent_in_hmode, interrupt_canonical_paragraph_for_display,
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph, start_canonical_paragraph,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
