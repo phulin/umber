@@ -299,36 +299,51 @@ matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` �
 returning `ScannedStep::OffSave`/`OffSaveBottomDrop` so the execute phase
 prints the matching "Missing ... inserted"/"Extra ..." text once, after
 scanning already ran the recovery. It is written as a general, reusable
-routine rather than inlined at its first call site (TeX82 §1091's
+routine rather than inlined at its first call site (TeX82 §1095's
 `head_for_vmode` restricted-`hmode` branch, reached by `\vskip`/`\vfil`/
 `\vfill`/`\vss`/`\vfilneg` inside an `\hbox`); future primitives that reach
 `off_save` in other modes should call it too instead of re-deriving the
 four-way group dispatch.
 
-For TeX82 §1095's `hmode+stop` `head_for_vmode` branch, `tex-command` likewise
-owns the two exact backups: it first backs up `\end` (or `\dump`), then backs
-up the synthesized primitive `\par` with inserted input ownership. The
-executor applies only the typed paragraph transition, after which command
-processing retires that inserted recovery level and redelivers the stop in
-vertical mode. This precedes §46's `its_all_over` end-game decision; no
-executor source-read path may manufacture either token.
+`\end` and `\dump` (TeX82's `stop` command) dispatch on `abs(mode)` like
+every other main-control case, and every arm is one of the general recoveries
+above:
 
-At TeX82 §46's `its_all_over` output hand-off, that redelivered vertical stop
-first retires its exhausted backup, then receives a fresh command-owned backup
-before the `\output` token list is pushed. This preserves the final-stop retry
-below the output routine and fixes the canonical input order independently of
-the executor's typed page/output effects.
+- `hmode+stop` (§1094) takes §1095's `head_for_vmode`. Unrestricted
+  horizontal mode backs up `\end` (or `\dump`) and then backs up the
+  synthesized primitive `\par` with inserted input ownership, both owned by
+  `tex-command`; restricted horizontal mode takes the same §1064 `off_save`
+  the `\vskip` family does.
+- `mmode+stop` is one of §1046's math-only cases, so §1047's
+  `insert_dollar_sign` closes the math and retries the stop in the resulting
+  mode.
+- `vmode+stop` (§1045) is §1054's `its_all_over`, and it is the only exit
+  from main control.
 
-When TeX82 §46 reaches the `max_dead_cycles` escape after completed output
-routines, replay preserves that same final-stop backup and then publishes the
-single detached forced-shipout effect through the ordinary artifact commit
-boundary. The command seam does not reconstruct the repeated dead-cycle page
-lists; their only canonical trace consequence is that ordered DVI effect.
+§1054 is the whole end-game decision and it has exactly two outcomes. §1051's
+`privileged` first rejects any mode below outer vertical -- inside a `\vbox`,
+an `\insert`, or `\output` itself -- with `report_illegal_case`. Then the job
+ends if and only if the current page and the contribution list are both empty
+and the last output was not a dead cycle. Otherwise the stop is backed up and
+`\hbox to \hsize{}`, `\vfill`, and `\penalty-'10000000000` are appended to
+the contribution list before §994's `build_page` runs.
+
+Nothing about `\output` is decided there. Whether the ejection reaches an
+output routine at all, with which `\box255`, and whether §1005's dead-cycle
+escape ships the page directly instead, is §1005/§1012's decision, and §1025
+is the single place a `\output` token list is ever pushed. A `stop` dispatch
+that consulted `\output` itself would run the routine on a job with nothing
+to print, where TeX82 reports "No pages of output." instead.
+
+Once `its_all_over` is true, §1335's `final_cleanup` unwinds every input
+level main control has abandoned -- the root file at end of text, an
+unfinished macro body, a live token list -- without reading any of them, and
+the job-termination effect belongs to that step alone.
 
 Canonical `\shipout` replay likewise crosses the executor only as a completed
 box. The artifact kernel receives an already-published detached input summary;
 it must not construct a `tex_lex::InputStack` as a publication fallback.
-TeX82 §46 display diagnostics follow the same seam: `\show` consumes and
+TeX82 §1293's `show_whatever` follows the same seam: `\show` consumes and
 renders its raw operand, while `\showthe` and `\showbox` complete their
 expanded/internal scans in `tex-command`; replay writes only the frozen
 diagnostic request and never probes an executor input source.
@@ -342,9 +357,9 @@ Replay models that routine as an explicit output group and internal-vertical
 mode. Its required opening brace is consumed by `scan_left_brace`, not as a
 nested ordinary group; the matching close ends its paragraph, leaves the
 output group, and restores outer vertical mode before output-list retirement.
-The final-stop backup below the output list can therefore retire before a later
+A stop backed up below the output list can therefore retire before a later
 `its_all_over` retry, instead of spuriously taking `head_for_vmode`'s
-horizontal recovery path (TeX82 §§46, 1095, 1131).
+horizontal recovery path (TeX82 §§1025, 1095, 1131).
 
 At TeX82 §23's `check_outer_validity` boundary, an aligning scanner reports
 the typed `outer_validity` alignment recovery after its EOF diagnostic and
