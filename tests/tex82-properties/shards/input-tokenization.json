@@ -506,7 +506,7 @@
           "test": "raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "csname_expands_characters_then_injects_a_relaxed_named_control_sequence"
         }
       ],
@@ -908,7 +908,7 @@
           "test": "parameter_replay_uses_nearest_macro_body_param_start"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
         },
         {
@@ -967,27 +967,27 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "expandafter_and_noexpand_preserve_canonical_raw_order"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "csname_expands_characters_interns_once_and_requires_endcsname"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "backup_replays_the_exact_delivered_token_above_expansion"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "ordinary_loop_expands_macro_body_on_the_canonical_raw_path"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "input_uses_only_capability_registered_backing_and_returns_to_parent"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
         }
       ],
@@ -1109,19 +1109,19 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "conversion_rendering_publishes_recovery_input_before_its_first_token"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "the_toks_pushes_immutable_stored_input_without_reading_beyond_target"
         },
         {
-          "path": "crates/tex-command/src/processor/expand.rs",
+          "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "string_reads_its_target_with_normal_scanner_status_then_restores_definition"
         },
         {
