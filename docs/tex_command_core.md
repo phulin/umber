@@ -730,8 +730,14 @@ enters when it receives the construction. Replay enters the typed group and
 mode, schedules the matching immutable `\everyhbox`/`\everyvbox` command
 episode (§1083 begins that token list after the brace is gone), and applies
 pure packing only after the body closes; scoped `\setbox` assignment then
-occurs at the same aggregate boundary. An active box body therefore counts
-brace depth from one, with no opener still owed to it.
+occurs at the same aggregate boundary. An active box body therefore owes no
+opener: the body's own closer is exactly the brace delivered while the
+innermost group is still the group `scan_spec` opened. Braces _inside_ the
+body are ordinary `simple_group` levels (§1063's `non_math(left_brace):
+new_save_level(simple_group)`), closed by §1069's `simple_group: unsave` like
+any other group; replay keeps no separate brace-depth count, because §1068's
+`handle_right_brace` dispatches purely on `cur_group` and the save stack
+already records every open level.
 If the opener is malformed, §403 recovers by backing up the rejected command
 and proceeding as though a brace had been read; replay enters the typed box
 group without fabricating a command event, so that backed-up command becomes
@@ -745,9 +751,9 @@ deferred to replay) and the same mandatory-opening-brace scan
 `\hbox`/`\vbox`/`\vtop` use (§1099's own `new_save_level(insert_group);
 scan_left_brace`). Replay enters `GroupKind::Insert`/internal
 vertical mode, applies §1099's `normal_paragraph` reset, and reuses the box
-family's brace-matching bookkeeping (`active_boxes`/`BoxBeginGroup`/
-`BoxEndGroup`) purely for nested-brace counting -- an insertion body is not a
-box and schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
+family's body-closing bookkeeping (`active_boxes`/`BoxEndGroup`) purely to
+recognize its own closing brace -- an insertion body is not a box and
+schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
 dedicated branch (`finish_insert_or_adjust_group`): §1100's `end_graf`, then
 TeX82's `vpack` macro (unconstrained depth, but the box's _current_
 `\vbadness`/`\vfuzz`, unlike an ordinary `\vbox`) packages the body, and the
@@ -803,7 +809,7 @@ dimension (`\lower`/`\moveright` keep it, `\raise`/`\moveleft` negate it), and
 then `scan_box`'s own operand (§1076): any `make_box` command. `\hbox`/`\vbox`/
 `\vtop` reuse `scan_box_construction` and are returned as an ordinary
 `ScannedBoxShiftPayload::Construction`, deferring to the same
-`active_boxes`/`BoxBeginGroup`/`BoxEndGroup` machinery as `BeginBox` --
+`active_boxes`/`BoxEndGroup` machinery as `BeginBox` --
 `ActiveReplayBox` carries the pending signed shift, applied to
 `shift_amount(cur_box)` immediately before `BoxEndGroup`'s ordinary
 (non-register, non-shipout, non-leader) append, since a box-shift's own box
