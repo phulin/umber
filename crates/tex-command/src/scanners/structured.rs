@@ -483,6 +483,34 @@ pub enum MathFamilySize {
     ScriptScript,
 }
 
+impl MathFamilySize {
+    /// Recognizes TeX82 §1234's `def_family` command code.
+    ///
+    /// `def_family`'s `chr_code` selects the size bank, and every routine that
+    /// reaches one of the three primitives -- §415's font-identifier fetch,
+    /// §577's `scan_font_ident`, and §1257's assignment -- needs the same
+    /// mapping. `None` is "this command is not `def_family`".
+    #[must_use]
+    pub const fn of_primitive(primitive: UnexpandablePrimitive) -> Option<Self> {
+        match primitive {
+            UnexpandablePrimitive::TextFont => Some(Self::Text),
+            UnexpandablePrimitive::ScriptFont => Some(Self::Script),
+            UnexpandablePrimitive::ScriptScriptFont => Some(Self::ScriptScript),
+            _ => None,
+        }
+    }
+}
+
+impl From<MathFamilySize> for tex_state::math::MathFontSize {
+    fn from(size: MathFamilySize) -> Self {
+        match size {
+            MathFamilySize::Text => Self::Text,
+            MathFamilySize::Script => Self::Script,
+            MathFamilySize::ScriptScript => Self::ScriptScript,
+        }
+    }
+}
+
 /// The completed family index prefix of `\\textfont`, `\\scriptfont`, or
 /// `\\scriptscriptfont`.  Resolving the following font meaning is deliberately
 /// a separate typed operation, so source delivery cannot leak into replay.

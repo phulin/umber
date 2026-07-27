@@ -164,6 +164,32 @@ const fn missing_number_result(level: InternalLevel) -> InternalValue {
     }
 }
 
+/// TeX82 §413's `toks_register, assign_toks, def_family, set_font, def_font`
+/// case: the five command codes routed to §415.
+///
+/// §415 is guarded on `level=tok_val`, and it is the only case in §413's table
+/// that is, so the guard has to be answered from the command alone -- before
+/// the fetch scans a register index, a family index, or a font identifier.
+const fn is_token_list_or_font_identifier(meaning: Meaning) -> bool {
+    matches!(
+        meaning,
+        // `assign_toks`: `\output`, `\everypar`, ... and `\toksdef` names.
+        Meaning::TokParam(_) | Meaning::ToksRegister(_)
+            // `set_font`: `\font`-defined identifiers and `\nullfont`.
+            | Meaning::Font(_)
+            | Meaning::UnexpandablePrimitive(
+                // `toks_register`: `\toks`.
+                UnexpandablePrimitive::Toks
+                // `def_font`: `\font`.
+                | UnexpandablePrimitive::Font
+                // `def_family`: the three math size banks.
+                | UnexpandablePrimitive::TextFont
+                | UnexpandablePrimitive::ScriptFont
+                | UnexpandablePrimitive::ScriptScriptFont,
+            )
+    )
+}
+
 /// TeX82 §454's `while scan_keyword("l") do ... incr(cur_order)`.
 ///
 /// Every `l` after `fil` is consumed, and one past `filll` is an error that
@@ -1418,11 +1444,14 @@ impl CommandProcessor<'_> {
     /// `\count0=\skip3`, `\dimen0=\parskip`, and `\hsize=\baselineskip` read
     /// the register's width instead of silently scanning as zero.
     ///
-    /// `ident_val` and `tok_val` never enter the loop in tex.web: §416 has
+    /// `ident_val` and `tok_val` never enter the loop in tex.web: §415 has
     /// already replaced a font identifier or token list requested below
-    /// `tok_val` with a backed-up zero. `None` reports that same case to
-    /// [`Self::scan_something_internal`], which turns it into
-    /// [`InternalScan::NotANumber`].
+    /// `tok_val` with a backed-up zero, and
+    /// [`Self::scan_something_internal`]'s own §415 guard answers that case
+    /// before the fetch runs. `None` reports the same §415 branch from here,
+    /// so a value that reaches the loop above `tok_val` by some other route
+    /// still recovers as [`InternalScan::NotANumber`] rather than coercing a
+    /// font into a number.
     fn coerce_internal_value(
         &mut self,
         mut value: InternalValue,
@@ -1476,6 +1505,19 @@ impl CommandProcessor<'_> {
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
+        // §415 is titled "Fetch a token list or font identifier, provided that
+        // |level=tok_val|", and its `level<>tok_val` test runs BEFORE any
+        // operand is scanned: the whole branch is `back_error;
+        // scanned_result(0)(dimen_val)`. Testing it after the fetch instead
+        // would run §415's own `scan_eight_bit_int`, §577's
+        // `scan_four_bit_int`, and §415's `back_input; scan_font_ident` on a
+        // path tex.web never reaches, consuming tokens TeX leaves in place.
+        // The `back_error` half stays caller-owned (see [`InternalScan`]).
+        if level != InternalLevel::Tokens && is_token_list_or_font_identifier(command.meaning()) {
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe_internal_value(missing_number_result(level));
+            return Ok(InternalScan::NotANumber);
+        }
         let Some(value) = self.fetch_internal_value(command)? else {
             return Ok(InternalScan::NotInternal);
         };
@@ -1745,35 +1787,28 @@ impl CommandProcessor<'_> {
                 i32::try_from(u32::from(character)).expect("characters fit in i32"),
             ),
             Meaning::MathCharGiven(code) => InternalValue::Integer(i32::from(code)),
-            // TeX82 §424 represents `set_font`, `def_font`, and `def_family`
-            // as ident_val at the token-list level. Preserve the control
-            // sequence identity instead of rendering a font number or name.
-            Meaning::Font(font) => self.font_identity(font),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
-                self.font_identity(self.state.current_font())
-            }
-            Meaning::UnexpandablePrimitive(
-                primitive @ (UnexpandablePrimitive::TextFont
+            // TeX82 §415's font-identifier branch, verbatim: "back_input;
+            // scan_font_ident; scanned_result(font_id_base+cur_val)(ident_val)".
+            //
+            // §415 does NOT read the font off the command it already holds. It
+            // pushes that command back and re-reads it through §577's
+            // `scan_font_ident`, which is the only routine in TeX that turns a
+            // token into a font -- so `def_family`'s §435 family index, §406's
+            // space skipping, and the "Missing font identifier" recovery all
+            // live in exactly one place. Reading the font here instead skipped
+            // §415's backup level, its recovery record, and the re-delivery of
+            // the command, which is five semantic events per `\the\font` and
+            // per `\the\textfont<n>` (umber2-johp.259).
+            Meaning::Font(_)
+            | Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Font
+                | UnexpandablePrimitive::TextFont
                 | UnexpandablePrimitive::ScriptFont
-                | UnexpandablePrimitive::ScriptScriptFont),
+                | UnexpandablePrimitive::ScriptScriptFont,
             ) => {
-                let size = match primitive {
-                    UnexpandablePrimitive::TextFont => crate::MathFamilySize::Text,
-                    UnexpandablePrimitive::ScriptFont => crate::MathFamilySize::Script,
-                    UnexpandablePrimitive::ScriptScriptFont => crate::MathFamilySize::ScriptScript,
-                    _ => unreachable!("font-family primitive is exhaustive"),
-                };
-                let family = self.scan_math_family(size)?;
-                self.font_identity(self.state.math_family_font(
-                    match family.size {
-                        crate::MathFamilySize::Text => tex_state::math::MathFontSize::Text,
-                        crate::MathFamilySize::Script => tex_state::math::MathFontSize::Script,
-                        crate::MathFamilySize::ScriptScript => {
-                            tex_state::math::MathFontSize::ScriptScript
-                        }
-                    },
-                    family.family,
-                ))
+                self.back_input(command.copy_for_backup())?;
+                let font = self.scan_font_selector()?;
+                self.font_identity(font)
             }
             _ => return Ok(None),
         };

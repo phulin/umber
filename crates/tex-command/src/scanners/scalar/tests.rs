@@ -1630,6 +1630,182 @@ fn font_integers_read_the_named_font_rather_than_the_current_one() {
     assert_eq!(processor.scan_integer().expect("skewchar scans").value, 96);
 }
 
+/// TeX82 §415's font-identifier branch is `back_input; scan_font_ident`.
+///
+/// §415 never reads the font off the command it already holds: it pushes that
+/// command back and re-reads it through §577. The backup level, its recovery
+/// record, and the command's second delivery are all observable, and reading
+/// the font in place emitted only the internal result -- five events short per
+/// `\the<font identifier>` (umber2-johp.259).
+#[test]
+fn the_font_identifier_backs_the_command_up_and_rereads_it_through_scan_font_ident() {
+    use tex_state::font::NULL_FONT;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let tenrm = universe.intern("tenrm").symbol();
+    let named = universe
+        .try_copy_font_with_identifier(NULL_FONT, tenrm)
+        .expect("a font identifier is definable from nullfont");
+    universe.set_meaning(tenrm, Meaning::Font(named));
+    push(&mut command, vec![Token::Cs(tenrm)]);
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        let target = processor
+            .get_x_token()
+            .expect("the font identifier delivers")
+            .expect("input is not exhausted");
+        let value = processor
+            .scan_the_internal_value(&target)
+            .expect("§415 fetches a font identifier")
+            .expect("`\\tenrm` is an internal quantity");
+        assert_eq!(value, InternalValue::Font(tenrm));
+    }
+
+    let backups = recorder
+        .0
+        .iter()
+        .filter(|record| {
+            matches!(record, CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup)
+        })
+        .count();
+    assert_eq!(backups, 1, "§415 backs the font identifier up exactly once");
+    let deliveries = recorder
+        .0
+        .iter()
+        .filter(|record| {
+            matches!(record, CommandObservation::Command(record)
+                if record.boundary == crate::CommandDeliveryBoundary::Raw)
+        })
+        .count();
+    assert_eq!(
+        deliveries, 2,
+        "§415's `back_input` makes §577 deliver the same command a second time"
+    );
+    let backup = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup)
+        })
+        .expect("the font identifier is backed up");
+    assert!(
+        matches!(
+            &recorder.0[backup + 1],
+            CommandObservation::Recovery(recovery)
+                if recovery.tokens == vec![ObservedToken::ControlSequence("tenrm".into())]
+        ),
+        "the recovery record names the backed-up font identifier"
+    );
+}
+
+/// TeX82 §577's `def_family` branch: `m:=cur_chr; scan_four_bit_int;
+/// f:=equiv(m+cur_val)`.
+///
+/// `\textfont`, `\scriptfont`, and `\scriptscriptfont` are font identifiers
+/// wherever `scan_font_ident` runs -- not only in §415 -- so `\skewchar
+/// \textfont1` reads family 1's text font. Handling the family index outside
+/// `scan_font_ident` left every other caller unable to name one.
+#[test]
+fn scan_font_ident_resolves_a_math_family_font() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::math::MathFontSize;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let teni = universe.intern("teni").symbol();
+    let family_font = universe
+        .try_copy_font_with_identifier(NULL_FONT, teni)
+        .expect("a font identifier is definable from nullfont");
+    universe.set_math_family_font(MathFontSize::Text, 1, family_font, false);
+    universe.set_font_skew_char(family_font, 127);
+    let text_font = universe.intern("textfont").symbol();
+    universe.set_meaning(text_font, Meaning::UnexpandablePrimitive(P::TextFont));
+    let skew_char = universe.intern("skewchar").symbol();
+    universe.set_meaning(skew_char, Meaning::UnexpandablePrimitive(P::SkewChar));
+
+    push(
+        &mut command,
+        vec![Token::Cs(skew_char), Token::Cs(text_font), char_token('1')],
+    );
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor.scan_integer().expect("skewchar scans").value,
+        127,
+        "§426 fetches through §577, which resolves `\\textfont1`"
+    );
+}
+
+/// TeX82 §415 tests `level<>tok_val` before it scans any operand.
+///
+/// The whole `level<>tok_val` branch is `back_error;
+/// scanned_result(0)(dimen_val)`: §415's own `scan_eight_bit_int`, §577's
+/// `scan_four_bit_int`, and §415's `back_input; scan_font_ident` are all
+/// unreachable on that path, so `\count0=\textfont1` leaves both `\textfont`
+/// and `1` in the input rather than eating the family index.
+#[test]
+fn an_integer_request_for_a_font_identifier_scans_no_operand() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let text_font = universe.intern("textfont").symbol();
+    universe.set_meaning(text_font, Meaning::UnexpandablePrimitive(P::TextFont));
+    push(
+        &mut command,
+        vec![Token::Cs(text_font), char_token('1'), char_token('7')],
+    );
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let scanned = processor.scan_integer().expect("§415 recovers");
+    assert_eq!(scanned.value, 0);
+    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+
+    let mut replayed = Vec::new();
+    while let Some(command) = processor.get_x_token().expect("replay delivers") {
+        replayed.push(match command.meaning() {
+            Meaning::CharToken { ch, .. } => ch,
+            Meaning::UnexpandablePrimitive(P::TextFont) => '\\',
+            other => panic!("unexpected replayed meaning {other:?}"),
+        });
+    }
+    assert_eq!(
+        replayed,
+        vec!['\\', '1', '7'],
+        "the rejected command is backed up and its family index is untouched"
+    );
+}
+
 /// TeX82 §407's failed match restores the input as two levels, not one.
 ///
 /// `back_input` undoes the offending delivery -- one observed backup push

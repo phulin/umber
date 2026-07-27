@@ -3747,12 +3747,8 @@ fn scan_command(
         | UnexpandablePrimitive::ScriptScriptFont),
     ) = command.meaning()
     {
-        let size = match primitive {
-            UnexpandablePrimitive::TextFont => tex_command::MathFamilySize::Text,
-            UnexpandablePrimitive::ScriptFont => tex_command::MathFamilySize::Script,
-            UnexpandablePrimitive::ScriptScriptFont => tex_command::MathFamilySize::ScriptScript,
-            _ => unreachable!(),
-        };
+        let size = tex_command::MathFamilySize::of_primitive(primitive)
+            .expect("the outer match restricts this to `def_family`");
         let family = processor.scan_math_family(size).map_err(command_error)?;
         // tex.web section 23069-23070 (def_family): scan_four_bit_int is
         // followed by scan_optional_equals before scan_font_ident. Skipping
@@ -7837,13 +7833,8 @@ fn apply_scanned_step(
             font,
             global,
         } => {
-            let size = match family.size {
-                tex_command::MathFamilySize::Text => MathFontSize::Text,
-                tex_command::MathFamilySize::Script => MathFontSize::Script,
-                tex_command::MathFamilySize::ScriptScript => MathFontSize::ScriptScript,
-            };
             stores.set_math_family_font(
-                size,
+                MathFontSize::from(family.size),
                 family.family,
                 font,
                 assignment_global(global, stores),
