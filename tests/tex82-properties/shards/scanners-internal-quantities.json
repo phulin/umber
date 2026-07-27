@@ -618,8 +618,7 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "character_definition_scanner_recovers_out_of_range_operands_to_zero"
-        },
-        { "path": "crates/tex-exec/src/math/scan/tests.rs", "test": "delimiter_command_scans_all_twenty_seven_bits" }
+        }
       ],
       "planned_coverage": [
         {
@@ -1180,11 +1179,6 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "invalid_delimiter_pushback_preserves_traced_origin"
-        },
-        { "path": "crates/tex-exec/src/math/scan/tests.rs", "test": "delimiter_command_scans_all_twenty_seven_bits" },
-        {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "generalized_fraction_delimiters_read_delimiter_codes_not_integers"
         },
@@ -1195,7 +1189,7 @@
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix",
           "cases": [
             "direct delimiter",
