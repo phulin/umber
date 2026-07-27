@@ -592,11 +592,15 @@
       "equivalence_cases": ["Ordinary/global and nested/restored assignments before and after preparation."],
       "recovery_cases": ["Invalid values diagnose and retain the canonical effective value."],
       "semantic_owner": "tex-exec::assignment-state",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "prepare_mag_bounds_and_freezes_first_effective_value"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -646,11 +650,15 @@
       "equivalence_cases": ["Outer/internal modes and source/replay after local/global histories."],
       "recovery_cases": ["Repeated invalid input remains finite and stop cannot bypass pending material."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "main_control_error_privilege_and_stop_paths_are_finite"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -885,7 +893,7 @@
       "equivalence_cases": ["Present/missing `to`, direct/replayed targets, and all stream classes."],
       "recovery_cases": ["Missing `to` diagnoses then continues; invalid targets recover through get_r_token."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-vq14",
@@ -893,6 +901,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "read_to_definition_scans_stream_keyword_target_and_installs_tokens"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "read-to-definition strict xfail",
+            "linked to umber2-vq14",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -911,7 +928,7 @@
       "equivalence_cases": ["Named/numbered, ordinary/prefixed, local/global, replay/restoration, direct/copied RHS."],
       "recovery_cases": ["Bad braces/indices/ranges, overflow, and zero divisors retain prior values as specified."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-sb8t",
@@ -919,6 +936,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "typed_parameter_register_and_arithmetic_assignments_cover_scope_copy_and_bounds"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "parameters-registers-arithmetic strict xfail",
+            "linked to umber2-sb8t",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -935,7 +961,7 @@
       "equivalence_cases": ["Local/global/globaldefs and direct/replayed setbox with optional equals."],
       "recovery_cases": ["Forbidden alignment/accent contexts diagnose improper setbox without scanning a box."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-t7fl",
@@ -943,6 +969,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "setbox_request_encodes_scope_and_rejects_disallowed_contexts"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "setbox-request strict xfail",
+            "linked to umber2-t7fl",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -961,11 +996,15 @@
       "equivalence_cases": ["Valid boundary values in outer/internal modes and direct/replayed commands."],
       "recovery_cases": ["Wrong mode, bad space factor/prevgraf, and void box diagnose or no-op as specified."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -985,11 +1024,15 @@
       "equivalence_cases": ["Optional equals, local/global/globaldefs, nested restoration, and replay."],
       "recovery_cases": ["Dimension scanner recovery supplies each malformed pair component before installation."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "parshape_assignment_scans_pair_count_and_restores_local_shape"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1013,7 +1056,7 @@
       ],
       "recovery_cases": ["Production pattern use diagnoses and flushes through the matching right brace."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-ktj0",
@@ -1021,6 +1064,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "hyphenation-data strict xfail",
+            "linked to umber2-ktj0",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1037,7 +1089,7 @@
       "equivalence_cases": ["Direct font identifiers, current-font aliases, nested groups, and repeated assignment."],
       "recovery_cases": ["Invalid fontdimen and font identifier scans diagnose before mutation."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-90qe",
@@ -1045,6 +1097,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "font-parameters strict xfail",
+            "linked to umber2-90qe",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1065,7 +1126,7 @@
       ],
       "recovery_cases": ["Illegal scaled values become 1000 and improper at sizes become 10pt before load/reuse."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-jrvz",
@@ -1073,6 +1134,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "font-definition strict xfail",
+            "linked to umber2-jrvz",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1089,7 +1159,7 @@
       "equivalence_cases": ["All four modes, log open/closed, nested groups, and repeated commands."],
       "recovery_cases": ["No value scanning occurs; an unresolved primitive is rejected before this action."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-mp0d",
@@ -1097,6 +1167,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "interaction_assignment_updates_mode_and_selector_for_log_state"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "interaction-mode strict xfail",
+            "linked to umber2-mp0d",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1175,7 +1254,7 @@
       "equivalence_cases": ["Explicit/missing extension, optional equals, streams 0/15, and direct/replayed commands."],
       "recovery_cases": ["Failed open leaves the stream closed after retiring its prior handle."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-chi1",
@@ -1183,6 +1262,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "openin_closein_replace_stream_state_and_apply_default_extension"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "input-stream-open-close strict xfail",
+            "linked to umber2-chi1",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1201,7 +1289,7 @@
       "equivalence_cases": ["Empty/nonempty, short/wrapping, nested macro, and source/replay message text."],
       "recovery_cases": ["Runaway text follows scan_toks recovery before any partial message is emitted."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-19aw",
@@ -1209,6 +1297,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "message_expands_balanced_text_and_applies_terminal_line_spacing"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "messages strict xfail",
+            "linked to umber2-19aw",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1227,7 +1324,7 @@
       "equivalence_cases": ["Errhelp present/absent, first/repeated, scroll/error-stop interaction, and replay."],
       "recovery_cases": ["Error continuation preserves input and does not retain temporary message storage."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-djge",
@@ -1235,6 +1332,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "errmessage_selects_user_or_once_only_builtin_help_and_clears_flag"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "errmessage-help strict xfail",
+            "linked to umber2-djge",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1255,11 +1361,15 @@
       ],
       "recovery_cases": ["Runaway or missing brace follows scan_toks recovery before transformation."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "case_shift_substitutes_character_codes_preserves_commands_and_replays"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1281,7 +1391,7 @@
         "Invalid command operands are impossible after primitive resolution and fail loudly if constructed."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-abvi",
@@ -1289,6 +1399,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "show-dispatch strict xfail",
+            "linked to umber2-abvi",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1307,11 +1426,15 @@
       "equivalence_cases": ["Control sequence/character and call/long/outer/long-outer/end-template meanings."],
       "recovery_cases": ["EOF raw-token recovery precedes meaning rendering."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1331,11 +1454,15 @@
       "equivalence_cases": ["Void/nonvoid, boundary registers, nested groups, and replay."],
       "recovery_cases": ["Out-of-range selectors recover through the eight-bit scanner before inspection."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "showbox_scans_register_and_distinguishes_void_from_box_contents"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1355,11 +1482,15 @@
       "equivalence_cases": ["Integer/dimension/glue/muglue/token/font values from named and register sources."],
       "recovery_cases": ["Invalid internal quantities follow the_toks scanner recovery before printing."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1383,7 +1514,7 @@
         "Interactive continuation returns through the ordinary error routine without duplicating inspection."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-74vb",
@@ -1391,6 +1522,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_completion_routes_transcript_and_adjusts_error_count_by_interaction"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "show-completion strict xfail",
+            "linked to umber2-74vb",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1415,7 +1555,7 @@
         "Production dump prints the canonical INITEX-only diagnostic and returns without format storage; preexisting incomplete groups/conditions are reported and condition nodes are freed without invoking ordinary delimiter recovery."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-xfj3",
@@ -1423,6 +1563,15 @@
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "final-cleanup-end-or-dump strict xfail",
+            "linked to umber2-xfj3",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     }

@@ -27,6 +27,12 @@
       "properties": {
         "id": { "$ref": "#/$defs/slug" },
         "property_id": { "type": "string", "minLength": 1 },
+        "profile": { "enum": ["initex", "production"] },
+        "font_inputs": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
         "source": { "type": "string", "pattern": "^[^/]+\\.tex$" },
         "provenance": { "$ref": "#/$defs/provenance" },
         "projection": { "$ref": "#/$defs/projection" },
@@ -76,7 +82,8 @@
             "predicate-outcomes",
             "observations",
             "execution-boundaries",
-            "state"
+            "state",
+            "terminal-checks"
           ]
         },
         "count_registers": {
@@ -121,7 +128,13 @@
         },
         "node_depth": { "type": "integer", "minimum": 0, "maximum": 8 },
         "include_mode_transitions": { "type": "boolean" },
-        "include_artifact_hashes": { "type": "boolean" }
+        "include_artifact_hashes": { "type": "boolean" },
+        "terminal_checks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
       }
     },
     "expectation": {

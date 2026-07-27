@@ -1,0 +1,6 @@
+\catcode`\{=1 \catcode`\}=2
+\uccode`a=`A
+\uppercase{\def\shifted{a}}
+\def\expected{A}
+\ifx\shifted\expected \global\count0=1\fi
+\end

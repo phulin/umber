@@ -1,0 +1,13 @@
+\catcode`\{=1 \catcode`\}=2
+\prevdepth=2pt \prevgraf=3
+\pagegoal=10pt \deadcycles=4 \insertpenalties=5
+\setbox0=\hbox{}
+\wd0=6pt \ht0=7pt \dp0=8pt
+\ifdim\prevdepth=2pt \global\count0=1\fi
+\ifnum\prevgraf=3 \global\count1=1\fi
+\ifdim\wd0=6pt \global\count2=1\fi
+\ifnum\deadcycles=4 \global\count3=1\fi
+\ifnum\insertpenalties=5 \global\count4=1\fi
+\ifdim\ht0=7pt \ifdim\dp0=8pt \global\count5=1\fi\fi
+\copy0
+\end

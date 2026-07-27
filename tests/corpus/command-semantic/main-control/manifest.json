@@ -186,6 +186,374 @@
       "projection": { "kind": "state", "count_registers": [0, 1, 2] },
       "expected": ["count:0=7", "count:1=1", "count:2=9"],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "mag-freeze",
+      "property_id": "tex82.assignment.mag-freeze",
+      "source": "mag-freeze.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [286, 287, 288]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1200"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "error-and-stop",
+      "property_id": "tex82.main-control.error-and-stop",
+      "source": "error-and-stop.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1048, 1049, 1050, 1051, 1052, 1053, 1054]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "read-to-definition",
+      "property_id": "tex82.assignment.read-to-definition",
+      "source": "read-to-definition.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1225] },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-vq14",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "count:0=1",
+          "actual": "main-control step: Command(InputInvariant)"
+        }
+      },
+      "terminal_lines": ["alpha"]
+    },
+    {
+      "id": "parameters-registers-arithmetic",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "source": "parameters-registers-arithmetic.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240]
+      },
+      "projection": { "kind": "state", "count_registers": [0, 1] },
+      "expected": ["count:0=2000000000", "count:1=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-sb8t",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "count:0=2000000000",
+          "actual": "main-control step: ArithmeticOverflow"
+        }
+      }
+    },
+    {
+      "id": "setbox-request",
+      "property_id": "tex82.assignment.setbox-request",
+      "source": "setbox-request.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1241] },
+      "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
+      "expected": ["box:0/0:kern", "count:0=0"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-t7fl",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "box:0/0:kern",
+          "actual": "box:0:void"
+        }
+      }
+    },
+    {
+      "id": "auxiliary-state",
+      "property_id": "tex82.assignment.auxiliary-state",
+      "source": "auxiliary-state.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1242, 1243, 1244, 1245, 1246, 1247]
+      },
+      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4, 5] },
+      "expected": ["count:0=1", "count:1=1", "count:2=1", "count:3=1", "count:4=1", "count:5=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "parshape",
+      "property_id": "tex82.assignment.parshape",
+      "source": "parshape.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1248] },
+      "projection": { "kind": "state", "count_registers": [0, 1] },
+      "expected": ["count:0=1", "count:1=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "hyphenation-data",
+      "property_id": "tex82.assignment.hyphenation-data",
+      "profile": "production",
+      "source": "hyphenation-data.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1250, 1251, 1252]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": ["Patterns can be loaded only by INITEX"],
+        "count_registers": [0]
+      },
+      "expected": ["terminal-check:Patterns can be loaded only by INITEX=true", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-ktj0",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:Patterns can be loaded only by INITEX=true",
+          "actual": "terminal-check:Patterns can be loaded only by INITEX=false"
+        }
+      }
+    },
+    {
+      "id": "font-parameters",
+      "property_id": "tex82.assignment.font-parameters",
+      "source": "font-parameters.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1253, 1254, 1255]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-90qe",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "count:0=1",
+          "actual": "main-control step: RegisterNumberOutOfRange(0)"
+        }
+      }
+    },
+    {
+      "id": "font-definition",
+      "property_id": "tex82.assignment.font-definition",
+      "source": "font-definition.tex",
+      "font_inputs": { "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm" },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1256, 1257, 1258, 1259, 1260]
+      },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["Improper"], "count_registers": [0] },
+      "expected": ["terminal-check:Improper=true", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-jrvz",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:Improper=true",
+          "actual": "terminal-check:Improper=false"
+        }
+      }
+    },
+    {
+      "id": "interaction-mode",
+      "property_id": "tex82.assignment.interaction-mode",
+      "source": "interaction-mode.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1262, 1263, 1264, 1265]
+      },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["x"], "count_registers": [0] },
+      "expected": ["terminal-check:x=false", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-mp0d",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:x=false",
+          "actual": "terminal-check:x=true"
+        }
+      }
+    },
+    {
+      "id": "input-stream-open-close",
+      "property_id": "tex82.main-control.input-stream-open-close",
+      "source": "input-stream-open-close.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1272, 1273, 1274, 1275]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-chi1",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "count:0=1",
+          "actual": "main-control step: MissingToken { context: \"\\\\input\" }"
+        }
+      },
+      "inputs": { "first.tex": "ok" }
+    },
+    {
+      "id": "messages",
+      "property_id": "tex82.main-control.messages",
+      "source": "messages.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1276, 1277, 1278, 1279, 1280]
+      },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["a b"], "count_registers": [0] },
+      "expected": ["terminal-check:a b=true", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-19aw",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:a b=true",
+          "actual": "terminal-check:a b=false"
+        }
+      }
+    },
+    {
+      "id": "errmessage-help",
+      "property_id": "tex82.main-control.errmessage-help",
+      "source": "errmessage-help.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1281, 1282, 1283, 1284]
+      },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["user help"], "count_registers": [0] },
+      "expected": ["terminal-check:user help=true", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-djge",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:user help=true",
+          "actual": "terminal-check:user help=false"
+        }
+      }
+    },
+    {
+      "id": "case-shift",
+      "property_id": "tex82.main-control.case-shift",
+      "source": "case-shift.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1285, 1286, 1287, 1288, 1289]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "show-dispatch",
+      "property_id": "tex82.main-control.show-dispatch",
+      "source": "show-dispatch.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1290, 1291, 1292, 1293]
+      },
+      "projection": { "kind": "observations", "kinds": ["effect"], "count_registers": [0] },
+      "expected": ["effect:activities:mode=vertical", "count:0=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-abvi",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "effect:activities:mode=vertical",
+          "actual": "main-control step: UnimplementedPrimitive { primitive: ShowLists, mode: Vertical, origin: OriginId(..) }"
+        }
+      }
+    },
+    {
+      "id": "show-meaning",
+      "property_id": "tex82.main-control.show-meaning",
+      "source": "show-meaning.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1294, 1295] },
+      "projection": { "kind": "state", "count_registers": [0, 9] },
+      "expected": ["count:0=1", "count:9=0"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "show-box",
+      "property_id": "tex82.main-control.show-box",
+      "source": "show-box.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1296] },
+      "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
+      "expected": ["box:0/0:hlist", "box:0/0/0:kern", "count:0=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "show-value",
+      "property_id": "tex82.main-control.show-value",
+      "source": "show-value.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1297] },
+      "projection": { "kind": "state", "count_registers": [0, 1] },
+      "expected": ["count:0=17", "count:1=1"],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "show-completion",
+      "property_id": "tex82.main-control.show-completion",
+      "source": "show-completion.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1298] },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["? "], "count_registers": [1] },
+      "expected": ["terminal-check:? =true", "count:1=1"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-74vb",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:? =true",
+          "actual": "terminal-check:? =false"
+        }
+      },
+      "terminal_lines": ["s"]
+    },
+    {
+      "id": "final-cleanup-end-or-dump",
+      "property_id": "tex82.main-control.final-cleanup-end-or-dump",
+      "profile": "production",
+      "source": "final-cleanup-end-or-dump.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1335] },
+      "projection": { "kind": "terminal-checks", "terminal_checks": ["performed only by INITEX"] },
+      "expected": ["terminal-check:performed only by INITEX=true"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-xfj3",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "terminal-check:performed only by INITEX=true",
+          "actual": "terminal-check:performed only by INITEX=false"
+        }
+      }
     }
   ]
 }

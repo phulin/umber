@@ -12,12 +12,14 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tex_command::{
-    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, InputReason,
-    InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind, SourceRegistration,
-    canonical_names,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, FontResource,
+    InputReason, InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind,
+    SourceRegistration, canonical_names,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
-use tex_state::{ContentHash, Universe, node::Node};
+use tex_state::{
+    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe, node::Node,
+};
 
 const SCHEMA: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 4 * 1024;
@@ -40,6 +42,10 @@ struct DomainManifest {
 struct Case {
     id: String,
     property_id: String,
+    #[serde(default)]
+    profile: SessionProfile,
+    #[serde(default)]
+    font_inputs: BTreeMap<String, String>,
     source: String,
     provenance: Provenance,
     projection: Projection,
@@ -80,6 +86,8 @@ struct Projection {
     include_mode_transitions: bool,
     #[serde(default)]
     include_artifact_hashes: bool,
+    #[serde(default)]
+    terminal_checks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -93,8 +101,16 @@ enum ProjectionKind {
     Observations,
     ExecutionBoundaries,
     State,
+    TerminalChecks,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum SessionProfile {
+    #[default]
+    Initex,
+    Production,
+}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum ObservationKind {
@@ -418,6 +434,32 @@ fn validate_case(
             case.id
         ));
     }
+    if case.projection.kind == ProjectionKind::TerminalChecks {
+        if case.projection.terminal_checks.is_empty()
+            || case
+                .projection
+                .terminal_checks
+                .iter()
+                .enumerate()
+                .any(|(index, check)| case.projection.terminal_checks[..index].contains(check))
+            || case.projection.terminal_checks.iter().any(|check| {
+                check.is_empty()
+                    || check.contains('\n')
+                    || check.contains('\r')
+                    || check.len() > 128
+            })
+        {
+            return Err(format!(
+                "case {} terminal checks must be short, nonempty, and unique",
+                case.id
+            ));
+        }
+    } else if !case.projection.terminal_checks.is_empty() {
+        return Err(format!(
+            "case {} selects terminal checks outside that projection",
+            case.id
+        ));
+    }
     if case.terminal_lines.iter().any(|line| {
         line.contains("\n") || line.contains("\r") || line.len() > MAX_SOURCE_BYTES as usize
     }) {
@@ -430,6 +472,17 @@ fn validate_case(
             || bytes.len() > MAX_SOURCE_BYTES as usize
     }) {
         return Err(format!("case {} has an invalid named input", case.id));
+    }
+    if case.font_inputs.iter().any(|(name, source)| {
+        !is_safe_relative(Path::new(name))
+            || name.is_empty()
+            || !is_safe_relative(Path::new(source))
+            || !root.join(source).is_file()
+    }) {
+        return Err(format!(
+            "case {} has an invalid declarative font input",
+            case.id
+        ));
     }
     validate_expectation(&case.expectation).map_err(|error| format!("case {}: {error}", case.id))
 }
@@ -558,7 +611,13 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             .push_memory_terminal_line(line.clone())
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    let mut control = match case.profile {
+        SessionProfile::Initex => CanonicalMainControl::tex82_initex(&mut universe),
+        SessionProfile::Production => {
+            let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
+            CanonicalMainControl::new()
+        }
+    };
     for (name, bytes) in &case.inputs {
         control.capabilities_mut().register_input(
             name,
@@ -566,6 +625,24 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 RegisteredSourceKind::Generated,
                 Arc::<[u8]>::from(bytes.as_bytes()),
             ),
+        );
+    }
+    for (name, source) in &case.font_inputs {
+        let bytes = fs::read(repository_root().join(source))
+            .map_err(|error| format!("font fixture read: {error}"))?;
+        universe
+            .world_mut()
+            .set_memory_file(name, bytes)
+            .map_err(|error| format!("font fixture registration: {error}"))?;
+        let metrics =
+            InputReadState::read_input_file(&mut universe.input_open_context(), Path::new(name))
+                .map_err(|error| format!("font fixture parsing: {error}"))?;
+        control.capabilities_mut().register_font(
+            name,
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
         );
     }
     let source = control
@@ -983,6 +1060,40 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
     output
 }
 
+fn captured_terminal_text(run: &SemanticRun) -> String {
+    let committed = run
+        .universe
+        .world()
+        .memory_terminal_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = run
+        .universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    committed + &pending
+}
+
+fn terminal_check_results(output: &str, checks: &[String]) -> Vec<String> {
+    checks
+        .iter()
+        .map(|check| format!("terminal-check:{check}={}", output.contains(check)))
+        .collect()
+}
+
+fn terminal_check_projection(run: &SemanticRun, projection: &Projection) -> Vec<String> {
+    terminal_check_results(&captured_terminal_text(run), &projection.terminal_checks)
+}
+
 fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
     let mut output = match projection.kind {
         ProjectionKind::Classification => {
@@ -1040,6 +1151,7 @@ fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
         }
         ProjectionKind::PredicateOutcomes => predicate_outcomes(run),
         ProjectionKind::Observations => observation_projection(run, projection),
+        ProjectionKind::TerminalChecks => terminal_check_projection(run, projection),
         ProjectionKind::ExecutionBoundaries => execution_boundaries(run, projection),
         ProjectionKind::State => Vec::new(),
     };
@@ -1263,9 +1375,23 @@ fn state_projection_emits_only_requested_final_counts() {
         node_depth: None,
         include_mode_transitions: false,
         include_artifact_hashes: false,
+        terminal_checks: Vec::new(),
     };
 
     assert_eq!(project(&run, &projection), ["count:2=7"]);
+}
+
+#[test]
+fn terminal_checks_report_presence_and_absence_in_declaration_order() {
+    let checks = vec!["alpha beta".into(), "gamma".into()];
+
+    assert_eq!(
+        terminal_check_results("alpha beta", &checks),
+        [
+            "terminal-check:alpha beta=true",
+            "terminal-check:gamma=false"
+        ]
+    );
 }
 
 #[test]
