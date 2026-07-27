@@ -406,12 +406,55 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// TeX82 §342's `@<If an alignment entry has just ended, take appropriate
+    /// action@>`, the last statement of §341's `get_next` before its `exit`.
+    ///
+    /// Because it lives inside `get_next`, §789's ⟨v_j⟩ insertion is
+    /// transparent to *every* reader that pulls a raw command: `get_token`,
+    /// `get_x_token`, `macro_call`'s §392 parameter matcher, and §473's
+    /// `scan_toks` all restart on the ⟨v_j⟩ template and never see the tab
+    /// mark, `\span`, or `\cr` that ended the entry as ordinary content. A
+    /// reader that does see it captures the delimiter's spelling as material
+    /// -- and, worse, leaves the cell's own `\endv` undelivered, so the
+    /// alignment never advances. Umber classifies the delimiter in
+    /// [`crate::processor::alignment::AlignmentDelivery`] during delivery;
+    /// this is where §342's structural consequence is applied, so the
+    /// classification is made exactly once and consumed exactly once.
+    ///
+    /// `Ok(None)` means the ⟨v_j⟩ template is now the live input and the
+    /// caller must restart its fetch, which is §789's `goto restart`.
+    ///
+    /// The one reader that deliberately does not run this is main control's
+    /// [`Self::get_x_alignment_delivery`]: TeX82 §789 stores the delimiter in
+    /// `extra_info(cur_align)` for §791's `fin_col`, and that alignment
+    /// identity is executor-owned in Umber, so main control surfaces a typed
+    /// [`AlignmentDeliveryEvent::EndTemplate`] and the executor calls
+    /// [`Self::begin_alignment_v_template`] to perform the same insertion.
+    pub(super) fn insert_alignment_entry_v_template(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        if matches!(
+            command.alignment_adjustment(),
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+        ) {
+            self.begin_scalar_alignment_v_template(command)?;
+            return Ok(None);
+        }
+        Ok(Some(command))
+    }
+
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
         loop {
             match self.get_next_with_control_sequence_creation(false)? {
-                Some(CommandReplayDelivery::Command(command)) => return Ok(Some(command)),
+                Some(CommandReplayDelivery::Command(command)) => {
+                    match self.insert_alignment_entry_v_template(command)? {
+                        Some(command) => return Ok(Some(command)),
+                        None => continue,
+                    }
+                }
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => return Ok(None),
             }
@@ -458,7 +501,12 @@ impl CommandProcessor<'_> {
         self.last_delivery = None;
         loop {
             match self.get_next_with_control_sequence_creation(true)? {
-                Some(CommandReplayDelivery::Command(command)) => return Ok(Some(command)),
+                Some(CommandReplayDelivery::Command(command)) => {
+                    match self.insert_alignment_entry_v_template(command)? {
+                        Some(command) => return Ok(Some(command)),
+                        None => continue,
+                    }
+                }
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => return Ok(None),
             }
@@ -2875,7 +2923,7 @@ mod tests {
     }
 
     #[test]
-    fn get_next_alone_intercepts_top_level_alignment_delimiters_and_backup_replays_them() {
+    fn main_control_delivery_surfaces_top_level_delimiters_and_backup_replays_them() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(17);
         command.begin_alignment(alignment);
@@ -2899,10 +2947,19 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
-        let delimiter = processor
-            .get_next()
-            .expect("delimiter delivers")
-            .expect("input is live");
+        // §342 runs §789's insertion inside `get_next`, so no scanner ever
+        // sees the delimiter. Main control is the one reader that does:
+        // §789 stores the delimiter in `extra_info(cur_align)` for §791's
+        // `fin_col`, and that identity is executor-owned, so the delimiter
+        // is surfaced as a typed event for the executor to hand back.
+        let crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::EndTemplate(delimiter)) =
+            processor
+                .get_x_alignment_delivery(false)
+                .expect("delimiter delivers")
+                .expect("input is live")
+        else {
+            panic!("a top-level delimiter is a typed alignment event");
+        };
         assert!(matches!(
             delimiter.meaning(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
@@ -2914,12 +2971,72 @@ mod tests {
         assert_eq!(processor.command.alignment.align_state, 0);
         assert!(matches!(
             processor
-                .get_next()
+                .get_x_alignment_delivery(false)
                 .expect("delimiter replays")
-                .expect("backup is live")
-                .meaning(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+                .expect("backup is live"),
+            crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::EndTemplate(_))
         ));
+    }
+
+    /// TeX82 §342's `@<If an alignment entry has just ended, take appropriate
+    /// action@>` is the tail of §341's `get_next`, so §789's ⟨v_j⟩ template
+    /// becomes the live input before any raw reader sees the delimiter. The
+    /// token `get_next` returns is the template's first token, never the tab
+    /// mark, `\span`, or `\cr` that ended the entry (`umber2-johp.258`).
+    #[test]
+    fn get_next_inserts_the_v_template_for_a_top_level_alignment_delimiter() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(19);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let v_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'v',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: None,
+                    v_template,
+                },
+            )
+            .expect("cell begins");
+        command
+            .install_alignment_cell_template(alignment)
+            .expect("cell without a u-template installs");
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Char {
+                    ch: '&',
+                    cat: Catcode::AlignmentTab,
+                },
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("the v-template's own first token delivers")
+                .expect("input is live")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'v',
+                cat: Catcode::Letter,
+            }
+        );
+        assert_eq!(processor.command.alignment.align_state, 1_000_000);
     }
 
     #[test]
@@ -3036,11 +3153,10 @@ mod tests {
         processor.get_next().expect("closing brace delivers");
         assert!(matches!(
             processor
-                .get_next()
+                .get_x_alignment_delivery(false)
                 .expect("top-level tab delivers")
-                .expect("input is live")
-                .meaning(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+                .expect("input is live"),
+            crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::EndTemplate(_))
         ));
     }
 

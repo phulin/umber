@@ -293,7 +293,7 @@ impl CommandProcessor<'_> {
         fetch: ExpandedFetch,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
-            let mut command = match pending.take() {
+            let command = match pending.take() {
                 Some(command) => command,
                 None => {
                     let Some(delivery) = self.get_next_with_replay_completion()? else {
@@ -309,17 +309,16 @@ impl CommandProcessor<'_> {
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
             ) {
-                // TeX82 §24 has already crossed this active-cell delimiter.
-                // Complete the command-owned v-template handoff, then restart
-                // expansion; only retained frozen end-template input from
-                // v-template exhaustion becomes `endv` below.
-                if matches!(
-                    command.alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                ) {
-                    self.begin_scalar_alignment_v_template(command)?;
+                // This loop's raw fetch is `get_next_with_replay_completion`,
+                // which is §341's body without §342's tail, so §342's
+                // consequence runs here through the same single helper
+                // `get_next` and `get_token` use. `Ok(None)` is §789's
+                // `goto restart`: the ⟨v_j⟩ template is live and no reader
+                // ever sees the delimiter. Only frozen end-template input
+                // from v-template exhaustion falls through to §380 below.
+                let Some(mut command) = self.insert_alignment_entry_v_template(command)? else {
                     continue;
-                }
+                };
                 if fetch == ExpandedFetch::XToken {
                     // §366 `expand` has no `end_template` shortcut: it routes
                     // straight to §375, which backs up a `frozen_endv` token

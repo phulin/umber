@@ -139,6 +139,42 @@ fn recovered_token_assignment_brace_preserves_alignment_cell_boundaries() {
     assert!(support::terminal_effect_text(&stores).contains("Missing { inserted"));
 }
 
+/// TeX82 §342 runs §789's ⟨v_j⟩ insertion at the tail of §341's `get_next`,
+/// so it is transparent to every reader that pulls a raw command -- including
+/// §392's macro parameter matcher. A macro argument may therefore open in a
+/// ⟨u_j⟩ template and close on the right brace the ⟨v_j⟩ template supplies:
+/// plain.tex's `\eqalignno` third column, `\llap{$\@lign##$}`, is exactly
+/// that shape, and `$$\eqalignno{a &= b & (1)\cr}$$` is the smallest input
+/// that reaches it.
+///
+/// When the matcher instead received the cell delimiter as ordinary argument
+/// material, the delimiter's `\endv` was never delivered, the alignment never
+/// advanced, and every remaining token of the job was absorbed into the
+/// argument -- so the assignment after the alignment below never ran.
+#[test]
+fn macro_argument_opened_in_a_u_template_closes_on_the_v_template() {
+    let stores = super::core::run_canonical_tex82(
+        r"\def\lap#1{\hbox{#1}}
+          \setbox0=\vbox{\halign{#&\lap{#}\cr a&b\cr}}
+          \count7=42 \end",
+    );
+
+    assert_eq!(
+        stores.count(7),
+        42,
+        "material after the alignment must still be executed"
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    assert_eq!(rows.len(), 1, "the one `\\cr` row must be appended");
+    let cells = row_cells(&stores, rows[0]);
+    assert_eq!(cells.len(), 2, "both cells must be set");
+    assert_eq!(
+        row_cells(&stores, cells[1]).len(),
+        1,
+        "the second cell holds the \\lap hbox the v-template's brace closed"
+    );
+}
+
 fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
     let mut stores = support::stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(format!(
