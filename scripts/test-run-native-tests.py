@@ -43,6 +43,13 @@ def parsed(passed: int, failed: int, ignored: int):
     return match
 
 
+REAL_TIER = "check-wasm.sh"
+
+
+def deferral(tier: str = REAL_TIER, reason: str = "reason") -> "runner.Deferral":
+    return runner.Deferral(tier=tier, reason=reason)
+
+
 def run_plan(members: dict, excluded: dict, workspaces: dict | None = None):
     saved_packages = runner.EXCLUDED_PACKAGES
     saved_workspaces = runner.EXCLUDED_WORKSPACES
@@ -55,9 +62,9 @@ def run_plan(members: dict, excluded: dict, workspaces: dict | None = None):
         runner.EXCLUDED_WORKSPACES = saved_workspaces
 
 
-def raises_coverage(members: dict, excluded: dict) -> bool:
+def raises_coverage(members: dict, excluded: dict, workspaces: dict | None = None) -> bool:
     try:
-        run_plan(members, excluded)
+        run_plan(members, excluded, workspaces)
     except runner.CoverageError:
         return True
     return False
@@ -94,11 +101,11 @@ expect(binaries == 1, "a non-test target was counted as a test binary")
 
 # An exclusion that outlived its package fails rather than being ignored.
 expect(
-    raises_coverage({"a": LIB}, {"gone": "reason"}),
+    raises_coverage({"a": LIB}, {"gone": deferral()}),
     "a stale exclusion did not fail the run",
 )
 # ... and one that still names a member is honoured.
-selected, _ = run_plan({"a": LIB, "b": LIB}, {"b": "reason"})
+selected, _ = run_plan({"a": LIB, "b": LIB}, {"b": deferral()})
 expect(selected == ["a"], "a live exclusion was not applied")
 
 # A directory pushed out of the workspace must name the gate that runs it.
@@ -107,18 +114,35 @@ expect(
     "an undeclared `[workspace] exclude` directory did not fail the run",
 )
 expect(
-    raises_workspace_coverage([], {"tools/gone": "scripts/check-tools.sh"}),
+    raises_workspace_coverage([], {"tools/gone": "check-tools.sh"}),
     "a declaration for a directory no longer excluded did not fail the run",
 )
 expect(
-    not raises_workspace_coverage(
-        ["tools/thing"], {"tools/thing": "scripts/check-tools.sh"}
-    ),
+    not raises_workspace_coverage(["tools/thing"], {"tools/thing": "check-tools.sh"}),
     "a correct `[workspace] exclude` declaration was rejected",
 )
 
+# An exclusion may only defer to a tier that stamps and reports its own runs;
+# deferring to anything else is a claim nothing can check (`umber2-johp.213`).
+expect(
+    raises_coverage({"a": LIB, "b": LIB}, {"b": deferral(tier="check-nothing.sh")}),
+    "an exclusion deferring to an unregistered tier did not fail the run",
+)
+expect(
+    raises_coverage(
+        {"a": LIB}, {}, {"tools/thing": "check-nothing.sh"}
+    ),
+    "a `[workspace] exclude` deferring to an unregistered tier did not fail",
+)
+expect(
+    set(runner.EXCLUDED_WORKSPACES.values())
+    | {entry.tier for entry in runner.EXCLUDED_PACKAGES.values()}
+    <= set(runner.tier_stamp.TIERS),
+    "the live exclusion declarations name a tier outside the registry",
+)
+
 # A selection that cannot fail is not allowed to report success.
-expect(raises_coverage({"a": LIB}, {"a": "reason"}), "an empty selection passed")
+expect(raises_coverage({"a": LIB}, {"a": deferral()}), "an empty selection passed")
 expect(
     raises_coverage({"a": [target("thing", "lib", False)]}, {}),
     "a selection with no test binaries at all passed",
@@ -157,6 +181,13 @@ expect("VERDICT: PASS" in line, "the passing verdict is not labelled")
 expect(
     "2 packages, 2/2 test binaries, 15 passed, 0 failed, 2 ignored" in line,
     "the passing verdict does not state what ran",
+)
+
+# A PASS must never read as a statement about the tiers this suite defers to.
+_, line = runner.verdict(0, ok, 2, 2, "deferred tiers: 0 of 3 passed on this tree")
+expect(
+    line.endswith("; deferred tiers: 0 of 3 passed on this tree"),
+    "the verdict does not state the deferred tiers' evidence",
 )
 
 if failures:

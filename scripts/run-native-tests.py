@@ -38,6 +38,8 @@ Exit status:
 
 from __future__ import annotations
 
+import dataclasses
+import importlib.util
 import json
 import re
 import subprocess
@@ -47,20 +49,46 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+_TIER_SPEC = importlib.util.spec_from_file_location(
+    "tier_stamp", REPO_ROOT / "scripts" / "tier_stamp.py"
+)
+assert _TIER_SPEC is not None and _TIER_SPEC.loader is not None
+tier_stamp = importlib.util.module_from_spec(_TIER_SPEC)
+sys.modules["tier_stamp"] = tier_stamp
+_TIER_SPEC.loader.exec_module(tier_stamp)
+
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_COVERAGE = 2
 EXIT_SHORT = 3
 
+@dataclasses.dataclass(frozen=True)
+class Deferral:
+    """A claim that something this suite does not select runs somewhere else.
+
+    The tier must be one `scripts/tier_stamp.py` knows, because that registry is
+    what makes the claim checkable: every tier in it stamps its own runs, and
+    this suite prints what each stamp says.  Naming a tier that does not exist,
+    or one that reports nothing, would put the claim back where
+    `umber2-johp.213` found it -- asserted by a comment and verified by nobody.
+    """
+
+    tier: str
+    reason: str
+
+
 # Workspace members this host suite deliberately does not select, each with the
-# command that does run its tests.  An entry here is a claim that the package's
+# tier that does run its tests.  An entry here is a claim that the package's
 # tests run somewhere else; it is not permission to leave them unrun.
 EXCLUDED_PACKAGES = {
-    "umber-wasm": (
-        "its tests are `#[wasm_bindgen_test]`, which registers no test on a "
-        "host target: selecting it here builds a cdylib and runs exactly zero "
-        "tests. `scripts/check-wasm.sh` runs them for real with "
-        "`wasm-pack test --headless --firefox crates/umber-wasm`."
+    "umber-wasm": Deferral(
+        tier="check-wasm.sh",
+        reason=(
+            "its tests are `#[wasm_bindgen_test]`, which registers no test on a "
+            "host target: selecting it here builds a cdylib and runs exactly "
+            "zero tests. `scripts/check-wasm.sh` runs them for real with "
+            "`wasm-pack test --headless --firefox crates/umber-wasm`."
+        ),
     ),
 }
 
@@ -70,9 +98,9 @@ EXCLUDED_PACKAGES = {
 # directory pushed out of the workspace cannot take its tests out of every gate
 # on the way.
 EXCLUDED_WORKSPACES = {
-    "tools/corpus-sync": "scripts/check-tools.sh",
-    "tools/fixturegen": "scripts/check-tools.sh",
-    "tools/texlive-wasm-publish": "scripts/check-tools.sh",
+    "tools/corpus-sync": "check-tools.sh",
+    "tools/fixturegen": "check-tools.sh",
+    "tools/texlive-wasm-publish": "check-tools.sh",
 }
 
 # Cargo target kinds that `--tests` builds in test mode.  Integration tests are
@@ -138,11 +166,26 @@ def declared_workspace_excludes() -> list[str]:
         return tomllib.load(manifest)["workspace"].get("exclude", [])
 
 
+def check_deferred_tiers() -> None:
+    """Every exclusion must defer to a tier that exists and reports on itself."""
+    named = {deferral.tier for deferral in EXCLUDED_PACKAGES.values()}
+    named |= set(EXCLUDED_WORKSPACES.values())
+    unregistered = sorted(named - set(tier_stamp.TIERS))
+    if unregistered:
+        raise CoverageError(
+            "exclusions defer to tiers `scripts/tier_stamp.py` does not know: "
+            + ", ".join(unregistered)
+            + "\nA tier outside that registry stamps no runs and appears in no "
+            "report, so deferring to it is an unverifiable claim."
+        )
+
+
 def plan(
     members: dict[str, list[dict]], declared_excludes: list[str]
 ) -> tuple[list[str], int]:
     """Resolve the selection, or explain why the declaration is wrong."""
     check_excluded_workspaces(declared_excludes)
+    check_deferred_tiers()
 
     unknown = sorted(set(EXCLUDED_PACKAGES) - set(members))
     if unknown:
@@ -197,6 +240,7 @@ def verdict(
     results: list[re.Match[str]],
     packages: int,
     expected_binaries: int,
+    deferred: str = "",
 ) -> tuple[int, str]:
     """Classify a finished run into an exit code and its one-line verdict."""
     passed = sum(int(match["passed"]) for match in results)
@@ -207,6 +251,11 @@ def verdict(
         f"{packages} packages, {ran}/{expected_binaries} test binaries, "
         f"{passed} passed, {failed} failed, {ignored} ignored"
     )
+    # The census describes this suite only.  Stating the deferred tiers' state
+    # in the same line is what stops a PASS from reading as a statement about
+    # the coverage this suite hands to them (`umber2-johp.213`).
+    if deferred:
+        census = f"{census}; {deferred}"
 
     if status != 0 or failed > 0:
         return EXIT_FAIL, f"run-native-tests: VERDICT: FAIL - {census}"
@@ -230,18 +279,19 @@ def main(argv: list[str]) -> int:
     # The guards below are checked against synthetic inputs first, for the same
     # reason the clippy gate self-tests `check-lint-passes.py`: a coverage
     # check nobody has watched fail proves nothing when it stays quiet.
-    self_test = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "test-run-native-tests.py")],
-        cwd=REPO_ROOT,
-        check=False,
-    )
-    if self_test.returncode != 0:
-        print(
-            "\nrun-native-tests: VERDICT: COVERAGE - the suite's own guards are "
-            "broken; its verdict would mean nothing.",
-            file=sys.stderr,
+    for guard in ("test-run-native-tests.py", "test_tier_stamp.py"):
+        self_test = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / guard)],
+            cwd=REPO_ROOT,
+            check=False,
         )
-        return EXIT_COVERAGE
+        if self_test.returncode != 0:
+            print(
+                f"\nrun-native-tests: VERDICT: COVERAGE - {guard}'s guards are "
+                "broken; this run's verdict would mean nothing.",
+                file=sys.stderr,
+            )
+            return EXIT_COVERAGE
 
     members = workspace_members()
     try:
@@ -254,10 +304,23 @@ def main(argv: list[str]) -> int:
 
     if EXCLUDED_PACKAGES:
         print("\nrun-native-tests: not selected here:")
-        for name, reason in sorted(EXCLUDED_PACKAGES.items()):
-            print(f"  - {name}: {reason}")
+        for name, deferral in sorted(EXCLUDED_PACKAGES.items()):
+            print(f"  - {name}: {deferral.reason}")
 
-    code, line = verdict(status, results, len(selected), expected_binaries)
+    # What the deferred tiers last did, read from their stamps.  This runs no
+    # tier: the routine suite must not acquire a dependency on wasm-pack,
+    # Firefox, ripgrep, or the pinned oracle builds, which is why those tiers
+    # are separate at all.
+    print("\nrun-native-tests: deferred tiers (not run here):")
+    tier_reports = tier_stamp.collect(list(tier_stamp.TIERS))
+    for report in tier_reports:
+        print(f"  {report.line}")
+    satisfied = sum(1 for report in tier_reports if report.satisfied)
+    deferred = (
+        f"deferred tiers: {satisfied} of {len(tier_reports)} passed on this tree"
+    )
+
+    code, line = verdict(status, results, len(selected), expected_binaries, deferred)
     print(f"\n{line}", file=sys.stdout if code == EXIT_PASS else sys.stderr)
     return code
 
