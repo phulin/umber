@@ -1080,3 +1080,826 @@ fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
     assert!(processor.command.expansion.pending_diagnostics.is_empty());
     assert!(processor.command.conditions.current().is_none());
 }
+
+fn letter(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: tex_state::token::Catcode::Letter,
+    }
+}
+
+fn append_boolean_case(
+    universe: &mut Universe,
+    tokens: &mut Vec<Token>,
+    name: &str,
+    primitive: ExpandablePrimitive,
+    operands: impl IntoIterator<Item = Token>,
+) {
+    tokens.push(install(universe, name, primitive));
+    tokens.extend(operands);
+    tokens.push(other('t'));
+    tokens.push(install(
+        universe,
+        &format!("{name}-else"),
+        ExpandablePrimitive::Else,
+    ));
+    tokens.push(other('f'));
+    tokens.push(install(
+        universe,
+        &format!("{name}-fi"),
+        ExpandablePrimitive::Fi,
+    ));
+}
+
+#[test]
+fn tex82_predicate_aliases_preserve_classification() {
+    for (primitive, kind) in [
+        (ExpandablePrimitive::If, ConditionalKind::If),
+        (ExpandablePrimitive::IfCat, ConditionalKind::IfCat),
+        (ExpandablePrimitive::IfNum, ConditionalKind::IfNum),
+        (ExpandablePrimitive::IfDim, ConditionalKind::IfDim),
+        (ExpandablePrimitive::IfOdd, ConditionalKind::IfOdd),
+        (ExpandablePrimitive::IfVMode, ConditionalKind::IfVMode),
+        (ExpandablePrimitive::IfHMode, ConditionalKind::IfHMode),
+        (ExpandablePrimitive::IfMMode, ConditionalKind::IfMMode),
+        (ExpandablePrimitive::IfInner, ConditionalKind::IfInner),
+        (ExpandablePrimitive::IfVoid, ConditionalKind::IfVoid),
+        (ExpandablePrimitive::IfHBox, ConditionalKind::IfHBox),
+        (ExpandablePrimitive::IfVBox, ConditionalKind::IfVBox),
+        (ExpandablePrimitive::IfX, ConditionalKind::IfX),
+        (ExpandablePrimitive::IfEof, ConditionalKind::IfEof),
+        (ExpandablePrimitive::IfTrue, ConditionalKind::IfTrue),
+        (ExpandablePrimitive::IfFalse, ConditionalKind::IfFalse),
+        (ExpandablePrimitive::IfCase, ConditionalKind::IfCase),
+    ] {
+        assert_eq!(ConditionalKind::from_primitive(primitive), Some(kind));
+    }
+    for (primitive, delimiter) in [
+        (ExpandablePrimitive::Or, ConditionalDelimiter::Or),
+        (ExpandablePrimitive::Else, ConditionalDelimiter::Else),
+        (ExpandablePrimitive::Fi, ConditionalDelimiter::Fi),
+    ] {
+        assert_eq!(
+            ConditionalDelimiter::from_meaning(Meaning::ExpandablePrimitive(primitive)),
+            Some(delimiter)
+        );
+    }
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let first = install(&mut universe, "truth-alias-a", ExpandablePrimitive::IfTrue);
+    let second = install(&mut universe, "truth-alias-b", ExpandablePrimitive::IfTrue);
+    universe
+        .register_primitive_meaning("fi", Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
+    let frozen_fi = universe
+        .primitive_token("fi")
+        .expect("frozen fi is registered");
+    let public_fi = universe.intern("fi").symbol();
+    universe.set_meaning(
+        public_fi,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFalse),
+    );
+    push(&mut command, vec![first, second, frozen_fi]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for _ in 0..2 {
+        let alias = processor
+            .get_next()
+            .expect("raw token delivery succeeds")
+            .expect("raw token remains");
+        assert_eq!(
+            alias.meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue)
+        );
+    }
+    assert_eq!(
+        processor
+            .get_next()
+            .expect("raw token delivery succeeds")
+            .expect("raw token remains")
+            .meaning(),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi)
+    );
+}
+
+#[test]
+fn condition_stack_preserves_lines_limits_and_input_independence() {
+    let mut command = CommandState::default();
+    let outer = command.conditions.push(ConditionalKind::IfNum, 41);
+    let middle = command.conditions.push(ConditionalKind::IfCase, 43);
+    let inner = command.conditions.push(ConditionalKind::IfX, 47);
+    assert_eq!(
+        command
+            .conditions
+            .frame(outer)
+            .expect("outer frame exists")
+            .source_line,
+        41
+    );
+    assert_eq!(
+        command
+            .conditions
+            .frame(middle)
+            .expect("middle frame exists")
+            .source_line,
+        43
+    );
+    assert_eq!(
+        command
+            .conditions
+            .frame(inner)
+            .expect("inner frame exists")
+            .source_line,
+        47
+    );
+
+    let saved = command.conditions.frames.clone();
+    push(&mut command, vec![other('x')]);
+    assert_eq!(command.conditions.frames, saved);
+    assert!(command.conditions.change_if_limit(outer, IfLimit::Else));
+    assert_eq!(command.conditions.limit(outer), Some(IfLimit::Else));
+    assert_eq!(command.conditions.limit(middle), Some(IfLimit::Evaluating));
+    assert_eq!(command.conditions.limit(inner), Some(IfLimit::Evaluating));
+    assert_eq!(
+        command
+            .conditions
+            .pop()
+            .expect("nested frame remains")
+            .identity,
+        inner
+    );
+    assert_eq!(
+        command
+            .conditions
+            .pop()
+            .expect("middle frame remains")
+            .identity,
+        middle
+    );
+    assert_eq!(
+        command
+            .conditions
+            .pop()
+            .expect("outer frame remains")
+            .identity,
+        outer
+    );
+    assert!(command.conditions.current().is_none());
+}
+
+#[test]
+fn pass_text_does_not_expand_or_execute_skipped_tokens() {
+    let mut command = CommandState::default();
+    let condition = command.conditions.push(ConditionalKind::IfFalse, 11);
+    assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let nested_if = install(&mut universe, "skip-nested-if", ExpandablePrimitive::IfTrue);
+    let nested_fi = install(&mut universe, "skip-nested-fi", ExpandablePrimitive::Fi);
+    let outer_fi = install(&mut universe, "skip-outer-fi", ExpandablePrimitive::Fi);
+    let skipped_macro = macro_token(
+        &mut universe,
+        "skip-macro",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('!')],
+    );
+    let right = universe.intern("skip-right-brace").symbol();
+    universe.set_meaning(
+        right,
+        Meaning::CharToken {
+            ch: '}',
+            cat: tex_state::token::Catcode::EndGroup,
+        },
+    );
+    push(
+        &mut command,
+        vec![
+            skipped_macro,
+            other('{'),
+            Token::Cs(right),
+            nested_if,
+            nested_fi,
+            outer_fi,
+            other('z'),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(
+        processor.pass_text(condition, ScannerWarning(11)),
+        Ok(PassTextStop {
+            delimiter: ConditionalDelimiter::Fi,
+            nested_conditions: 0,
+        })
+    );
+    assert_eq!(next_character(&mut processor), 'z');
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+    assert!(processor.command.expansion.pending_diagnostics.is_empty());
+}
+
+#[test]
+fn ifcase_zero_negative_else_and_fi_boundaries() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let ifcase = install(
+        &mut universe,
+        "case-matrix-ifcase",
+        ExpandablePrimitive::IfCase,
+    );
+    let or = install(&mut universe, "case-matrix-or", ExpandablePrimitive::Or);
+    let otherwise = install(&mut universe, "case-matrix-else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "case-matrix-fi", ExpandablePrimitive::Fi);
+    let mut tokens = vec![ifcase];
+    tokens.extend(chars("0a"));
+    tokens.extend([or, other('x'), fi, ifcase]);
+    tokens.extend(chars("2a"));
+    tokens.extend([
+        or,
+        other('b'),
+        or,
+        other('c'),
+        otherwise,
+        other('x'),
+        fi,
+        ifcase,
+    ]);
+    tokens.extend(chars("-1a"));
+    tokens.extend([or, other('b'), otherwise, other('e'), fi, ifcase]);
+    tokens.extend(chars("4a"));
+    tokens.extend([or, other('b'), fi, other('z')]);
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['a', 'c', 'e', 'z'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.expansion.pending_diagnostics.is_empty());
+}
+
+#[test]
+fn conditional_delimiter_legality_matrix() {
+    for (limit, accepted) in [
+        (IfLimit::Evaluating, [false, false, true]),
+        (IfLimit::Fi, [false, false, true]),
+        (IfLimit::Else, [false, true, true]),
+        (IfLimit::Or, [true, true, true]),
+    ] {
+        for (delimiter, expected) in [
+            (ConditionalDelimiter::Or, accepted[0]),
+            (ConditionalDelimiter::Else, accepted[1]),
+            (ConditionalDelimiter::Fi, accepted[2]),
+        ] {
+            assert_eq!(limit.accepts_delimiter(delimiter), expected);
+        }
+    }
+    let mut stack = ConditionStack::default();
+    let evaluating = stack.push(ConditionalKind::If, 1);
+    for delimiter in [
+        ConditionalDelimiter::Or,
+        ConditionalDelimiter::Else,
+        ConditionalDelimiter::Fi,
+    ] {
+        assert!(
+            stack
+                .evaluating_delimiter_recovery(evaluating, delimiter)
+                .is_some()
+        );
+    }
+
+    let mut command = CommandState::default();
+    let frame = command.conditions.push(ConditionalKind::IfTrue, 7);
+    assert!(command.conditions.change_if_limit(frame, IfLimit::Else));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let or = install(&mut universe, "legality-or", ExpandablePrimitive::Or);
+    let otherwise = install(&mut universe, "legality-else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "legality-fi", ExpandablePrimitive::Fi);
+    push(&mut command, vec![or, fi, or, otherwise, fi]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert!(
+        processor
+            .get_x_token()
+            .expect("delimiter recovery finishes")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+    assert_eq!(
+        processor.command.expansion.pending_diagnostics,
+        [
+            EXTRA_DELIMITER_DIAGNOSTIC,
+            EXTRA_DELIMITER_DIAGNOSTIC,
+            EXTRA_DELIMITER_DIAGNOSTIC,
+            EXTRA_DELIMITER_DIAGNOSTIC,
+        ]
+    );
+}
+
+#[test]
+fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let hbox = boxed(&mut universe, false);
+    let vbox = boxed(&mut universe, true);
+    universe.set_box_reg(1, hbox);
+    universe.set_box_reg(2, vbox);
+    universe
+        .world_mut()
+        .set_memory_file("dispatch-stream.tex", b"line\n".to_vec())
+        .expect("memory input is installed");
+    universe
+        .world_mut()
+        .open_in(tex_state::StreamSlot::new(1), "dispatch-stream.tex")
+        .expect("memory input opens");
+
+    let mut tokens = Vec::new();
+    let mut expected = Vec::new();
+    for (name, primitive, operands, selected) in [
+        (
+            "dispatch-if",
+            ExpandablePrimitive::If,
+            vec![other('a'), other('a')],
+            't',
+        ),
+        (
+            "dispatch-ifcat",
+            ExpandablePrimitive::IfCat,
+            vec![letter('a'), letter('b')],
+            't',
+        ),
+        (
+            "dispatch-ifx",
+            ExpandablePrimitive::IfX,
+            vec![other('q'), other('q')],
+            't',
+        ),
+        (
+            "dispatch-ifnum",
+            ExpandablePrimitive::IfNum,
+            chars("1=1"),
+            't',
+        ),
+        (
+            "dispatch-ifdim",
+            ExpandablePrimitive::IfDim,
+            chars("1pt=1pt"),
+            't',
+        ),
+        (
+            "dispatch-ifodd",
+            ExpandablePrimitive::IfOdd,
+            chars("-3"),
+            't',
+        ),
+        (
+            "dispatch-ifvmode",
+            ExpandablePrimitive::IfVMode,
+            Vec::new(),
+            'f',
+        ),
+        (
+            "dispatch-ifhmode",
+            ExpandablePrimitive::IfHMode,
+            Vec::new(),
+            't',
+        ),
+        (
+            "dispatch-ifmmode",
+            ExpandablePrimitive::IfMMode,
+            Vec::new(),
+            'f',
+        ),
+        (
+            "dispatch-ifinner",
+            ExpandablePrimitive::IfInner,
+            Vec::new(),
+            't',
+        ),
+        (
+            "dispatch-ifvoid",
+            ExpandablePrimitive::IfVoid,
+            chars("0"),
+            't',
+        ),
+        (
+            "dispatch-ifhbox",
+            ExpandablePrimitive::IfHBox,
+            chars("1"),
+            't',
+        ),
+        (
+            "dispatch-ifvbox",
+            ExpandablePrimitive::IfVBox,
+            chars("2"),
+            't',
+        ),
+        (
+            "dispatch-ifeof-open",
+            ExpandablePrimitive::IfEof,
+            chars("1"),
+            'f',
+        ),
+        (
+            "dispatch-ifeof-closed",
+            ExpandablePrimitive::IfEof,
+            chars("3"),
+            't',
+        ),
+        (
+            "dispatch-iftrue",
+            ExpandablePrimitive::IfTrue,
+            Vec::new(),
+            't',
+        ),
+        (
+            "dispatch-iffalse",
+            ExpandablePrimitive::IfFalse,
+            Vec::new(),
+            'f',
+        ),
+    ] {
+        append_boolean_case(&mut universe, &mut tokens, name, primitive, operands);
+        expected.push(selected);
+    }
+    let ifcase = install(
+        &mut universe,
+        "dispatch-ifcase",
+        ExpandablePrimitive::IfCase,
+    );
+    let or = install(&mut universe, "dispatch-ifcase-or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "dispatch-ifcase-fi", ExpandablePrimitive::Fi);
+    tokens.extend([ifcase, other('0'), other('t'), or, other('f'), fi]);
+    expected.push('t');
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.set_conditional_state(ConditionalState::new(ConditionalMode::Horizontal, true));
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        for selected in expected {
+            assert_eq!(next_character(&mut processor), selected);
+        }
+        assert!(
+            processor
+                .get_x_token()
+                .expect("conditional input is exhausted")
+                .is_none()
+        );
+        assert!(processor.command.conditions.current().is_none());
+    }
+
+    for (mode, inner, truth) in [
+        (
+            ConditionalMode::Vertical,
+            false,
+            [true, false, false, false],
+        ),
+        (ConditionalMode::Vertical, true, [true, false, false, true]),
+        (
+            ConditionalMode::Horizontal,
+            false,
+            [false, true, false, false],
+        ),
+        (
+            ConditionalMode::Horizontal,
+            true,
+            [false, true, false, true],
+        ),
+        (ConditionalMode::Math, false, [false, false, true, false]),
+        (ConditionalMode::Math, true, [false, false, true, true]),
+    ] {
+        capabilities.set_conditional_state(ConditionalState::new(mode, inner));
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(
+            processor.evaluate_boolean(ConditionalKind::IfVMode),
+            Ok(truth[0])
+        );
+        assert_eq!(
+            processor.evaluate_boolean(ConditionalKind::IfHMode),
+            Ok(truth[1])
+        );
+        assert_eq!(
+            processor.evaluate_boolean(ConditionalKind::IfMMode),
+            Ok(truth[2])
+        );
+        assert_eq!(
+            processor.evaluate_boolean(ConditionalKind::IfInner),
+            Ok(truth[3])
+        );
+    }
+}
+
+#[test]
+fn ifnum_ifdim_relation_and_missing_equals_matrix() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut tokens = Vec::new();
+    for (index, expression) in ["1<2", "2=2", "3>2"].into_iter().enumerate() {
+        append_boolean_case(
+            &mut universe,
+            &mut tokens,
+            &format!("ifnum-relation-{index}"),
+            ExpandablePrimitive::IfNum,
+            chars(expression),
+        );
+    }
+    for (index, expression) in ["1pt<2pt", "2pt=2pt", "3pt>2pt"].into_iter().enumerate() {
+        append_boolean_case(
+            &mut universe,
+            &mut tokens,
+            &format!("ifdim-relation-{index}"),
+            ExpandablePrimitive::IfDim,
+            chars(expression),
+        );
+    }
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifnum-missing-relation",
+        ExpandablePrimitive::IfNum,
+        vec![
+            other('1'),
+            Token::Char {
+                ch: ' ',
+                cat: tex_state::token::Catcode::Space,
+            },
+            other('1'),
+        ],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for _ in 0..7 {
+        assert_eq!(next_character(&mut processor), 't');
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("conditional input is exhausted")
+            .is_none()
+    );
+    assert_eq!(
+        processor.command.expansion.pending_diagnostics,
+        [MISSING_RELATION_DIAGNOSTIC]
+    );
+    assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
+fn ifodd_signed_parity_and_scanner_recovery_matrix() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut tokens = Vec::new();
+    for (index, value) in ["0", "2", "-2", "1", "-1"].into_iter().enumerate() {
+        append_boolean_case(
+            &mut universe,
+            &mut tokens,
+            &format!("ifodd-parity-{index}"),
+            ExpandablePrimitive::IfOdd,
+            chars(value),
+        );
+    }
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifodd-missing-number",
+        ExpandablePrimitive::IfOdd,
+        chars("x"),
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['f', 'f', 'f', 't', 't', 'f'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("conditional input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+}
+
+fn box_with_content(
+    universe: &mut Universe,
+    vertical: bool,
+    nonempty: bool,
+) -> tex_state::ids::NodeListId {
+    use tex_state::glue::Order;
+    use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+    use tex_state::scaled::{GlueSetRatio, Scaled};
+
+    let content = if nonempty {
+        vec![Node::Penalty(17)]
+    } else {
+        Vec::new()
+    };
+    let children = universe.freeze_node_list(&content);
+    let node = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    });
+    universe.freeze_node_list(&[if vertical {
+        Node::VList(node)
+    } else {
+        Node::HList(node)
+    }])
+}
+
+#[test]
+fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let hbox_empty = box_with_content(&mut universe, false, false);
+    let hbox_nonempty = box_with_content(&mut universe, false, true);
+    let vbox_empty = box_with_content(&mut universe, true, false);
+    let vbox_nonempty = box_with_content(&mut universe, true, true);
+    universe.set_box_reg(1, hbox_empty);
+    universe.set_box_reg(2, hbox_nonempty);
+    universe.set_box_reg(3, vbox_empty);
+    universe.set_box_reg(4, vbox_nonempty);
+
+    let mut tokens = Vec::new();
+    let mut expected = Vec::new();
+    for (primitive, prefix, truths) in [
+        (
+            ExpandablePrimitive::IfVoid,
+            "ifvoid",
+            [true, false, false, false, false],
+        ),
+        (
+            ExpandablePrimitive::IfHBox,
+            "ifhbox",
+            [false, true, true, false, false],
+        ),
+        (
+            ExpandablePrimitive::IfVBox,
+            "ifvbox",
+            [false, false, false, true, true],
+        ),
+    ] {
+        for (offset, register) in [5_u16, 1, 2, 3, 4].into_iter().enumerate() {
+            append_boolean_case(
+                &mut universe,
+                &mut tokens,
+                &format!("{prefix}-{register}"),
+                primitive,
+                chars(&register.to_string()),
+            );
+            expected.push(if truths[offset] { 't' } else { 'f' });
+        }
+    }
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for selected in expected {
+        assert_eq!(next_character(&mut processor), selected);
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("conditional input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
+fn if_ifcat_and_ifx_complete_operand_matrix() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_true = install(&mut universe, "operand-iftrue", ExpandablePrimitive::IfTrue);
+    let if_false = install(
+        &mut universe,
+        "operand-iffalse",
+        ExpandablePrimitive::IfFalse,
+    );
+    let no_expand = install(
+        &mut universe,
+        "operand-noexpand",
+        ExpandablePrimitive::NoExpand,
+    );
+    let active = active_macro(&mut universe, '~');
+    let same_a = macro_token(
+        &mut universe,
+        "operand-same-a",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), other('x')],
+    );
+    let same_b = macro_token(
+        &mut universe,
+        "operand-same-b",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), other('x')],
+    );
+    let long_same = macro_token(
+        &mut universe,
+        "operand-long-same",
+        MeaningFlags::LONG,
+        &[Token::param(1)],
+        &[Token::param(1), other('x')],
+    );
+    let different_text = macro_token(
+        &mut universe,
+        "operand-different-text",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), other('y')],
+    );
+    let mut tokens = Vec::new();
+    for (name, primitive, operands) in [
+        (
+            "matrix-if-equal",
+            ExpandablePrimitive::If,
+            vec![other('a'), letter('a')],
+        ),
+        (
+            "matrix-if-different",
+            ExpandablePrimitive::If,
+            vec![other('a'), other('b')],
+        ),
+        (
+            "matrix-ifcat-equal",
+            ExpandablePrimitive::IfCat,
+            vec![letter('a'), letter('b')],
+        ),
+        (
+            "matrix-ifcat-different",
+            ExpandablePrimitive::IfCat,
+            vec![letter('a'), other('a')],
+        ),
+        (
+            "matrix-active",
+            ExpandablePrimitive::If,
+            vec![no_expand, active, no_expand, active],
+        ),
+        (
+            "matrix-ifx-raw-equal",
+            ExpandablePrimitive::IfX,
+            vec![if_true, if_true],
+        ),
+        (
+            "matrix-ifx-raw-different",
+            ExpandablePrimitive::IfX,
+            vec![if_true, if_false],
+        ),
+        (
+            "matrix-ifx-macro-equal",
+            ExpandablePrimitive::IfX,
+            vec![same_a, same_b],
+        ),
+        (
+            "matrix-ifx-flags",
+            ExpandablePrimitive::IfX,
+            vec![same_a, long_same],
+        ),
+        (
+            "matrix-ifx-text",
+            ExpandablePrimitive::IfX,
+            vec![same_a, different_text],
+        ),
+    ] {
+        append_boolean_case(&mut universe, &mut tokens, name, primitive, operands);
+    }
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['t', 'f', 't', 'f', 't', 't', 'f', 't', 'f', 'f'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("conditional input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+}

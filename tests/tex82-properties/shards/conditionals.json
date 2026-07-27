@@ -188,22 +188,15 @@
         {
           "path": "crates/tex-command/src/observation/mod.rs",
           "test": "tex82_conditional_delimiters_use_shared_fi_or_else_identity"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "tex82_predicate_aliases_preserve_classification"
         }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "tex82_predicate_aliases_preserve_classification",
-          "cases": [
-            "17 predicate operands",
-            "fi/else/or delimiter operands",
-            "control-sequence aliases",
-            "redefined public fi recovery"
-          ]
-        }
-      ]
+      "planned_coverage": []
     },
     {
       "id": "tex82.conditionals.stack-lifecycle",
@@ -244,22 +237,15 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "true_ifx_fi_observes_branch_before_popping_its_frame"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "condition_stack_preserves_lines_limits_and_input_independence"
         }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "condition_stack_preserves_lines_limits_and_input_independence",
-          "cases": [
-            "source-line capture",
-            "nested push and pop",
-            "stable outer-frame limit change",
-            "input-stack independence"
-          ]
-        }
-      ]
+      "planned_coverage": []
     },
     {
       "id": "tex82.conditionals.skipped-text",
@@ -296,22 +282,15 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "pass_text_uses_get_next_and_skips_nested_conditionals"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "pass_text_does_not_expand_or_execute_skipped_tokens"
         }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "pass_text_does_not_expand_or_execute_skipped_tokens",
-          "cases": [
-            "raw expandable token",
-            "nested if and fi",
-            "literal and control-sequence braces",
-            "no skipped effects"
-          ]
-        }
-      ]
+      "planned_coverage": []
     },
     {
       "id": "tex82.conditionals.branch-and-delimiters",
@@ -361,31 +340,19 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "redundant_else_inside_a_selected_true_limb_is_skipped_silently"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifcase_zero_negative_else_and_fi_boundaries"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "conditional_delimiter_legality_matrix"
         }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifcase_zero_negative_else_and_fi_boundaries",
-          "cases": [
-            "ifcase zero",
-            "positive selected limb",
-            "negative index",
-            "else and fi termination"
-          ]
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "conditional_delimiter_legality_matrix",
-          "cases": [
-            "evaluating premature delimiters",
-            "completed-limit extra delimiters",
-            "empty-stack delimiters"
-          ]
-        }
-      ]
+      "planned_coverage": []
     },
     {
       "id": "tex82.conditionals.predicate-dispatch",
@@ -426,21 +393,13 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries",
-          "cases": [
-            "all 17 dispatch arms",
-            "positive and negative mode families",
-            "inner and outer state",
-            "open and closed streams",
-            "constant predicates"
-          ]
+          "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries"
         }
       ],
+      "planned_coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
     },
@@ -483,20 +442,13 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "ifdim_uses_typed_units_and_internal_dimensions"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifnum_ifdim_relation_and_missing_equals_matrix",
-          "cases": [
-            "integer less equal greater",
-            "dimension less equal greater",
-            "missing relation",
-            "backed-up nonrelation"
-          ]
+          "test": "ifnum_ifdim_relation_and_missing_equals_matrix"
         }
       ],
+      "planned_coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
     },
@@ -530,20 +482,14 @@
         "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case ifodd-premature-delimiter observes canonical recovery directly."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "planned_coverage": [
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifodd_signed_parity_and_scanner_recovery_matrix",
-          "cases": [
-            "zero",
-            "positive and negative even",
-            "positive and negative odd",
-            "integer scanner recovery"
-          ]
+          "test": "ifodd_signed_parity_and_scanner_recovery_matrix"
         }
       ],
+      "planned_coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
     },
@@ -582,17 +528,20 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifvoid_ifhbox_ifvbox_register_kind_matrix"
         }
       ],
       "planned_coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifvoid_ifhbox_ifvbox_register_kind_matrix",
+          "test": "ifbox_out_of_range_selector_recovers_to_register_zero",
           "cases": [
-            "void register",
-            "empty and nonempty hbox",
-            "empty and nonempty vbox",
-            "selector recovery"
+            "eight-bit selector range recovery",
+            "selector 256 is replaced by register zero",
+            "blocked by umber2-johp.246"
           ]
         }
       ],
@@ -646,23 +595,15 @@
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "noexpand_before_an_active_character_compares_as_that_character"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "if_ifcat_and_ifx_complete_operand_matrix"
         }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "if_ifcat_and_ifx_complete_operand_matrix",
-          "cases": [
-            "if character normalization",
-            "ifcat category normalization",
-            "noexpand active character",
-            "raw ifx meanings",
-            "macro flags and token text"
-          ]
-        }
-      ]
+      "planned_coverage": []
     }
   ]
 }
