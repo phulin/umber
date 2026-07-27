@@ -104,7 +104,7 @@ pub(crate) fn finish_end(
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError> {
     while !job_is_quiescent(stores) {
-        append_end_cleanup_contributions(stores);
+        append_end_job_contributions(stores);
         build_page(stores)?;
         drain_pending_output(nest, input, stores, execution, stats)?;
     }
@@ -554,30 +554,13 @@ fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
-/// Performs TeX82 §46's final default-output selection after the output-loop
-/// escape.  This is deliberately page-builder work, not a synthetic shipout:
-/// the residual contribution list receives the end-job hbox/vfill/penalty,
-/// `build_page` chooses the actual best break, and §1016's `fire_up` packing
-/// produces the real `\\box255` payload.
+/// Appends TeX82 §1054's end-job contribution trio to the contribution
+/// list: `tail_append(new_null_box); width(tail):=hsize;
+/// tail_append(new_glue(fill_glue)); tail_append(new_penalty(-'10000000000))`.
 ///
-/// The caller owns lowering and publication of the returned page.  Keeping
-/// that commit outside this state-only selection makes the same helper usable
-/// by canonical main control without admitting a legacy input path.
-pub(crate) fn take_final_default_output_page(stores: &mut Universe) -> Result<Node, ExecError> {
-    append_end_cleanup_contributions(stores);
-    build_page(stores)?;
-    let fire_up = stores.page_fire_up().ok_or(ExecError::MissingToken {
-        context: "final page break",
-    })?;
-    prepare_box255(stores, fire_up)?;
-    prepend_output_heldover(stores, Vec::new());
-    let page = take_box255_node(stores)?;
-    stores.clear_page_discards();
-    build_page(stores)?;
-    Ok(page)
-}
-
-fn append_end_cleanup_contributions(stores: &mut Universe) {
+/// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
+/// baselineskip interposition applies and `prev_depth` is left alone.
+pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
     let empty = stores.freeze_node_list(&[]);
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
@@ -603,6 +586,18 @@ fn append_end_cleanup_contributions(stores: &mut Universe) {
         leader: None,
     });
     stores.append_page_contribution(Node::Penalty(END_JOB_PENALTY));
+}
+
+/// TeX82 §1054's `its_all_over` test: `(page_head=page_tail) and (head=tail)
+/// and (dead_cycles=0)`.
+///
+/// §1051's `privileged` has already restricted this to outer vertical mode,
+/// where `head`/`tail` *is* the contribution list, so `head=tail` is exactly
+/// "no contributions are waiting for `build_page`".
+pub(crate) fn job_is_all_over(stores: &Universe) -> bool {
+    stores.current_page_len() == 0
+        && stores.page_contributions().is_empty()
+        && stores.page_integer(PageInteger::DeadCycles) == 0
 }
 
 fn job_is_quiescent(stores: &Universe) -> bool {
@@ -674,7 +669,7 @@ mod tests {
     fn end_cleanup_uses_tex_its_all_over_penalty() {
         let mut stores = Universe::new();
 
-        append_end_cleanup_contributions(&mut stores);
+        append_end_job_contributions(&mut stores);
 
         assert_eq!(
             stores.page_contributions().back(),
@@ -683,8 +678,13 @@ mod tests {
     }
 
     #[test]
-    fn final_default_output_selects_the_residual_page() {
+    fn job_is_all_over_only_when_page_and_contributions_are_empty() {
+        // TeX82 §1054: `(page_head=page_tail) and (head=tail) and
+        // (dead_cycles=0)`. A residual contribution alone keeps `\end` from
+        // ending the job, which is what makes the end-job trio reachable.
         let mut stores = Universe::new();
+        assert!(job_is_all_over(&stores));
+
         let residual = Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(17),
             height: Scaled::from_raw(11),
@@ -697,15 +697,10 @@ mod tests {
             children: stores.freeze_node_list(&[]),
         }));
         stores.append_page_contribution(residual);
+        assert!(!job_is_all_over(&stores));
 
-        let page = take_final_default_output_page(&mut stores)
-            .expect("final cleanup selects the residual page");
-        let Node::VList(page) = page else {
-            panic!("final cleanup must package its selected page in a vbox");
-        };
-        assert!(stores.nodes(page.children).iter().any(|node| {
-            matches!(node.to_owned(), Node::HList(node) if node.width == Scaled::from_raw(17))
-        }));
-        assert!(stores.current_page_nodes().is_empty());
+        let mut stores = Universe::new();
+        stores.set_page_integer(PageInteger::DeadCycles, 1);
+        assert!(!job_is_all_over(&stores));
     }
 }

@@ -60,8 +60,42 @@ fn run_to_error(control: &mut CanonicalMainControl, universe: &mut Universe) -> 
     }
 }
 
+/// Runs TeX82 §1054's two-delivery `\end` when the run typeset material.
+///
+/// `its_all_over` is true only when the current page and the contribution
+/// list are both empty and the last output was not a dead cycle, so a run
+/// that put anything on the page delivers the stop twice: the first delivery
+/// backs it up and ejects the residual page through §994's `build_page`, and
+/// the retry -- reached after the (INITEX-empty) `\output` has shipped that
+/// page -- ends the job.
+fn assert_end_after_ejecting_residual_page(
+    control: &mut CanonicalMainControl,
+    universe: &mut Universe,
+) {
+    assert_eq!(
+        control
+            .step(universe)
+            .expect("end ejects the residual page first"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(universe).expect("retried end ends the job"),
+        ReplayStep::End
+    );
+}
+
+/// Every terminal/log write the run has made, committed or not.
+///
+/// Committing a shipout drains the applied effect records, so reading only
+/// `effect_records` would silently lose every diagnostic issued before the
+/// first page was shipped.
 fn terminal_text(universe: &Universe) -> String {
-    universe
+    let committed = universe
+        .world()
+        .memory_terminal_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = universe
         .world()
         .effect_records()
         .iter()
@@ -75,7 +109,8 @@ fn terminal_text(universe: &Universe) -> String {
             } => Some(text.as_str()),
             _ => None,
         })
-        .collect()
+        .collect();
+    committed + &pending
 }
 
 fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
@@ -680,7 +715,7 @@ fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_sou
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.push(Mode::Math);
-    register_source(&mut control, br"\mathop{a}^b\left( c d \right)\over e\end");
+    register_source(&mut control, br"\mathop{a}^b\left( c d \right)\over e");
     run_to_end(&mut control, &mut universe);
 
     let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
@@ -747,7 +782,7 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.push(Mode::Math);
-    register_source(&mut control, br"\mathord{\kern1pt}Z\end");
+    register_source(&mut control, br"\mathord{\kern1pt}Z");
     run_to_end(&mut control, &mut universe);
 
     let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
@@ -789,7 +824,7 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
 
 #[test]
 fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
-    let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d\end";
+    let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d";
     let mut plain_universe = Universe::new_with_plain_catcodes();
     let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
     plain.modes.push(Mode::Math);
@@ -840,7 +875,7 @@ fn canonical_math_family_assignment_and_fam_select_variable_mathcode_family() {
     control.modes.push(Mode::Math);
     register_source(
         &mut control,
-        br#"\font\f=cmr10 \textfont2\f \mathcode`a="7161 \fam2 a\end"#,
+        br#"\font\f=cmr10 \textfont2\f \mathcode`a="7161 \fam2 a"#,
     );
     run_to_end(&mut control, &mut universe);
     let f = universe.intern("f");
@@ -2214,11 +2249,19 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
             .expect("inserted paragraph ends the outer horizontal list"),
         ReplayStep::Continue
     );
+    // TeX82 §1051's `privileged`: the retried stop is delivered below outer
+    // vertical mode -- inside the alignment -- so it reports an illegal case
+    // and leaves the job running until the source runs out.
     assert_eq!(
         control
             .step(&mut universe)
-            .expect("end retries in vertical mode"),
-        ReplayStep::End
+            .expect("stop is not privileged inside the alignment"),
+        ReplayStep::Continue
+    );
+    assert!(terminal_text(&universe).contains("You can't use `\\end'"));
+    assert_eq!(
+        control.step(&mut universe).expect("input runs out"),
+        ReplayStep::EndOfInput
     );
 }
 
@@ -2809,23 +2852,70 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
     ));
 
     observations.0.clear();
+    // TeX82 §1054: the paragraph is on the page, so the retried stop is not
+    // "all over" -- it is backed up again while §994's `build_page` ejects
+    // the residual page.
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
             .expect("stop retries in vertical mode"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Input(retirement),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(backup_retirement),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+            ] if retirement.transition == InputTransition::Retire
+                && retirement.reason == InputReason::Recovery
+                && raw.command == "stop"
+                && expanded.command == "stop"
+                && backup_retirement.transition == InputTransition::Retire
+                && backup_retirement.reason == InputReason::Backup
+                && backup.transition == InputTransition::Backup
+                && recovery.kind == RecoveryKind::Backup
+        ),
+        "unexpected residual-page ejection observations: {:?}",
+        observations.0
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("the retry after the ejected page ends the job"),
         ReplayStep::End
     );
-    assert!(matches!(
-        observations.0.as_slice(),
-        [
-            CommandObservation::Input(retirement),
-            CommandObservation::Command(raw),
-            CommandObservation::Command(expanded),
-        ] if retirement.transition == InputTransition::Retire
-            && retirement.reason == InputReason::Recovery
-            && raw.command == "stop"
-            && expanded.command == "stop"
-    ));
+    // §1335's `final_cleanup` unwinds the abandoned input stack and the
+    // termination effect follows it.
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(backup_retire),
+                CommandObservation::Input(source_retire),
+                CommandObservation::Input(terminal_stop),
+                CommandObservation::Effect(terminate),
+            ] if raw.command == "stop"
+                && expanded.command == "stop"
+                && backup_retire.transition == InputTransition::Retire
+                && backup_retire.reason == InputReason::Backup
+                && source_retire.transition == InputTransition::Retire
+                && source_retire.reason == InputReason::Source
+                && terminal_stop.transition == InputTransition::Stop
+                && terminal_stop.reason == InputReason::Source
+                && terminate.kind == "terminate"
+        ),
+        "unexpected final-cleanup observations: {:?}",
+        observations.0
+    );
 }
 
 #[test]
@@ -2963,7 +3053,11 @@ fn output_group_waits_for_nested_box_body_before_closing() {
 
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(universe.world().artifact_commits().len(), 2);
+    // One page, not two: the routine's own `\shipout` resets `dead_cycles`
+    // (§638) and empties the page, so §1054's `its_all_over` is true when
+    // `\end` is reconsidered and the job ends without ejecting a second
+    // page.
+    assert_eq!(universe.world().artifact_commits().len(), 1);
     assert!(universe.box_reg(255).is_none());
 }
 
@@ -2982,7 +3076,11 @@ fn simple_group_ancestor_does_not_close_nested_output_box() {
 
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(universe.world().artifact_commits().len(), 2);
+    // One page, not two: the routine's own `\shipout` resets `dead_cycles`
+    // (§638) and empties the page, so §1054's `its_all_over` is true when
+    // `\end` is reconsidered and the job ends without ejecting a second
+    // page.
+    assert_eq!(universe.world().artifact_commits().len(), 1);
     assert!(universe.box_reg(255).is_none());
 }
 
@@ -3008,41 +3106,75 @@ fn hrule_contributes_to_outer_page_before_final_shipout() {
 }
 
 #[test]
-fn dead_output_cycle_forces_shipout_after_final_stop_backup() {
-    // TeX82 §§46 and 1005: after `maxdeadcycles` completed output routines
-    // that leave `\box255` unused, `its_all_over` backs up the final stop
-    // before `fire_up` forces the page through `ship_out`.
+fn end_with_an_empty_page_ends_the_job_without_running_output() {
+    // TeX82 §1054's `its_all_over`: with the current page and the
+    // contribution list both empty and `dead_cycles=0`, `\end` ends the job
+    // immediately. `\output` is not consulted at all -- §1025 is reached
+    // only through §1012's `fire_up`, never from the stop dispatch -- so a
+    // job that typeset nothing produces no page, exactly as TeX82's
+    // "No pages of output." reports.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\maxdeadcycles=1\output={X}\end");
     let mut observations = ObservationRecorder::default();
 
-    for _ in 0..32 {
-        match control
+    assert_eq!(
+        control
             .step_with_observer(&mut universe, &mut observations)
-            .expect("output-cycle replay")
-        {
-            ReplayStep::Continue => {}
-            ReplayStep::End | ReplayStep::EndOfInput => break,
-        }
-    }
+            .expect("maxdeadcycles assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("output assignment"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("stop ends the job"),
+        ReplayStep::End
+    );
 
-    let shipout = observations
-        .0
-        .iter()
-        .position(|observation| {
-            matches!(
-                observation,
-                CommandObservation::Effect(effect)
-                    if effect.kind == "shipout" && effect.detail == "dvi\0".to_owned() + "1"
-            )
-        })
-        .expect("forced output shipout effect");
-    assert!(matches!(
-        observations.0.get(shipout.checked_sub(1).expect("effect has predecessor")),
-        Some(CommandObservation::Recovery(recovery)) if recovery.kind == RecoveryKind::Backup
-    ));
+    assert!(universe.world().artifact_commits().is_empty());
+    assert!(
+        !observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Effect(effect) if effect.kind == "shipout"
+        )),
+        "an empty job must not ship a page: {:?}",
+        observations.0
+    );
+    assert!(observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Effect(effect) if effect.kind == "terminate"
+    )));
+}
+
+#[test]
+fn dead_output_cycles_force_a_shipout_from_fire_up() {
+    // TeX82 §1005's `@<Explain that too many dead cycles have occurred...@>`:
+    // once `dead_cycles` reaches `\maxdeadcycles`, `fire_up` ships `\box255`
+    // itself instead of entering `\output` again. Reaching that escape needs
+    // real page material, because §1054 would otherwise have ended the job
+    // before any output routine ran.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\maxdeadcycles=1\output={X}\setbox0=\hbox{}\copy0\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
     assert_eq!(universe.world().artifact_commits().len(), 1);
+    assert!(
+        terminal_text(&universe).contains("Output loop---"),
+        "the dead-cycle escape must report itself: {}",
+        terminal_text(&universe)
+    );
 }
 
 #[test]
@@ -3527,10 +3659,7 @@ fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment(
         control.step(&mut universe).expect("inserted paragraph"),
         ReplayStep::Continue
     );
-    assert_eq!(
-        control.step(&mut universe).expect("retried end"),
-        ReplayStep::End
-    );
+    assert_end_after_ejecting_residual_page(&mut control, &mut universe);
 }
 
 #[test]
@@ -3632,7 +3761,7 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
                 if scanner.kind == "dimension" && scanner.value == "196608"
         )
     }));
-    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+    assert_end_after_ejecting_residual_page(&mut control, &mut universe);
 }
 
 #[derive(Default)]
@@ -3787,12 +3916,16 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
         .apply_alignment_request(AlignmentRequest::Finish(alignment))
         .expect("alignment lifecycle finishes through command core");
     assert_eq!(control.active_alignment(), None);
+    // TeX82 §1051's `privileged`: the alignment left this replay in internal
+    // vertical mode, where `\end` reports an illegal case instead of ending
+    // the job, so the run finishes by running out of input.
     assert_eq!(
         control
             .step(&mut universe)
-            .expect("saved delimiter does not re-enter ordinary delivery"),
-        ReplayStep::End
+            .expect("stop is not privileged in internal vertical mode"),
+        ReplayStep::Continue
     );
+    assert!(terminal_text(&universe).contains("You can't use `\\end'"));
     assert_eq!(
         control
             .step(&mut universe)
@@ -3867,12 +4000,16 @@ fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order(
     control
         .apply_alignment_request(AlignmentRequest::Finish(alignment))
         .expect("alignment lifecycle finishes through command core");
+    // TeX82 §1051's `privileged`: this replay ends inside the alignment's
+    // internal vertical mode, so `\end` reports an illegal case rather than
+    // ending the job.
     assert_eq!(
         control
             .step(&mut universe)
-            .expect("saved delimiter does not re-enter ordinary delivery"),
-        ReplayStep::End
+            .expect("stop is not privileged in internal vertical mode"),
+        ReplayStep::Continue
     );
+    assert!(terminal_text(&universe).contains("You can't use `\\end'"));
 }
 
 #[test]

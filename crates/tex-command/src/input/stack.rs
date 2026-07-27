@@ -348,6 +348,45 @@ impl CommandState {
         })
     }
 
+    /// Pops one input level for TeX82 §1335's `final_cleanup` unwinding.
+    ///
+    /// §1335 runs `while input_ptr>0 do if state=token_list then
+    /// end_token_list else end_file_reading` once §1054's `its_all_over` has
+    /// returned true.  Both arms are unconditional pops: the job is over, no
+    /// level will ever be read again, and none of the exhaustion-time rules
+    /// [`Self::retire_exhausted_input`] enforces (exact expected identity,
+    /// macro-activation order, v-template retention) applies.  Levels
+    /// therefore unwind top-down here even when a macro body, an alignment
+    /// template, or a partially consumed source is still live.
+    pub(crate) fn pop_input_level_at_end_of_job(&mut self) -> Option<InputRetirement> {
+        let level = self.input.levels.pop()?;
+        let identity = input_level_identity(&level);
+        let InputLevel::Tokens(cursor) = level else {
+            return Some(InputRetirement {
+                identity,
+                action: InputRetirementAction::SourcePopped,
+                reason: InputRetirementReason::Source,
+                trace: None,
+            });
+        };
+        self.finish_macro_body_retirement(&cursor.behavior);
+        let action = match cursor.retirement {
+            RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
+            RetirementBehavior::CloseScantokens => InputRetirementAction::ScantokensClosed,
+            RetirementBehavior::Pop
+            | RetirementBehavior::RetainExhaustedVTemplate
+            | RetirementBehavior::AwaitingVTemplateRetirement => {
+                InputRetirementAction::TokenListPopped
+            }
+        };
+        Some(InputRetirement {
+            identity,
+            action,
+            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            trace: Some(cursor.trace),
+        })
+    }
+
     fn allocate_input_level_identity(&mut self) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);

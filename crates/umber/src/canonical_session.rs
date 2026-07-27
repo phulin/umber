@@ -562,7 +562,10 @@ mod tests {
             Some(&b"once"[..]),
             "aggregate rollback must not repeat an already committed write"
         );
-        assert_eq!(run.artifacts.len(), 1);
+        // Two pages: the explicit `\shipout`, then TeX82 §1054's residual
+        // page -- `x\par` is still on the current page when `\end` arrives,
+        // so `its_all_over` is false and the end-job trio ejects it.
+        assert_eq!(run.artifacts.len(), 2);
         assert_eq!(run.dvi_pages.len(), run.artifacts.len());
         let boundaries = checkpoints
             .iter()
