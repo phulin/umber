@@ -6485,3 +6485,50 @@ fn alignment_cell_body_handles_ignore_spaces() {
     register_source(&mut control, br"\halign{#\cr\ignorespaces a\cr}\end");
     run_to_end(&mut control, &mut universe);
 }
+
+/// tex.web §1085's `handle_right_brace` runs `end_graf` (§1096) for
+/// `vbox_group` and `vtop_group` -- and only for those two -- before
+/// `package`, so a paragraph still open at the box's closing brace is
+/// line-broken into the box's own vertical list rather than being packaged as
+/// if its hlist material were the box body (`umber2-johp.232`).
+#[test]
+fn vertical_box_group_end_runs_end_graf_before_packaging() {
+    for opener in [&b"\\vbox"[..], &b"\\vtop"[..]] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_cmr10_font(&mut control, &mut universe);
+        let mut source = b"\\font\\f=cmr10 \\f \\hsize=100pt \\setbox1=".to_vec();
+        source.extend_from_slice(opener);
+        source.extend_from_slice(b"{\\noindent A}");
+        register_source(&mut control, &source);
+        run_to_end(&mut control, &mut universe);
+
+        let stored = universe
+            .box_reg(1)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("setbox1 stores a vertical box");
+        let Node::VList(stored) = stored else {
+            panic!("setbox1 contains a vertical box");
+        };
+        let children: Vec<_> = universe
+            .nodes(stored.children)
+            .iter()
+            .map(|node| node.to_owned())
+            .collect();
+        let [Node::HList(line)] = children.as_slice() else {
+            panic!("the finished paragraph contributes exactly one line box, got {children:?}");
+        };
+        assert_eq!(
+            line.width,
+            Scaled::from_raw(100 * 65_536),
+            "the line box was packaged to \\hsize by the line breaker"
+        );
+        assert!(
+            universe
+                .nodes(line.children)
+                .iter()
+                .any(|node| matches!(node.to_owned(), Node::Char { ch: 'A', .. })),
+            "the paragraph's character reached the line box"
+        );
+    }
+}

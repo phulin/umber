@@ -8983,6 +8983,20 @@ fn apply_scanned_step(
             if let ReplayBoxKind::Insert(class) = box_state.kind {
                 return finish_insert_or_adjust_group(class, modes, stores);
             }
+            // TeX82 §1085's `handle_right_brace` runs `end_graf` (§1096) for
+            // `vbox_group` and `vtop_group` -- and only for those two -- before
+            // `package`: `hbox_group` and `adjusted_hbox_group` package
+            // immediately. A vertical box whose body still has a paragraph open
+            // when its closing brace arrives must therefore line-break that
+            // paragraph into the box's own vertical list first. Without this,
+            // `modes.pop()` below took the still-open *horizontal* level for the
+            // box body and packaged its hlist material directly, so
+            // `\vbox{\noindent A}` produced `\vbox(0.0+0.0)x0.0` holding a bare
+            // char node -- and left the box's real internal-vertical level open
+            // on the mode nest (`umber2-johp.232`).
+            if !box_state.kind.horizontal() {
+                crate::assignments::end_paragraph(modes, stores)?;
+            }
             // TeX82's main-control loop appends every character (and its
             // resolved ligature/kern chain) to the current list synchronously
             // as it is scanned, so by the time `handle_right_brace` reaches
