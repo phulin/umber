@@ -67,8 +67,12 @@ are equal after erasing every source position and nothing else, through an
 exhaustive match over the event schema, so a new schema variant fails to
 compile rather than silently changing what merges. The report also prints the
 bounds it applied: a fixture whose `--max-divergences` budget was reached, and
-a document trace that was never generated. See "Grouped worklist and run
-accounting" in `docs/testing_infrastructure.md`.
+a document trace that was never generated. Either bound also makes the run
+`PARTIAL` (exit `2`), separate from `CLEAN` (`0`), `DIVERGED` (`1`), and a run
+that could not be performed (`3`), so a caller reading only the exit status
+cannot take an uncompared fixture for a converged one; the report is printed
+even when clean and closes with a matching `VERDICT:` line. See "Grouped
+worklist and run accounting" in `docs/testing_infrastructure.md`.
 
 The runner owns no canonical vocabulary of its own. Every name it puts in an
 event -- catcodes, command names, glue orders, scanner statuses, token

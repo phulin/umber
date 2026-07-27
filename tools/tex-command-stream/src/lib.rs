@@ -41,9 +41,7 @@ pub use compare::{
     find_divergences,
 };
 pub use group::{RootSite, group};
-pub use report::{
-    ComparisonReport, EXIT_NOT_RUN, FixtureState, FixtureSummary, RunOutcome,
-};
+pub use report::{ComparisonReport, EXIT_NOT_RUN, FixtureState, FixtureSummary, RunOutcome};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
