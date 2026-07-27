@@ -32,7 +32,13 @@ warn_missing_e2e_oracles
 
 scripts/test-publish-texlive-r2.sh
 
-cargo test --tests --quiet &
+# The suite is run through `run-native-tests.py` rather than a bare
+# `cargo test --tests`: that command selects the workspace's default members,
+# which left the `bib-*` crates, `umber-interrupt`, `refexec`, and
+# `profile-analyzer` executed by no routine gate (`umber2-johp.211`). The
+# script selects `--workspace` minus a declared, verified exclusion list and
+# ends in a `VERDICT:` line naming what actually ran.
+scripts/run-native-tests.py &
 test_pid=$!
 scripts/check.sh &
 check_pid=$!
