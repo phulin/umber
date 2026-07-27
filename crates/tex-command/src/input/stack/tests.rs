@@ -1,17 +1,20 @@
 use std::sync::{Arc, Weak};
 
+use tex_state::Universe;
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
 use crate::{CommandState, RegisteredSourceKind, SourceRegistration};
 
 use super::{
-    InputRetirementAction, InputRetirementError, OutParameterReplay, ParameterReplayError,
+    InputRetirementAction, InputRetirementError, InputRetirementReason, OutParameterReplay,
+    ParameterReplayError,
 };
 use crate::input::levels::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason, TokenBehavior,
-    TokenPayload, TransientReplayReason,
+    BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer,
+    SharedTokenBuffer, StoredReplayReason, TokenBehavior, TokenPayload, TransientReplayReason,
 };
 
 fn traced(ch: char) -> TracedTokenWord {
@@ -492,4 +495,221 @@ fn replay_trace_cannot_select_retirement_or_parameter_ownership() {
         parameter_range(ReplayTrace::Stored(StoredReplayReason::Mark)),
         parameter_range(ReplayTrace::Inserted)
     );
+}
+
+#[test]
+fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("stable-reference").symbol();
+    universe.set_meaning(symbol, Meaning::CharGiven('A'));
+    let list = universe.intern_token_list(&[Token::Cs(symbol)]);
+    let mut state = CommandState::default();
+    let level = state.push_token_level(
+        TokenPayload::Stored {
+            tokens: list,
+            origins: OriginListId::EMPTY,
+        },
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Stored(StoredReplayReason::TokenList),
+    );
+
+    universe.set_meaning(symbol, Meaning::CharGiven('B'));
+
+    let InputLevel::Tokens(cursor) = state
+        .input
+        .levels
+        .last()
+        .expect("stored level remains live")
+    else {
+        panic!("stored replay changed level kind");
+    };
+    let TokenPayload::Stored { tokens, .. } = cursor.payload else {
+        panic!("stored replay changed payload kind");
+    };
+    assert_eq!(universe.tokens(tokens), &[Token::Cs(symbol)]);
+    assert_eq!(universe.meaning(symbol), Meaning::CharGiven('B'));
+    assert_eq!(
+        state
+            .retire_exhausted_input(level)
+            .expect("replay retires")
+            .reason,
+        InputRetirementReason::TokenList
+    );
+}
+
+#[test]
+fn source_level_begin_end_restore_line_and_terminal_state() {
+    let mut state = CommandState::default();
+    let outer = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"outer\n".to_vec(),
+        ))
+        .expect("outer source registers");
+    state
+        .open_registered_source(outer)
+        .expect("outer source opens");
+    let outer_line = state.load_next_source_line(13).expect("outer line loads");
+
+    let inner = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"inner\n".to_vec(),
+        ))
+        .expect("inner source registers");
+    state
+        .open_registered_source(inner)
+        .expect("inner source opens");
+    let inner_identity = match state.input.levels.last().expect("inner level") {
+        InputLevel::Source(source) => source.identity,
+        InputLevel::Tokens(_) => panic!("opened source is not a source level"),
+    };
+    assert_eq!(state.input.levels.len(), 2);
+    let retired = state
+        .retire_exhausted_input(inner_identity)
+        .expect("inner source retires");
+    assert_eq!(retired.action, InputRetirementAction::SourcePopped);
+    assert_eq!(retired.reason, InputRetirementReason::Source);
+
+    let InputLevel::Source(source) = state.input.levels.last().expect("outer source restored")
+    else {
+        panic!("outer source changed level kind");
+    };
+    assert_eq!(
+        source
+            .cursor
+            .line
+            .as_ref()
+            .expect("outer line remains live")
+            .physical,
+        outer_line
+    );
+    let outer_identity = source.identity;
+    state
+        .retire_exhausted_input(outer_identity)
+        .expect("outer source retires");
+    assert!(state.input.levels.is_empty());
+    assert_eq!(
+        state.retire_exhausted_input(outer_identity),
+        Err(InputRetirementError::NoInput)
+    );
+}
+
+#[test]
+fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
+    for (behavior, trace, expected_reason) in [
+        (
+            TokenBehavior::Ordinary,
+            ReplayTrace::Stored(StoredReplayReason::TokenList),
+            InputRetirementReason::TokenList,
+        ),
+        (
+            TokenBehavior::Parameter,
+            ReplayTrace::MacroParameter { slot: 9 },
+            InputRetirementReason::Parameter,
+        ),
+        (
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            ReplayTrace::BackedUp,
+            InputRetirementReason::Backup,
+        ),
+    ] {
+        let mut state = CommandState::default();
+        let identity = state.push_token_level(
+            TokenPayload::Stored {
+                tokens: TokenListId::EMPTY,
+                origins: OriginListId::EMPTY,
+            },
+            behavior,
+            RetirementBehavior::Pop,
+            trace,
+        );
+        let retirement = state
+            .retire_exhausted_input(identity)
+            .expect("matrix level retires");
+        assert_eq!(retirement.action, InputRetirementAction::TokenListPopped);
+        assert_eq!(retirement.reason, expected_reason);
+        assert!(state.input.levels.is_empty());
+    }
+}
+
+#[test]
+fn backup_inserted_and_macro_levels_retire_in_canonical_order() {
+    let mut state = CommandState::default();
+    let activation = push_activation(
+        &mut state,
+        41,
+        Vec::<TracedTokenWord>::new().into(),
+        [None; 9],
+    );
+    let macro_level = state.push_token_level(
+        transient_payload(&[]),
+        TokenBehavior::MacroBody(activation),
+        RetirementBehavior::Pop,
+        ReplayTrace::MacroReplacement,
+    );
+    let inserted = state.push_token_level(
+        transient_payload(&[]),
+        TokenBehavior::Recovery,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    let backup = state.push_token_level(
+        TokenPayload::BackedUp(SharedBackedUpBuffer::default()),
+        TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+
+    for (identity, reason) in [
+        (backup, InputRetirementReason::Backup),
+        (inserted, InputRetirementReason::Recovery),
+        (macro_level, InputRetirementReason::Macro),
+    ] {
+        assert_eq!(
+            state
+                .retire_exhausted_input(identity)
+                .expect("top level retires")
+                .reason,
+            reason
+        );
+    }
+    assert!(state.input.levels.is_empty());
+    assert!(state.parameters.activations.is_empty());
+}
+
+#[test]
+fn input_level_retirement_covers_source_token_parameter_and_reference_actions() {
+    for (behavior, retirement, trace, action, reason) in [
+        (
+            TokenBehavior::Ordinary,
+            RetirementBehavior::StopAtEnd,
+            ReplayTrace::Stored(StoredReplayReason::EveryJob),
+            InputRetirementAction::TerminalStop,
+            InputRetirementReason::TokenList,
+        ),
+        (
+            TokenBehavior::Parameter,
+            RetirementBehavior::Pop,
+            ReplayTrace::MacroParameter { slot: 1 },
+            InputRetirementAction::TokenListPopped,
+            InputRetirementReason::Parameter,
+        ),
+        (
+            TokenBehavior::Recovery,
+            RetirementBehavior::CloseScantokens,
+            ReplayTrace::Transient(TransientReplayReason::Scantokens),
+            InputRetirementAction::ScantokensClosed,
+            InputRetirementReason::Recovery,
+        ),
+    ] {
+        let mut state = CommandState::default();
+        let identity = state.push_token_level(transient_payload(&[]), behavior, retirement, trace);
+        let retired = state
+            .retire_exhausted_input(identity)
+            .expect("level retires");
+        assert_eq!(retired.action, action);
+        assert_eq!(retired.reason, reason);
+    }
 }

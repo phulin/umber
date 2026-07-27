@@ -1,5 +1,5 @@
 use tex_state::Universe;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandIdentity, ConvertSelector, CurrentCommand, DeliveryStamp, XRaySelector};
@@ -194,4 +194,102 @@ fn tex82_diagnostics_resolve_to_the_shared_xray_identity() {
 
         assert_eq!(command.identity(), CommandIdentity::XRay(selector));
     }
+}
+
+#[test]
+fn command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges() {
+    let mut universe = Universe::new();
+    let cases = [
+        (
+            Meaning::CharToken {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            "character",
+        ),
+        (
+            Meaning::InternalInteger(InternalInteger::Badness),
+            "internal",
+        ),
+        (
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def),
+            "unexpandable",
+        ),
+        (
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+            "expandable",
+        ),
+    ];
+
+    for (index, (meaning, expected_partition)) in cases.into_iter().enumerate() {
+        let symbol = universe.intern(&format!("partition{index}")).symbol();
+        universe.set_meaning(symbol, meaning);
+        let command = resolve(&mut universe, Token::Cs(symbol), OriginId::UNKNOWN);
+        let actual_partition = match command.meaning() {
+            Meaning::CharToken { .. } | Meaning::CharGiven(_) => "character",
+            Meaning::InternalInteger(_)
+            | Meaning::CountRegister(_)
+            | Meaning::DimenRegister(_)
+            | Meaning::SkipRegister(_)
+            | Meaning::MuskipRegister(_)
+            | Meaning::ToksRegister(_)
+            | Meaning::IntParam(_)
+            | Meaning::DimenParam(_)
+            | Meaning::GlueParam(_)
+            | Meaning::MuGlueParam(_)
+            | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_)
+            | Meaning::Font(_) => "internal",
+            Meaning::UnexpandablePrimitive(_) | Meaning::EndV => "unexpandable",
+            Meaning::ExpandablePrimitive(_) | Meaning::Macro { .. } => "expandable",
+            _ => "other",
+        };
+        assert_eq!(actual_partition, expected_partition, "case {index}");
+    }
+
+    assert_eq!(Catcode::Escape as u8, 0);
+    assert_eq!(Catcode::Invalid as u8, 15);
+    assert_eq!(UnexpandablePrimitive::Def.operand(), 0);
+    assert_eq!(ExpandablePrimitive::ExpandAfter.operand(), 0);
+}
+
+#[test]
+fn lookup_reuses_existing_identity_and_guarded_miss_does_not_intern() {
+    let mut universe = Universe::new();
+    let first = {
+        let mut state = universe.command_context();
+        state.intern_control_sequence("already-known")
+    };
+
+    {
+        let state = universe.command_context();
+        assert_eq!(state.known_control_sequence("already-known"), Some(first));
+        assert_eq!(state.known_control_sequence("guarded-miss"), None);
+    }
+
+    let mut state = universe.command_context();
+    assert_eq!(state.intern_control_sequence("already-known"), first);
+    assert_ne!(state.intern_control_sequence("guarded-miss"), first);
+}
+
+#[test]
+fn primitive_installation_binds_spelling_command_operand_and_level() {
+    let mut universe = Universe::new();
+    let meaning = Meaning::ExpandablePrimitive(ExpandablePrimitive::Number);
+
+    universe.install_primitive_meaning("number", meaning);
+
+    let symbol = universe
+        .symbol("number")
+        .expect("primitive spelling is interned");
+    assert_eq!(universe.primitive_meaning("number"), Some(meaning));
+    assert_eq!(universe.primitive_name(meaning), Some("number"));
+    assert_eq!(universe.meaning(symbol), meaning);
+    let command = resolve(&mut universe, Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
+    assert_eq!(
+        command.identity(),
+        CommandIdentity::Convert(ConvertSelector::Number)
+    );
+    assert_eq!(ConvertSelector::Number.operand(), 0);
 }

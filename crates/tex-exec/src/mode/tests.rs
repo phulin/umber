@@ -76,3 +76,90 @@ fn mode_projection_is_canonical_and_content_sensitive() {
         first_hash
     );
 }
+
+#[test]
+fn semantic_nest_six_modes_and_fields_initialize_canonically() {
+    for (mode, family, inner, horizontal_space_factor) in [
+        (
+            Mode::Vertical,
+            tex_expand::EngineMode::Vertical,
+            false,
+            false,
+        ),
+        (
+            Mode::InternalVertical,
+            tex_expand::EngineMode::Vertical,
+            true,
+            false,
+        ),
+        (
+            Mode::Horizontal,
+            tex_expand::EngineMode::Horizontal,
+            false,
+            true,
+        ),
+        (
+            Mode::RestrictedHorizontal,
+            tex_expand::EngineMode::Horizontal,
+            true,
+            true,
+        ),
+        (Mode::Math, tex_expand::EngineMode::Math, true, false),
+        (
+            Mode::DisplayMath,
+            tex_expand::EngineMode::Math,
+            false,
+            false,
+        ),
+    ] {
+        let mut nest = ModeNest::new();
+        nest.push(mode);
+        let list = nest.current_list();
+
+        assert_eq!(nest.current_mode(), mode);
+        assert_eq!(mode.engine_mode(), family);
+        assert_eq!(mode.is_inner(), inner);
+        assert!(list.is_empty());
+        assert_eq!(
+            list.raw_space_factor(),
+            if horizontal_space_factor { 1000 } else { 0 }
+        );
+        assert_eq!(list.prev_depth(), None);
+        assert_eq!(list.prev_graf(), 0);
+        assert!(!list.no_boundary());
+        assert_eq!(list.hyphen_language(), 0);
+        assert!(list.align_state().is_none());
+        assert!(list.incomplete_fraction().is_none());
+        assert!(list.display_interrupt().is_none());
+        assert!(list.display_eq_no().is_none());
+    }
+}
+
+#[test]
+fn semantic_nest_push_and_pop_preserve_fields_and_start_empty_list() {
+    let mut nest = ModeNest::new();
+    nest.current_list_mut().set_prev_graf(7);
+    nest.current_list_mut().push(kern(11));
+
+    for mode in [Mode::Horizontal, Mode::Math, Mode::InternalVertical] {
+        nest.push(mode);
+        assert_eq!(nest.current_mode(), mode);
+        assert!(nest.current_list().is_empty());
+    }
+    nest.current_list_mut().set_prev_depth(Scaled::from_raw(23));
+    nest.current_list_mut().push(kern(29));
+
+    let inner = nest.pop().expect("nested mode pops");
+    assert_eq!(inner.mode(), Mode::InternalVertical);
+    assert_eq!(inner.list().prev_depth(), Some(Scaled::from_raw(23)));
+    assert_eq!(inner.list().nodes(), &[kern(29)]);
+    assert_eq!(nest.current_mode(), Mode::Math);
+    assert!(nest.current_list().is_empty());
+
+    nest.pop().expect("math mode pops");
+    nest.pop().expect("horizontal mode pops");
+    assert_eq!(nest.current_mode(), Mode::Vertical);
+    assert_eq!(nest.current_list().prev_graf(), 7);
+    assert_eq!(nest.current_list().nodes(), &[kern(11)]);
+    assert!(nest.pop().is_err());
+}

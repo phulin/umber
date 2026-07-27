@@ -89,3 +89,32 @@ fn the_dense_level_enum_has_only_source_and_token_variants() {
     });
     assert_eq!(classify(&level), "tokens");
 }
+
+#[test]
+fn stored_token_encoding_partitions_characters_controls_and_macro_forms() {
+    let mut universe = tex_state::Universe::new();
+    let control = universe.intern("control").symbol();
+    let cases = [
+        Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+        Token::Cs(control),
+        Token::param(1),
+        Token::param(9),
+    ];
+
+    for (index, token) in cases.into_iter().enumerate() {
+        let traced = TracedTokenWord::pack(token, OriginId::UNKNOWN);
+        assert_eq!(traced.semantic_token(), token, "case {index}");
+        assert_eq!(traced.origin(), OriginId::UNKNOWN, "case {index}");
+    }
+    assert_eq!(core::mem::size_of::<Token>(), 8);
+    assert_ne!(cases[0], cases[1]);
+    assert_ne!(cases[2], cases[3]);
+    assert_ne!(cases[3], cases[4]);
+}

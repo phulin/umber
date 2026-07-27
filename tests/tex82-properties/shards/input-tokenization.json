@@ -350,12 +350,7 @@
       "stimulus": [
         "Phase 2 unit `command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges` exercises every boundary and alias; minifixture `command-code-boundaries.tex` observes representative raw and expanded identities on each side."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Aliases share their required numeric code, internal quantities occupy the inclusive canonical interval, and commands above max_command never reach main control unexpanded."
       ],
@@ -370,9 +365,14 @@
       ],
       "semantic_owner": "tex-command::delivery",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.240"
     },
     {
       "id": "tex82.modes.semantic-nest-model",
@@ -382,12 +382,7 @@
       "stimulus": [
         "Phase 2 unit `semantic_nest_six_modes_and_fields_initialize_canonically` constructs every signed mode, empty/nonempty list, auxiliary interpretation, and initial contribution state."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/mode/tests.rs",
-          "test": "semantic_nest_six_modes_and_fields_initialize_canonically"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Outer vertical mode begins on contrib_head with ignored prev_depth; head/tail agree exactly for an empty list; mode arithmetic selects one of three families while sign selects outer versus internal form."
       ],
@@ -402,9 +397,14 @@
       ],
       "semantic_owner": "tex-exec::mode-nest",
       "test_level": "planned-rust-unit",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/mode/tests.rs",
+          "test": "semantic_nest_six_modes_and_fields_initialize_canonically"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.242"
     },
     {
       "id": "tex82.modes.semantic-nest-lifecycle",
@@ -416,12 +416,7 @@
       "stimulus": [
         "Phase 2 unit `semantic_nest_push_and_pop_preserve_fields_and_start_empty_list` nests all mode families, mutates each inner field, and unwinds to exact saved records."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/mode/tests.rs",
-          "test": "semantic_nest_push_and_pop_preserve_fields_and_start_empty_list"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Push preserves old mode and auxiliary values in the saved record but gives the child a fresh empty head/tail, zero prev_graf, and current line; pop restores every saved field."
       ],
@@ -434,9 +429,14 @@
       ],
       "semantic_owner": "tex-exec::mode-nest",
       "test_level": "planned-rust-unit",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/mode/tests.rs",
+          "test": "semantic_nest_push_and_pop_preserve_fields_and_start_empty_list"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.242"
     },
     {
       "id": "tex82.modes.activity-diagnostics",
@@ -466,7 +466,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.242"
     },
     {
       "id": "tex82.input.control-sequence-lookup",
@@ -481,12 +481,7 @@
       "stimulus": [
         "Phase 2 unit `lookup_reuses_existing_identity_and_guarded_miss_does_not_intern` plus minifixture `input-control-sequences.tex` cover equal/colliding names and guarded/permitted misses."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "lookup_reuses_existing_identity_and_guarded_miss_does_not_intern"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Only a permitted miss interns; source and csname lookup of equal bytes share identity."
       ],
@@ -501,9 +496,22 @@
       ],
       "semantic_owner": "tex-command::control-sequences",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "lookup_reuses_existing_identity_and_guarded_miss_does_not_intern"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "csname_expands_characters_then_injects_a_relaxed_named_control_sequence"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.primitive-installation",
@@ -517,12 +525,7 @@
       "stimulus": [
         "Phase 2 unit `primitive_installation_binds_spelling_command_operand_and_level` installs single- and multiletter primitives."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "primitive_installation_binds_spelling_command_operand_and_level"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Later raw resolution returns exactly the installed command and operand."
       ],
@@ -537,9 +540,14 @@
       ],
       "semantic_owner": "tex-command::control-sequences",
       "test_level": "planned-rust-unit",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "primitive_installation_binds_spelling_command_operand_and_level"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.241"
     },
     {
       "id": "tex82.input.stored-token-representation",
@@ -555,16 +563,7 @@
       "stimulus": [
         "Existing vocabulary tests cover canonical names and compact parameter forms; Phase 2 units `stored_token_encoding_partitions_characters_controls_and_macro_forms` and `stored_token_reference_lifetime_survives_redefinition_and_replay`, plus minifixture `stored-token-replay.tex`, cover numeric partitions, brace/match limits, reference ownership, and replay after redefinition."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/input/levels/tests.rs",
-          "test": "stored_token_encoding_partitions_characters_controls_and_macro_forms"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "stored_token_reference_lifetime_survives_redefinition_and_replay"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Token kind, parameter role, and one-based selector remain distinct."
       ],
@@ -587,10 +586,18 @@
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
           "test": "replacement_parameter_forms_remain_compact_and_distinct"
+        },
+        {
+          "path": "crates/tex-command/src/input/levels/tests.rs",
+          "test": "stored_token_encoding_partitions_characters_controls_and_macro_forms"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "stored_token_reference_lifetime_survives_redefinition_and_replay"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.level-lifecycle",
@@ -622,20 +629,7 @@
       "stimulus": [
         "Existing stack tests exercise stored replay ownership; Phase 2 units `source_level_begin_end_restore_line_and_terminal_state`, `token_list_kind_reference_and_parameter_stack_lifecycle_matrix`, and `backup_inserted_and_macro_levels_retire_in_canonical_order`, plus minifixture `input-level-lifecycle.tex`, cover the remaining source and token-list assertions."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "source_level_begin_end_restore_line_and_terminal_state"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "token_list_kind_reference_and_parameter_stack_lifecycle_matrix"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "backup_inserted_and_macro_levels_retire_in_canonical_order"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Newest input delivers first; every token-list kind applies its canonical reference/parameter action; source close restores line, terminal/file state, and enclosing cursor; replay selects the nearest live parameter owner."
       ],
@@ -658,10 +652,22 @@
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
           "test": "parameter_level_replays_out_parameter_tokens_literally"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "source_level_begin_end_restore_line_and_terminal_state"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "token_list_kind_reference_and_parameter_stack_lifecycle_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "backup_inserted_and_macro_levels_retire_in_canonical_order"
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.245"
     },
     {
       "id": "tex82.input.level-retirement",
@@ -673,12 +679,7 @@
       "stimulus": [
         "Phase 2 unit `input_level_retirement_covers_source_token_parameter_and_reference_actions` exhausts every stored-list kind and nested source; final_cleanup may cross-reference this property while retaining exclusive ownership of §1335."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "input_level_retirement_covers_source_token_parameter_and_reference_actions"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Token references and macro parameter ranges are released before their level disappears; file close decrements nesting and restores the saved line; the common pop exposes exactly the prior record."
       ],
@@ -705,10 +706,18 @@
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
           "test": "macro_body_retirement_rejects_activation_mismatch_transactionally"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "input_level_retirement_covers_source_token_parameter_and_reference_actions"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "source_level_begin_end_restore_line_and_terminal_state"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.raw-delivery",
@@ -727,12 +736,7 @@
       "stimulus": [
         "Phase 2 unit `raw_delivery_sets_current_identity_and_intercepts_only_top_level_alignment_delimiters` plus minifixture `input-raw-delivery.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "raw_delivery_sets_current_identity_and_intercepts_only_top_level_alignment_delimiters"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "One raw event precedes expansion and an intercepted delimiter does not escape as ordinary continuation."
       ],
@@ -747,9 +751,22 @@
       ],
       "semantic_owner": "tex-command::delivery",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "observer_preserves_active_control_sequence_identity_at_raw_delivery"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "get_next_alone_intercepts_top_level_alignment_delimiters_and_backup_replays_them"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "alignment_delimiter_waits_for_literal_brace_depth"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.outer-validity-recovery",
@@ -767,12 +784,7 @@
       "stimulus": [
         "Phase 2 unit `outer_validity_recovery_is_scanner_status_specific_and_finite` plus minifixture `input-outer-recovery.tex` cover skipping, matching, defining, aligning, and absorbing."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "outer_validity_recovery_is_scanner_status_specific_and_finite"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Runaway context and canonical recovery tokens occur once before resumable input."
       ],
@@ -787,9 +799,22 @@
       ],
       "semantic_owner": "tex-command::delivery",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "runaway_recovery_inserts_the_status_specific_canonical_tokens"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "outer_macro_is_backed_up_and_current_delivery_becomes_a_space"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "outer_recovery_is_bounded_and_snapshot_rollback_replays_the_episode"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.tokenization",
@@ -828,19 +853,7 @@
       "planned_coverage": [
         {
           "path": "crates/tex-command/src/input/tokenizer/tests.rs",
-          "test": "stored_get_next_substitutes_parameters_and_resolves_meanings"
-        },
-        {
-          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
-          "test": "force_eof_and_refill_retire_only_at_line_boundary"
-        },
-        {
-          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
           "test": "pausing_replaces_the_firmed_line_before_tokenization"
-        },
-        {
-          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
-          "test": "no_new_control_sequence_guard_covers_source_and_csname_paths"
         }
       ],
       "expected_observations": [
@@ -885,10 +898,30 @@
         {
           "path": "crates/tex-command/src/input/tokenizer/tests.rs",
           "test": "all_canonical_dialects_share_the_exact_byte_state_machine"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "stored_replay_delivers_once_then_restarts_to_the_underlying_source"
+        },
+        {
+          "path": "crates/tex-command/src/input/stack/tests.rs",
+          "test": "parameter_replay_uses_nearest_macro_body_param_start"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "get_token_enters_a_new_multiletter_name_a_later_raw_scan_then_finds"
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.243"
     },
     {
       "id": "tex82.expansion.delivery-and-primitives",
@@ -1153,7 +1186,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.244"
     }
   ]
 }
