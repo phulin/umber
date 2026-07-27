@@ -6,7 +6,7 @@ that exist in this workspace today.
 
 This document records current implementation facts: what each tool is and how
 to run it. For rules that should guide future test design and placement, see
-[Rust Testing Policy](testing_policy.md). For the *process* of working a
+[Rust Testing Policy](testing_policy.md). For the _process_ of working a
 `umber2-johp` canonical/oracle divergence with these tools -- diagnosis order,
 oracle hierarchy, fix discipline, gates, and the glossary defining that
 vocabulary -- see [Canonical Divergence Working Contract](canonical_divergence_workflow.md).
@@ -548,9 +548,9 @@ DVI opcode and writing a triage bundle under
 corrupting one assembled byte before the DVI comparison made
 `e2e_conformance_story_canonical` fail with an exact byte/page/opcode mismatch
 while `e2e_conformance_story` (legacy) kept passing; reverting the corruption
-restored both to green. See the diagnosis order in [Canonical Divergence
-Working Contract](canonical_divergence_workflow.md#2-diagnosis-order) for the
-differential-tracer/first-failure-locator recipe to use once this gate
+restored both to green. See the diagnosis order in
+[Canonical Divergence Working Contract](canonical_divergence_workflow.md#2-diagnosis-order)
+for the differential-tracer/first-failure-locator recipe to use once this gate
 actually fails on a real regression.
 
 ## Canonical Command-Core Diagnostics
@@ -608,9 +608,9 @@ It reports a ranked WORKLIST, not just the first divergence:
     around it:
 
     ```text
-      first difference at character 4325, past the truncation above:
-        expected: …, OracleToken { … "mac_param" … }, OracleToken { … }] })
-        actual:   …, OracleToken { … "mac_param" … }, OracleToken { … }] })
+    first difference at character 4325, past the truncation above:
+      expected: …, OracleToken { … "mac_param" … }, OracleToken { … }] })
+      actual:   …, OracleToken { … "mac_param" … }, OracleToken { … }] })
     ```
 
     It is text-level rather than schema-aware, so it works for every event
@@ -842,8 +842,9 @@ It reports the first failure it hits: the live execution mode, the
 source context (`ExecError::format_with_provenance`), or, for a Rust panic,
 lets the default panic hook report the Rust-side `file:line` origin (rerun
 with `RUST_BACKTRACE=1` for a full backtrace). As a first-failure locator (see
-the Glossary in [Canonical Divergence Working
-Contract](canonical_divergence_workflow.md#glossary)), it can only show that
+the Glossary in
+[Canonical Divergence Working Contract](canonical_divergence_workflow.md#glossary)),
+it can only show that
 execution stopped, never that completed output is wrong. It intentionally
 does not run under `cargo test`: the command core is mid-migration and this
 locator is expected to fail on `gentle` until each earlier divergence in the
