@@ -536,7 +536,7 @@ mod tests {
     }
 
     fn prepared_session(source: &'static [u8]) -> (Universe, Arc<[u8]>) {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         tex_expand::install_expandable_primitives(&mut stores);
         tex_exec::install_unexpandable_primitives(&mut stores);
         (stores, Arc::from(source))
@@ -642,7 +642,7 @@ mod tests {
         assert_eq!(font_record.path(), Path::new("cmr10.tfm"));
         assert_eq!(font_record.len(), CMR10.len());
 
-        let mut image_stores = Universe::new();
+        let mut image_stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut image_stores);
         image_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         image_stores

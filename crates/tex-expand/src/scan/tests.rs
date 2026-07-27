@@ -19,7 +19,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::ExpansionContext;
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new(input));
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
@@ -51,7 +51,7 @@ fn install_passthrough_macro(stores: &mut Universe, name: &str) {
 
 #[test]
 fn expanded_preserves_group_pairs_around_nested_unexpanded_text() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_etex_expandable_primitives(&mut stores);
     crate::install_latex_expandable_primitives(&mut stores);
     let target = stores.intern("target");
@@ -85,7 +85,7 @@ fn expanded_preserves_group_pairs_around_nested_unexpanded_text() {
 
 #[test]
 fn expanded_general_text_trailing_conditional_preserves_following_input() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let context = TracedTokenWord::pack(
         Token::Cs(stores.intern("pdfximage").symbol()),
@@ -115,7 +115,7 @@ fn expanded_general_text_trailing_conditional_preserves_following_input() {
 
 #[test]
 fn expanded_general_text_collects_trailing_value_output_before_its_boundary() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let count = stores.intern("count");
     stores.set_meaning(
@@ -155,7 +155,7 @@ fn expanded_general_text_collects_trailing_value_output_before_its_boundary() {
 
 #[test]
 fn expanded_preserves_unexpanded_replay_expanded_once_by_expandafter() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
     crate::install_latex_expandable_primitives(&mut stores);
@@ -180,7 +180,7 @@ fn expanded_preserves_unexpanded_replay_expanded_once_by_expandafter() {
 
 #[test]
 fn expanded_general_text_stops_after_a_nested_conditional() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let outer = TracedTokenWord::pack(
         Token::Cs(stores.intern("outer").symbol()),
@@ -220,7 +220,7 @@ fn expanded_general_text_stops_after_a_nested_conditional() {
 
 #[test]
 fn expanded_definition_ifcase_consumes_a_glue_component_selector() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let gluestretch = stores.intern("gluestretch");
     stores.set_meaning(
@@ -257,7 +257,7 @@ fn expanded_definition_preserves_alignment_delta_from_skipped_brace() {
     // tex.web §§473--479 scan an expanded definition inline. `pass_text`
     // still uses `get_next`, so the skipped left brace changes `align_state`;
     // finishing the definition must not restore an entry-state snapshot.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{\\iffalse{\\fi}"));
     input.begin_alignment();
@@ -280,7 +280,7 @@ fn expanded_definition_preserves_alignment_delta_from_skipped_brace() {
 
 #[test]
 fn expanded_general_text_copies_the_token_register_without_expanding_it() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let toks = stores.intern("toks");
     stores.set_meaning(
@@ -315,7 +315,7 @@ fn expanded_general_text_copies_the_token_register_without_expanding_it() {
 
 #[test]
 fn expanded_general_text_skips_relax_before_its_opening_brace() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let context = TracedTokenWord::pack(
@@ -337,7 +337,7 @@ fn expanded_general_text_skips_relax_before_its_opening_brace() {
 
 #[test]
 fn expanded_definition_preserves_protected_macro_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let protected = stores.intern("protectedmacro");
     let empty = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
@@ -366,7 +366,7 @@ fn expanded_definition_preserves_protected_macro_tokens() {
 
 #[test]
 fn expanded_definition_records_and_discards_undefined_control_sequences() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let missing = stores.intern("missing");
     let mut input = InputStack::new(MemoryInput::new("{a\\missing b}"));
     let context =
@@ -400,7 +400,7 @@ fn expanded_definition_consumes_undefined_control_sequence_delimiter_raw() {
     // latex.ltx constructs `\@qend` with this exact scanner shape. `\@nil`
     // is intentionally undefined: tex.web §§391--400 require macro_call to
     // compare delimiter tokens using raw get_token delivery before expansion.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let expandafter = stores.intern("expandafter");
     let string = stores.intern("string");
@@ -453,7 +453,7 @@ fn expanded_definition_consumes_undefined_control_sequence_delimiter_raw() {
 fn expanded_definition_expandafter_forces_only_its_protected_target() {
     // e-TeX manual section 3.1: protected macros resist `\edef`, but an
     // explicit `\expandafter` still expands its target by one step.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let first = stores.intern("first");
     let second = stores.intern("second");
@@ -511,7 +511,7 @@ fn scans_all_nine_parameters_in_order() {
 
 #[test]
 fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let outer = stores.intern("outermacro");
     let empty = stores.intern_token_list(&[]);
     stores.set_macro_meaning(
@@ -540,7 +540,7 @@ fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
 
 #[test]
 fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let outer = stores.intern("outermacro");
     let empty = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
@@ -572,7 +572,7 @@ fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
 
 #[test]
 fn noexpand_suppresses_outer_validation_in_expanded_replacement() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let outer = stores.intern("outermacro");
     let empty = stores.intern_token_list(&[]);
@@ -602,7 +602,7 @@ fn noexpand_suppresses_outer_validation_in_expanded_replacement() {
 
 #[test]
 fn ordinary_expanded_replacement_avoids_back_input() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new("{abcdefghijklmnopqrstuvwxyz}"));
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
@@ -623,7 +623,7 @@ fn ordinary_expanded_replacement_avoids_back_input() {
 
 #[test]
 fn expanded_definition_interprets_parameter_references_from_macro_argument_replay() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_passthrough_macro(&mut stores, "passthrough");
     let mut input = InputStack::new(MemoryInput::new(
         "#1#2#3#4#5#6#7#8#9{\\passthrough{#1#2#3#4#5#6#7#8#9}}",
@@ -648,7 +648,7 @@ fn expanded_definition_interprets_parameter_references_from_macro_argument_repla
 
 #[test]
 fn expanded_definition_interprets_doubled_parameter_from_macro_argument_replay() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_passthrough_macro(&mut stores, "passthrough");
     let mut input = InputStack::new(MemoryInput::new("{\\passthrough{##}}"));
     let context =
@@ -671,7 +671,7 @@ fn expanded_definition_interprets_doubled_parameter_from_macro_argument_replay()
 
 #[test]
 fn definition_hash_escapes_compact_parameter_before_nested_substitution() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let owner_body = stores.intern_token_list(&[char_token('z', Catcode::Letter)]);
     let argument = TracedTokenWord::pack(char_token('x', Catcode::Letter), OriginId::UNKNOWN);
     let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
@@ -706,7 +706,7 @@ fn definition_hash_escapes_compact_parameter_before_nested_substitution() {
 
 #[test]
 fn expanded_definition_noexpand_character_preserves_parameter_scanning() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{\\noexpand##}"));
     let context =
@@ -734,7 +734,7 @@ fn expanded_definition_noexpand_character_preserves_parameter_scanning() {
 
 #[test]
 fn expanded_definition_reinterprets_historical_unexpanded_parameter_origins() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let macro_cs = stores.intern("historical");
     let parameter = char_token('#', Catcode::Parameter);
     let body = stores.intern_token_list(&[parameter, parameter]);
@@ -766,7 +766,7 @@ fn expanded_definition_reinterprets_historical_unexpanded_parameter_origins() {
 
 #[test]
 fn expanded_definition_copies_unexpanded_parameter_character_verbatim() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_etex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{\\unexpanded{#1}}"));
     let context =
@@ -792,7 +792,7 @@ fn expanded_definition_copies_unexpanded_parameter_character_verbatim() {
 
 #[test]
 fn expanded_definition_does_not_expand_the_token_register_contents() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let the = stores.intern("the");
     let toks = stores.intern("toks");
     stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
@@ -830,7 +830,7 @@ fn expanded_definition_does_not_expand_the_token_register_contents() {
 
 #[test]
 fn expanded_definition_copies_parameter_tokens_from_token_register() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let the = stores.intern("the");
     let toks = stores.intern("toks");
     stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
@@ -861,7 +861,7 @@ fn expanded_definition_copies_parameter_tokens_from_token_register() {
 
 #[test]
 fn expanded_definition_copies_literal_hash_from_token_register() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let the = stores.intern("the");
     let toks = stores.intern("toks");
     stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
@@ -890,7 +890,7 @@ fn expanded_definition_copies_literal_hash_from_token_register() {
 
 #[test]
 fn definition_escapes_internal_parameter_after_parameter_marker() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let replay = stores.intern_token_list(&[
         char_token('{', Catcode::BeginGroup),
         char_token('#', Catcode::Parameter),
@@ -937,7 +937,7 @@ fn definition_recovers_parameter_before_nested_group() {
 
 #[test]
 fn definition_stops_at_tex82s_hundredth_recovery_error() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut source = String::from("{");
     for _ in 0..100 {
         source.push_str("#x");
@@ -963,7 +963,7 @@ fn definition_stops_at_tex82s_hundredth_recovery_error() {
 
 #[test]
 fn expanded_definition_reexpands_nested_unexpanded_output() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_etex_expandable_primitives(&mut stores);
     crate::install_latex_expandable_primitives(&mut stores);
     let macro_cs = stores.intern("macro");
@@ -994,7 +994,7 @@ fn expanded_definition_reexpands_nested_unexpanded_output() {
 
 #[test]
 fn unexpanded_provenance_does_not_suppress_later_macro_replay() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_etex_expandable_primitives(&mut stores);
     let macro_cs = stores.intern("macro");
     let empty = stores.intern_token_list(&[]);
@@ -1035,7 +1035,7 @@ fn unexpanded_provenance_does_not_suppress_later_macro_replay() {
 
 #[test]
 fn expanded_definition_tracks_braces_returned_by_nested_expanded() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
     crate::install_latex_expandable_primitives(&mut stores);
@@ -1064,7 +1064,7 @@ fn expanded_definition_tracks_braces_returned_by_nested_expanded() {
 
 #[test]
 fn expanded_definition_recovers_invalid_parameter_from_macro_argument_replay() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_passthrough_macro(&mut stores, "passthrough");
     let mut input = InputStack::new(MemoryInput::new("{\\passthrough{#x}}"));
     let context =
@@ -1096,7 +1096,7 @@ fn expanded_definition_recovers_invalid_parameter_from_macro_argument_replay() {
 
 #[test]
 fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
@@ -1138,7 +1138,7 @@ fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
 
 #[test]
 fn out_of_order_parameter_inserts_expected_and_replays_wrong_digit() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new("#2{}"));
 
     let context =
@@ -1174,7 +1174,7 @@ fn scans_trailing_hash_brace_parameter_text() {
 
 #[test]
 fn trailing_hash_brace_preserves_whole_list_absent_provenance() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let replacement = [
         char_token('a', Catcode::Letter),
         char_token('b', Catcode::Letter),
@@ -1237,7 +1237,7 @@ fn scans_doubled_hash_as_literal_parameter_character_in_body() {
 
 #[test]
 fn definition_uses_parameter_character_alias_command_meaning() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let hash = stores.intern("hash");
     stores.set_meaning(
         hash,

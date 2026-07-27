@@ -79,10 +79,24 @@ box node root live across intervening group exits.
 
 ## 5. Meaning, sparse tier: the code tables
 
-Unicode code tables use sparse copy-on-write pages with TeX-compatible default
-values. Mutation and restoration occur through `Universe`; consumers receive
-guarded lookup views, not raw pages. Page roots and generations participate in
-snapshots and semantic state.
+Unicode code tables use sparse copy-on-write pages whose absent entries mean
+INITEX's initial values. Mutation and restoration occur through `Universe`;
+consumers receive guarded lookup views, not raw pages. Page roots and
+generations participate in snapshots and semantic state.
+
+The defaults are exactly tex.web §232 and §240, not the state a format leaves
+behind. §232 makes every character `other_char` and then overrides only `^^@`
+(ignore), `^^M` (car_ret), space (spacer), `%` (comment), `\` (escape), `^^?`
+(invalid_char), and the ASCII letters; `\mathcode`, `\lccode`, `\uccode`, and
+`\sfcode` follow the same module, and §240 sets every `\delcode` to `-1`
+except the null delimiter period, whose `\delcode` is `0`. The seven
+characters left brace, right brace, dollar, ampersand, hash, circumflex, and
+underscore are therefore `other_char` in a fresh `Universe`: plain.tex assigns
+them (lines 11--17), and Umber -- which has no dumped plain format --
+synthesizes that part of the prelude in `umber::prepare_run_stores`, where the
+loaded format's state belongs. `Universe::new_with_plain_catcodes` and
+`Universe::install_plain_catcodes` expose the same seven assignments to
+callers that need a format-loaded engine without executing one.
 
 Hyphenation patterns and exceptions are also state-owned. Pattern loading,
 exception mutation, language selection, snapshotting, and format restore pass

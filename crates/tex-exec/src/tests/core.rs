@@ -41,7 +41,7 @@ fn mode_nest_projects_conditional_predicates_across_transitions() {
 
 #[test]
 fn owned_execution_run_advances_through_explicit_phases() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut checkpoints = Vec::new();
     let mut run = ExecutionRun::new("owned-job");
@@ -87,7 +87,7 @@ fn owned_execution_run_advances_through_explicit_phases() {
 
 #[test]
 fn effect_budget_failure_rolls_back_the_entire_candidate_step() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\message{not published}\\end"));
@@ -123,7 +123,7 @@ fn effect_budget_failure_rolls_back_the_entire_candidate_step() {
 
 #[test]
 fn named_checkpoint_preserves_future_execution_accounting() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut checkpoints = Vec::new();
     let mut run = ExecutionRun::new("accounted");
@@ -151,7 +151,7 @@ fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
     let command_count = 257;
     let mut source = "\\count0=0 ".repeat(command_count);
     source.push_str("\\end");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
@@ -178,7 +178,7 @@ fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
 
 #[test]
 fn owned_execution_run_observes_cancellation_before_mutation() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new("ignored"));
     let mut run = ExecutionRun::new("cancelled-job");
     let cancellation = Cancellation::new();
@@ -229,7 +229,7 @@ impl tex_expand::InputResolver for SuspendScannerInputOnce {
 
 #[test]
 fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -282,7 +282,7 @@ fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
 
 #[test]
 fn high_segment_pgfkeys_call_preserves_second_argument_and_retires_condition() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.intern("low-slot-csname");
@@ -306,7 +306,7 @@ fn high_segment_pgfkeys_call_preserves_second_argument_and_retires_condition() {
 
 #[test]
 fn high_segment_package_let_state_survives_lower_meaning_writes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     for index in 0..65_536_u32 {
@@ -339,7 +339,7 @@ fn high_segment_package_let_state_survives_lower_meaning_writes() {
 
 #[test]
 fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\halign{\\input child#\\cr a\\cr}\\end"));
@@ -387,7 +387,7 @@ fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
 
 #[test]
 fn resource_suspension_preserves_local_box_state_only_until_box_exit() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -477,7 +477,7 @@ impl tex_expand::InputResolver for SuspendInputOnce {
 
 #[test]
 fn resource_suspension_rolls_back_the_aggregate_step_and_replays_stably() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\input child"));
@@ -558,7 +558,7 @@ fn resource_suspension_rolls_back_the_aggregate_step_and_replays_stably() {
 
 #[test]
 fn unsupported_typesetting_diagnostic_names_control_sequence() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let special = stores.intern("special");
     let error = ExecError::UnimplementedTypesetting {
         mode: Mode::DisplayMath,
@@ -605,7 +605,7 @@ fn detached_page_episode_replays_before_output_fire_up() {
         origin
     }
 
-    let mut first = Universe::new();
+    let mut first = Universe::new_with_plain_catcodes();
     first.enable_pure_memo(tex_state::PureMemoConfig::default());
     first.enable_page_memo();
     page_input(&mut first, false);
@@ -613,7 +613,7 @@ fn detached_page_episode_replays_before_output_fire_up() {
     let expected = first.page_memo_fingerprint();
     let runtime = first.take_pure_memo_runtime();
 
-    let mut second = Universe::new();
+    let mut second = Universe::new_with_plain_catcodes();
     let current_origin = page_input(&mut second, true);
     second.install_pure_memo_runtime(runtime);
     crate::page_builder::build_page(&mut second).expect("replayed page episode");
@@ -654,7 +654,7 @@ fn page_episode_tracks_insertion_registers_and_detaches_insert_content() {
         });
     }
 
-    let mut first = Universe::new();
+    let mut first = Universe::new_with_plain_catcodes();
     first.enable_pure_memo(tex_state::PureMemoConfig::default());
     first.enable_page_memo();
     insertion_input(&mut first, 1_000, false);
@@ -662,7 +662,7 @@ fn page_episode_tracks_insertion_registers_and_detaches_insert_content() {
     let expected = first.page_memo_fingerprint();
     let runtime = first.take_pure_memo_runtime();
 
-    let mut same = Universe::new();
+    let mut same = Universe::new_with_plain_catcodes();
     insertion_input(&mut same, 1_000, true);
     same.install_pure_memo_runtime(runtime);
     crate::page_builder::build_page(&mut same).expect("replayed insertion episode");
@@ -671,7 +671,7 @@ fn page_episode_tracks_insertion_registers_and_detaches_insert_content() {
     assert_eq!(after_hit.page_hits, 1, "{after_hit:?}");
 
     let runtime = same.take_pure_memo_runtime();
-    let mut changed = Universe::new();
+    let mut changed = Universe::new_with_plain_catcodes();
     insertion_input(&mut changed, 500, true);
     changed.install_pure_memo_runtime(runtime);
     crate::page_builder::build_page(&mut changed).expect("changed insertion episode");
@@ -690,7 +690,7 @@ fn finalized_shipout_artifact_reuses_while_output_routine_still_executes() {
         \\setbox0=\\hbox{\\vrule width1pt height1pt} \
         \\copy0\\penalty-10000 \\copy0\\penalty-10000\\end";
     let run = |memoized: bool| {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         tex_expand::install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         if memoized {
@@ -722,7 +722,7 @@ fn finalized_shipout_artifact_reuses_while_output_routine_still_executes() {
 
 #[test]
 fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -743,7 +743,7 @@ fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
 
 #[test]
 fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     tex_expand::install_latex_expandable_primitives(&mut stores);
@@ -771,7 +771,7 @@ fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
 
 #[test]
 fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -798,7 +798,7 @@ fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
 
 #[test]
 fn deferred_write_preserves_unexpanded_tokens_through_shipout_collection() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -817,7 +817,7 @@ fn deferred_write_preserves_unexpanded_tokens_through_shipout_collection() {
 
 #[test]
 fn trailing_hash_brace_is_appended_to_the_macro_replacement() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -872,7 +872,7 @@ fn nest_push_pop_and_summary_cover_all_modes() {
 
 #[test]
 fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut executor = Executor::new();
     stores.set_count(3, 41);
@@ -997,7 +997,7 @@ fn shipout_checkpoint_restores_after_nested_work_has_unwound() {
 
 #[test]
 fn successful_execution_publishes_the_exact_final_input_cursor() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut executor = Executor::new();
 
@@ -1046,7 +1046,7 @@ fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
 #[test]
 fn engine_snapshot_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
-    let stores = Universe::new();
+    let stores = Universe::new_with_plain_catcodes();
     let mut context = crate::ExecutionContext::new("texput");
     crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
     assert_eq!(context.engine.mode, tex_expand::EngineMode::Vertical);
@@ -1066,7 +1066,7 @@ fn engine_snapshot_queries_are_backed_by_current_nest_level() {
 #[test]
 fn outer_lastskip_uses_page_glue_only_when_the_contribution_list_is_empty() {
     let executor = Executor::new();
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let page_glue = stores.intern_glue(GlueSpec {
         width: tex_state::scaled::Scaled::from_raw(7 * tex_state::scaled::Scaled::UNITY),
         ..GlueSpec::ZERO
@@ -1092,7 +1092,7 @@ fn outer_lastskip_uses_page_glue_only_when_the_contribution_list_is_empty() {
 
 #[test]
 fn dispatch_relax_continues_without_state_mutation() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1113,7 +1113,7 @@ fn dispatch_relax_continues_without_state_mutation() {
 
 #[test]
 fn dump_marks_format_stop_and_stops_before_following_input() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     stores.set_page_dimension(tex_state::page::PageDimension::Goal, Scaled::from_raw(123));
@@ -1131,7 +1131,7 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
 
 #[test]
 fn incomplete_delimited_macro_at_root_eof_recovers_once_with_par() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\def\runaway#1\stop{}\runaway missing"));
@@ -1150,7 +1150,7 @@ fn incomplete_delimited_macro_at_root_eof_recovers_once_with_par() {
 
 #[test]
 fn incomplete_delimited_macro_from_inserted_replay_retains_clean_eof_recovery() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut definition = InputStack::new(MemoryInput::new(r"\def\runaway#1\stop{}\end"));
@@ -1176,7 +1176,7 @@ fn incomplete_delimited_macro_from_inserted_replay_retains_clean_eof_recovery() 
 
 #[test]
 fn format_loaded_job_replays_everyjob_before_root_input() {
-    let mut initex = Universe::new();
+    let mut initex = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut initex);
     crate::install_unexpandable_primitives(&mut initex);
     let mut format_source = InputStack::new(MemoryInput::new(
@@ -1202,7 +1202,7 @@ fn format_loaded_job_replays_everyjob_before_root_input() {
 
 #[test]
 fn format_loaded_message_keeps_the_token_register_output_unexpanded() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut initial = InputStack::new(MemoryInput::new(
@@ -1234,7 +1234,7 @@ fn format_loaded_message_keeps_the_token_register_output_unexpanded() {
 
 #[test]
 fn immediate_puts_back_non_io_extension_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1250,7 +1250,7 @@ fn immediate_puts_back_non_io_extension_tokens() {
 
 #[test]
 fn interaction_mode_primitives_update_checkpointed_engine_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let snapshot = stores.snapshot();
@@ -1269,7 +1269,7 @@ fn interaction_mode_primitives_update_checkpointed_engine_state() {
 fn message_applies_newlinechar_to_raw_expanded_character_tokens() {
     // tex.web's issue_message builds a string with selector=new_string, so
     // character tokens remain raw until newlinechar is applied.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1285,7 +1285,7 @@ fn message_applies_newlinechar_to_raw_expanded_character_tokens() {
 
 #[test]
 fn bare_internal_quantity_reports_illegal_mode_and_continues() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\badness\message{continued}\end"));
@@ -1301,7 +1301,7 @@ fn bare_internal_quantity_reports_illegal_mode_and_continues() {
 
 #[test]
 fn inputlineno_reports_current_physical_source_line() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1317,7 +1317,7 @@ fn inputlineno_reports_current_physical_source_line() {
 
 #[test]
 fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         r"\lefthyphenmin=0 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7}",
@@ -1345,7 +1345,7 @@ fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
 
 #[test]
 fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let source = r#"
@@ -1365,7 +1365,7 @@ fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
 
 #[test]
 fn uppercase_expands_tokens_until_its_opening_brace() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1380,7 +1380,7 @@ fn uppercase_expands_tokens_until_its_opening_brace() {
 
 #[test]
 fn uppercase_retargets_active_character_definitions() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1395,7 +1395,7 @@ fn uppercase_retargets_active_character_definitions() {
 
 #[test]
 fn protected_active_macro_expands_from_classic_utf8_input() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
@@ -1412,7 +1412,7 @@ fn protected_active_macro_expands_from_classic_utf8_input() {
 
 #[test]
 fn dispatch_character_hits_loud_typesetting_stub() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token = Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
@@ -1437,7 +1437,7 @@ fn dispatch_character_hits_loud_typesetting_stub() {
 
 #[test]
 fn dispatch_undefined_control_sequence_reports_and_continues() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let undefined = stores.intern("undefined");
     let origin = stores.source_origin(tex_state::SourceId::new(1), 12, 3, 4);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1460,7 +1460,7 @@ fn dispatch_undefined_control_sequence_reports_and_continues() {
 
 #[test]
 fn edef_reports_undefined_control_sequence_and_completes_definition() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1478,7 +1478,7 @@ fn edef_reports_undefined_control_sequence_and_completes_definition() {
 
 #[test]
 fn execution_error_capture_retains_macro_trace_after_frame_pop() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[]);
     let params = stores.intern_token_list(&[]);
     let macro_symbol = stores.intern("m");
@@ -1527,7 +1527,7 @@ fn execution_error_capture_retains_macro_trace_after_frame_pop() {
 
 #[test]
 fn extra_endcsname_delivery_reports_and_continues() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_expandable(&mut stores, "endcsname", ExpandablePrimitive::EndCsName);
     let endcsname = stores.symbol("endcsname").expect("endcsname");
     let origin = stores.source_origin(tex_state::SourceId::new(2), 20, 5, 6);
@@ -1549,7 +1549,7 @@ fn extra_endcsname_delivery_reports_and_continues() {
 
 #[test]
 fn illegal_prefix_replays_scanned_token_with_its_origin() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let global = stores.symbol("global").expect("global");
     let prefix_origin = stores.source_origin(tex_state::SourceId::new(3), 30, 7, 8);
@@ -1584,7 +1584,7 @@ fn illegal_prefix_replays_scanned_token_with_its_origin() {
 
 #[test]
 fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new("\\relax"));
@@ -1597,7 +1597,7 @@ fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
 
 #[test]
 fn horizontal_main_control_batches_inactive_alignment_macro_text() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\x{abcdefgh}\\x"));
 
@@ -1611,7 +1611,7 @@ fn horizontal_main_control_batches_inactive_alignment_macro_text() {
 
 #[test]
 fn horizontal_main_control_batches_direct_physical_source_text() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("abcdef"));
 
@@ -1626,7 +1626,7 @@ fn horizontal_main_control_batches_direct_physical_source_text() {
 #[test]
 fn paragraph_recording_preserves_source_text_batching() {
     fn run(memo: bool) -> ExecutionStats {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_unexpandable_primitives(&mut stores);
         if memo {
             stores.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -1652,7 +1652,7 @@ fn paragraph_recording_preserves_source_text_batching() {
 
 #[test]
 fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\x{abcdefgh}\\x"));
     input.begin_alignment();
@@ -1667,7 +1667,7 @@ fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() 
 
 #[test]
 fn main_control_recovers_from_undefined_control_sequence() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\missing\\count0=7"));
 
@@ -1683,7 +1683,7 @@ fn main_control_recovers_from_undefined_control_sequence() {
 
 #[test]
 fn register_index_scanner_recovers_from_undefined_control_sequence() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1702,7 +1702,7 @@ fn register_index_scanner_recovers_from_undefined_control_sequence() {
 
 #[test]
 fn recursively_expanded_dimension_scanner_recovers_from_undefined_control_sequence() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1721,7 +1721,7 @@ fn recursively_expanded_dimension_scanner_recovers_from_undefined_control_sequen
 
 #[test]
 fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1738,7 +1738,7 @@ fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
 
 #[test]
 fn main_control_consumes_invalid_category_character() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('@', Catcode::Invalid);
     let mut input = InputStack::new(MemoryInput::new("@\\count0=7"));
@@ -1752,7 +1752,7 @@ fn main_control_consumes_invalid_category_character() {
 
 #[test]
 fn main_control_aborts_nonlong_macro_argument_at_par_and_replays_par() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\b#1\\par{}\\b{x\\par\\count0=7"));
@@ -1767,7 +1767,7 @@ fn main_control_aborts_nonlong_macro_argument_at_par_and_replays_par() {
 
 #[test]
 fn main_control_ignores_extra_conditional_terminator() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\else\\count0=7"));
@@ -1782,7 +1782,7 @@ fn main_control_ignores_extra_conditional_terminator() {
 
 #[test]
 fn def_and_gdef_assign_macro_meanings_through_group_barrier() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\gdef\\b{B}"));
     stores.enter_group();
@@ -1802,7 +1802,7 @@ fn def_and_gdef_assign_macro_meanings_through_group_barrier() {
 
 #[test]
 fn edef_omits_noexpand_command_and_freezes_the_output() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
     install_expandable(&mut stores, "the", ExpandablePrimitive::The);
@@ -1832,7 +1832,7 @@ fn edef_expandafter_expands_a_target_preserved_by_prior_unexpanded() {
     // TeX.web section 366 expands the second raw token once; e-TeX manual
     // section 3.1 limits `\unexpanded` suppression to construction of the
     // expanded token list, not a later invocation of that stored list.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -1849,7 +1849,7 @@ fn edef_expandafter_expands_a_target_preserved_by_prior_unexpanded() {
 
 #[test]
 fn edef_expansion_uses_active_input_resolver() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "input", ExpandablePrimitive::Input);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -1884,7 +1884,7 @@ fn edef_expansion_uses_active_input_resolver() {
 
 #[test]
 fn input_expands_while_scanning_assignment_values() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -1920,7 +1920,7 @@ fn input_expands_while_scanning_assignment_values() {
 
 #[test]
 fn input_expands_while_scanning_conditional_operands() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -1958,7 +1958,7 @@ fn input_expands_while_scanning_conditional_operands() {
 
 #[test]
 fn input_expands_while_scanning_register_indices_and_the_operands() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -1990,7 +1990,7 @@ fn input_expands_while_scanning_register_indices_and_the_operands() {
 
 #[test]
 fn let_assigns_control_sequence_and_implicit_character_meanings() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let a = stores.intern("a");
     stores.set_meaning(a, Meaning::CharGiven('Q'));
@@ -2014,7 +2014,7 @@ fn let_assigns_control_sequence_and_implicit_character_meanings() {
 
 #[test]
 fn let_skips_spaces_before_optional_equals_and_aliases_control_symbol() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\\\#1{#1}\\let\\alias   = \\\\ "));
 
@@ -2029,7 +2029,7 @@ fn let_skips_spaces_before_optional_equals_and_aliases_control_symbol() {
 
 #[test]
 fn plain_getf_ctor_setup_restores_catcodes_before_control_symbol_alias() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('@', Catcode::Letter);
     let mut input = InputStack::new(MemoryInput::new(
@@ -2049,7 +2049,7 @@ fn plain_getf_ctor_setup_restores_catcodes_before_control_symbol_alias() {
 
 #[test]
 fn futurelet_assigns_second_token_meaning_and_preserves_order() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let futurelet = stores.symbol("futurelet").expect("futurelet");
     let mut input = InputStack::new(MemoryInput::new("\\n\\first x"));
@@ -2087,7 +2087,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 
 #[test]
 fn let_copies_frozen_endv_alignment_meaning() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let let_token = stores.symbol("let").expect("let primitive");
     let alias = stores.intern("endv_alias");
@@ -2113,7 +2113,7 @@ fn let_copies_frozen_endv_alignment_meaning() {
 
 #[test]
 fn def_accepts_active_character_target_and_expands_it() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("\\def~{OK}\\edef\\x{~}"));
@@ -2132,7 +2132,7 @@ fn def_accepts_active_character_target_and_expands_it() {
 
 #[test]
 fn active_character_and_same_spelling_control_symbol_expand_independently() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new(
@@ -2152,7 +2152,7 @@ fn active_character_and_same_spelling_control_symbol_expand_independently() {
 
 #[test]
 fn let_accepts_active_character_target() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\let~=\\a\\edef\\x{~}"));
@@ -2166,7 +2166,7 @@ fn let_accepts_active_character_target() {
 
 #[test]
 fn futurelet_accepts_active_character_target() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("~\\first x"));
@@ -2195,7 +2195,7 @@ fn futurelet_accepts_active_character_target() {
 
 #[test]
 fn countdef_accepts_active_character_target_and_assigns_through_it() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("\\countdef~=12 ~=7"));
@@ -2213,7 +2213,7 @@ fn countdef_accepts_active_character_target_and_assigns_through_it() {
 
 #[test]
 fn outer_def_accepts_active_character_target() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("\\outer\\def~{A}"));
@@ -2230,7 +2230,7 @@ fn outer_def_accepts_active_character_target() {
 
 #[test]
 fn box_primitives_round_trip_through_registers() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox to 10pt{}\\setbox1=\\copy0\\box0",
@@ -2259,7 +2259,7 @@ fn box_primitives_round_trip_through_registers() {
 
 #[test]
 fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox \\global\\count0=7}"));
 
@@ -2274,7 +2274,7 @@ fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
 
 #[test]
 fn box_scanner_closes_by_execution_group_after_message_argument() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\\message{x}\\vbox{\\hrule height2pt}}\\hrule height3pt",
@@ -2313,7 +2313,7 @@ fn box_scanner_closes_by_execution_group_after_message_argument() {
 
 #[test]
 fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     // This is the decisive topology reduced from the malformed tail of
@@ -2364,7 +2364,7 @@ fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
 
 #[test]
 fn recoverable_assignment_error_inside_box_preserves_box_ownership() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\\afterassignment\\relax\\advance\\prevdepth\\undefined\\vbox{\\hrule height2pt}}",
@@ -2399,7 +2399,7 @@ fn recoverable_assignment_error_inside_box_preserves_box_ownership() {
 
 #[test]
 fn last_box_assignment_replays_with_identical_state_hash() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     let source = "\\setbox0=\\hbox{\\raise2pt\\hbox to7pt{}\\global\\setbox1=\\lastbox}";
@@ -2460,7 +2460,7 @@ fn control_space_uses_space_skip_without_space_factor_scaling() {
 
 #[test]
 fn invalid_space_factor_reports_and_preserves_the_previous_value() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
 
@@ -2575,7 +2575,7 @@ fn appended_box_resets_space_factor_before_sentence_punctuation() {
 
 #[test]
 fn overfull_hbox_appends_running_rule_when_enabled() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_dimen_param(
         DimenParam::OVERFULL_RULE,
@@ -2604,7 +2604,7 @@ fn overfull_hbox_appends_running_rule_when_enabled() {
 
 #[test]
 fn box_dimension_writes_are_readable_by_the() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "the", ExpandablePrimitive::The);
     let mut setup = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{}"));
@@ -2641,7 +2641,7 @@ fn box_dimension_writes_are_readable_by_the() {
 
 #[test]
 fn box_dimension_writes_mutate_the_visible_box_binding() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{} {\\ht0=12pt}\\setbox1=\\hbox{} {\\setbox1=\\hbox{}\\global\\ht1=9pt}",
@@ -2671,7 +2671,7 @@ fn box_dimension_writes_mutate_the_visible_box_binding() {
 
 #[test]
 fn uncopy_primitives_unbox_without_clearing_registers() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\\kern1pt}\
@@ -2708,7 +2708,7 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 
 #[test]
 fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\hbox{\\kern1pt}}\\setbox1=\\vbox{\\noindent\\kern2pt\\unvbox0}",
@@ -2739,7 +2739,7 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
 
 #[test]
 fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut setup = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\\hbox{\\kern1pt}}\\setbox1=\\vbox{\\vbox{\\kern2pt}}",
@@ -2766,7 +2766,7 @@ fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
 
 #[test]
 fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let before = stores.testing_epoch_clone_counts();
     let mut input = InputStack::new(MemoryInput::new("{\\setbox0\\hbox{X}\\copy0}"));
@@ -2782,7 +2782,7 @@ fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
 
 #[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut setup = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\hbox{}}\\setbox1=\\hbox{\\kern1pt}",
@@ -2815,7 +2815,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
 
 #[test]
 fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\vsize=1000pt \
@@ -2837,7 +2837,7 @@ fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
 
 #[test]
 fn badness_reads_most_recent_pack_and_is_not_assignable() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "the", ExpandablePrimitive::The);
     let mut input = InputStack::new(MemoryInput::new(
@@ -2870,7 +2870,7 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 
 #[test]
 fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox to10pt{\\hrule height20pt}\\count0=\\badness",
@@ -2888,7 +2888,7 @@ fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
     // e-TeX short reference manual section 3.3 assigns -1 to an empty list
     // and the e-TRIP node codes 1, 12, and 13 to hlist, kern, and penalty.
     for (material, expected) in [("\\hbox{}", "1"), ("\\kern1pt", "12"), ("\\penalty7", "13")] {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         tex_expand::install_expandable_primitives(&mut stores);
         tex_expand::install_etex_expandable_primitives(&mut stores);
         crate::install_unexpandable_primitives(&mut stores);
@@ -2909,7 +2909,7 @@ fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
 fn etex_tracingscantokens_closes_after_everyeof() {
     // The e-TeX manual sections 3.2 and 3.6 require `( ` on pseudo-file
     // entry and the matching `)` only when scanning, including everyeof, ends.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -2932,7 +2932,7 @@ fn etex_tracingscantokens_closes_after_everyeof() {
 
 #[test]
 fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -2955,7 +2955,7 @@ fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
 
 #[test]
 fn etex_showtokens_decomposes_unexpanded_balanced_text() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -2972,7 +2972,7 @@ fn etex_showtokens_decomposes_unexpanded_balanced_text() {
 
 #[test]
 fn etex_showtokens_expands_only_to_find_its_opening_brace() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -2989,7 +2989,7 @@ fn etex_showtokens_expands_only_to_find_its_opening_brace() {
 
 #[test]
 fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -3012,7 +3012,7 @@ fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
 
 #[test]
 fn etex_showifs_is_available_inside_math_mode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -3027,7 +3027,7 @@ fn etex_showifs_is_available_inside_math_mode() {
 
 #[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\\leaders\\hbox{\\kern1pt}\\hskip10pt}\
@@ -3090,7 +3090,7 @@ fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
 
 #[test]
 fn leaders_report_missing_payload_and_glue_diagnostics() {
-    let mut missing_payload = Universe::new();
+    let mut missing_payload = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut missing_payload);
     let err = Executor::new()
         .run(
@@ -3100,7 +3100,7 @@ fn leaders_report_missing_payload_and_glue_diagnostics() {
         .expect_err("invalid leader payload should fail");
     assert_eq!(err.to_string(), "A <box> was supposed to be here.");
 
-    let mut missing_glue = Universe::new();
+    let mut missing_glue = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut missing_glue);
     Executor::new()
         .run(
@@ -3119,7 +3119,7 @@ fn leaders_report_missing_payload_and_glue_diagnostics() {
 
 #[test]
 fn leader_payloads_participate_in_state_hash_and_rollback() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let snapshot = stores.snapshot();
     let before = snapshot.state_hash();
@@ -3151,7 +3151,7 @@ fn leader_payloads_participate_in_state_hash_and_rollback() {
 
 #[test]
 fn showbox_dumps_leader_glue_payloads_like_reference() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\showboxbreadth=100 \\showboxdepth=100 \
@@ -3170,7 +3170,7 @@ fn showbox_dumps_leader_glue_payloads_like_reference() {
 
 #[test]
 fn box_motion_uses_tex_web_shift_amount_signs_and_diagnostics() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\showboxbreadth=100 \\showboxdepth=100 \
@@ -3217,7 +3217,7 @@ fn box_motion_uses_tex_web_shift_amount_signs_and_diagnostics() {
 
 #[test]
 fn everypar_replays_through_input_stack_and_mutates_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let global = stores.intern("global");
     let count = stores.intern("count");
@@ -3249,7 +3249,7 @@ fn everypar_replays_through_input_stack_and_mutates_state() {
 
 #[test]
 fn paragraph_end_appends_single_line_through_vertical_spacing() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.set_dimen_param(
         DimenParam::PAR_INDENT,
@@ -3281,7 +3281,7 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
 
 #[test]
 fn paragraph_hpack_appends_overfull_rule_for_insufficient_normal_shrink() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(concat!(
@@ -3320,7 +3320,7 @@ fn paragraph_hpack_appends_overfull_rule_for_insufficient_normal_shrink() {
 
 #[test]
 fn paragraph_end_ignores_empty_unindented_paragraph() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\noindent\\par\\indent\\par}",
@@ -3342,7 +3342,7 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 
 #[test]
 fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\hrule $$\\hbox{}$$}"));
@@ -3362,7 +3362,7 @@ fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
 
 #[test]
 fn paragraph_end_removes_only_the_final_trailing_glue() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\noindent x\\hskip1pt\\hskip2pt\\par}",
@@ -3404,7 +3404,7 @@ fn paragraph_end_removes_only_the_final_trailing_glue() {
 
 #[test]
 fn last_items_read_current_horizontal_tail_by_type() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3427,7 +3427,7 @@ fn last_items_read_current_horizontal_tail_by_type() {
 
 #[test]
 fn delete_last_removes_only_matching_current_list_tail() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3448,7 +3448,7 @@ fn delete_last_removes_only_matching_current_list_tail() {
 
 #[test]
 fn vertical_infinite_skip_primitives_preserve_glue_orders() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3473,7 +3473,7 @@ fn vertical_infinite_skip_primitives_preserve_glue_orders() {
 
 #[test]
 fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\vfill}"));
 
@@ -3487,7 +3487,7 @@ fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
 
 #[test]
 fn vertical_skip_in_horizontal_mode_ends_the_paragraph_before_appending_glue() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\noindent\\kern1pt\\vskip2pt\\kern3pt}",
@@ -3520,7 +3520,7 @@ fn vertical_skip_in_horizontal_mode_ends_the_paragraph_before_appending_glue() {
 
 #[test]
 fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\unskip"));
     Executor::new()
@@ -3528,7 +3528,7 @@ fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
         .expect("empty outer unskip is silent");
 
     for (source, command) in [("\\unpenalty", "\\unpenalty"), ("\\unkern", "\\unkern")] {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new(source));
         let err = Executor::new()
@@ -3563,7 +3563,7 @@ fn new_paragraph_resets_prevgraf_before_tracking_finished_lines() {
 
 #[test]
 fn negative_prevgraf_is_recoverable_and_leaves_value_unchanged() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\prevgraf=3\\prevgraf=-1"));
     let mut executor = Executor::new();
@@ -3655,7 +3655,7 @@ fn paragraph_hfill_sets_the_line_at_fill_order() {
 
 #[test]
 fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\hrule width7pt"));
     let mut executor = Executor::new();
@@ -3751,7 +3751,7 @@ fn vertical_char_runs_everypar_before_scanning_and_appending_the_character() {
 
 #[test]
 fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\hrule}"));
 
@@ -3765,7 +3765,7 @@ fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
 
 #[test]
 fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\showboxbreadth=100 \\showboxdepth=100 \\hrule width7pt\\showlists",
@@ -3783,7 +3783,7 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
 
 #[test]
 fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\hrule width7pt#\\showlists"));
 
@@ -3804,7 +3804,7 @@ fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
 
 #[test]
 fn outer_paragraph_retains_zero_parskip_after_existing_material() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3833,7 +3833,7 @@ fn outer_paragraph_retains_zero_parskip_after_existing_material() {
 
 #[test]
 fn vertical_unhbox_of_void_box_still_builds_indented_empty_line() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3857,7 +3857,7 @@ fn vertical_unhbox_of_void_box_still_builds_indented_empty_line() {
 
 #[test]
 fn page_builder_moves_box_and_updates_page_scalars() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3877,7 +3877,7 @@ fn page_builder_moves_box_and_updates_page_scalars() {
 
 #[test]
 fn page_builder_discards_glue_before_first_box() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\vskip 5pt\\setbox0=\\hbox{}\\copy0"));
 
@@ -3894,7 +3894,7 @@ fn page_builder_discards_glue_before_first_box() {
 
 #[test]
 fn etex_page_discards_save_splice_and_clear_discarded_material() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -3939,7 +3939,7 @@ fn etex_page_discards_save_splice_and_clear_discarded_material() {
 fn etex_vsplit_updates_mark_classes_and_consumes_saved_discards() {
     // e-TeX manual sections 3.4 and 3.7 require classed split marks and make
     // \splitdiscards a destructive splice when \savingvdiscards is positive.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -3986,7 +3986,7 @@ fn etex_vsplit_updates_mark_classes_and_consumes_saved_discards() {
 
 #[test]
 fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\vsize=100pt \\setbox0=\\hbox{}\\copy0\
@@ -4016,7 +4016,7 @@ fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
 
 #[test]
 fn writable_page_scalars_read_after_page_freeze() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4034,7 +4034,7 @@ fn writable_page_scalars_read_after_page_freeze() {
 
 #[test]
 fn insert_node_captures_split_parameters_and_natural_size() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4079,7 +4079,7 @@ fn insert_node_captures_split_parameters_and_natural_size() {
 
 #[test]
 fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4104,7 +4104,7 @@ fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
 
 #[test]
 fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4142,7 +4142,7 @@ fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
 
 #[test]
 fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4163,7 +4163,7 @@ fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
 
 #[test]
 fn vertical_mode_discretionary_hyphen_starts_a_paragraph() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\-\\par}"));
@@ -4184,7 +4184,7 @@ fn vertical_mode_discretionary_hyphen_starts_a_paragraph() {
 
 #[test]
 fn insertion_starts_with_normal_paragraph_parameters() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(concat!(
@@ -4296,7 +4296,7 @@ fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
 
 #[test]
 fn insertion_skip_reports_infinite_shrink_correction() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\vsize=100pt \\count7=1000 \\dimen7=100pt \
@@ -4319,7 +4319,7 @@ fn insertion_skip_reports_infinite_shrink_correction() {
 
 #[test]
 fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\vsize=20pt \\count7=1000 \\dimen7=12pt \
@@ -4355,7 +4355,7 @@ fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
 
 #[test]
 fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut setup = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{\\hrule height10pt\\vskip0pt minus 1fil\\hrule height10pt}",
@@ -4392,7 +4392,7 @@ fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
 
 #[test]
 fn vsplit_recovers_a_missing_to_keyword() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\vbox{}\\setbox1=\\vsplit0 0pt",
@@ -4407,7 +4407,7 @@ fn vsplit_recovers_a_missing_to_keyword() {
 
 #[test]
 fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox3=\\hbox{}\\setbox4=\\vsplit3 to 0pt",
@@ -4424,7 +4424,7 @@ fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
 
 #[test]
 fn insertion_page_goal_uses_skip_once_and_count_scaling() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4452,7 +4452,7 @@ fn insertion_page_goal_uses_skip_once_and_count_scaling() {
 
 #[test]
 fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4487,7 +4487,7 @@ fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
 
 #[test]
 fn forced_page_penalty_runs_default_output() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
@@ -4510,7 +4510,7 @@ fn forced_page_penalty_runs_default_output() {
 
 #[test]
 fn page_output_promotes_nested_survivor_children_into_one_root() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\output={\\global\\setbox2=\\copy255 \\shipout\\box255}\
@@ -4550,7 +4550,7 @@ fn page_output_promotes_nested_survivor_children_into_one_root() {
 
 #[test]
 fn page_output_keeps_locally_moved_box_children_live() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt {\\setbox0=\\hbox{X}\\box0} \\penalty-10000",
@@ -4567,7 +4567,7 @@ fn page_output_keeps_locally_moved_box_children_live() {
 
 #[test]
 fn page_output_keeps_shifted_copy_children_live_after_source_replacement() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\setbox0=\\hbox{X} \\raise1pt\\copy0 \
@@ -4584,7 +4584,7 @@ fn page_output_keeps_shifted_copy_children_live_after_source_replacement() {
 
 #[test]
 fn mark_scans_raw_general_text_then_expands_payload() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\mark{#\\a}"));
@@ -4619,7 +4619,7 @@ fn mark_scans_raw_general_text_then_expands_payload() {
 
 #[test]
 fn etex_marks_appends_the_scanned_mark_class() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -4648,7 +4648,7 @@ fn etex_marks_appends_the_scanned_mark_class() {
 
 #[test]
 fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4679,7 +4679,7 @@ fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
 
 #[test]
 fn fire_up_tracks_etex_mark_classes_independently() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -4702,7 +4702,7 @@ fn fire_up_tracks_etex_mark_classes_independently() {
 
 #[test]
 fn output_routine_replays_in_implicit_group_and_consumes_box255() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\output={\\advance\\count0 by 1 \\global\\advance\\count1 by 1 \\shipout\\box255}\
@@ -4734,7 +4734,7 @@ fn output_routine_replays_in_implicit_group_and_consumes_box255() {
 
 #[test]
 fn expandable_output_tail_cannot_consume_following_float_group() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -4766,7 +4766,7 @@ fn output_routine_emits_one_checkpoint_only_after_teardown() {
                   \\global\\advance\\count1 by 1 \\shipout\\hbox{}\\shipout\\box255}
                   \\count0=10 \\count1=20
                   \\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000";
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut executor = Executor::new();
@@ -4826,7 +4826,7 @@ fn lastbox_reappend_runs_page_builder_before_enclosing_group_ends() {
 
 #[test]
 fn output_routine_reports_nonvoid_box255_after_output() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\output={\\relax}\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
@@ -4844,7 +4844,7 @@ fn output_routine_reports_nonvoid_box255_after_output() {
 
 #[test]
 fn deadcycles_overflow_reports_output_loop() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\maxdeadcycles=1 \\output={\\setbox1=\\box255}\
@@ -4871,7 +4871,7 @@ fn deadcycles_overflow_reports_output_loop() {
 
 #[test]
 fn end_cleanup_ejects_residual_page() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\end",
@@ -4892,7 +4892,7 @@ fn end_cleanup_ejects_residual_page() {
 
 #[test]
 fn end_cleanup_exposes_tex_its_all_over_penalty_to_output_routine() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\output={\\global\\count0=\\outputpenalty \\shipout\\box255}\\
@@ -4909,7 +4909,7 @@ fn end_cleanup_exposes_tex_its_all_over_penalty_to_output_routine() {
 
 #[test]
 fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     control
         .register_root_source(SourceRegistration::new(
@@ -4937,7 +4937,7 @@ fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
 }
 
 fn run_canonical_tex82(source: &str) -> Universe {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     control
         .register_root_source(SourceRegistration::new(
@@ -5044,7 +5044,7 @@ fn canonical_named_toks_assignment_collects_and_copies_token_lists() {
 
 #[test]
 fn end_inside_unterminated_box_reaches_outer_cleanup() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\hbox{A\\end"));
 
@@ -5059,7 +5059,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
 
 #[test]
 fn parshape_and_hanging_parameters_reset_after_paragraph() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2\\looseness=2 x\\par",
@@ -5078,7 +5078,7 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
 
 #[test]
 fn vertical_par_resets_normal_paragraph_parameters_without_material() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2\\looseness=2\\par",
@@ -5098,7 +5098,7 @@ fn vertical_par_resets_normal_paragraph_parameters_without_material() {
 
 #[test]
 fn parshape_assignment_obeys_local_and_global_grouping() {
-    let mut local_stores = Universe::new();
+    let mut local_stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut local_stores);
     let mut local_input =
         InputStack::new(MemoryInput::new("\\parshape=1 3pt 40pt{\\parshape=0}\\end"));
@@ -5108,7 +5108,7 @@ fn parshape_assignment_obeys_local_and_global_grouping() {
     assert_eq!(local_stores.paragraph_shape().len(), 1);
     assert_eq!(local_stores.paragraph_shape()[0].indent.raw(), 3 * 65_536);
 
-    let mut global_stores = Universe::new();
+    let mut global_stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut global_stores);
     let mut global_input =
         InputStack::new(MemoryInput::new("{\\global\\parshape=1 7pt 80pt}\\end"));
@@ -5121,7 +5121,7 @@ fn parshape_assignment_obeys_local_and_global_grouping() {
 
 #[test]
 fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5144,7 +5144,7 @@ fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
 
 #[test]
 fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5184,7 +5184,7 @@ fn macro_text(stores: &Universe, name: &str) -> String {
 
 #[test]
 fn long_prefix_on_let_reports_tex_prefix_error() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\long\\let\\a=b"));
 
@@ -5204,7 +5204,7 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
 
 #[test]
 fn interactionmode_reads_and_assigns_globally() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5229,7 +5229,7 @@ fn interactionmode_reads_and_assigns_globally() {
 
 #[test]
 fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5248,7 +5248,7 @@ fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
 
 #[test]
 fn etex_showgroups_and_showifs_render_live_nested_stacks() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5273,7 +5273,7 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
     // returned by `\unexpanded` are suppressed for that expansion step, but
     // protected macros encountered while the prefix scanner continues are
     // expanded before the eventual definition command.
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -5298,7 +5298,7 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
 
 #[test]
 fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);

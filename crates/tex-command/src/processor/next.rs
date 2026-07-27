@@ -1732,7 +1732,7 @@ mod tests {
             .apply_alignment_request(crate::AlignmentRequest::InstallCellTemplate(alignment))
             .expect("empty template installs");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
@@ -1794,7 +1794,7 @@ mod tests {
             })
             .expect("empty-template cell begins");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
@@ -1853,7 +1853,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -1928,7 +1928,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         universe.set_catcode('~', Catcode::Active);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
@@ -1971,7 +1971,7 @@ mod tests {
             .expect("source opens");
         let snapshot = command.snapshot();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut first = Recorder::default();
         {
@@ -2063,7 +2063,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         universe.install_primitive_meaning(
             "hfil",
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HFil),
@@ -2114,7 +2114,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         universe.install_primitive_meaning(
             "hskip",
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip),
@@ -2174,7 +2174,7 @@ mod tests {
                 .open_registered_source(source)
                 .expect("source opens");
             let mut runtime = CommandRuntime::default();
-            let mut universe = Universe::new();
+            let mut universe = Universe::new_with_plain_catcodes();
             universe.install_primitive_meaning(name, Meaning::UnexpandablePrimitive(primitive));
             let mut capabilities = CommandHostCapabilities::default();
             let mut recorder = Recorder::default();
@@ -2225,8 +2225,8 @@ mod tests {
         }
         let mut observed_runtime = CommandRuntime::default();
         let mut unobserved_runtime = CommandRuntime::default();
-        let mut observed_universe = Universe::new();
-        let mut unobserved_universe = Universe::new();
+        let mut observed_universe = Universe::new_with_plain_catcodes();
+        let mut unobserved_universe = Universe::new_with_plain_catcodes();
         let mut observed_capabilities = CommandHostCapabilities::default();
         let mut unobserved_capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
@@ -2265,7 +2265,7 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let stored = universe.finish_traced_token_list(&[TracedTokenWord::pack(
             Token::Char {
                 ch: 't',
@@ -2325,7 +2325,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2372,7 +2372,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2422,7 +2422,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2469,7 +2469,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2508,7 +2508,7 @@ mod tests {
             .install_alignment_cell_template(alignment)
             .expect("cell without a u-template installs");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
             cr,
@@ -2591,7 +2591,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2635,7 +2635,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let u_template =
             tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
                 Token::Char {
@@ -2787,7 +2787,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
@@ -2819,7 +2819,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let target = universe.intern("target").symbol();
         universe.set_meaning(
             target,
@@ -2867,7 +2867,7 @@ mod tests {
     fn noexpand_treatment_survives_rewindable_token_input() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let target = universe.intern("target").symbol();
         universe.set_meaning(
             target,
@@ -2924,7 +2924,7 @@ mod tests {
     fn runaway_recovery_inserts_the_status_specific_canonical_tokens() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let mut capabilities = CommandHostCapabilities::default();
         let warning = ScannerWarning(17);
@@ -3015,7 +3015,7 @@ mod tests {
     fn aligning_eof_recovery_preserves_frozen_cr_identity_as_an_inserted_control_sequence() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_cr = universe.primitive_token("cr").expect("cr is registered");
         let mut capabilities = CommandHostCapabilities::default();
@@ -3086,7 +3086,7 @@ mod tests {
     fn skipping_eof_reports_diagnostics_before_frozen_fi_recovery() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
         let mut capabilities = CommandHostCapabilities::default();
@@ -3166,7 +3166,7 @@ mod tests {
             .open_registered_source(child)
             .expect("nested source opens above parent");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
         let mut capabilities = CommandHostCapabilities::default();
@@ -3225,7 +3225,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let outer = universe.intern("outer").symbol();
         let frozen_par = universe.primitive_token("par").expect("par is registered");
@@ -3302,7 +3302,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let outer = universe.intern("outer").symbol();
         let parameters = universe.intern_token_list(&[]);

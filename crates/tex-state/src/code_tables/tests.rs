@@ -12,14 +12,17 @@ fn initex_catcode_defaults_match_tex82_ascii() {
     assert_eq!(tables.catcode('\r'), Catcode::EndLine);
     assert_eq!(tables.catcode(' '), Catcode::Space);
     assert_eq!(tables.catcode('\\'), Catcode::Escape);
-    assert_eq!(tables.catcode('{'), Catcode::BeginGroup);
-    assert_eq!(tables.catcode('}'), Catcode::EndGroup);
-    assert_eq!(tables.catcode('$'), Catcode::MathShift);
-    assert_eq!(tables.catcode('&'), Catcode::AlignmentTab);
-    assert_eq!(tables.catcode('#'), Catcode::Parameter);
-    assert_eq!(tables.catcode('^'), Catcode::Superscript);
-    assert_eq!(tables.catcode('_'), Catcode::Subscript);
     assert_eq!(tables.catcode('%'), Catcode::Comment);
+    // tex.web §232 assigns no other category codes: `{ } $ & # ^ _` stay
+    // `other_char` until a format assigns them.
+    assert_eq!(tables.catcode('{'), Catcode::Other);
+    assert_eq!(tables.catcode('}'), Catcode::Other);
+    assert_eq!(tables.catcode('$'), Catcode::Other);
+    assert_eq!(tables.catcode('&'), Catcode::Other);
+    assert_eq!(tables.catcode('#'), Catcode::Other);
+    assert_eq!(tables.catcode('^'), Catcode::Other);
+    assert_eq!(tables.catcode('_'), Catcode::Other);
+    assert_eq!(tables.catcode('~'), Catcode::Other);
     assert_eq!(tables.catcode('\u{7f}'), Catcode::Invalid);
     assert_eq!(tables.catcode('A'), Catcode::Letter);
     assert_eq!(tables.catcode('z'), Catcode::Letter);
@@ -45,7 +48,9 @@ fn initex_case_space_math_and_delimiter_defaults() {
     assert_eq!(tables.mathcode('a'), 0x7161);
     assert_eq!(tables.mathcode('@'), u32::from('@'));
     assert_eq!(tables.mathcode('é'), u32::from('é'));
+    // tex.web §240: every `del_code` is -1 except the null delimiter `.`.
     assert_eq!(tables.delcode('A'), -1);
+    assert_eq!(tables.delcode('.'), 0);
 }
 
 #[test]

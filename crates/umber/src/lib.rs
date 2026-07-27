@@ -886,10 +886,19 @@ impl From<WorldError> for FinalizationError {
 }
 
 /// Installs the primitive/state setup used by `umber run`.
+///
+/// `umber run` models a *format-loaded* engine -- the committed DVI corpora
+/// are regenerated against a plain-format `pdftex`, not `pdftex -ini` (only
+/// `tests/corpus/math`, whose sources carry their own `\catcode` preamble,
+/// uses `--ini`). INITEX itself leaves `{ } $ & # ^ _` as `other_char`
+/// (tex.web §232); the format assigns them, so Umber -- which has no dumped
+/// plain format -- synthesizes that part of the format prelude here rather
+/// than in [`Universe::new`]'s INITEX code tables.
 pub fn prepare_run_stores(stores: &mut Universe) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     tex_expand::install_expandable_primitives(stores);
     tex_exec::install_unexpandable_primitives(stores);
+    stores.install_plain_catcodes();
     stores.intern("par");
 }
 
@@ -974,7 +983,7 @@ mod primitive_mode_tests {
 
     #[test]
     fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
-        let mut stores = Universe::with_world(World::memory());
+        let mut stores = Universe::with_world(World::memory()).with_plain_catcodes();
         let relax = stores.intern("relax");
         stores.set_meaning(relax, Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
 
@@ -1736,7 +1745,7 @@ mod tests {
 
     #[test]
     fn canonical_bridge_registers_only_acquired_root_and_nested_sources() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         stores
@@ -1791,7 +1800,7 @@ mod tests {
 
     #[test]
     fn registered_root_executes_through_the_canonical_session_path() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut legacy_input = InputStack::new(MemoryInput::new("\\message{legacy}"));
@@ -1816,7 +1825,7 @@ mod tests {
 
     #[test]
     fn canonical_explicit_shipout_publishes_aligned_prepared_dvi_receipt() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -1846,7 +1855,7 @@ mod tests {
 
     #[test]
     fn canonical_effect_free_shipout_memo_republishes_one_aligned_receipt() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         stores.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -1883,7 +1892,7 @@ mod tests {
 
     #[test]
     fn canonical_default_page_shipout_publishes_an_aligned_receipt() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -1912,7 +1921,7 @@ mod tests {
 
     #[test]
     fn canonical_special_is_deferred_until_shipout() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -1942,7 +1951,7 @@ mod tests {
 
     #[test]
     fn canonical_stream_effects_and_page_effects_commit_in_tex_order() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -1993,7 +2002,7 @@ mod tests {
 
     #[test]
     fn canonical_pdf_whatsits_keep_explicit_shipout_order() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2050,7 +2059,7 @@ mod tests {
     #[test]
     fn canonical_pdf_whatsits_survive_default_and_output_routine_shipout() {
         let run = |source: &'static [u8]| {
-            let mut stores = Universe::new();
+            let mut stores = Universe::new_with_plain_catcodes();
             crate::prepare_pdftex_run_stores(&mut stores);
             stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
             let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2127,7 +2136,7 @@ mod tests {
             bytes: Arc::from(&b"retry image bytes"[..]),
         };
 
-        let mut retry_stores = Universe::new();
+        let mut retry_stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut retry_stores);
         retry_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         let mut retry_input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2165,7 +2174,7 @@ mod tests {
         );
         let retried = retry.execute().expect("retried execution succeeds");
 
-        let mut fresh_stores = Universe::new();
+        let mut fresh_stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut fresh_stores);
         fresh_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         let mut fresh_input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2216,7 +2225,7 @@ mod tests {
         use crate::EngineMode;
 
         for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
-            let mut fresh = Universe::new();
+            let mut fresh = Universe::new_with_plain_catcodes();
             mode.prepare_fresh(&mut fresh);
             let mut fresh_input = InputStack::new(MemoryInput::new(""));
             let fresh_session = EngineSession::with_command_profile(
@@ -2254,7 +2263,7 @@ mod tests {
         for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
             let root = b"\\message{canonical format}\\end";
 
-            let mut fresh = Universe::new();
+            let mut fresh = Universe::new_with_plain_catcodes();
             mode.prepare_fresh(&mut fresh);
             fresh
                 .world_mut()
@@ -2311,7 +2320,7 @@ mod tests {
     fn canonical_session_checkpoint_uses_command_summary_not_legacy_input() {
         use tex_exec::{EngineBoundary, ExecutionBudgetCounters};
 
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2338,7 +2347,7 @@ mod tests {
 
     #[test]
     fn canonical_pdfximage_suspends_then_retries_with_the_exact_request() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2425,7 +2434,7 @@ mod tests {
 
     #[test]
     fn canonical_pdfximage_authoritative_absence_is_a_pdftex_diagnostic() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
@@ -2459,7 +2468,7 @@ mod tests {
     #[test]
     fn canonical_pdfximage_request_uses_live_pagebox_configuration() {
         let request_for = |page_box, force_page_box, source: &[u8]| {
-            let mut stores = Universe::new();
+            let mut stores = Universe::new_with_plain_catcodes();
             crate::prepare_pdftex_run_stores(&mut stores);
             stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
             stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_PAGE_BOX, page_box);
@@ -2503,7 +2512,7 @@ mod tests {
 
     #[test]
     fn canonical_pdfximage_rejects_dvi_mode_before_resource_acquisition() {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut stores);
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
         let mut session = EngineSession::with_command_profile(
@@ -2530,7 +2539,7 @@ mod tests {
     fn driver_materialization_follows_engine_effect_commit() {
         let temp = tempfile::tempdir().expect("temp dir");
         let output = temp.path().join("shared.out");
-        let mut stores = Universe::with_world(World::real());
+        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
         let slot = StreamSlot::new(1);
         stores.world_mut().open_out(slot, &output);
         stores
@@ -2553,7 +2562,7 @@ mod tests {
     #[test]
     fn failed_effect_commit_cannot_materialize_driver_file() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let mut stores = Universe::with_world(World::real());
+        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
         let slot = StreamSlot::new(1);
         stores.world_mut().open_out(slot, temp.path());
         stores
@@ -2572,7 +2581,7 @@ mod tests {
 
     #[test]
     fn duplicate_driver_paths_are_rejected_before_finalization() {
-        let stores = Universe::with_world(World::memory());
+        let stores = Universe::with_world(World::memory()).with_plain_catcodes();
         let result = PlannedFinalization::new(
             stores.world().effect_pos(),
             vec![
@@ -2588,7 +2597,7 @@ mod tests {
 
     #[test]
     fn lexically_aliased_driver_paths_are_rejected_before_finalization() {
-        let stores = Universe::with_world(World::memory());
+        let stores = Universe::with_world(World::memory()).with_plain_catcodes();
         let result = PlannedFinalization::new(
             stores.world().effect_pos(),
             vec![
@@ -2616,7 +2625,7 @@ mod tests {
 
     #[test]
     fn fixture_policy_preserves_effects_without_materializing_files() {
-        let mut stores = Universe::with_world(World::memory());
+        let mut stores = Universe::with_world(World::memory()).with_plain_catcodes();
         stores
             .world_mut()
             .write_text(PrintSink::Terminal, "fixture");

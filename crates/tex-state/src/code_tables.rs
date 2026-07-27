@@ -29,8 +29,18 @@ const ASCII_LOWER_A: u32 = b'a' as u32;
 const ASCII_LOWER_Z: u32 = b'z' as u32;
 const ASCII_ZERO: u32 = b'0' as u32;
 const ASCII_NINE: u32 = b'9' as u32;
+const ASCII_PERIOD: u32 = b'.' as u32;
 const VARIABLE_MATH_CLASS: u32 = 7 << 12;
 const LETTER_MATH_FAMILY: u32 = 1 << 8;
+/// tex.web §22 `null_code`: the ASCII code INITEX makes `\catcode` 9.
+const NULL_CODE: u32 = 0;
+/// tex.web §22 `carriage_return`: the ASCII code INITEX makes `\catcode` 5.
+const CARRIAGE_RETURN: u32 = 0o15;
+/// tex.web §22 `invalid_code`: the ASCII code INITEX makes `\catcode` 15.
+const INVALID_CODE: u32 = 0o177;
+const ASCII_SPACE: u32 = b' ' as u32;
+const ASCII_PERCENT: u32 = b'%' as u32;
+const ASCII_BACKSLASH: u32 = b'\\' as u32;
 
 /// A TeX `\lccode` value.
 pub type LcCode = u32;
@@ -823,21 +833,22 @@ fn build_default_root<T>() -> Arc<Root<T>> {
 struct CatcodeDefaults;
 
 impl Defaults<Catcode> for CatcodeDefaults {
+    /// tex.web §232 initializes `cat_code(k)` to `other_char` for every `k`,
+    /// then overrides exactly six single characters -- `^^@` (ignore), `^^M`
+    /// (car_ret), space (spacer), `%` (comment), `\` (escape), and `^^?`
+    /// (invalid_char) -- plus the ASCII letters.
+    ///
+    /// `{ } $ & # ^ _` are deliberately absent: they are `other_char` in
+    /// INITEX and only become grouping, math-shift, alignment, parameter, and
+    /// script characters when a format assigns them (plain.tex lines 11-17).
     fn default_for(code: u32) -> Catcode {
         match code {
-            0 => Catcode::Ignored,
-            13 => Catcode::EndLine,
-            32 => Catcode::Space,
-            92 => Catcode::Escape,
-            123 => Catcode::BeginGroup,
-            125 => Catcode::EndGroup,
-            36 => Catcode::MathShift,
-            38 => Catcode::AlignmentTab,
-            35 => Catcode::Parameter,
-            94 => Catcode::Superscript,
-            95 => Catcode::Subscript,
-            37 => Catcode::Comment,
-            127 => Catcode::Invalid,
+            NULL_CODE => Catcode::Ignored,
+            CARRIAGE_RETURN => Catcode::EndLine,
+            ASCII_SPACE => Catcode::Space,
+            ASCII_PERCENT => Catcode::Comment,
+            ASCII_BACKSLASH => Catcode::Escape,
+            INVALID_CODE => Catcode::Invalid,
             ASCII_A..=ASCII_Z | ASCII_LOWER_A..=ASCII_LOWER_Z => Catcode::Letter,
             _ => Catcode::Other,
         }
@@ -936,8 +947,16 @@ impl StaticDefaultRoot<MathCode> for MathCodeDefaults {
 struct DelCodeDefaults;
 
 impl Defaults<DelCode> for DelCodeDefaults {
-    fn default_for(_: u32) -> DelCode {
-        DELCODE_DEFAULT
+    /// tex.web §240: INITEX sets every `del_code` to `-1` except
+    /// `del_code(".")`, the null delimiter used in error recovery, which is
+    /// `0`. Formats do not restore it (plain.tex line 121 records the same
+    /// convention), so it belongs in the defaults.
+    fn default_for(code: u32) -> DelCode {
+        if code == ASCII_PERIOD {
+            0
+        } else {
+            DELCODE_DEFAULT
+        }
     }
 }
 

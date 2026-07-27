@@ -15,7 +15,7 @@ const CMSY10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.t
 const CMEX10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
 fn template() -> Universe {
-    let mut universe = Universe::with_world(tex_state::World::memory());
+    let mut universe = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     tex_exec::install_unexpandable_primitives(&mut universe);
     tex_expand::install_expandable_primitives(&mut universe);
     universe
@@ -5195,7 +5195,8 @@ fn changed_included_input_rejects_checkpoint_reuse() {
     let root = format!("\\input {} \\end", included.display());
     let mut universe = Universe::with_world(tex_state::World::real_with_artifact_dir(
         directory.path().join("artifacts"),
-    ));
+    ))
+    .with_plain_catcodes();
     tex_exec::install_unexpandable_primitives(&mut universe);
     tex_expand::install_expandable_primitives(&mut universe);
     let mut session = Session::start(

@@ -8,7 +8,7 @@ use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, Unset
 use tex_state::scaled::Scaled;
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();
@@ -25,7 +25,7 @@ fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
 }
 
 fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();
@@ -330,7 +330,7 @@ fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
 
 #[test]
 fn halign_head_for_vmode_replay_preserves_command_origin() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let halign = Token::Cs(stores.intern("halign").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
@@ -379,7 +379,7 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
 
 #[test]
 fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let hrule = Token::Cs(stores.intern("hrule").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
@@ -421,7 +421,7 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
 
 #[test]
 fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recovery() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let halign = Token::Cs(stores.intern("halign").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
@@ -472,7 +472,7 @@ fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recover
 
 #[test]
 fn bottom_level_halign_recovery_drops_command_without_growing_input_frames() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\halign"));
     let mut nest = ModeNest::new();
@@ -693,7 +693,7 @@ fn v_template_macros_expand_when_the_cell_finishes() {
 
 #[test]
 fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -744,7 +744,7 @@ fn futurelet_brace_lookahead_restores_alignment_depth_before_replay() {
 
 #[test]
 fn extra_alignment_tab_is_changed_to_row_terminator() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\halign{#\\cr a&b\\cr}"));
@@ -761,7 +761,7 @@ fn extra_alignment_tab_is_changed_to_row_terminator() {
 
 #[test]
 fn extra_span_is_changed_to_row_terminator() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\halign{#\\cr a\\span\\cr}"));
@@ -1042,7 +1042,7 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
 
 #[test]
 fn alignment_preamble_errors_match_reference_wording() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
     input.begin_alignment();
@@ -1059,7 +1059,7 @@ fn alignment_preamble_errors_match_reference_wording() {
         support::terminal_effect_text(&stores).contains("Missing # inserted in alignment preamble")
     );
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{#a#b\\cr}"));
     input.begin_alignment();
@@ -1177,7 +1177,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
 
 #[test]
 fn shipout_rejects_unset_alignment_nodes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let unset = unset_for_test(&mut stores, UnsetKind::HBox, &[], 1);
     let state_before = stores.testing_state_hash();
     let nodes_before = stores.testing_epoch_node_count();
@@ -1767,7 +1767,7 @@ fn valign_column_extent_includes_cell_depth() {
 
 #[test]
 fn fin_align_restores_saved_aux_instead_of_recomputing_it_from_set_nodes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(sp(1));

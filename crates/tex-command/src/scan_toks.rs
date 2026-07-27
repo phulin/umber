@@ -605,7 +605,7 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let mut processor = CommandProcessor::new(
@@ -656,7 +656,7 @@ mod tests {
     fn direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
         let macro_symbol = universe.intern("storedmacro").symbol();
         let register = universe.intern("stored").symbol();
@@ -724,7 +724,7 @@ mod tests {
     fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
         let count = universe.intern("count").symbol();
         universe.set_meaning(
@@ -814,7 +814,7 @@ mod tests {
     fn completed_direct_splice_scan_rolls_back_to_the_exact_input_state() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
         let register = universe.intern("stored").symbol();
         universe.set_meaning(register, Meaning::ToksRegister(3));
@@ -880,7 +880,7 @@ mod tests {
     fn macro_definition_converts_parameters_and_preserves_doubled_hashes() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         push(
             &mut command,
             vec![
@@ -951,7 +951,7 @@ mod tests {
     fn parameterless_macro_definition_still_collapses_doubled_hashes() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         push(
             &mut command,
             vec![
@@ -1002,7 +1002,7 @@ mod tests {
     fn general_text_keeps_both_parameter_characters() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         push(
             &mut command,
             vec![
@@ -1051,7 +1051,7 @@ mod tests {
     fn macro_definition_hash_brace_reuses_the_left_brace_after_the_body() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         push(
             &mut command,
             vec![
@@ -1135,7 +1135,7 @@ mod tests {
     fn expanded_collection_expands_a_macro_one_step_at_a_time() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let macro_symbol = universe.intern("m").symbol();
         let empty = universe.intern_token_list(&[]);
         let replacement = universe.intern_token_list(&[Token::Char {

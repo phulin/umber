@@ -318,6 +318,14 @@ copies the pinned local CM TFMs and area support files, uses INITEX for the math
 corpus, and rewrites raw reference DVI only when the existing
 preamble-comment-only comparison detects a change.
 
+Only the math corpus uses `--ini`; its sources declare their own `\catcode`
+preamble because INITEX leaves `{`, `}`, `$`, `&`, `#`, `^`, and `_` as
+`other_char` (tex.web §232). Every other area is regenerated against a
+format-loaded reference engine, so `umber run` matches it by synthesizing that
+part of the format prelude in `umber::prepare_run_stores` rather than in the
+INITEX code-table defaults. `umber lex-dump` and `umber expand-dump` report the
+same format-loaded state, and their committed corpora rely on it.
+
 ## Committed PDF Corpus
 
 `tests/corpus/pdf` commits minimal primitive-only sources, pinned reference

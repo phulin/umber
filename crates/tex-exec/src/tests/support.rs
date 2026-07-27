@@ -42,7 +42,7 @@ pub(super) fn stores_with_fonts() -> Universe {
     const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
     const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()

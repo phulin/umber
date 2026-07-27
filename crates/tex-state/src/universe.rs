@@ -1125,6 +1125,17 @@ const WORLD_EFFECTS_DOMAIN: u64 = 0x776f_726c_645f_6566;
 const WORLD_SHELL_ESCAPES_DOMAIN: u64 = 0x776f_726c_645f_7368;
 const WORLD_SCALARS_DOMAIN: u64 = 0x776f_726c_645f_7363;
 const WORLD_STREAMS_DOMAIN: u64 = 0x776f_726c_645f_6275;
+/// plain.tex lines 11-17: the printable characters INITEX (tex.web §232)
+/// leaves as `other_char` and that plain.tex gives conventional meanings.
+const PLAIN_PRINTABLE_CATCODES: [(char, Catcode); 7] = [
+    ('{', Catcode::BeginGroup),
+    ('}', Catcode::EndGroup),
+    ('$', Catcode::MathShift),
+    ('&', Catcode::AlignmentTab),
+    ('#', Catcode::Parameter),
+    ('^', Catcode::Superscript),
+    ('_', Catcode::Subscript),
+];
 const INPUT_PROJECTION_DOMAIN: u64 = 0x696e_7075_745f_7072;
 const INTERACTION_PROJECTION_DOMAIN: u64 = 0x696e_7465_7261_6374;
 
@@ -1332,9 +1343,43 @@ impl Universe {
     }
 
     /// Creates an isolated TeX state timeline.
+    ///
+    /// Code tables start at INITEX's values (tex.web §232 and §240), so
+    /// `{`, `}`, `$`, `&`, `#`, `^`, and `_` are `other_char` until a format
+    /// assigns them. Engines that need those conventions execute a format
+    /// source; callers that only want the conventions without a format use
+    /// [`Self::new_with_plain_catcodes`].
     #[must_use]
     pub fn new() -> Self {
         Self::with_world(World::default())
+    }
+
+    /// Creates an isolated TeX state timeline carrying plain.tex's printable
+    /// `\catcode` assignments on top of INITEX's table.
+    ///
+    /// tex.web §232 leaves `{ } $ & # ^ _` as `other_char`; plain.tex lines
+    /// 11-17 assign them their conventional meanings. This constructor stands
+    /// in for that format prelude when a caller exercises grouping, macro
+    /// parameters, math shifts, alignment, or scripts without loading one.
+    #[must_use]
+    pub fn new_with_plain_catcodes() -> Self {
+        Self::new().with_plain_catcodes()
+    }
+
+    /// Applies plain.tex's printable `\catcode` assignments to an existing
+    /// timeline. See [`Self::new_with_plain_catcodes`].
+    #[must_use]
+    pub fn with_plain_catcodes(mut self) -> Self {
+        self.install_plain_catcodes();
+        self
+    }
+
+    /// Assigns plain.tex's printable `\catcode` values in place. See
+    /// [`Self::new_with_plain_catcodes`].
+    pub fn install_plain_catcodes(&mut self) {
+        for (character, catcode) in PLAIN_PRINTABLE_CATCODES {
+            self.set_catcode_global(character, catcode);
+        }
     }
 
     /// Creates an isolated TeX timeline backed by an explicit effect world.
