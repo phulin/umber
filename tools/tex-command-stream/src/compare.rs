@@ -126,13 +126,65 @@ pub enum Repair {
     AnchorResync {
         expected_skipped: usize,
         actual_skipped: usize,
-        anchor: String,
+        anchor: ResyncAnchor,
     },
     /// No repair confirmed and no shared anchor found. Comparison of this
     /// fixture stopped here rather than guessing.
     Abandoned,
     /// One stream ended while the other still had events.
     Truncated { remaining: usize },
+}
+
+/// The structural boundary a [`Repair::AnchorResync`] rejoined the two streams
+/// at, kept as data rather than as pre-rendered text.
+///
+/// Structure matters because a source line is a *position*: two recurrences of
+/// one root site rejoin at the same kind of anchor at different lines, and
+/// the report's recurrence grouping can only recognize that if the line is a
+/// separate field rather than a substring of a message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResyncAnchor {
+    /// An input-stack push, retire, or stop: a real nesting boundary.
+    Input {
+        transition: InputTransition,
+        reason: InputReason,
+        name: String,
+    },
+    /// The first delivery attributed to a new source line.
+    Line { source: String, line: u32 },
+}
+
+impl fmt::Display for ResyncAnchor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Input {
+                transition,
+                reason,
+                name,
+            } => write!(formatter, "input {transition:?}/{reason:?} {name}"),
+            Self::Line { source, line } => write!(formatter, "{source} line {line}"),
+        }
+    }
+}
+
+impl From<&AnchorKey<'_>> for ResyncAnchor {
+    fn from(key: &AnchorKey<'_>) -> Self {
+        match key {
+            AnchorKey::Input {
+                transition,
+                reason,
+                name,
+            } => Self::Input {
+                transition: *transition,
+                reason: *reason,
+                name: (*name).into(),
+            },
+            AnchorKey::Line { source, line } => Self::Line {
+                source: (*source).into(),
+                line: *line,
+            },
+        }
+    }
 }
 
 impl Repair {
@@ -261,6 +313,22 @@ impl fmt::Display for StreamMismatch {
     }
 }
 
+/// One fixture's complete comparison: the ordered divergences it produced, and
+/// whether `max_results` cut the comparison short.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Comparison {
+    /// The ordered divergences, at most `max_results` of them.
+    pub entries: Vec<StreamMismatch>,
+    /// `true` when the `max_results` budget was reached while both streams
+    /// still had events left to compare: the rest of this fixture was never
+    /// examined and more divergences may exist beyond the last entry.
+    ///
+    /// A bound that is not reported is a bound that silently becomes the
+    /// answer, so the runner prints this rather than leaving a reader to infer
+    /// it from `entries.len() == max_results`.
+    pub budget_reached: bool,
+}
+
 /// Compares complete ordered streams without omitting unsupported event kinds,
 /// reporting only the earliest divergence. Kept for callers that only need
 /// the first mismatch; [`find_divergences`] reports up to `max_results`.
@@ -270,6 +338,7 @@ pub fn compare_streams(
     actual: &[ObservedEvent],
 ) -> Result<(), Box<StreamMismatch>> {
     match find_divergences(fixture, expected, actual, 1, AlignmentTuning::default())
+        .entries
         .into_iter()
         .next()
     {
@@ -290,11 +359,14 @@ pub fn find_divergences(
     actual: &[ObservedEvent],
     max_results: usize,
     tuning: AlignmentTuning,
-) -> Vec<StreamMismatch> {
+) -> Comparison {
     let aligner = Aligner::new(fixture, expected, actual, tuning);
-    let mut entries = aligner.align(max_results);
+    let (mut entries, budget_reached) = aligner.align(max_results);
     attribute_suppressed_cascade(&mut entries, expected, actual);
-    entries
+    Comparison {
+        entries,
+        budget_reached,
+    }
 }
 
 /// Whether the two streams agree at one already-aligned position.
@@ -491,19 +563,6 @@ enum AnchorKey<'a> {
     Line { source: &'a str, line: u32 },
 }
 
-impl fmt::Display for AnchorKey<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Input {
-                transition,
-                reason,
-                name,
-            } => write!(formatter, "input {transition:?}/{reason:?} {name}"),
-            Self::Line { source, line } => write!(formatter, "{source} line {line}"),
-        }
-    }
-}
-
 struct Aligner<'a> {
     fixture: &'a str,
     expected: Vec<&'a Event>,
@@ -542,10 +601,20 @@ impl<'a> Aligner<'a> {
         }
     }
 
-    fn align(&self, max_results: usize) -> Vec<StreamMismatch> {
+    /// Aligns the two streams, returning the ordered divergences and whether
+    /// `max_results` stopped the walk before either stream was exhausted.
+    fn align(&self, max_results: usize) -> (Vec<StreamMismatch>, bool) {
         let mut entries = Vec::new();
         let (mut expected_index, mut actual_index) = (0usize, 0usize);
-        while entries.len() < max_results {
+        loop {
+            if entries.len() >= max_results {
+                // Every other exit from this loop is terminal and leaves
+                // through `break`, so reaching the budget here is the one case
+                // where unexamined events remain.
+                let remaining = expected_index < self.expected.len()
+                    || actual_index < self.actual.len();
+                return (entries, remaining);
+            }
             match (
                 expected_index < self.expected.len(),
                 actual_index < self.actual.len(),
@@ -622,7 +691,7 @@ impl<'a> Aligner<'a> {
                 }
             }
         }
-        entries
+        (entries, false)
     }
 
     fn both(&self, expected_index: usize, actual_index: usize, repair: Repair) -> StreamMismatch {
@@ -709,13 +778,13 @@ impl<'a> Aligner<'a> {
         &self,
         expected_index: usize,
         actual_index: usize,
-    ) -> Option<(usize, usize, String)> {
+    ) -> Option<(usize, usize, ResyncAnchor)> {
         let expected_anchors =
             collect_anchors(&self.expected, expected_index, self.tuning.anchor_scan);
         let actual_anchors =
             collect_anchors(&self.actual_events, actual_index, self.tuning.anchor_scan);
 
-        let mut best: Option<(usize, usize, usize, String)> = None;
+        let mut best: Option<(usize, usize, usize, ResyncAnchor)> = None;
         for (expected_skip, expected_anchor) in &expected_anchors {
             for (actual_skip, actual_anchor) in &actual_anchors {
                 if expected_anchor != actual_anchor {
@@ -732,7 +801,7 @@ impl<'a> Aligner<'a> {
                     cost,
                     *expected_skip,
                     *actual_skip,
-                    expected_anchor.to_string(),
+                    ResyncAnchor::from(expected_anchor),
                 ));
             }
         }
@@ -837,7 +906,7 @@ fn attribute_suppressed_cascade(
 ///
 /// Exhaustive over every oracle event kind: a new schema variant must be
 /// labeled here rather than silently collapsing into a generic bucket.
-fn classify_mismatch_kind(sides: &MismatchSides) -> &'static str {
+pub(crate) fn classify_mismatch_kind(sides: &MismatchSides) -> &'static str {
     let (expected, actual) = match sides {
         MismatchSides::Both { expected, actual } => (expected.as_ref(), &actual.event),
         MismatchSides::ExpectedOnly(_) => return "stream_truncated_early",

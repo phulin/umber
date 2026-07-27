@@ -66,6 +66,7 @@ fn align(expected: &[Event], actual: &[Event], tuning: AlignmentTuning) -> Vec<S
         64,
         tuning,
     )
+    .entries
 }
 
 fn default_align(expected: &[Event], actual: &[Event]) -> Vec<StreamMismatch> {
@@ -235,7 +236,11 @@ fn the_anchor_fallback_rejoins_at_a_shared_input_boundary() {
         Repair::AnchorResync {
             expected_skipped: 100,
             actual_skipped: 0,
-            anchor: "input Push/Source child.tex".into(),
+            anchor: ResyncAnchor::Input {
+                transition: InputTransition::Push,
+                reason: InputReason::Source,
+                name: "child.tex".into(),
+            },
         }
     );
 }
@@ -258,7 +263,15 @@ fn the_anchor_fallback_rejoins_at_a_shared_source_line() {
     );
     assert_eq!(entries.len(), 1);
     assert!(
-        matches!(&entries[0].repair, Repair::AnchorResync { anchor, .. } if anchor == "case.tex line 42"),
+        matches!(
+            &entries[0].repair,
+            Repair::AnchorResync { anchor, .. }
+                if *anchor
+                    == ResyncAnchor::Line {
+                        source: "case.tex".into(),
+                        line: 42,
+                    }
+        ),
         "{:?}",
         entries[0].repair
     );
@@ -366,12 +379,15 @@ fn the_divergence_budget_still_caps_one_fixture() {
         })
         .collect();
 
-    let entries = find_divergences(
+    let comparison = find_divergences(
         "tex82/case",
         &oracle(&expected),
         &observed(&actual),
         3,
         AlignmentTuning::default(),
     );
-    assert_eq!(entries.len(), 3);
+    assert_eq!(comparison.entries.len(), 3);
+    // The budget cut this comparison short, and the runner must be able to say
+    // so rather than let a bounded worklist read like a complete one.
+    assert!(comparison.budget_reached);
 }

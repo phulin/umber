@@ -32,11 +32,16 @@ use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
 
 pub mod compare;
 pub mod documents;
+pub mod group;
+pub mod report;
 
 pub use compare::{
-    AlignmentTuning, DEFAULT_ANCHOR_SCAN, DEFAULT_REALIGN_CONFIRMATION, DEFAULT_REALIGN_WINDOW,
-    MismatchSides, Repair, StreamMismatch, compare_streams, find_divergences,
+    AlignmentTuning, Comparison, DEFAULT_ANCHOR_SCAN, DEFAULT_REALIGN_CONFIRMATION,
+    DEFAULT_REALIGN_WINDOW, MismatchSides, Repair, ResyncAnchor, StreamMismatch, compare_streams,
+    find_divergences,
 };
+pub use group::{RootSite, group};
+pub use report::{ComparisonReport, FixtureState, FixtureSummary};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
@@ -68,6 +73,10 @@ pub struct RunOptions {
     pub max_divergences: usize,
     /// Bounds on the comparator's resynchronization search.
     pub alignment: AlignmentTuning,
+    /// Collapse exact recurrences of one root site into a single reported
+    /// entry (`--ungrouped` clears it). Presentation only: the comparison, the
+    /// divergence order, and the divergence count are identical either way.
+    pub grouped: bool,
 }
 
 impl Default for RunOptions {
@@ -75,6 +84,7 @@ impl Default for RunOptions {
         Self {
             max_divergences: DEFAULT_MAX_DIVERGENCES,
             alignment: AlignmentTuning::default(),
+            grouped: true,
         }
     }
 }
@@ -108,7 +118,11 @@ pub fn run_repository(
     let repository = repository.as_ref();
     let suite = validate_tex82_command_trace_suite(repository)
         .map_err(|error| RunnerError::Suite(error.to_string()))?;
-    let mut divergences = Vec::new();
+    let mut report = ComparisonReport {
+        grouped: options.grouped,
+        max_divergences: options.max_divergences,
+        ..ComparisonReport::default()
+    };
     for entry in suite.fixtures {
         let fixture_directory =
             repository
@@ -123,7 +137,7 @@ pub fn run_repository(
             &fixture,
             &ReplayResources::committed(),
             options,
-            &mut divergences,
+            &mut report,
         )?;
     }
 
@@ -133,6 +147,7 @@ pub fn run_repository(
             "tex-command-stream: document trace {name} is not generated on this checkout; \
              run scripts/build-tex82-document-traces.sh to include it"
         );
+        report.fixtures.push(FixtureSummary::not_generated(name));
     }
     for trace in &registry.traces {
         collect_fixture_divergences(
@@ -140,14 +155,14 @@ pub fn run_repository(
             &trace.fixture,
             &trace.resources,
             options,
-            &mut divergences,
+            &mut report,
         )?;
     }
 
-    if divergences.is_empty() {
+    if report.divergences.is_empty() {
         Ok(())
     } else {
-        Err(RunnerError::Comparison(divergences))
+        Err(RunnerError::Comparison(Box::new(report)))
     }
 }
 
@@ -156,47 +171,62 @@ fn collect_fixture_divergences(
     fixture: &CommittedFixture,
     resources: &ReplayResources,
     options: RunOptions,
-    divergences: &mut Vec<Divergence>,
+    report: &mut ComparisonReport,
 ) -> Result<(), RunnerError> {
     let replay = replay_fixture(directory, fixture, resources)?;
     let identity = format!(
         "{} manifest={}",
         fixture.manifest.name, fixture.stream.header.manifest
     );
-    divergences.extend(
-        find_divergences(
-            &identity,
-            &fixture.stream.events,
-            &replay.events,
-            options.max_divergences,
-            options.alignment,
-        )
-        .into_iter()
-        .map(Box::new)
-        .map(Divergence::Mismatch),
+    let comparison = find_divergences(
+        &identity,
+        &fixture.stream.events,
+        &replay.events,
+        options.max_divergences,
+        options.alignment,
+    );
+    let first = report.divergences.len();
+    report.divergences.extend(
+        comparison
+            .entries
+            .into_iter()
+            .map(Box::new)
+            .map(Divergence::Mismatch),
     );
     // A contained failure is at most one entry per fixture and names a
     // concrete `ExecError` or panic site, so it is reported outside the
     // mismatch budget: the twentieth consecutive mismatch of an
     // already-reported structural defect must never crowd it out.
     if let Some(failure) = replay.failure {
-        divergences.push(Divergence::Failure {
-            fixture: identity,
+        report.divergences.push(Divergence::Failure {
+            fixture: identity.clone(),
             index: replay.events.len(),
             failure,
         });
     }
+    report.fixtures.push(FixtureSummary {
+        name: fixture.manifest.name.clone(),
+        identity,
+        state: FixtureState::Compared {
+            divergences: report.divergences.len() - first,
+            first_index: report.divergences.get(first).map(Divergence::index),
+            budget_reached: comparison.budget_reached,
+        },
+    });
     Ok(())
 }
 
 const USAGE: &str = "expected --repository <path>, --max-divergences <n>, \
-                     --realign-window <n>, --realign-confirm <n>, or --anchor-scan <n>";
+                     --realign-window <n>, --realign-confirm <n>, --anchor-scan <n>, \
+                     or --ungrouped";
 
 /// Parses the intentionally narrow offline runner interface.
 ///
 /// The three alignment tunables exist so a coordinator can widen the search
 /// when a suspected repair is larger than the default window, or narrow it to
 /// prove a reported realignment is not an artifact of an over-generous bound.
+/// `--ungrouped` restores the one-entry-per-divergence worklist, so the
+/// grouped report can always be checked against the list it summarizes.
 pub fn run_cli() -> Result<(), RunnerError> {
     let mut arguments = env::args_os().skip(1);
     let mut repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -218,6 +248,8 @@ pub fn run_cli() -> Result<(), RunnerError> {
                 positive_argument(&mut arguments, "--realign-confirm")?;
         } else if argument == "--anchor-scan" {
             options.alignment.anchor_scan = positive_argument(&mut arguments, "--anchor-scan")?;
+        } else if argument == "--ungrouped" {
+            options.grouped = false;
         } else {
             return Err(RunnerError::Usage(format!(
                 "unknown argument {}; {USAGE}",
@@ -278,6 +310,42 @@ pub enum Divergence {
     },
 }
 
+impl Divergence {
+    /// The fixture identity this divergence belongs to.
+    pub fn fixture(&self) -> &str {
+        match self {
+            Self::Mismatch(mismatch) => &mismatch.fixture,
+            Self::Failure { fixture, .. } => fixture,
+        }
+    }
+
+    /// The cheap structural label this divergence is batched by.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Mismatch(mismatch) => mismatch.kind,
+            Self::Failure { failure, .. } => failure.kind(),
+        }
+    }
+
+    /// The oracle event index this divergence is reported at. For a contained
+    /// replay failure this is the observed index the failure occurred after.
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Mismatch(mismatch) => mismatch.index,
+            Self::Failure { index, .. } => *index,
+        }
+    }
+
+    /// Cascade mismatches this divergence stands in for; always zero for a
+    /// contained replay failure, which stands in for nothing.
+    pub fn suppressed_cascade(&self) -> usize {
+        match self {
+            Self::Mismatch(mismatch) => mismatch.suppressed_cascade,
+            Self::Failure { .. } => 0,
+        }
+    }
+}
+
 impl fmt::Display for Divergence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -319,7 +387,9 @@ impl ReplayFailure {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    /// Cheap structural label, the contained-failure counterpart of a
+    /// mismatch's [`StreamMismatch`] kind.
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Error(_) => "exec_error",
             Self::Panic(_) => "panic",
@@ -342,7 +412,7 @@ pub enum RunnerError {
     /// with its committed pin, or unreadable.
     Document(String),
     Replay(String),
-    Comparison(Vec<Divergence>),
+    Comparison(Box<ComparisonReport>),
 }
 
 impl fmt::Display for RunnerError {
@@ -353,17 +423,7 @@ impl fmt::Display for RunnerError {
             | Self::Document(error)
             | Self::Replay(error) => formatter.write_str(error),
             Self::Fixture(fixture, error) => write!(formatter, "fixture {fixture}: {error}"),
-            Self::Comparison(divergences) => {
-                writeln!(formatter, "{} ordered divergence(s):", divergences.len())?;
-                for (index, divergence) in divergences.iter().enumerate() {
-                    if index != 0 {
-                        formatter.write_str("\n")?;
-                    }
-                    write!(formatter, "[{index}] ")?;
-                    divergence.fmt(formatter)?;
-                }
-                Ok(())
-            }
+            Self::Comparison(report) => write!(formatter, "{report}"),
         }
     }
 }
