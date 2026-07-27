@@ -100,28 +100,12 @@
       "rationale": "Reviewed glue and muglue width, stretch, shrink, orders, internal fast paths, sign handling, and unit recovery."
     },
     {
-      "modules": { "first": 464, "last": 464 },
-      "disposition": "context_only",
-      "owner": "tex-command::scan-toks",
-      "property_ids": [],
-      "gap_bead": null,
-      "rationale": "Reviewed token-list-building part heading and string-token conversion context."
-    },
-    {
-      "modules": { "first": 465, "last": 466 },
+      "modules": { "first": 473, "last": 473 },
       "disposition": "property",
       "owner": "tex-command::scan-toks",
-      "property_ids": ["tex82.scanner.the-toks"],
+      "property_ids": ["tex82.scanner.scan-toks"],
       "gap_bead": null,
-      "rationale": "Reviewed typed internal-value conversion and exact token-list/font-identifier copying for the_toks."
-    },
-    {
-      "modules": { "first": 473, "last": 473 },
-      "disposition": "context_only",
-      "owner": "tex-command::scan-toks",
-      "property_ids": [],
-      "gap_bead": null,
-      "rationale": "Reviewed scan_toks purpose, modes, and result ownership contract."
+      "rationale": "Reviewed executable scan_toks entry, scanner-status ownership, builder initialization, collection dispatch, and result finalization."
     },
     {
       "modules": { "first": 474, "last": 479 },
@@ -299,6 +283,12 @@
         "internal_quantity_mode_page_box_last_item_and_zero_recovery",
         "internal_quantity_token_list_identifier_reference_and_negation_ownership",
         "scanner-conditionals.tex: internal family typed results and transcript spellings"
+      ],
+      "cross_references": [
+        {
+          "property_id": "tex82.expansion.converted-token-lists",
+          "relationship": "Non-owning consumer reference: the expansion property owns §§464–472, where tok_val results are copied or rendered into converted token lists."
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.224"
@@ -518,56 +508,8 @@
       "gap_bead": "umber2-johp.224"
     },
     {
-      "id": "tex82.scanner.the-toks",
-      "sections": [465, 466],
-      "claim": "the_toks scans one internal quantity at tok_val and produces either its exact unexpanded token list/font identifier or canonical character tokens spelling its integer, dimension, glue, or muglue value.",
-      "preconditions": [
-        "The current command is the expandable the primitive.",
-        "Internal-value scanning and deterministic TeX82 value formatting are available."
-      ],
-      "stimulus": [
-        "Expand the over empty/nonempty token registers and parameters, font identifiers, and signed integer, dimension, glue, and muglue quantities including nested register selectors."
-      ],
-      "expected_observations": [
-        "Token-list and font-identifier results are copied without expansion.",
-        "Numeric results are formatted with canonical pt or mu spelling and re-tokenized as spaces plus other-character tokens.",
-        "The nested internal-value result precedes the direct-splice observation."
-      ],
-      "postconditions": [
-        "The returned frozen list owns no borrowed reference count and preserves original token identity where copying applies.",
-        "No token produced by the is expanded again by the collecting scan_toks episode."
-      ],
-      "equivalence_cases": [
-        "A token register and token parameter holding the same list produce identical copied tokens.",
-        "Equivalent scalar values from named parameters and registers have identical formatted token spellings."
-      ],
-      "recovery_cases": [
-        "An invalid internal target follows scan_something_internal recovery before formatting zero.",
-        "An out-of-range token-register selector recovers to register zero before list copying."
-      ],
-      "semantic_owner": "tex-command::scan-toks",
-      "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/scan_toks.rs",
-          "test": "direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector"
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks.rs",
-          "test": "direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup"
-        }
-      ],
-      "planned_coverage": [
-        "the_toks_all_internal_levels_empty_lists_font_ids_and_format_spellings",
-        "the_toks_invalid_target_and_bounded_token_register_recovery",
-        "expansion-macros.tex: direct the splice and transcript-visible spellings"
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
-    },
-    {
       "id": "tex82.scanner.scan-toks",
-      "sections": [474, 475, 476, 477, 478, 479],
+      "sections": [473, 474, 475, 476, 477, 478, 479],
       "claim": "scan_toks installs the correct scanner status, builds canonical macro parameter and balanced replacement lists, distinguishes expanded and raw collection, and splices the results of the without re-expansion.",
       "preconditions": [
         "The caller selects macro versus general text and expanded versus unexpanded collection.",
