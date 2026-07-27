@@ -4137,7 +4137,7 @@ fn scan_command(
         }
         Meaning::TokParam(index) => {
             let tokens = processor
-                .scan_token_parameter_assignment()
+                .scan_token_parameter_assignment(TokParam::new(index))
                 .map_err(command_error)?;
             Ok(ScannedStep::TokParam {
                 index,

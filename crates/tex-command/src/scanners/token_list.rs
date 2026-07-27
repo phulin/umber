@@ -6,6 +6,7 @@
 //! the aggregate mutation without acquiring a second input path.
 
 use tex_state::TracedTokenList;
+use tex_state::env::banks::TokParam;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -53,17 +54,33 @@ impl CommandProcessor<'_> {
         Ok(self.scan_token_list_right_hand_side()?.tokens())
     }
 
-    /// Scans a token-parameter assignment such as `\output={...}`.
+    /// Scans a token-parameter assignment such as `\everypar={...}`.
     ///
-    /// TeX82 retains the outer braces in token parameters, unlike `\toks`
-    /// registers. The command processor owns both that representation choice
-    /// and optional-equals consumption, so replay receives one frozen value.
-    pub fn scan_token_parameter_assignment(&mut self) -> Result<TracedTokenList, CommandError> {
+    /// The delimiting braces are `scan_toks`'s own (tex.web §473: "this left
+    /// brace will not be part of the token list, nor will the matching right
+    /// brace that comes at the end"), so the stored value is the balanced text
+    /// between them. tex.web §1226 then adds *one* enclosing brace pair back,
+    /// and only for `output_routine_loc`: "For safety's sake, we place an
+    /// enclosing pair of braces around an `\output` list." Every other
+    /// token-list parameter -- `\everypar`, `\everymath`, `\everycr`,
+    /// `\errhelp`, ... -- keeps the bare balanced text, exactly like a `\toks`
+    /// register. §1226 also tests emptiness *before* enclosing, so `\output={}`
+    /// reverts to the empty default rather than storing a brace pair.
+    ///
+    /// The command processor owns both that representation choice and
+    /// optional-equals consumption, so replay receives one frozen value.
+    pub fn scan_token_parameter_assignment(
+        &mut self,
+        parameter: TokParam,
+    ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
         let scanned = match self.scan_token_list_right_hand_side()? {
             TokenListRightHandSide::Collected(tokens) => tokens,
             TokenListRightHandSide::Internal(tokens) => return Ok(tokens),
         };
+        if parameter != TokParam::OUTPUT || self.state.tokens(scanned.token_list()).is_empty() {
+            return Ok(scanned);
+        }
         let mut tokens = Vec::new();
         tokens.push(TracedTokenWord::pack(
             Token::Char {
