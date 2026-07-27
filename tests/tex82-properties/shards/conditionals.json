@@ -17,31 +17,7 @@
       "owner": "tex-command::conditionals",
       "property_ids": [],
       "gap_bead": null,
-      "rationale": "Defines frozen_fi among the permanent eqtb identities; its executable recovery use is classified in §§336 and 493–510."
-    },
-    {
-      "modules": { "first": 336, "last": 336 },
-      "disposition": "property",
-      "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.eof-and-final-recovery"],
-      "gap_bead": null,
-      "rationale": "Owns outer-validity recovery when skipped conditional text reaches EOF or an outer token."
-    },
-    {
-      "modules": { "first": 366, "last": 366 },
-      "disposition": "context_only",
-      "owner": "tex-command::expansion",
-      "property_ids": [],
-      "gap_bead": null,
-      "rationale": "Enumerates the general expandable-command interval; §367 supplies the independently executable conditional dispatch."
-    },
-    {
-      "modules": { "first": 367, "last": 367 },
-      "disposition": "property",
-      "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.expandable-dispatch"],
-      "gap_bead": null,
-      "rationale": "Dispatches if_test to conditional and fi_or_else to delimiter processing from the expansion loop."
+      "rationale": "Defines frozen_fi among the permanent eqtb identities; its conditional use is exercised by §§493–510 and cross-referenced to tex82.input.outer-validity-recovery."
     },
     {
       "modules": { "first": 487, "last": 487 },
@@ -159,7 +135,7 @@
       "modules": { "first": 1335, "last": 1335 },
       "disposition": "property",
       "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.eof-and-final-recovery"],
+      "property_ids": ["tex82.conditionals.final-cleanup-recovery"],
       "gap_bead": null,
       "rationale": "Reports and unwinds every condition frame still incomplete at final cleanup."
     }
@@ -202,48 +178,6 @@
         {
           "path": "crates/tex-command/src/observation/mod.rs",
           "test": "tex82_conditional_delimiters_use_shared_fi_or_else_identity"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225"
-    },
-    {
-      "id": "tex82.conditionals.expandable-dispatch",
-      "sections": [367],
-      "claim": "Expanded delivery invokes the conditional evaluator for if_test and the delimiter terminator for fi_or_else, recursively completing the selected branch without leaking either command as unexpandable output.",
-      "preconditions": [
-        "Canonical expanded delivery has resolved a predicate or delimiter meaning.",
-        "The independent condition stack contains exactly the frames established by prior expanded delivery."
-      ],
-      "stimulus": [
-        "Request expanded tokens through nested predicates, accepted delimiters, premature delimiters, and delimiters in skipped text."
-      ],
-      "expected_observations": [
-        "Predicate delivery enters conditional evaluation and emits stack/branch observations before expanded delivery resumes.",
-        "Delimiter delivery validates the live frame limit, skips when required, and never escapes as an ordinary expanded token."
-      ],
-      "postconditions": [
-        "Expanded delivery resumes at the first token in the selected live branch.",
-        "Recursive expansion changes only the frame identified by the predicate that initiated it."
-      ],
-      "equivalence_cases": [
-        "Direct primitive tokens and control-sequence aliases use the same dispatch.",
-        "Phase 2 adds conditionals::tests::expanded_dispatch_consumes_all_if_test_and_fi_or_else_commands and a semantic-matrix row proving no expanded delimiter leakage."
-      ],
-      "recovery_cases": [
-        "A premature delimiter replays the inserted relax before operand scanning continues.",
-        "An extra delimiter is diagnosed and ignored at its raw-delivery boundary."
-      ],
-      "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "boolean_condition_skips_false_limb_and_else_skips_true_remainder"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "delimiter_during_operand_scan_replays_each_missing_if_operand"
         }
       ],
       "status": "gap",
@@ -481,44 +415,33 @@
       "gap_bead": "umber2-johp.225"
     },
     {
-      "id": "tex82.conditionals.eof-and-final-recovery",
-      "sections": [336, 1335],
-      "claim": "EOF or an outer token during conditional skipping emits the canonical incomplete-if diagnostic and inserts frozen fi before parent input resumes; end/dump separately reports and unwinds every still-open condition with its kind and source line.",
+      "id": "tex82.conditionals.final-cleanup-recovery",
+      "sections": [1335],
+      "claim": "End or dump reports and unwinds every still-open condition with its kind and source line; skipped-input EOF and outer-token recovery remains owned by tex82.input.outer-validity-recovery.",
       "preconditions": [
-        "Scanner status is skipping with a live current condition, or final cleanup begins with one or more live condition frames.",
-        "The skip start line and each condition's entry line have been retained."
+        "Final cleanup begins with one or more live condition frames.",
+        "Each condition's kind and entry line have been retained."
       ],
       "stimulus": [
-        "Exhaust a child file and the terminal source while pass_text is active, encounter an outer control during skipping, and invoke final cleanup with nested incomplete conditions."
+        "Invoke end or dump with nested incomplete conditions still present on the independent condition stack."
       ],
       "expected_observations": [
-        "Outer-validity recovery identifies the current condition, reports the skip start line, distinguishes EOF wording, and inserts inaccessible frozen fi.",
         "Final cleanup reports incomplete frames from innermost to outermost with nonzero source lines and frees the entire stack."
       ],
       "postconditions": [
-        "Inserted-fi replay permits ordinary conditional completion without redefinable-token dependence.",
         "After final cleanup no condition node remains live."
       ],
       "equivalence_cases": [
-        "Physical-file and token-list exhaustion use the same skipping recovery ordering at their canonical input boundaries.",
-        "The committed scanner-conditionals-eof minifixture covers one child EOF; Phase 2 adds conditionals::tests::skipping_eof_outer_and_final_cleanup_recovery_order plus nested EOF/final-cleanup semantic cases."
+        "End and dump use the same incomplete-condition reporting and unwind order before their distinct terminal actions.",
+        "Phase 2 adds conditionals::tests::final_cleanup_reports_and_unwinds_nested_conditions plus nested end/dump semantic cases."
       ],
       "recovery_cases": [
-        "An outer token is backed up for rereading after inserted-fi recovery; EOF has no token to back up.",
+        "Skipped-input EOF and outer-token recovery are cross-referenced to tex82.input.outer-validity-recovery and do not claim §336 here.",
         "Multiple incomplete conditions at final cleanup each produce one ordered report rather than one collapsed diagnostic."
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "evaluating_delimiter_recovery_is_typed_and_frame_specific"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "delimiter_during_operand_scan_replays_each_missing_if_operand"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
     }
