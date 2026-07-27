@@ -38,12 +38,45 @@ use crate::observation::{
 };
 
 impl CommandProcessor<'_> {
-    /// Whether TeX's current `\output` token list is empty.
-    #[must_use]
-    pub fn output_routine_is_empty(&self) -> bool {
-        self.state
-            .tokens(self.state.tok_param(TokParam::OUTPUT))
-            .is_empty()
+    /// Runs TeX82 §1335's `final_cleanup` input unwinding.
+    ///
+    /// `main_control` returns as soon as §1054's `its_all_over` is true, so
+    /// every input level still on the stack -- the root file at end of text,
+    /// an unfinished macro body, a `\\output` token list -- is discarded
+    /// without being read: `while input_ptr>0 do if state=token_list then
+    /// end_token_list else end_file_reading`.  §1335 stops at `input_ptr=0`,
+    /// the terminal, whose own stop is reported by the job-termination
+    /// boundary; Umber's terminal level is already gone by then (it supplied
+    /// only the startup filename), so the terminal stop is reported here once
+    /// the stack is empty, exactly as ordinary exhaustion reports it.
+    pub fn final_cleanup(&mut self) {
+        let mut terminal_stopped = false;
+        while let Some(retirement) = self.command.pop_input_level_at_end_of_job() {
+            let terminal = matches!(retirement.action, InputRetirementAction::TerminalStop);
+            terminal_stopped |= terminal;
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: if terminal {
+                    InputTransition::Stop
+                } else {
+                    InputTransition::Retire
+                },
+                reason: observed_retirement_reason(retirement.action, retirement.reason),
+                level: retirement.identity.0,
+                position: 0,
+            }));
+        }
+        #[cfg(any(test, feature = "instrumentation"))]
+        if !terminal_stopped {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Stop,
+                reason: InputReason::Source,
+                level: 0,
+                position: 0,
+            }));
+        }
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = terminal_stopped;
     }
 
     /// Retires the exhausted level that supplied the immediately preceding
@@ -612,48 +645,13 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    /// Performs TeX82 §46's `its_all_over` hand-off to `\output`.
+    /// Starts TeX82 §1025's already-selected output token list.
     ///
-    /// `main_control` has just redelivered a stop command from the one-token
-    /// backup made by `head_for_vmode`.  TeX retires that exhausted backup
-    /// before it backs the stop up for the eventual final retry, then starts
-    /// the output token list.  Keeping all three input operations here makes
-    /// the command processor, rather than an executor-side input path, own
-    /// their observable order.
-    pub fn begin_output_routine_after_stop(
-        &mut self,
-        command: CurrentCommand,
-    ) -> Result<(), CommandError> {
-        self.back_input(command)?;
-
-        let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
-        let level = self.command.push_token_level(
-            TokenPayload::Stored {
-                tokens: output.token_list(),
-                origins: output.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
-        );
-        #[cfg(not(any(test, feature = "instrumentation")))]
-        let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Input(InputRecord {
-            transition: InputTransition::Push,
-            reason: InputReason::TokenList,
-            level: level.0,
-            position: 0,
-        }));
-        Ok(())
-    }
-
-    /// Starts TeX82 §1016's already-selected output token list.
-    ///
-    /// Page selection and `\box255` packing belong to the stomach, but the
-    /// resulting token-list ownership never leaves command control.  Unlike
-    /// [`Self::begin_output_routine_after_stop`], this is not a §46 recovery:
-    /// there is no exhausted final-stop backup to retire or recreate.
+    /// Page selection and `\box255` packing belong to the stomach (§1012's
+    /// `fire_up`), but the resulting token-list ownership never leaves
+    /// command control.  This is the *only* way `\output` is ever entered:
+    /// §1054's `its_all_over` never starts it directly, it only appends the
+    /// end-job contribution trio and lets §994's `build_page` decide.
     pub fn begin_selected_output_routine(&mut self) -> Result<(), CommandError> {
         let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
         let level = self.command.push_token_level(

@@ -61,7 +61,6 @@ pub struct CanonicalMainControl {
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
-    output_dead_cycles: i32,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -71,6 +70,10 @@ pub struct CanonicalMainControl {
     /// command per `step_once`, so the label it would have jumped to has to
     /// be carried across steps explicitly.
     main_loop_active: bool,
+    /// Observations produced by `fire_pending_page_output` after the current
+    /// step's own records. Drained by every step, observed or not.
+    #[cfg(any(test, feature = "instrumentation"))]
+    page_output_observations: Vec<CommandObservation>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// canonical aggregate operation. This is replay state so rollback drops
@@ -181,7 +184,6 @@ struct ReplayBoxes {
     recovery_simple_group_open: bool,
     output_routine_active: bool,
     output_routine_opening_pending: bool,
-    terminal_output_shipout_complete: bool,
 }
 
 /// The only normal reason a canonical operation may be retried by its host.
@@ -219,7 +221,6 @@ struct CanonicalStepSnapshot {
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
-    output_dead_cycles: i32,
     main_loop_active: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
@@ -522,7 +523,6 @@ impl CanonicalMainControl {
             next_alignment_identity: self.next_alignment_identity,
             active_alignment: self.active_alignment.clone(),
             boxes: self.boxes.clone(),
-            output_dead_cycles: self.output_dead_cycles,
             main_loop_active: self.main_loop_active,
             completed_replay_episode: self.completed_replay_episode,
             prepared_dvi_pages: self.prepared_dvi_pages.clone(),
@@ -570,7 +570,6 @@ impl CanonicalMainControl {
         self.next_alignment_identity = snapshot.next_alignment_identity;
         self.active_alignment = snapshot.active_alignment;
         self.boxes = snapshot.boxes;
-        self.output_dead_cycles = snapshot.output_dead_cycles;
         self.main_loop_active = snapshot.main_loop_active;
         self.completed_replay_episode = snapshot.completed_replay_episode;
         self.prepared_dvi_pages = snapshot.prepared_dvi_pages;
@@ -686,6 +685,7 @@ impl CanonicalMainControl {
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
+        let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -699,6 +699,7 @@ impl CanonicalMainControl {
                 &ReplayBoxes::default(),
                 innermost_group,
                 mode,
+                job_is_all_over,
                 main_loop_active,
             )?
         };
@@ -887,7 +888,7 @@ impl CanonicalMainControl {
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
+        let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -902,8 +903,7 @@ impl CanonicalMainControl {
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
-                &mut self.output_dead_cycles,
-                max_dead_cycles,
+                job_is_all_over,
                 self.modes.current_list().display_eq_no().is_some(),
                 self.main_loop_active,
             )?
@@ -959,10 +959,9 @@ impl CanonicalMainControl {
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
-        if stores.world().artifact_commits().len() != artifact_count {
-            self.output_dead_cycles = 0;
-        }
         self.fire_pending_page_output(stores)?;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.page_output_observations.clear();
         if stores.world().artifact_commits().len() != artifact_count {
             self.completed_boundaries
                 .push(crate::EngineBoundary::ShipoutComplete);
@@ -980,6 +979,12 @@ impl CanonicalMainControl {
     /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
     /// and packing stay here with the mode nest; `CommandProcessor` alone
     /// installs the selected output token-list replay.
+    ///
+    /// Every step runs this, observed or not: §994's `build_page` and §1012's
+    /// `fire_up` are part of executing the command that contributed, not an
+    /// instrumentation-only extra.  The `\output` token-list push it performs
+    /// is buffered rather than observed directly, so an observed step can
+    /// flush it after that step's own mutation and effect records.
     fn fire_pending_page_output(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         while !self.boxes.output_routine_active {
             let Some(fire_up) = stores.page_fire_up() else {
@@ -992,14 +997,23 @@ impl CanonicalMainControl {
                     }
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
-                    CommandProcessor::new(
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    let mut buffered = ObservationBuffer::default();
+                    let processor = CommandProcessor::new(
                         &mut self.command,
                         &mut self.runtime,
                         stores.command_context(),
                         CommandHostContext::new(&mut self.capabilities),
-                    )
-                    .begin_selected_output_routine()
-                    .map_err(command_error)?;
+                    );
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    let mut processor = processor.with_observer(&mut buffered);
+                    #[cfg(not(any(test, feature = "instrumentation")))]
+                    let mut processor = processor;
+                    processor
+                        .begin_selected_output_routine()
+                        .map_err(command_error)?;
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.page_output_observations.extend(buffered.0);
                     stores.enter_group_with_kind(GroupKind::Output);
                     self.modes.push(Mode::InternalVertical);
                     self.boxes.output_routine_active = true;
@@ -1578,7 +1592,7 @@ impl CanonicalMainControl {
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
+        let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -1594,8 +1608,7 @@ impl CanonicalMainControl {
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
-                &mut self.output_dead_cycles,
-                max_dead_cycles,
+                job_is_all_over,
                 self.modes.current_list().display_eq_no().is_some(),
                 self.main_loop_active,
             )?
@@ -1684,6 +1697,9 @@ impl CanonicalMainControl {
         if result.is_ok() && fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
+        if result.is_ok() {
+            self.fire_pending_page_output(stores)?;
+        }
         let extra_tab_recovery = result
             .as_ref()
             .ok()
@@ -1746,7 +1762,11 @@ impl CanonicalMainControl {
             if let Some(effect) = effect {
                 observer.committed(CommandObservation::Effect(effect));
             }
+            for observation in self.page_output_observations.drain(..) {
+                observer.committed(observation);
+            }
         }
+        self.page_output_observations.clear();
         result
     }
 
@@ -2063,8 +2083,23 @@ enum ScannedStep {
         global: bool,
     },
     EndOfInput,
-    Terminate,
+    /// TeX82 §1045's `vmode+stop: if its_all_over then return` -- the only
+    /// exit from `main_control`. §1335's `final_cleanup` has already unwound
+    /// the abandoned input stack, so the job-termination effect is this
+    /// step's, not a later input-exhaustion step's.
     End,
+    /// TeX82 §1051's `privileged` failure for `\\end`/`\\dump` in internal
+    /// vertical mode (`mode<0`): `report_illegal_case`, and the job keeps
+    /// running. Shares the recovery shape of `IllegalBoxShift` and friends.
+    IllegalStop {
+        token: Token,
+    },
+    /// TeX82 §1054's `its_all_over` false branch: the backed-up stop stays
+    /// live while `\\hbox to \\hsize{}`, `\\vfill`, and
+    /// `\\penalty-'10000000000` are appended to the contribution list and
+    /// §994's `build_page` runs. Whether that fires `\\output` is §1005's
+    /// decision.
+    EjectResidualPage,
     Count {
         index: u16,
         value: i32,
@@ -2471,14 +2506,8 @@ enum ScannedStep {
     },
     BeginOrdinaryGroup,
     EndOrdinaryGroup,
-    BeginOutputRoutine,
     OutputRoutineOpeningBrace,
     EndOutputRoutine,
-    /// TeX82 §46 reaches the output-loop escape after the final-stop backup
-    /// has been installed.  Main control now asks the typed page builder for
-    /// the selected final page before canonical lowering; it never invents a
-    /// synthetic box for this recovery path.
-    ForcedOutputShipout,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
         omit: bool,
@@ -2655,8 +2684,7 @@ fn scan_replay_step(
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
     innermost_group: Option<GroupKind>,
-    output_dead_cycles: &mut i32,
-    max_dead_cycles: i32,
+    job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
@@ -2695,15 +2723,21 @@ fn scan_replay_step(
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
                 scan_alignment_peek(processor, alignment, after_noalign)
             }
-            AlignmentPreamblePhase::NoAlignBody => {
-                scan_noalign_body(processor, alignment, boxes, innermost_group, mode)
-            }
+            AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(
+                processor,
+                alignment,
+                boxes,
+                innermost_group,
+                mode,
+                job_is_all_over,
+            ),
             AlignmentPreamblePhase::CellDelivery => scan_alignment_delivery_step(
                 processor,
                 alignment,
                 boxes,
                 innermost_group,
                 mode,
+                job_is_all_over,
                 main_loop_active,
             ),
         };
@@ -2714,8 +2748,7 @@ fn scan_replay_step(
         starts_paragraph,
         boxes,
         innermost_group,
-        output_dead_cycles,
-        max_dead_cycles,
+        job_is_all_over,
         display_eq_no,
         main_loop_active,
     )
@@ -2809,6 +2842,7 @@ fn scan_noalign_body(
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     mode: Mode,
+    job_is_all_over: bool,
 ) -> Result<ScannedStep, ExecError> {
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
@@ -2831,8 +2865,7 @@ fn scan_noalign_body(
             false,
             boxes,
             innermost_group,
-            &mut 0,
-            0,
+            job_is_all_over,
             false,
         ),
     }
@@ -2848,6 +2881,7 @@ fn scan_alignment_delivery_step(
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     mode: Mode,
+    job_is_all_over: bool,
     main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
     match processor
@@ -2901,8 +2935,7 @@ fn scan_alignment_delivery_step(
                 false,
                 boxes,
                 innermost_group,
-                &mut 0,
-                0,
+                job_is_all_over,
                 false,
             )
         }
@@ -2932,8 +2965,7 @@ fn scan_step(
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
-    output_dead_cycles: &mut i32,
-    max_dead_cycles: i32,
+    job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
@@ -2947,11 +2979,7 @@ fn scan_step(
         processor.get_x_token_with_replay_completion()
     };
     let Some(delivery) = delivery.map_err(command_error)? else {
-        return Ok(if boxes.terminal_output_shipout_complete {
-            ScannedStep::Terminate
-        } else {
-            ScannedStep::EndOfInput
-        });
+        return Ok(ScannedStep::EndOfInput);
     };
     let tex_command::CommandReplayDelivery::Command(mut command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
@@ -2986,8 +3014,7 @@ fn scan_step(
         starts_paragraph,
         boxes,
         innermost_group,
-        output_dead_cycles,
-        max_dead_cycles,
+        job_is_all_over,
         display_eq_no,
     )
 }
@@ -3154,8 +3181,7 @@ fn scan_command(
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
-    output_dead_cycles: &mut i32,
-    max_dead_cycles: i32,
+    job_is_all_over: bool,
     display_eq_no: bool,
 ) -> Result<ScannedStep, ExecError> {
     if let Meaning::UnexpandablePrimitive(
@@ -3444,40 +3470,67 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
         }
+        // TeX82 §1094's `hmode+stop,...: head_for_vmode`. §1095's
+        // unrestricted branch (`mode>0`) backs the stop up, then backs an
+        // inserted `\\par` up ahead of it, so the stop is retried in the
+        // enclosing vertical mode. The command core owns both backups;
+        // replay merely processes the resulting `\\par`.
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) if mode == Mode::Horizontal => {
-            // TeX82 §1095's `hmode+stop` case reaches `head_for_vmode`.
-            // The command core owns both backups; replay merely processes
-            // the resulting `\\par` and retries the stop in vertical mode.
             processor
                 .recover_stop_for_vertical_mode(command)
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
         }
+        // §1095's restricted-`hmode` branch (`mode<0`, e.g. inside an
+        // `\\hbox`): `if cur_cmd<>hrule then off_save`. `\\par` has no
+        // meaning there, so §1064's fully general recovery closes the
+        // enclosing group instead, exactly as the `\\vskip` family above.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
+        ) if mode == Mode::RestrictedHorizontal => {
+            scan_off_save(processor, command, innermost_group)
+        }
+        // §1046's "math-only cases in non-math modes, or vice versa" table
+        // lists `mmode+stop`, so §1047's `insert_dollar_sign` closes the math
+        // first and retries the stop in the resulting mode.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
+        ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
+        // §1045's `vmode+stop: if its_all_over then return` -- "this is the
+        // only way out" of `main_control`. §1054's `its_all_over` is the one
+        // general mechanism: the job ends only when the current page and the
+        // contribution list are both empty and the last output was not a dead
+        // cycle. Otherwise the stop is backed up and residual material is
+        // ejected by appending `\\hbox to \\hsize{}`, `\\vfill`, and
+        // `\\penalty-'10000000000` and calling §994's `build_page`; whether
+        // that reaches `\\output` at all, and with what `\\box255`, is
+        // §1005/§1012's decision, never this dispatch's.
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) => {
-            if boxes.terminal_output_shipout_complete {
-                return Ok(ScannedStep::Continue);
+            // §1051's `privileged`: `mode>0` only. Internal vertical mode
+            // (inside a `\\vbox`, an `\\insert`, or `\\output` itself) reports
+            // an illegal case and leaves the job running.
+            if mode != Mode::Vertical {
+                return Ok(ScannedStep::IllegalStop {
+                    token: command.spelling().semantic_token(),
+                });
             }
-            if processor.output_routine_is_empty() {
+            if job_is_all_over {
+                // §1335's `final_cleanup` unwinds the input stack that
+                // `main_control`'s return has abandoned.
+                processor.final_cleanup();
                 return Ok(ScannedStep::End);
             }
-            // TeX82 §46's `its_all_over` does not discard the stop command
-            // that has just been replayed from §1095's backup.  Command input
-            // retires that exhausted level, backs `\end` up for the final
-            // retry, and only then enters the output token list.
-            if *output_dead_cycles >= max_dead_cycles {
-                processor.back_input(command).map_err(command_error)?;
-                Ok(ScannedStep::ForcedOutputShipout)
-            } else {
-                processor
-                    .begin_output_routine_after_stop(command)
-                    .map_err(command_error)?;
-                *output_dead_cycles += 1;
-                Ok(ScannedStep::BeginOutputRoutine)
-            }
+            processor.back_input(command).map_err(command_error)?;
+            Ok(ScannedStep::EjectResidualPage)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             let index = processor
@@ -3673,7 +3726,7 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
-        // §1091's `head_for_vmode` distinguishes unrestricted `hmode`
+        // §1095's `head_for_vmode` distinguishes unrestricted `hmode`
         // (`mode>=0`) from restricted `hmode` (`mode<0`, e.g. inside an
         // `\hbox`): only the unrestricted case takes the simple
         // "back up, insert `\par`, retry" path that
@@ -3690,7 +3743,7 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
         }
-        // §1091's `head_for_vmode`'s restricted-`hmode` branch
+        // §1095's `head_for_vmode`'s restricted-`hmode` branch
         // (`mode<0`): `if cur_cmd<>hrule then off_save`. Unlike the
         // unrestricted case above, restricted horizontal mode (e.g. inside
         // an `\hbox`) cannot simply insert `\par` and retry -- `\par` has no
@@ -3706,7 +3759,7 @@ fn scan_command(
         ) if mode == Mode::RestrictedHorizontal => {
             scan_off_save(processor, command, innermost_group)
         }
-        // TeX82 §1054's `vmode+vskip: append_glue` (using `abs(mode)`, so both
+        // TeX82 §1057's `vmode+vskip: append_glue` (using `abs(mode)`, so both
         // outer `Vertical` and `InternalVertical` match `vmode`).
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip)
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
@@ -6459,8 +6512,9 @@ fn applied_mutation_observation(
         ScannedStep::Continue
         | ScannedStep::MissingMathShift
         | ScannedStep::EndOfInput
-        | ScannedStep::Terminate
         | ScannedStep::End
+        | ScannedStep::IllegalStop { .. }
+        | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
         | ScannedStep::VerticalSkip { .. }
         | ScannedStep::Kern { .. }
@@ -6523,10 +6577,8 @@ fn applied_mutation_observation(
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
         | ScannedStep::EndOrdinaryGroup
-        | ScannedStep::BeginOutputRoutine
         | ScannedStep::OutputRoutineOpeningBrace
         | ScannedStep::EndOutputRoutine
-        | ScannedStep::ForcedOutputShipout
         | ScannedStep::AlignmentPeekCell { .. }
         | ScannedStep::NoAlignBeginGroup { .. }
         | ScannedStep::NoAlignEndGroup { .. }
@@ -6671,13 +6723,16 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::BoxRegister {
             ships_out: true, ..
         }
-        | ScannedStep::BoxEndGroup { ships_out: true }
-        | ScannedStep::ForcedOutputShipout => Some(EffectRecord {
+        | ScannedStep::BoxEndGroup { ships_out: true } => Some(EffectRecord {
             kind: "shipout",
             detail: format!("dvi\0{}", stores.world().artifact_commits().len()),
             tokens: None,
         }),
-        ScannedStep::Terminate => Some(EffectRecord {
+        // TeX82 §1335's `final_cleanup` and §1333's
+        // `close_files_and_terminate` run once `its_all_over` has returned
+        // true, so the job-termination effect belongs to that step and to no
+        // other.
+        ScannedStep::End => Some(EffectRecord {
             kind: "terminate",
             detail: "engine\0".into(),
             tokens: None,
@@ -6702,7 +6757,7 @@ fn shipout_replay_box(
         stores,
         &mut execution,
     )?;
-    // TeX82's `ship_out` clears the consecutive-dead-output counter (§643).
+    // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
     stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
@@ -7120,7 +7175,7 @@ fn apply_scanned_step(
             );
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::EndOfInput | ScannedStep::Terminate => Ok(ReplayStep::EndOfInput),
+        ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
         ScannedStep::End => Ok(ReplayStep::End),
         ScannedStep::Count {
             index,
@@ -8426,13 +8481,6 @@ fn apply_scanned_step(
             boxes.recovery_simple_group_open = false;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BeginOutputRoutine => {
-            stores.enter_group_with_kind(GroupKind::Output);
-            modes.push(Mode::InternalVertical);
-            boxes.output_routine_active = true;
-            boxes.output_routine_opening_pending = true;
-            Ok(ReplayStep::Continue)
-        }
         ScannedStep::OutputRoutineOpeningBrace => {
             boxes.output_routine_opening_pending = false;
             Ok(ReplayStep::Continue)
@@ -8457,16 +8505,22 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ForcedOutputShipout => {
-            // TeX82 §46 appends its end-job contribution trio and delegates
-            // page selection to §1006's `build_page`; §1016 then packs the
-            // chosen material into \\box255 for the default shipout.  The
-            // helper has no input capability and returns only that typed box.
-            let page = crate::output::take_final_default_output_page(stores)?;
-            if let Some(receipt) = shipout_replay_box(page, stores)? {
-                prepared_dvi_pages.push(receipt);
-            }
-            boxes.terminal_output_shipout_complete = true;
+        ScannedStep::EjectResidualPage => {
+            // TeX82 §1054's `its_all_over` false branch. The stop is already
+            // backed up; appending the end-job trio and running §994's
+            // `build_page` is all the ejection this step performs. §1005's
+            // `@<Check if node p is a new champion breakpoint...@>` decides
+            // whether the `-'10000000000` penalty fires §1012's `fire_up`,
+            // and §1025 alone ever starts `\output`.
+            crate::output::append_end_job_contributions(stores);
+            crate::page_builder::build_page(stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalStop { token } => {
+            // TeX82 §1051's `privileged`: `\end`/`\dump` below outer
+            // vertical mode reports and is discarded, exactly like the other
+            // Forbidden cases.
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {
