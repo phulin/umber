@@ -313,21 +313,35 @@ impl SourceLineState {
 }
 
 impl SourceCursor {
-    /// Returns the physical terminator of the currently loaded line, if it
-    /// has one. The tokenizer uses this only for the generated blank-line
-    /// `\par` spelling; ordinary synthetic `endlinechar` remains anchored at
-    /// its normalized content end.
-    pub(crate) fn current_terminator_range(&self) -> SourceRange {
-        self.line.as_ref().map_or_else(
-            || {
-                SourceRange::new(
-                    self.backing.id,
-                    self.next_physical_offset,
-                    self.next_physical_offset,
-                )
-            },
-            |line| line.physical.terminator,
-        )
+    /// Physical anchor of TeX82's `buffer[limit]` for the loaded line.
+    ///
+    /// Every `car_ret` case finishes the line with `loc:=limit+1` -- tex.web
+    /// §348 (emit a space), §350 (skip to the next line), and §351 (emit
+    /// `\par`) -- so a token produced by a line terminator is always located
+    /// at `limit`, never at the character that triggered it. tex.web §362
+    /// stores an active `\endlinechar` in `buffer[limit]`, which is the
+    /// zero-width synthetic anchor at the normalized content end; when
+    /// `\endlinechar` is inactive §362 decrements `limit` instead, leaving the
+    /// line's last retained character in that position.
+    pub(crate) fn line_end_anchor(&self) -> SourceRange {
+        let Some(line) = self.line.as_ref() else {
+            return SourceRange::new(
+                self.backing.id,
+                self.next_physical_offset,
+                self.next_physical_offset,
+            );
+        };
+        let end = line.retained_end;
+        if line.endline.is_some() {
+            return SourceRange::new(line.physical.source, end, end);
+        }
+        let start = final_character_start(
+            &self.backing.bytes,
+            self.backing.mode,
+            line.physical.content.start,
+            end,
+        );
+        SourceRange::new(line.physical.source, start, end)
     }
 
     pub(crate) fn load_next_line(&mut self, endlinechar: i32) -> Option<&mut SourceLineState> {
@@ -394,6 +408,26 @@ impl SourceCursor {
     pub(crate) fn finish_line(&mut self) {
         self.line = None;
     }
+}
+
+/// Start offset of the character that ends at `end`, or `end` itself when the
+/// normalized line is empty.
+fn final_character_start(bytes: &[u8], mode: CharacterMode, line_start: u64, end: u64) -> u64 {
+    if end <= line_start {
+        return end;
+    }
+    let mut start = end - 1;
+    if mode == CharacterMode::UnicodeExtended {
+        while start > line_start
+            && usize::try_from(start)
+                .ok()
+                .and_then(|index| bytes.get(index))
+                .is_some_and(|byte| byte & 0b1100_0000 == 0b1000_0000)
+        {
+            start -= 1;
+        }
+    }
+    start
 }
 
 fn endline_character(mode: CharacterMode, endlinechar: i32) -> Option<CharacterCode> {

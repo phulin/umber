@@ -197,7 +197,7 @@ impl SourceCursor {
                     });
                 }
                 Catcode::Comment => {
-                    self.discard_line();
+                    self.skip_rest_of_line();
                     continue;
                 }
                 Catcode::Escape => {
@@ -230,42 +230,41 @@ impl SourceCursor {
                     }
                     LexerState::SkipBlanks | LexerState::NewLine => continue,
                 },
-                Catcode::EndLine => match self.lexer_state {
-                    LexerState::MidLine => {
-                        self.lexer_state = LexerState::NewLine;
-                        return SourceTokenizationStep::Token(SourceToken::Character {
-                            code: semantic_ascii(mode, b' '),
-                            catcode: Catcode::Space,
-                            range: character.range(),
-                            scalar_range,
-                        });
+                Catcode::EndLine => {
+                    // tex.web §348, §350, and §351 each finish the line with
+                    // `loc:=limit+1`, whatever character carried catcode 5:
+                    // the rest of the line is skipped, and the emitted token
+                    // is located at `buffer[limit]`, not at the trigger. An
+                    // explicit `^^M` mid-line therefore ends the line exactly
+                    // like the synthetic `\endlinechar` does.
+                    let range = self.line_end_anchor();
+                    let state = self.lexer_state;
+                    self.skip_rest_of_line();
+                    self.lexer_state = LexerState::NewLine;
+                    match state {
+                        LexerState::MidLine => {
+                            return SourceTokenizationStep::Token(SourceToken::Character {
+                                code: semantic_ascii(mode, b' '),
+                                catcode: Catcode::Space,
+                                range,
+                                scalar_range,
+                            });
+                        }
+                        LexerState::SkipBlanks => continue,
+                        LexerState::NewLine => {
+                            return SourceTokenizationStep::Token(SourceToken::ControlSequence {
+                                name: b"par"
+                                    .iter()
+                                    .copied()
+                                    .map(|byte| semantic_ascii(mode, byte))
+                                    .collect(),
+                                kind: SourceControlSequenceKind::Paragraph,
+                                range,
+                                scalar_range,
+                            });
+                        }
                     }
-                    LexerState::SkipBlanks => {
-                        self.lexer_state = LexerState::NewLine;
-                        continue;
-                    }
-                    LexerState::NewLine => {
-                        // The generated paragraph is a control sequence, so
-                        // its canonical source position is the physical line
-                        // terminator that caused it. Retaining this typed
-                        // distinction avoids treating the zero-width
-                        // synthetic endline anchor like an explicit `\par`
-                        // spelling (whose position is its final source
-                        // character). Unterminated EOF input intentionally
-                        // remains a zero-width anchor.
-                        let range = self.current_terminator_range();
-                        return SourceTokenizationStep::Token(SourceToken::ControlSequence {
-                            name: b"par"
-                                .iter()
-                                .copied()
-                                .map(|byte| semantic_ascii(mode, byte))
-                                .collect(),
-                            kind: SourceControlSequenceKind::Paragraph,
-                            range,
-                            scalar_range,
-                        });
-                    }
-                },
+                }
                 _ => {
                     self.lexer_state = LexerState::MidLine;
                     return SourceTokenizationStep::Token(SourceToken::Character {
@@ -357,12 +356,20 @@ impl SourceCursor {
         )
     }
 
-    fn discard_line(&mut self) {
+    /// tex.web's `loc:=limit+1`, shared by every case that abandons the rest
+    /// of a line: comments (§345's `Cases where character is ignored` sibling
+    /// in §344) and all three `car_ret` cases (§348, §350, §351).
+    ///
+    /// The line stays loaded and merely becomes exhausted, because tex.web
+    /// moves to the next line only on the following `get_next`, at §343's
+    /// `loc>limit` branch. That branch is where §362 observes `force_eof` and
+    /// retires the file, so finishing the line eagerly here would skip
+    /// `\endinput`.
+    fn skip_rest_of_line(&mut self) {
         if let Some(line) = &mut self.line {
             line.byte_cursor = line.retained_end;
             line.endline_delivered = true;
         }
-        self.finish_line();
     }
 }
 
