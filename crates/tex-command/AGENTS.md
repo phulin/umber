@@ -47,6 +47,9 @@ Private state-machine modules must not be widened for compatibility with
 - `src/input/`: remaining private backup and summary state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
+- `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
+  alignment-delivery state and focused stack, brace-depth, template, and omit
+  lifecycle tests.
 - `src/processor/expand.rs`, `src/processor/expand/tests.rs`: ordinary
   expanded-command delivery, expandable primitives, converted-token
   construction, and focused private unit tests.

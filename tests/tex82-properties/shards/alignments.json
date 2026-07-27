@@ -409,16 +409,16 @@
         "Recovery: §771 specifies initialization, not error recovery; no malformed-input branch is asserted."
       ],
       "semantic_owner": "tex-command::alignment-delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "alignment_stack_globals_initialize_to_null"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.nested-state-stack",
@@ -446,16 +446,16 @@
         "Recovery: §772 defines no recovery branch; tests assert only the stated push_alignment and pop_alignment preconditions and effects."
       ],
       "semantic_owner": "tex-command::alignment-delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "push_pop_alignment_restores_all_tex82_fields"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.initialize-spec-and-mode",
@@ -485,20 +485,20 @@
         "Recovery: improper display material is flushed with the canonical diagnostic; missing specification brace uses compulsory-brace recovery."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/preamble/tests.rs",
           "test": "alignment_scan_spec_consumes_brace_after_keyword_backups"
         },
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/preamble/tests.rs",
           "test": "alignment_initial_mode_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.preamble-tabskip-and-delimiters",
@@ -531,16 +531,16 @@
         "Recovery: effective endv during preamble scanning raises interwoven-preamble failure; exhausted preamble input follows aligning-status EOF recovery."
       ],
       "semantic_owner": "tex-exec::align-preamble",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/preamble/tests.rs",
           "test": "preamble_tabskip_span_expansion_and_delimiter_identity"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.u-v-template-scan",
@@ -569,16 +569,16 @@
         "Recovery: missing # backs up the top-level tab/cr for v scanning; extra # is discarded and v scanning continues; empty-u && selects periodic repetition only at the first eligible site."
       ],
       "semantic_owner": "tex-exec::align-preamble",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/preamble/tests.rs",
           "test": "scan_u_v_templates_empty_nested_and_malformed"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.row-lookahead-noalign-finish",
@@ -606,16 +606,16 @@
         "Recovery: malformed noalign opener uses scan_left_brace recovery; repeated crcr remains bounded and does not create an empty row."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "align_peek_selects_noalign_finish_crcr_or_row"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.row-start-mode",
@@ -643,16 +643,16 @@
         "Recovery: an empty or exhausted preamble is rejected before row initialization rather than manufacturing a column."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "init_row_switches_mode_and_copies_leading_tabskip"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.span-start",
@@ -719,16 +719,16 @@
         "Recovery: delimiter at align_state ±1 triggers missing-brace correction; delimiter during aligning or without cur_align reports interwoven-preamble failure."
       ],
       "semantic_owner": "tex-command::alignment-delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "cell_template_delivery_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.finish-column-and-repeat-preamble",

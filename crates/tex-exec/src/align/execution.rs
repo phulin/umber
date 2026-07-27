@@ -1,4 +1,7 @@
 use tex_expand::{get_alignment_x_or_protected_with_context, get_x_token_with_context};
+#[cfg(test)]
+mod tests;
+
 use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};

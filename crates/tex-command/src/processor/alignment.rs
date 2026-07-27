@@ -5,6 +5,9 @@
 //! lifecycle transitions here, but only `get_next` classifies a delivered tab,
 //! `\span`, or row terminator.
 
+#[cfg(test)]
+mod tests;
+
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
