@@ -874,6 +874,88 @@ fn leading_decimal_dimension_replays_the_point_before_scanning_its_fraction() {
     );
 }
 
+#[test]
+fn leading_decimal_point_never_reaches_the_integer_scanner() {
+    // TeX82 §448's non-internal branch reads `cur_tok` after `back_input`
+    // without fetching it again:
+    //
+    //     back_input;
+    //     if cur_tok<>point_token then scan_int
+    //     else begin radix:=10; cur_val:=0; end;
+    //
+    // So a leading decimal point never enters `scan_int` at all, and §452's
+    // `get_token` -- not `get_x_token` -- is the one delivery that re-scans
+    // it. Routing the point through `scan_int` instead produced an expanded
+    // redelivery, a §444 `vacuous` scan with §446's second `back_error`
+    // backup, and an integer scanner result TeX never computes.
+    let mut command = CommandState::default();
+    push(&mut command, ".5cm".chars().map(char_token).collect());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        assert_eq!(
+            processor
+                .scan_dimension()
+                .expect("leading-decimal dimension scans")
+                .value
+                .raw(),
+            932_339
+        );
+    }
+
+    // The exact §448/§452 prefix: one raw/expanded pair from `<Get the next
+    // non-blank non-sign token>`, `back_input`, then §452's single raw
+    // `get_token` and the backup it exhausts. Everything after this belongs
+    // to the fraction digits and §453's unit keywords.
+    let point_delivery = |observation: &CommandObservation, boundary| {
+        matches!(
+            observation,
+            CommandObservation::Command(record)
+                if matches!(
+                    record.spelling,
+                    ObservedToken::Character { character: '.', .. }
+                ) && record.boundary == boundary
+        )
+    };
+    assert!(point_delivery(
+        &recorder.0[0],
+        crate::CommandDeliveryBoundary::Raw
+    ));
+    assert!(point_delivery(
+        &recorder.0[1],
+        crate::CommandDeliveryBoundary::Expanded
+    ));
+    assert!(matches!(
+        &recorder.0[2],
+        CommandObservation::Input(record)
+            if record.transition == InputTransition::Backup
+    ));
+    assert!(matches!(&recorder.0[3], CommandObservation::Recovery(_)));
+    assert!(point_delivery(
+        &recorder.0[4],
+        crate::CommandDeliveryBoundary::Raw
+    ));
+    assert!(matches!(
+        &recorder.0[5],
+        CommandObservation::Input(record)
+            if record.transition == InputTransition::Retire
+    ));
+    // `scan_int` is never called, so it commits no result at all.
+    assert!(!recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Scanner(record) if record.kind == "integer"
+    )));
+}
+
 /// Builds a processor over one pushed token list, for the level-coercion
 /// tests below. Each of them scans exactly one scalar from state that the
 /// caller has already installed.
@@ -1237,6 +1319,48 @@ fn continental_decimal_comma_introduces_a_fraction_like_a_point() {
             ),
         ),
         (3 * Scaled::UNITY + Scaled::UNITY / 2, Scaled::UNITY / 2)
+    );
+}
+
+#[test]
+fn radix_prefixed_dimension_constants_scan_and_admit_no_fraction() {
+    // TeX82 §448's own example is `-'77 pt`, so §444's octal and hexadecimal
+    // introducers are legal dimension prefixes: `scan_int` owns them, and
+    // §448 has no digit test of its own that could reject them.
+    //
+    // They are also why §448 guards §452 with `(radix=10)`: §440 initializes
+    // `radix:=0` and only §444's decimal branch sets it to 10, so the point
+    // in `'77.5pt` is not a decimal point. It reaches §453's unit scan
+    // instead, which reports "Illegal unit of measure" and assumes `pt`,
+    // leaving `.5pt` for the next scan.
+    let mut universe = Universe::new();
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "'77pt".chars().map(char_token).collect(),
+            |processor| processor.scan_dimension().expect("octal").value.raw(),
+        ),
+        63 * Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "\"1Fpt".chars().map(char_token).collect(),
+            |processor| processor.scan_dimension().expect("hexadecimal").value.raw(),
+        ),
+        31 * Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "'77.5pt".chars().map(char_token).collect(),
+            |processor| (
+                processor.scan_dimension().expect("octal").value.raw(),
+                processor.scan_dimension().expect("remainder").value.raw(),
+            ),
+        ),
+        (63 * Scaled::UNITY, Scaled::UNITY / 2)
     );
 }
 
