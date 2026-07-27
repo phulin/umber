@@ -20,11 +20,9 @@ pub(crate) mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
-use packaging::{
-    ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
-};
+use packaging::{ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value};
 pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_rule};
-pub(crate) use packaging::{scan_box_group, scan_pack_spec, take_last_box};
+pub(crate) use packaging::{first_box_node, scan_box_group, scan_pack_spec, take_last_box};
 use vsplit::scan_vsplit_node;
 pub(crate) use vsplit::split_vbox_register;
 
@@ -295,21 +293,7 @@ pub(crate) fn execute_box_register_read(
     {
         stores.pin_survivor(id);
     }
-    execute_scanned_box_register(primitive, id, nest, stores)
-}
-
-/// Applies the box-list mutation after command control has scanned an operand.
-///
-/// This intentionally has no input or execution context: replay reaches it
-/// only with a completed typed register index.
-pub(crate) fn execute_scanned_box_register(
-    _primitive: UnexpandablePrimitive,
-    id: Option<tex_state::ids::NodeListId>,
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    append_box_register(nest, stores, id)?;
-    Ok(())
+    append_box_register(nest, stores, id)
 }
 
 /// Replays a command-scanned unboxing register operation without reopening
@@ -357,18 +341,6 @@ pub(crate) fn execute_scanned_unbox(
         Some(UnboxSource::Shared(children))
     };
     append_unboxed(nest, stores, source)
-}
-
-/// Replays command-scanned `\\lastbox`; its mode and tail barriers are pure
-/// mode-list state and require no source access.
-pub(crate) fn execute_scanned_last_box(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    if let Some(node) = take_last_box(nest, stores)? {
-        append_box_node_to_current_list(nest, stores, node)?;
-    }
-    Ok(())
 }
 
 fn account_external_box_access(

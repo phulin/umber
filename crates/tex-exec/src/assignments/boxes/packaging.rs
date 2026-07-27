@@ -479,7 +479,7 @@ pub(crate) fn scan_pack_spec(
     }
 }
 
-pub(super) fn first_box_node(stores: &Universe, id: Option<NodeListId>) -> Option<Node> {
+pub(crate) fn first_box_node(stores: &Universe, id: Option<NodeListId>) -> Option<Node> {
     let id = id?;
     stores.nodes(id).first().and_then(|node| match node {
         tex_state::node_arena::NodeRef::HList(_) | tex_state::node_arena::NodeRef::VList(_) => {

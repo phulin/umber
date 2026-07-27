@@ -5386,3 +5386,64 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
     );
     assert!(!terminal_effect_text(&stores).contains("You can't use a prefix"));
 }
+
+/// tex.web §1079's `begin_box` ends every immediately resolved case --
+/// `box_code`, `copy_code`, `last_box_code`, `vsplit_code` -- with the same
+/// `box_end(box_context)` call, so §1077's "Store `cur_box` in a box
+/// register" applies to all of them and not only to the `\hbox`/`\vbox`
+/// bodies §1083 defers to a group end.
+#[test]
+fn canonical_setbox_stores_every_immediately_resolved_box_source() {
+    let stores = run_canonical_tex82(
+        r"\setbox12\hbox to 10pt{}\setbox1\copy12 \setbox2\box12
+          \setbox14\vbox to 8pt{\hbox{}}\setbox3\vsplit14 to 1pt \end",
+    );
+
+    assert!(stores.box_reg(1).is_some(), "\\setbox from \\copy stores");
+    assert!(stores.box_reg(2).is_some(), "\\setbox from \\box stores");
+    assert!(stores.box_reg(3).is_some(), "\\setbox from \\vsplit stores");
+    assert!(
+        stores.box_reg(12).is_none(),
+        "\\box still voids its source register at the same level"
+    );
+}
+
+/// §1080's `\lastbox` removes the tail box from the current list; §1075 then
+/// disposes of it by context. Under `\setbox` that means the register, not a
+/// re-append: plain.tex's `\t@bb@x` reads `\global\setbox\@ne\lastbox` inside
+/// the very `\hbox` it is shortening, and a re-append would both void the
+/// destination and leave the box in place (`umber2-johp.263`).
+#[test]
+fn canonical_setbox_from_lastbox_removes_the_box_instead_of_reappending_it() {
+    let stores = run_canonical_tex82(
+        r"\setbox13\hbox{\hbox to 10pt{}\global\setbox1\lastbox}\end",
+    );
+
+    assert!(
+        stores.box_reg(1).is_some(),
+        "\\global\\setbox from \\lastbox stores"
+    );
+    assert_eq!(
+        stores
+            .box_dimension(13, tex_state::BoxDimension::Width)
+            .map(tex_state::scaled::Scaled::raw),
+        Some(0),
+        "the enclosing hbox is packaged without the box \\lastbox took"
+    );
+}
+
+/// §1077 is `eq_define(box_base-box_flag+box_context,box_ref,cur_box)` with
+/// no `cur_box<>null` guard -- unlike §1076's append and §1075's `ship_out`.
+/// A void source therefore voids the destination rather than leaving its
+/// previous value in place.
+#[test]
+fn canonical_setbox_from_a_void_source_voids_the_destination() {
+    let stores = run_canonical_tex82(
+        r"\setbox1\hbox to 3pt{}\setbox2\hbox to 3pt{}\setbox3\hbox to 3pt{}
+          \setbox1\box12 \setbox2\copy12 \setbox3\vsplit12 to 1pt \end",
+    );
+
+    assert!(stores.box_reg(1).is_none(), "void \\box voids the target");
+    assert!(stores.box_reg(2).is_none(), "void \\copy voids the target");
+    assert!(stores.box_reg(3).is_none(), "void \\vsplit voids the target");
+}

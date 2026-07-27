@@ -8870,15 +8870,8 @@ fn apply_scanned_step(
             let index = u16::try_from(split.index)
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(split.index))?;
             let node = crate::assignments::split_vbox_register(stores, index, split.height)?;
-            let target = boxes.pending_setbox.take();
-            if let (Some(target), Some(node)) = (target, node) {
-                let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
-                if target.global {
-                    stores.set_box_reg_global(target.index, boxed);
-                } else {
-                    stores.set_box_reg(target.index, boxed);
-                }
-            }
+            let context = boxes.take_box_context(false);
+            box_end(context, node, modes, stores, prepared_dvi_pages)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxRegister {
@@ -8894,27 +8887,9 @@ fn apply_scanned_step(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            if ships_out {
-                boxes.pending_shipout = false;
-                if let Some(node) =
-                    id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
-                    && let Some(receipt) = shipout_replay_box(node, stores)?
-                {
-                    prepared_dvi_pages.push(receipt);
-                }
-            } else {
-                crate::assignments::execute_scanned_box_register(
-                    if copy {
-                        UnexpandablePrimitive::Copy
-                    } else {
-                        UnexpandablePrimitive::Box
-                    },
-                    id,
-                    modes,
-                    stores,
-                )?;
-                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
-            }
+            let node = crate::assignments::first_box_node(stores, id);
+            let context = boxes.take_box_context(ships_out);
+            box_end(context, node, modes, stores, prepared_dvi_pages)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
@@ -8922,8 +8897,9 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LastBox => {
-            crate::assignments::execute_scanned_last_box(modes, stores)?;
-            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            let node = crate::assignments::take_last_box(modes, stores)?;
+            let context = boxes.take_box_context(false);
+            box_end(context, node, modes, stores, prepared_dvi_pages)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Leaders {
@@ -9381,11 +9357,11 @@ fn apply_scanned_step(
                     stores.set_box_reg(target.index, boxed);
                 }
             } else {
-                // TeX82 §1073's `box_end` for an ordinary (non-register,
-                // non-shipout, non-leader) box appends the freshly built box
-                // to whatever list is currently open, exactly like `\box<n>`
-                // (`execute_scanned_box_register`/`append_box_node_to_current_list`
-                // below): baseline-skip insertion, migration extraction, and
+                // TeX82 §1076's `box_end` branch for an ordinary
+                // (non-register, non-shipout, non-leader) box appends the
+                // freshly built box to whatever list is currently open,
+                // exactly like `\box<n>` (`box_end`'s `BoxContext::Append`
+                // above): baseline-skip insertion, migration extraction, and
                 // (in outer vertical mode) page-builder contribution all
                 // apply. A bare `modes.current_list_mut().push(node)` here
                 // bypassed all of that, silently dropping every standalone
@@ -10120,7 +10096,7 @@ fn apply_box_shift(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            let node = id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()));
+            let node = crate::assignments::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta)?;
             Ok(ReplayStep::Continue)
         }
@@ -10169,6 +10145,101 @@ fn apply_box_shift(
             });
             schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
+        }
+    }
+}
+
+/// TeX82 §1071's `box_context`, for the box constructions §1079's `begin_box`
+/// resolves to a `cur_box` immediately -- `box_code`, `copy_code`,
+/// `last_box_code`, and `vsplit_code`, which all fall through to the shared
+/// `box_end(box_context)` call at the end of `begin_box`.
+///
+/// tex.web encodes the context as one integer and lets `box_end` classify it
+/// (`box_context<box_flag`, `<ship_out_flag`, `=ship_out_flag`, or greater).
+/// Enumerating it here keeps that single classification, so no producer can
+/// silently implement only part of the context space: before this existed,
+/// `\box`/`\copy` and `\lastbox` recognized only the append and `\shipout`
+/// contexts and dropped `\setbox`'s entirely, leaving `\setbox0\lastbox`
+/// re-appending its box and voiding the destination register
+/// (`umber2-johp.263`).
+///
+/// The leader context (`box_context>ship_out_flag`, §1078) is not represented:
+/// §1078 has to scan the *following* glue command before it can build its
+/// node, so the command scanner resolves leader payloads as their own
+/// `ScannedStep`s with the glue already attached.
+#[derive(Clone, Copy, Debug)]
+enum BoxContext {
+    /// `box_context<box_flag`: §1076's "Append box `cur_box` to the current
+    /// list, shifted by `box_context`". The plain append is a zero shift.
+    Append(Scaled),
+    /// `box_flag<=box_context<ship_out_flag`: §1077's "Store `cur_box` in a
+    /// box register", `eq_define`/`geq_define` by `\setbox`/`\global\setbox`.
+    SetBox(SetBoxTarget),
+    /// `box_context=ship_out_flag`: §1075's `ship_out(cur_box)`.
+    ShipOut,
+}
+
+impl ReplayBoxes {
+    /// Resolves the pending `box_context` for a box that reaches `box_end`
+    /// immediately, consuming it exactly like tex.web's single-use integer.
+    ///
+    /// `\shipout` and `\setbox` cannot both be pending on well-formed input:
+    /// §1084's `scan_box` accepts only a `make_box` command after `\setbox`,
+    /// and `\shipout` is `leader_ship`, so `\setbox0\shipout...` never gets
+    /// past the "A <box> was supposed to be here" recovery. The pending
+    /// `\setbox` target is still consumed either way so a recovered input
+    /// cannot leave it to capture an unrelated later box.
+    fn take_box_context(&mut self, ships_out: bool) -> BoxContext {
+        let target = self.pending_setbox.take();
+        if ships_out {
+            self.pending_shipout = false;
+            return BoxContext::ShipOut;
+        }
+        match target {
+            Some(target) => BoxContext::SetBox(target),
+            None => BoxContext::Append(Scaled::from_raw(0)),
+        }
+    }
+}
+
+/// TeX82 §1075's `box_end`: the one place a resolved `cur_box` is disposed of
+/// according to its context. `\hbox`/`\vbox`/`\vtop` bodies reach the same
+/// three dispositions through `BoxEndGroup`, which cannot share this entry
+/// point because §1083 defers them to their group's closing brace.
+fn box_end(
+    context: BoxContext,
+    node: Option<Node>,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
+) -> Result<(), ExecError> {
+    match context {
+        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta),
+        // §1077 defines the register unconditionally: a void `cur_box` makes
+        // the destination void, it does not leave the old value in place.
+        BoxContext::SetBox(target) => {
+            match node {
+                Some(node) => {
+                    let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
+                    if target.global {
+                        stores.set_box_reg_global(target.index, boxed);
+                    } else {
+                        stores.set_box_reg(target.index, boxed);
+                    }
+                }
+                None if target.global => stores.clear_box_reg_global(target.index),
+                None => stores.clear_box_reg(target.index),
+            }
+            Ok(())
+        }
+        // §1075 guards `ship_out` with `cur_box<>null`.
+        BoxContext::ShipOut => {
+            if let Some(node) = node
+                && let Some(receipt) = shipout_replay_box(node, stores)?
+            {
+                prepared_dvi_pages.push(receipt);
+            }
+            Ok(())
         }
     }
 }
