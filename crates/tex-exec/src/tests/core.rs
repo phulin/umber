@@ -5005,7 +5005,7 @@ fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
     assert!(matches!(page.root, tex_out::PageNode::VList(_)));
 }
 
-fn run_canonical_tex82(source: &str) -> Universe {
+pub(super) fn run_canonical_tex82(source: &str) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     control

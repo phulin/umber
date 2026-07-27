@@ -2158,6 +2158,47 @@ fn append_canonical_math_char(
     Ok(())
 }
 
+/// TeX82 §1155's `set_math_char`, entered from every §1154 case that derives
+/// its code from a character's `math_code`.
+///
+/// ```text
+/// procedure set_math_char(@!c:integer);
+/// begin if c>=@'100000 then
+///   @<Treat |cur_chr| as an active character@>
+/// else  begin p:=new_noad; ... end;
+/// end;
+/// ```
+///
+/// The `c>=@'100000` branch is not a diagnostic or a discard: §1155's own
+/// commentary says "the |cur_chr| is treated as an active character and
+/// nothing is appended", and §1152 then expands that active character in
+/// place and backs its result up for main control to reread. Plain TeX's
+/// ``\mathcode`\'="8000`` is the reason the branch exists at all, so a math
+/// list built without it silently loses every `\prime`.
+///
+/// Only §1154's `letter`/`other_char`/`char_given`/`char_num` cases can
+/// reach the branch: §1224's `\mathchardef` and §436's `scan_fifteen_bit_int`
+/// bound `\mathchar` and `\mathaccent` to fifteen bits, and §437's
+/// `scan_twenty_seven_bit_int` bounds `\delimiter`'s `cur_val div @'10000`
+/// to the same range, so those callers append unconditionally.
+fn set_canonical_math_char(
+    ch: char,
+    origin: tex_state::token::OriginId,
+    stores: &mut Universe,
+    modes: &mut ModeNest,
+    command: &mut CommandMachine<'_>,
+) -> Result<(), ExecError> {
+    let code = stores.mathcode(ch);
+    if code >= 0x8000 {
+        command
+            .processor(stores)
+            .treat_as_active_character(ch, origin)
+            .map_err(command_error)?;
+        return Ok(());
+    }
+    append_canonical_math_char(modes.current_list_mut(), stores, code, origin)
+}
+
 fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
     match kind {
         MathTextFieldKind::Ord => NoadKind::Normal(NoadClass::Ord),
@@ -7790,22 +7831,13 @@ fn apply_scanned_step(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                //
-                // §1155's other branch, `if c>=@'100000 then <Treat cur_chr
-                // as an active character>` (§1152), is not implemented: a
-                // `\mathcode` of 32768 is dropped here instead of being
-                // re-dispatched through the active character. Tracked as
-                // umber2-johp.205; `math_given` cannot reach it, since
-                // §1224's `\mathchardef` bounds its code to fifteen bits.
-                let code = stores.mathcode(ch);
-                if code != 0x8000 {
-                    append_canonical_math_char(
-                        modes.current_list_mut(),
-                        stores,
-                        code,
-                        tex_state::token::OriginId::UNKNOWN,
-                    )?;
-                }
+                set_canonical_math_char(
+                    ch,
+                    tex_state::token::OriginId::UNKNOWN,
+                    stores,
+                    modes,
+                    command,
+                )?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -9501,13 +9533,9 @@ fn apply_scanned_step(
         ScannedStep::Character { ch, cat, origin } => {
             if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
                 if !matches!(cat, Catcode::Space) {
-                    // §1155's active-character branch is missing here too;
-                    // see the `ScannedStep::CharacterCode` arm above and
-                    // umber2-johp.205.
-                    let code = stores.mathcode(ch);
-                    if code != 0x8000 {
-                        append_canonical_math_char(modes.current_list_mut(), stores, code, origin)?;
-                    }
+                    // TeX82 §1154's `mmode+letter,mmode+other_char:
+                    // set_math_char(ho(math_code(cur_chr)))`.
+                    set_canonical_math_char(ch, origin, stores, modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }

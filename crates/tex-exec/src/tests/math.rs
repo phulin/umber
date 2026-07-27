@@ -1718,3 +1718,60 @@ fn assert_char_list(stores: &Universe, list: tex_state::ids::NodeListId, expecte
         .collect();
     assert_eq!(actual, expected);
 }
+
+/// TeX82 §1155's `set_math_char` sends a `math_code` of `@'100000` to §1152's
+/// `@<Treat |cur_chr| as an active character@>`, which loads the
+/// `active_base + c` meaning into `cur_cmd`/`cur_chr`, runs §381's `x_token`
+/// on it, and backs the settled token up. Plain TeX's ``\mathcode`\'="8000``
+/// depends on the whole chain: without it every `'` in a formula vanishes
+/// instead of expanding the active `'` macro that builds `\prime` lists.
+#[test]
+fn canonical_mathcode_8000_expands_the_active_character_in_math_mode() {
+    let stores = super::core::run_canonical_tex82(
+        r"\catcode`\?=13 \def?{\global\count0=7 }\catcode`\?=12
+          \mathcode`\?=32768 $?$\end",
+    );
+
+    assert_eq!(stores.count(0), 7);
+}
+
+/// §1152 ends in `x_token; back_input`, so an active character bound to an
+/// unexpandable meaning is still redispatched: `x_token` leaves that meaning
+/// alone and `back_input` hands it to main control, which executes it in
+/// place of the character that carried the `math_code`. The result is read
+/// back inside the formula because `push_math` opens a group.
+#[test]
+fn canonical_mathcode_8000_backs_up_an_unexpandable_active_meaning() {
+    let stores = super::core::run_canonical_tex82(
+        r"\catcode`\?=13 \let?=\count \catcode`\?=12
+          \mathcode`\?=32768 $?0=9 \global\count1=\count0 $\end",
+    );
+
+    assert_eq!(stores.count(1), 9);
+}
+
+/// §1155 guards the redispatch with `c>=@'100000` alone, so any smaller
+/// `math_code` builds an ordinary noad and never consults the active
+/// character's meaning at all.
+#[test]
+fn canonical_mathcode_below_32768_never_consults_the_active_character() {
+    let stores = super::core::run_canonical_tex82(
+        r"\catcode`\?=13 \def?{\global\count0=7 }\catcode`\?=12
+          \mathcode`\?=28721 $?$\end",
+    );
+
+    assert_eq!(stores.count(0), 0);
+}
+
+/// §1151's `scan_math` carries the same branch as §1155: a script field whose
+/// first token is a `math_code`-32768 character is redispatched through the
+/// active character instead of becoming the field itself.
+#[test]
+fn canonical_mathcode_8000_redispatches_inside_a_script_field() {
+    let stores = super::core::run_canonical_tex82(
+        r"\catcode`\?=13 \def?{\global\count0=7 x}\catcode`\?=12
+          \mathcode`\?=32768 $y^?$\end",
+    );
+
+    assert_eq!(stores.count(0), 7);
+}
