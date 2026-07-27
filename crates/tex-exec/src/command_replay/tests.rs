@@ -2306,68 +2306,70 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
-            .expect("preamble opening is backed up"),
+            .expect("scan_spec consumes the preamble opener"),
         ReplayStep::Continue
     );
-    assert!(
-        matches!(
-            observations.0.as_slice(),
-            [..,
-                CommandObservation::Alignment(state_change),
-                CommandObservation::Command(raw),
-                CommandObservation::Command(expanded),
-                CommandObservation::Input(backup),
-                CommandObservation::Recovery(recovery),
-                CommandObservation::Alignment(correction),
-            ]
-                if state_change.transition == "begin_group"
-                    && state_change.align_state == -999_999
-                    && state_change.previous_align_state == Some(-1_000_000)
-                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
-                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
-                    && backup.transition == InputTransition::Backup
-                    && backup.reason == InputReason::Backup
-                    && recovery.kind == RecoveryKind::Backup
-                    && correction.transition == "backup_correction"
-                    && correction.align_state == -1_000_000
-                    && correction.previous_align_state == Some(-999_999)
-        ),
-        "unexpected observations: {:?}",
-        observations.0
-    );
-
-    observations.0.clear();
-    assert_eq!(
-        control
-            .step_with_observer(&mut universe, &mut observations)
-            .expect("replayed preamble opener is backed up again"),
-        ReplayStep::Continue
-    );
+    // TeX82 §774's `scan_spec(align_group,false)` reads this `{` three times:
+    // §407 `scan_keyword` reads and backs it up once per failed keyword
+    // (`to`, then `spread`), and §403's `scan_left_brace` reads it a third
+    // time and keeps it.  All three reads and both backups are command-owned;
+    // none is an executor replay of the brace.
     assert!(
         matches!(
             observations.0.as_slice(),
             [
-                CommandObservation::Alignment(state_change),
-                CommandObservation::Command(raw),
-                CommandObservation::Command(expanded),
+                CommandObservation::Alignment(first_group),
+                CommandObservation::Command(first_raw),
+                CommandObservation::Command(first_expanded),
+                CommandObservation::Input(first_backup),
+                CommandObservation::Recovery(first_recovery),
+                CommandObservation::Alignment(first_correction),
+                CommandObservation::Alignment(second_group),
+                CommandObservation::Command(second_raw),
+                CommandObservation::Command(second_expanded),
                 CommandObservation::Input(retirement),
-                CommandObservation::Input(backup),
-                CommandObservation::Recovery(recovery),
-                CommandObservation::Alignment(correction),
+                CommandObservation::Input(second_backup),
+                CommandObservation::Recovery(second_recovery),
+                CommandObservation::Alignment(second_correction),
+                CommandObservation::Alignment(third_group),
+                CommandObservation::Command(third_raw),
+                CommandObservation::Command(third_expanded),
             ]
-                if state_change.transition == "begin_group"
-                    && state_change.align_state == -999_999
-                    && state_change.previous_align_state == Some(-1_000_000)
-                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
-                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
+                if [first_group, second_group, third_group].iter().all(|group| {
+                    group.transition == "begin_group"
+                        && group.align_state == -999_999
+                        && group.previous_align_state == Some(-1_000_000)
+                })
+                    && [first_correction, second_correction].iter().all(|correction| {
+                        correction.transition == "backup_correction"
+                            && correction.align_state == -1_000_000
+                            && correction.previous_align_state == Some(-999_999)
+                    })
+                    && [
+                        first_raw,
+                        first_expanded,
+                        second_raw,
+                        second_expanded,
+                        third_raw,
+                        third_expanded,
+                    ]
+                    .iter()
+                    .all(|delivery| matches!(
+                        delivery.spelling,
+                        ObservedToken::Character { character: '{', .. }
+                    ))
+                    && first_raw.provenance.has_origin
+                    && second_raw.provenance.source_location.is_none()
+                    && third_raw.provenance.source_location.is_none()
+                    && [first_backup, second_backup].iter().all(|backup| {
+                        backup.transition == InputTransition::Backup
+                            && backup.reason == InputReason::Backup
+                    })
+                    && [first_recovery, second_recovery]
+                        .iter()
+                        .all(|recovery| recovery.kind == RecoveryKind::Backup)
                     && retirement.transition == InputTransition::Retire
                     && retirement.reason == InputReason::Backup
-                    && backup.transition == InputTransition::Backup
-                    && backup.reason == InputReason::Backup
-                    && recovery.kind == RecoveryKind::Backup
-                    && correction.transition == "backup_correction"
-                    && correction.align_state == -1_000_000
-                    && correction.previous_align_state == Some(-999_999)
         ),
         "unexpected observations: {:?}",
         observations.0
@@ -2377,16 +2379,13 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
-            .expect("replayed brace enters the live preamble scanner"),
+            .expect("the consumed brace enters the live preamble scanner"),
         ReplayStep::Continue
     );
     assert!(
         matches!(
             observations.0.as_slice(),
             [
-                CommandObservation::Alignment(state_change),
-                CommandObservation::Command(raw),
-                CommandObservation::Command(expanded),
                 CommandObservation::ScannerStatus(status),
                 CommandObservation::Alignment(preamble_start),
                 CommandObservation::Input(retirement),
@@ -2397,12 +2396,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Alignment(preamble_finish),
                 CommandObservation::ScannerStatus(finished),
             ]
-                if state_change.transition == "begin_group"
-                    && state_change.align_state == -999_999
-                    && state_change.previous_align_state == Some(-1_000_000)
-                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
-                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
-                    && status.from == "normal"
+                if status.from == "normal"
                     && status.to == "aligning"
                     && preamble_start.transition == "preamble_start"
                     && preamble_start.align_state == -1_000_000
@@ -2658,8 +2652,7 @@ fn completed_rule_spec_restarts_active_cell_through_typed_delimiter_delivery() {
 
     for phase in [
         "alignment begin",
-        "preamble opener backup",
-        "preamble opener replay",
+        "preamble scan_spec",
         "preamble scan and first cell",
         "cell opener and template installation",
         "replayed cell opener",
@@ -4322,6 +4315,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
     control.active_alignment = Some(ActiveReplayAlignment {
         identity: outer,
         kind: AlignmentKind::HAlign,
+        packing: crate::mode::AlignmentPackSpec::Natural,
         columns: Vec::new(),
         repeat_start: None,
         column: 0,
