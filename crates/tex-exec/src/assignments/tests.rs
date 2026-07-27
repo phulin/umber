@@ -5,7 +5,9 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::font::NULL_FONT;
 use tex_state::ids::GlueId;
 use tex_state::meaning::MeaningFlags;
-use tex_state::{EffectRecord, GroupKind, InputReadState};
+use tex_state::{
+    BoxDimension, EffectRecord, GroupKind, InputReadState, PrepareMagDiagnostic, StreamSlot,
+};
 
 use super::*;
 use crate::{CanonicalMainControl, MainControlStep};
@@ -82,6 +84,20 @@ fn letter(ch: char) -> Token {
         ch,
         cat: Catcode::Letter,
     }
+}
+
+fn macro_text(stores: &Universe, name: &str) -> String {
+    let meaning = stores
+        .macro_meaning(stores.symbol(name).expect("macro target"))
+        .expect("macro is defined");
+    stores
+        .tokens(meaning.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -568,4 +584,245 @@ fn afterassignment_slot_overwrites_and_fires_once_after_successful_assignment() 
         "later assignment does not refire the slot"
     );
     assert_eq!(stores.take_afterassignment(), None);
+}
+
+#[test]
+fn prepare_mag_bounds_and_freezes_first_effective_value() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_mag(0);
+    assert_eq!(
+        stores.prepare_mag(),
+        (
+            1_000,
+            Some(PrepareMagDiagnostic::IllegalMagnification { attempted: 0 })
+        )
+    );
+    assert_eq!(stores.mag(), 1_000);
+    assert_eq!(stores.prepared_mag(), Some(1_000));
+    stores.set_mag(1_200);
+    assert_eq!(
+        stores.prepare_mag(),
+        (
+            1_000,
+            Some(PrepareMagDiagnostic::IncompatibleMagnification {
+                attempted: 1_200,
+                retained: 1_000,
+            })
+        )
+    );
+    assert_eq!(stores.mag(), 1_000);
+
+    let mut maximum = Universe::new_with_plain_catcodes();
+    maximum.set_mag(32_768);
+    assert_eq!(maximum.prepare_mag(), (32_768, None));
+    assert_eq!(maximum.prepare_mag(), (32_768, None));
+    let mut too_large = Universe::new_with_plain_catcodes();
+    too_large.set_mag(32_769);
+    assert_eq!(
+        too_large.prepare_mag(),
+        (
+            1_000,
+            Some(PrepareMagDiagnostic::IllegalMagnification { attempted: 32_769 })
+        )
+    );
+}
+
+#[test]
+fn read_to_definition_scans_stream_keyword_target_and_installs_tokens() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::ErrorStop);
+    stores
+        .world_mut()
+        .push_memory_terminal_line("terminal")
+        .expect("terminal input registers");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"file"[..])),
+    );
+    register_source(
+        &mut control,
+        br"\openin1=child.tex \read1 to \fileline \closein1 \read1 to \closedline \end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(macro_text(&stores, "fileline"), "file\r");
+    assert_eq!(macro_text(&stores, "closedline"), "terminal\r");
+    assert!(stores.input_stream_eof(StreamSlot::new(1)));
+}
+
+#[test]
+fn setbox_request_encodes_scope_and_rejects_disallowed_contexts() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"{\setbox0=\hbox{}\global\setbox1=\hbox{}}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert!(stores.box_reg(0).is_none(), "ordinary local box restores");
+    assert!(stores.box_reg(1).is_some(), "explicit global box survives");
+}
+
+#[test]
+fn auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\prevdepth=2pt\prevgraf=3\spacefactor=2000\prevgraf=-1\xdef\depth{\the\prevdepth}\xdef\graf{\the\prevgraf}\setbox0=\hbox{}\wd0=6pt\ht0=7pt\dp0=8pt\copy0\pagegoal=10pt\deadcycles=4\insertpenalties=5\xdef\goal{\the\pagegoal}\xdef\dead{\the\deadcycles}\xdef\penalties{\the\insertpenalties}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(macro_text(&stores, "depth"), "2.0pt");
+    assert_eq!(macro_text(&stores, "graf"), "3");
+    assert_eq!(macro_text(&stores, "goal"), "10.0pt");
+    assert_eq!(macro_text(&stores, "dead"), "4");
+    assert_eq!(macro_text(&stores, "penalties"), "5");
+    assert_eq!(
+        stores.box_dimension(0, BoxDimension::Width),
+        Some(Scaled::from_raw(6 * Scaled::UNITY))
+    );
+    assert_eq!(
+        stores.box_dimension(0, BoxDimension::Height),
+        Some(Scaled::from_raw(7 * Scaled::UNITY))
+    );
+    assert_eq!(
+        stores.box_dimension(0, BoxDimension::Depth),
+        Some(Scaled::from_raw(8 * Scaled::UNITY))
+    );
+    let output = terminal_text(&stores);
+    assert!(output.contains("can't use `\\spacefactor'"), "{output}");
+    assert!(output.contains("Bad \\prevgraf"), "{output}");
+
+    let mut horizontal_stores = Universe::new_with_plain_catcodes();
+    let mut horizontal = CanonicalMainControl::tex82_initex(&mut horizontal_stores);
+    register_source(
+        &mut horizontal,
+        br"x\spacefactor=2000\xdef\sf{\the\spacefactor}\par\end",
+    );
+    run_to_end(&mut horizontal, &mut horizontal_stores);
+    assert_eq!(macro_text(&horizontal_stores, "sf"), "2000");
+}
+
+#[test]
+fn parshape_assignment_scans_pair_count_and_restores_local_shape() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\parshape=2 1pt 10pt 2pt 20pt{\parshape=0}\globaldefs=1{\parshape=1 3pt 30pt}\globaldefs=-1{\global\parshape=1 4pt 40pt}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.paragraph_shape_len(), 1);
+    assert_eq!(
+        stores.paragraph_shape_dimension(1, false),
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+    assert_eq!(
+        stores.paragraph_shape_dimension(1, true),
+        Scaled::from_raw(30 * Scaled::UNITY)
+    );
+    assert_eq!(
+        stores.paragraph_shape_dimension(2, true),
+        Scaled::from_raw(30 * Scaled::UNITY)
+    );
+}
+
+#[test]
+fn font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_font(&mut control, &mut stores);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 {\fontdimen2\f=3pt\hyphenchar\f=45\skewchar\f=127}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    let font = match stores.meaning(stores.symbol("f").expect("font target")) {
+        Meaning::Font(font) => font,
+        meaning => panic!("font definition installed {meaning:?}"),
+    };
+    assert_eq!(
+        stores.font_dimen(font, 2),
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+    assert_eq!(stores.font_hyphen_char(font), 45);
+    assert_eq!(stores.font_skew_char(font), 127);
+}
+
+#[test]
+fn interaction_assignment_updates_mode_and_selector_for_log_state() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    for (source, expected) in [
+        (&br"\batchmode"[..], InteractionMode::Batch),
+        (&br"\nonstopmode"[..], InteractionMode::Nonstop),
+        (&br"\scrollmode"[..], InteractionMode::Scroll),
+        (&br"\errorstopmode"[..], InteractionMode::ErrorStop),
+    ] {
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut stores);
+        assert_eq!(stores.interaction_mode(), expected);
+    }
+    register_source(&mut control, br"{\batchmode}");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.interaction_mode(), InteractionMode::Batch);
+}
+
+#[test]
+fn assignment_terminator_skips_space_and_relax_but_retains_first_command() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\mark{\global\advance\count1 by1}\count0=7   \relax\relax\mark\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 1);
+
+    register_source(&mut control, br"\count2=9");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.count(2), 9, "EOF also terminates the assignment");
+}
+
+#[test]
+fn hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\hyphenation{for-get}\patterns{a1b}\end");
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.hyphenation_exception("forget"), Some(&[3][..]));
+    assert_eq!(stores.hyphen_positions_for_language(0, "ab", 0, 0), vec![1]);
+}
+
+#[test]
+fn font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_font(&mut control, &mut stores);
+    register_source(
+        &mut control,
+        br"\font\a=cmr10 \font\b=cmr10 \font\c=cmr10 at 12pt \font\d=cmr10 scaled 1200 \font\e=cmr10 scaled 0 \font\f=cmr10 at 0pt \end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let font = |name| match stores.meaning(stores.symbol(name).expect("font target")) {
+        Meaning::Font(font) => font,
+        meaning => panic!("font definition installed {meaning:?}"),
+    };
+    let default = font("a");
+    assert_eq!(font("b"), default, "equal loads reuse font identity");
+    let twelve_point = font("c");
+    assert_eq!(font("d"), twelve_point, "at and scaled sizes normalize");
+    assert_eq!(
+        stores.font(twelve_point).size(),
+        Scaled::from_raw(12 * Scaled::UNITY)
+    );
+    assert_eq!(font("e"), default, "illegal scale recovers to default size");
+    assert_eq!(
+        font("f"),
+        default,
+        "illegal at size recovers to default size"
+    );
 }
