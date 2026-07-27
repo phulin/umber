@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# The deferred test tiers -- check-tools.sh, check-wasm.sh,
+# check-hb-shape-fixtures.sh -- must not run here. They need ripgrep, wasm-pack,
+# a headless browser, HarfBuzz, and three extra dependency trees, and a push
+# that waited on all of that would be bypassed with --no-verify by the second
+# day, which is how a gate stops being a gate.
+#
+# What this hook does instead is refuse to let a branch leave the machine while
+# a tier has never been invoked here at all. That condition cannot be satisfied
+# without running the tier: only scripts/tier-runner.sh writes a stamp, and it
+# writes one from its own step accounting. A tier that reports BLOCKED because
+# a tool is absent still passes this hook -- it answered. Refusing BLOCKED or
+# FAILED as well would make recording a bad outcome worse for the author than
+# never running the tier, which is the incentive that produced umber2-johp.213.
+
+python3 scripts/tier_stamp.py report --require-attempted
+status=$?
+
+if ((status == 0)); then
+  exit 0
+fi
+
+printf '\npre-push: refusing the push. Run the tiers above once in this ' >&2
+printf 'checkout, or push with --no-verify and say in the PR that the\n' >&2
+printf 'pre-push: deferred tiers were never exercised here.\n' >&2
+exit "$status"

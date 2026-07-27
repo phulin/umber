@@ -1,24 +1,31 @@
-name: WASM
+name: Deferred tiers
+
+# The named tiers the routine gate cannot run: they need wasm-pack, a headless
+# browser, ripgrep, and three dependency trees outside the workspace lockfile.
+#
+# Before umber2-johp.213 this file ran check-wasm.sh behind a path filter and
+# nothing at all ran check-tools.sh, so the coverage run-native-tests.py hands
+# to those tiers was asserted by a comment and executed by nobody. Both tiers
+# run here now, and both end in a VERDICT line naming the steps that ran, so a
+# green job is a statement about what happened rather than about what failed to
+# complain.
+#
+# The path filters are gone deliberately. A filter decides in advance which
+# changes could possibly break a tier, which is the same class of guess that
+# left tools/tex-command-stream rotted out of compiling (umber2-johp.121).
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/wasm.yml"
-      - "crates/umber-wasm/**"
-      - "crates/umber/**"
-      - "crates/tex-*/**"
-      - "scripts/*wasm*"
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/wasm.yml"
-      - "crates/umber-wasm/**"
-      - "crates/umber/**"
-      - "crates/tex-*/**"
-      - "scripts/*wasm*"
+  schedule:
+    # Weekly, so a tree nobody has pushed to still has a dated answer.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 jobs:
-  browser:
+  wasm:
+    name: check-wasm.sh
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -44,3 +51,21 @@ jobs:
         run: scripts/check-and-test.sh
       - name: Test optimized package in Firefox and Chrome
         run: CHROME="$(command -v chrome)" CHROME_NO_SANDBOX=1 scripts/check-wasm.sh
+
+  tools:
+    name: check-tools.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          components: clippy
+      # arxiv-entrypoint is the one step with a tool prerequisite the runner
+      # image does not reliably carry. Installing it here, rather than letting
+      # the step report BLOCKED, is the point of running the tier on a machine
+      # whose contents we control.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Host tool tier
+        run: scripts/check-tools.sh
