@@ -914,12 +914,22 @@ the end of a stream, all remaining pairs must agree; skipping both streams to
 their ends with no agreeing pair at all is a fork, not a repair.
 
 If nothing confirms inside the window, the divergence is structural and one
-anchor resync is attempted: both streams are scanned forward for the nearest
-shared high-salience boundary -- an input-stack push/retire/stop, or the
-first delivery attributed to a new source line -- and the same confirmation
-is required there. If that also fails, comparison of that fixture stops and
-says so. The bias is deliberate: cascade noise is visible, but a real defect
-hidden behind an over-eager realignment is not.
+anchor resync is attempted: both streams are scanned forward over every
+high-salience boundary -- an input-stack push/retire/stop, or the first
+delivery attributed to a new source line -- inside the scan bound, and the
+streams rejoin at the shared boundary with the least total skip that carries
+the same confirmation. If that also fails, comparison of that fixture stops
+and says so. The bias is deliberate: cascade noise is visible, but a real
+defect hidden behind an over-eager realignment is not.
+
+Least total skip is not a tie-break detail. Rejoining at a costlier shared
+anchor lands the streams on a boundary they agree at only locally, and the
+next real key mismatch then has no shared anchor left inside the scan, so an
+inherited over-costly rejoin is reported as a structural fork that stops the
+fixture. Anchors are enumerated by oracle offset, and the cheapest pair is
+frequently not the first one visited: a distant oracle anchor paired with an
+immediate observed one undercuts a nearby oracle anchor paired with a far
+observed one.
 
 This is not a global minimum-edit-distance diff, and deliberately so. Myers
 is `O(ND)` and Gentle's trace is over 100 000 events; worse, a global minimum
@@ -932,9 +942,9 @@ comparison would have reported over the stream region this entry covers --
 from this entry's oracle index up to the next reported entry's, or to the end
 of the streams for the last entry -- not counting the entry itself. It is the
 cascade the entry stands in for, and it is how to tell one root site from
-many: as of this writing `gentle` reports 758 divergences in 199 root sites
-where index-aligned comparison would report over 800 000, and `plain` and
-`story` are clean.
+many: as of this writing `gentle` reports 13 550 divergences in 2297 root
+sites where index-aligned comparison would report hundreds of thousands, and
+`plain` and `story` are clean.
 
 #### Alignment tunables
 
@@ -960,7 +970,11 @@ characters, and small enough that a genuine repair immediately followed by a
 second independent defect still confirms, leaving the second defect to be
 reported on its own. The anchor scan is only reached once the window search
 has already failed, so 4096 events -- roughly a page of document activity --
-is generous on purpose; at most 64 anchors per side are considered.
+is generous on purpose. It is the only bound on the fallback's reach: every
+anchor inside it is a candidate, so widening the flag really does widen the
+search. A dense trace region crosses dozens of input-stack boundaries in a
+few hundred events, so any secondary cap on the anchor count would quietly
+shorten this flag to a fraction of its stated reach.
 
 All three flags take a positive integer and reject anything else with a usage
 error.
