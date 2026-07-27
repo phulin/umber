@@ -30,11 +30,51 @@ in `{ISSUE_SLUG}`, `{BASE_REF}`, and optional WIP-import notes:
    `git -C {REPO_ROOT} worktree add {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} -b umber-{ISSUE_SLUG} {BASE_REF}`
    If the branch already exists without a worktree, attach with:
    `git -C {REPO_ROOT} worktree add {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} umber-{ISSUE_SLUG}`
-4. {OPTIONAL: import partial WIP from a prior wave; list files/stashes}
-5. `cd` into the worktree; all edits, tests, and commits happen there only.
+4. Link the shared gitignored artifacts (see below); a fresh worktree has none
+   of them, and their absence is silent.
+5. {OPTIONAL: import partial WIP from a prior wave; list files/stashes}
+6. `cd` into the worktree; all edits, tests, and commits happen there only.
    Do not modify the main checkout. If you have an `apply_patch` skill, it
    needs the full path to the in-worktree file every time you call it.
 ```
+
+### Shared gitignored artifacts
+
+The oracle, the generated document traces, the pinned corpora, and the
+byte-exact DVI oracles are all gitignored, so a fresh worktree has none of
+them. Rebuilding them costs roughly 40 minutes and needs network workarounds.
+Link the main checkout's instead, read-only, and never regenerate in place
+while other agents are running:
+
+```bash
+ln -s {REPO_ROOT}/third_party third_party
+mkdir -p target && ln -s {REPO_ROOT}/target/tex82-oracle target/tex82-oracle
+ln -s {REPO_ROOT}/tests/corpus/command/tex82-documents tests/corpus/command/tex82-documents
+for d in story gentle trip etrip; do
+  ln -s "{REPO_ROOT}/tests/corpus/e2e/$d.expected.dvi" "tests/corpus/e2e/$d.expected.dvi"
+done
+```
+
+`target/tex82-oracle` does **not** contain the document traces; they live under
+`tests/corpus/command/tex82-documents`, and omitting that link makes the tracer
+skip every document stream while still printing a headline divergence count.
+`.gitignore` lists that path with a trailing slash, which does not match a
+symlink of the same name, so the link shows up as untracked. Exclude it through
+`.git/info/exclude` rather than editing the shared `.gitignore`.
+
+### Confirm the worktree is not blind
+
+Every dispatch prompt must state the expected divergence total, the agent's own
+stream, and that stream's expected front, and must require the agent to confirm
+all three **before** doing any work:
+
+```bash
+cargo run-dev -q -p tex-command-stream -- --repository . --max-divergences 100000
+```
+
+A worklist containing only `tex82/command-transitions-v1` means the document
+traces are not linked. An agent that skips this check can spend an entire run
+against a worklist its own stream was never part of; that has happened.
 
 `{BASE_REF}` is the current tip of the branch the work integrates onto. Pin it
 to an explicit commit hash rather than a branch name so concurrent jobs share a
