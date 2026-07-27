@@ -132,7 +132,6 @@ impl CommandProcessor<'_> {
             TracedTokenList::synthetic(tokens),
         ))
     }
-
 }
 
 impl TokenListRightHandSide {

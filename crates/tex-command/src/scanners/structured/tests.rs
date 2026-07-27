@@ -732,14 +732,8 @@ fn generalized_fraction_delimiters_read_delimiter_codes_not_integers() {
             .expect("family scans");
         (fraction, family)
     };
-    assert_eq!(
-        fraction.left_delimiter.expect("left").code,
-        0x02_8300
-    );
-    assert_eq!(
-        fraction.right_delimiter.expect("right").code,
-        0x02_9301
-    );
+    assert_eq!(fraction.left_delimiter.expect("left").code, 0x02_8300);
+    assert_eq!(fraction.right_delimiter.expect("right").code, 0x02_9301);
     assert_eq!(
         fraction.thickness,
         Some(tex_state::scaled::Scaled::from_raw(196_608))
@@ -775,7 +769,10 @@ fn a_non_radical_delimiter_consumes_delimiter_in_place_and_backs_up_nothing_else
         let boundary = processor
             .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Left)
             .expect("boundary scans");
-        let next = processor.get_x_token().expect("next token").expect("present");
+        let next = processor
+            .get_x_token()
+            .expect("next token")
+            .expect("present");
         (boundary, next)
     };
     assert_eq!(boundary.kind, MathDelimiterBoundaryKind::Left);
@@ -812,7 +809,10 @@ fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
         let boundary = processor
             .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Right)
             .expect("boundary scans");
-        let next = processor.get_x_token().expect("next token").expect("present");
+        let next = processor
+            .get_x_token()
+            .expect("next token")
+            .expect("present");
         (boundary, next)
     };
     assert_eq!(boundary.delimiter.code, 0);
