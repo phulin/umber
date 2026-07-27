@@ -4,7 +4,7 @@
 //! index cascade, but one defect still reaches the worklist once per *source
 //! position* it recurs at. A preload loop that assigns the same wrong meaning
 //! forty-eight times is forty-eight entries that are byte-identical apart from
-//! their [`SourceLocation`]s, and a coordinator triaging the worklist by hand
+//! their [`tex_oracle::SourceLocation`]s, and a coordinator triaging by hand
 //! has to read all forty-eight to learn there is one thing to fix.
 //!
 //! This module groups those recurrences. It changes nothing about what the
@@ -155,22 +155,27 @@ impl RootSiteIdentity {
 /// recurrence differs in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PositionlessSides {
-    Both { expected: Event, actual: Event },
-    ExpectedOnly(Event),
-    ActualOnly(Event),
+    Both {
+        expected: Box<Event>,
+        actual: Box<Event>,
+    },
+    ExpectedOnly(Box<Event>),
+    ActualOnly(Box<Event>),
 }
 
 impl PositionlessSides {
     fn of(sides: &MismatchSides) -> Self {
         match sides {
             MismatchSides::Both { expected, actual } => Self::Both {
-                expected: positionless_event(expected),
-                actual: positionless_event(&actual.event),
+                expected: Box::new(positionless_event(expected)),
+                actual: Box::new(positionless_event(&actual.event)),
             },
             MismatchSides::ExpectedOnly(expected) => {
-                Self::ExpectedOnly(positionless_event(expected))
+                Self::ExpectedOnly(Box::new(positionless_event(expected)))
             }
-            MismatchSides::ActualOnly(actual) => Self::ActualOnly(positionless_event(&actual.event)),
+            MismatchSides::ActualOnly(actual) => {
+                Self::ActualOnly(Box::new(positionless_event(&actual.event)))
+            }
         }
     }
 }

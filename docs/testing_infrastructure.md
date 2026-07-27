@@ -624,6 +624,7 @@ an oracle, and what to do with the result, see the diagnosis order in
 cargo run -q -p tex-command-stream -- --repository .
 cargo run -q -p tex-command-stream -- --repository . --max-divergences 50
 cargo run -q -p tex-command-stream -- --repository . --realign-window 128
+cargo run -q -p tex-command-stream -- --repository . --ungrouped
 ```
 
 Run this from the repository root. It replays the committed
@@ -637,9 +638,9 @@ It reports a ranked WORKLIST, not just the first divergence:
 
 - Exit `0`: it prints nothing; no divergence against the fixture registry.
 - Exit `1`: prints up to `--max-divergences` ordered divergences (default
-  `DEFAULT_MAX_DIVERGENCES` = 20), one `[index] fixture <name> ... [kind]`
-  entry per line pair, in stream order across every registered fixture. Two
-  entry shapes share this ordered list:
+  `DEFAULT_MAX_DIVERGENCES` = 20) per fixture, in stream order across every
+  registered fixture, collapsed into one entry per root site (see "Grouped
+  worklist" below). Two entry shapes share this ordered list:
   - A stream mismatch: the expected event, the actual observed event, and
     source context, labeled with a cheap structural `kind` (for example
     `command_identity_mismatch`, `command_operand_mismatch`,
@@ -688,6 +689,87 @@ It reports a ranked WORKLIST, not just the first divergence:
 See `docs/command_semantic_fixtures.md` and `docs/alignment_brace_semantics.md`
 for the fixture registry and event schema this replays and compares against,
 and `tools/AGENTS.md` for what the tool does and does not do.
+
+#### Grouped worklist and run accounting
+
+One defect reaches the ordered worklist once per source position it recurs
+at, so a preload loop that assigns the same wrong meaning forty-eight times is
+forty-eight entries that are identical apart from their `SourceLocation`. The
+report collapses those into one entry each. The run opens with two separately
+labeled totals and a per-fixture accounting:
+
+```text
+759 ordered divergence(s) in 200 root site(s):
+  divergence(s): what the comparator found. Grouping does not change this
+    number; it is the one to compare against historical totals.
+  root site(s): the entries below, one per group of divergences that are
+    identical after erasing source positions and nothing else. Every
+    divergence is in exactly one group; none is dropped, sampled, or
+    truncated. Pass --ungrouped for one entry per divergence.
+per fixture, in replay order:
+  tex82/command-transitions-v1  1 divergence(s) in 1 root site(s), first at oracle event 5892
+  tex82/document-plain-v1       0 divergence(s)
+  tex82/document-story-v1       0 divergence(s)
+  tex82/document-gentle-v1      758 divergence(s) in 199 root site(s), first at oracle event 102452
+```
+
+The two numbers answer different questions and only one of them is comparable
+against a historical figure.
+
+- **divergence(s)** is what the comparator found. Grouping does not change it,
+  and every "N entries" figure recorded in `umber2-johp` before grouping
+  existed is this number. Compare a before/after fix against _this_.
+- **root site(s)** is how many entries the report prints. It is a triage
+  metric: it says how many distinct things a coordinator has to dispatch.
+
+Grouping is presentation only. The ordered comparison, the entry order, and
+the divergence count are identical with and without it, and `--ungrouped`
+prints the one-entry-per-divergence worklist -- byte-identical to the
+pre-grouping report body -- so the grouped view can always be checked against
+the list it summarizes. Both views print both totals.
+
+Two divergences are the same root site when they are equal after erasing every
+source position and _nothing else_. `group::positionless_event` is an
+exhaustive match over the `tex-oracle` event schema -- `CanonicalCommand`'s
+location plus every `OracleToken` reachable through commands, recovery events,
+macro arguments, token lists, scanner results, mutations, diagnostics, and
+effects -- so adding a schema variant fails to compile rather than silently
+carrying a position, or a payload, into the key. Everything else separates two
+entries: differing operands, differing token payloads, a differing repair
+shape (three dropped oracle events is not twenty-one), a differing fixture,
+and a macro call's token-list address. `Repair::AnchorResync` compares by
+anchor _kind_ with a line-anchor's line erased, since that line is a position
+like any other. The bias is deliberate: under-merging leaves a longer
+worklist, but over-merging hides a second defect behind the first.
+
+A grouped entry prints its count, renders its first occurrence exactly as the
+ungrouped worklist renders it, and then names every occurrence:
+
+```text
+[75] x109 fixture tex82/document-gentle-v1 manifest=... diverged at event 141407 ...
+  expected: Input(InputEvent { transition: Push, reason: TokenList, name: "every_par" })
+  actual: Command(CommandEvent { delivery: Raw, command: CanonicalCommand { ... } })
+  context: source=gentle.tex; input_level=5803; position=0
+  recurrence: 109 exact occurrence(s) of this root site, 1196 suppressed cascade event(s) in total;
+    the entry above is the first. Every occurrence, by oracle event index:
+    141407, 141450, 141486, 141551, 141619, 143260, ...
+```
+
+The oracle event index list is printed whole and never elided: an entry that
+stands for a hundred occurrences has to let the agent dispatched on it reach
+all hundred. A group's suppressed cascade is the sum over its members. A
+single-occurrence entry prints `x1` and no recurrence block.
+
+Two bounds the report used to leave a reader to infer are now printed.
+
+- A fixture whose `--max-divergences` budget was reached while events remained
+  prints `BOUNDED:` under its accounting line, naming the flag and saying that
+  comparison of that fixture stopped there. The budget still bounds
+  _divergences_, not root sites, so it is unchanged by grouping.
+- A document trace that is not generated on this checkout is listed as
+  `not compared -- trace not generated on this checkout`, in addition to the
+  stderr notice, so a fixture that never ran cannot read like a clean one.
+  Compared fixtures with no divergence are listed with an explicit `0`.
 
 #### Stream alignment
 
@@ -756,9 +838,9 @@ comparison would have reported over the stream region this entry covers --
 from this entry's oracle index up to the next reported entry's, or to the end
 of the streams for the last entry -- not counting the entry itself. It is the
 cascade the entry stands in for, and it is how to tell one root site from
-many: as of this writing the three document traces report 230, 269, and 501
-entries where index-aligned comparison would report roughly 95 000, 96 000,
-and 922 000.
+many: as of this writing `gentle` reports 758 divergences in 199 root sites
+where index-aligned comparison would report over 800 000, and `plain` and
+`story` are clean.
 
 #### Alignment tunables
 

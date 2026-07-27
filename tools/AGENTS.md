@@ -57,6 +57,19 @@ key mismatch with a bounded wavefront search (`--realign-window`,
 guessing when neither confirms. Each entry names its repair and the cascade
 it suppressed. See "Stream alignment" in `docs/testing_infrastructure.md`.
 
+`src/group.rs` then collapses exact recurrences of one root site into a single
+entry, and `src/report.rs` renders the worklist. Grouping is presentation
+only: the comparison, the entry order, and the divergence count are identical
+with and without it, `--ungrouped` prints the one-entry-per-divergence
+worklist, and the header prints both totals with labels saying which is
+comparable against historical figures. Two divergences group only when they
+are equal after erasing every source position and nothing else, through an
+exhaustive match over the event schema, so a new schema variant fails to
+compile rather than silently changing what merges. The report also prints the
+bounds it applied: a fixture whose `--max-divergences` budget was reached, and
+a document trace that was never generated. See "Grouped worklist and run
+accounting" in `docs/testing_infrastructure.md`.
+
 The runner owns no canonical vocabulary of its own. Every name it puts in an
 event -- catcodes, command names, glue orders, scanner statuses, token
 spellings -- comes from `tex_command::canonical_names`, and the command name
