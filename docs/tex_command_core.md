@@ -2280,7 +2280,42 @@ also puts it on the retained branch.
 
 `scan_dimen` delegates its integral prefix to that same integer scanner. Its
 backed-up decimal point is then consumed raw, while a backed-up unit remains
-available to the canonical keyword retry sequence. `scan_glue` first probes a
+available to the canonical keyword retry sequence.
+
+That delegation is conditional, and the condition is a token `scan_dimen`
+already holds rather than one it fetches. §448's non-internal branch reads
+
+```text
+back_input;
+if cur_tok=continental_point_token then cur_tok:=point_token;
+if cur_tok<>point_token then scan_int
+else begin radix:=10; cur_val:=0; end;
+if cur_tok=continental_point_token then cur_tok:=point_token;
+if (radix=10)and(cur_tok=point_token) then <Scan decimal fraction>;
+```
+
+`back_input` does not disturb `cur_tok`, so a _leading_ decimal point never
+enters `scan_int` at all, and §452's `get_token` -- unexpanded, "point_token
+is being re-scanned" -- is the single delivery that re-scans it. Re-reading
+the backed-up token through `get_x_token` and handing it to `scan_int` anyway
+costs six semantic events per leading-point dimension: an expanded
+redelivery, §444's `vacuous` scan, §446's second `back_error` backup and its
+recovery record, and an integer result TeX never computes (`umber2-johp.177`,
+`\vskip .5cm`).
+
+Two consequences of the same shape are easy to reintroduce as hand-narrowed
+tests. First, §448 has no digit test of its own: whether a number was there
+is `scan_int`'s answer (§444's `vacuous`), which is why §444's `'` and `"`
+radix introducers and §442's alphabetic constant are legal dimension prefixes
+-- §448's own example is `-'77 pt`. Second, the fraction test is
+`(radix=10)and(cur_tok=point_token)`, not the point test alone: §440
+initializes `radix:=0` and only §444's decimal branch sets it to 10, so
+`'77.5pt` has no fractional part. Both `point_token` and
+`continental_point_token` are §445 token constants (`other_token` plus a
+character), so recognizing a point is a category-code-12 test, never a bare
+character comparison.
+
+`scan_glue` first probes a
 complete internal glue value; an ordinary numeric width is backed up and only
 then passed to `scan_dimen`. These retry frames retire before their replacement
 backup, preserving the TeX82 input lifecycle for whole-number dimensions,
