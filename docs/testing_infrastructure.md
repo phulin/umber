@@ -212,6 +212,10 @@ long-document trace registry.
 
 The conditionals manifest preserves its eight passing cases and carries the
 bounded §505 selector-recovery gap as a strict xfail for `umber2-johp.246`.
+The input-expansion manifest adds four exact passing properties and eight strict
+xfails for `umber2-johp.240`, `.242`-`.245`, and `.252`-`.254`; bounded
+in-memory terminal lines and named inputs keep its pausing, read, and input-open
+evidence hermetic.
 
 ### What The Clippy Gate Covers
 

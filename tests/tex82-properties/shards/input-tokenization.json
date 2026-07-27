@@ -350,7 +350,17 @@
       "stimulus": [
         "Phase 2 unit `command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges` exercises every boundary and alias; minifixture `command-code-boundaries.tex` observes representative raw and expanded identities on each side."
       ],
-      "planned_coverage": null,
+      "planned_coverage": [
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "command-code-boundaries strict xfail",
+            "linked to umber2-johp.240",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
+        }
+      ],
       "expected_observations": [
         "Aliases share their required numeric code, internal quantities occupy the inclusive canonical interval, and commands above max_command never reach main control unexpanded."
       ],
@@ -364,7 +374,7 @@
         "Undefined and dont_expand meanings remain above max_command and are handled by expansion rather than ordinary execution."
       ],
       "semantic_owner": "tex-command::delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/command/tests.rs",
@@ -450,6 +460,15 @@
         {
           "path": "crates/tex-exec/src/mode/tests.rs",
           "test": "show_activities_reports_each_mode_auxiliary_and_entry_line"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "mode-activities strict xfail",
+            "linked to umber2-johp.242",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ],
       "expected_observations": [
@@ -463,7 +482,7 @@
         "Absent optional language, incomplete fraction, page, or contribution data suppresses only its own diagnostic clause."
       ],
       "semantic_owner": "tex-exec::mode-nest",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.242"
@@ -495,7 +514,7 @@
         "A guarded miss returns undefined_control_sequence without interning; an exhausted hash reports capacity overflow rather than aliasing or replacing an existing identity."
       ],
       "semantic_owner": "tex-command::control-sequences",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/command/tests.rs",
@@ -508,6 +527,10 @@
         {
           "path": "crates/tex-command/src/processor/expand/tests.rs",
           "test": "csname_expands_characters_then_injects_a_relaxed_named_control_sequence"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -577,7 +600,7 @@
         "Definition scanning rejects excess or invalid output-parameter selectors before publication; malformed stored forms are never reinterpreted as ordinary character tokens."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/observation/canonical_names/tests.rs",
@@ -594,6 +617,10 @@
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
           "test": "stored_token_reference_lifetime_survives_redefinition_and_replay"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -629,7 +656,17 @@
       "stimulus": [
         "Existing stack tests exercise stored replay ownership; Phase 2 units `source_level_begin_end_restore_line_and_terminal_state`, `token_list_kind_reference_and_parameter_stack_lifecycle_matrix`, and `backup_inserted_and_macro_levels_retire_in_canonical_order`, plus minifixture `input-level-lifecycle.tex`, cover the remaining source and token-list assertions."
       ],
-      "planned_coverage": null,
+      "planned_coverage": [
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "input-level-lifecycle strict xfail",
+            "linked to umber2-johp.245",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
+        }
+      ],
       "expected_observations": [
         "Newest input delivers first; every token-list kind applies its canonical reference/parameter action; source close restores line, terminal/file state, and enclosing cursor; replay selects the nearest live parameter owner."
       ],
@@ -643,7 +680,7 @@
         "Input-stack and parameter-stack overflow are bounded capacity failures; stale retirement is rejected without popping another level; back_error reports before replaying the offending token."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
@@ -750,7 +787,7 @@
         "Outer controls and source EOF delegate to check_outer_validity before another raw token is requested; inactive alignment delimiters remain ordinary commands rather than being consumed structurally."
       ],
       "semantic_owner": "tex-command::delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/processor/next.rs",
@@ -763,6 +800,10 @@
         {
           "path": "crates/tex-command/src/processor/next.rs",
           "test": "alignment_delimiter_waits_for_literal_brace_depth"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -798,7 +839,7 @@
         "EOF has no token to back up; matching inserts par, alignment inserts frozen_cr plus right brace, skipping inserts frozen_fi, and every branch restores deletions_allowed after one diagnostic."
       ],
       "semantic_owner": "tex-command::delivery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/processor/next.rs",
@@ -811,6 +852,10 @@
         {
           "path": "crates/tex-command/src/processor/next.rs",
           "test": "outer_recovery_is_bounded_and_snapshot_rollback_replays_the_episode"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -854,6 +899,15 @@
         {
           "path": "crates/tex-command/src/input/tokenizer/tests.rs",
           "test": "pausing_replaces_the_firmed_line_before_tokenization"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "input-tokenization-lifecycle strict xfail",
+            "linked to umber2-johp.243",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ],
       "expected_observations": [
@@ -869,7 +923,7 @@
         "Ignored, invalid, comment, invalid superscript, inactive endlinechar, force_eof, and forbidden new-control-sequence cases each consume or retire exactly the canonical input and cannot loop unchanged."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/input/lines/tests.rs",
@@ -950,7 +1004,17 @@
       "stimulus": [
         "Phase 2 units `expandafter_and_noexpand_preserve_canonical_raw_order`, `csname_expands_characters_interns_once_and_requires_endcsname`, `backup_replays_the_exact_delivered_token_above_expansion`, plus minifixture `expansion-delivery.tex`."
       ],
-      "planned_coverage": null,
+      "planned_coverage": [
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "expansion-delivery strict xfail",
+            "linked to umber2-johp.252",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
+        }
+      ],
       "expected_observations": [
         "Raw expandable events precede effects and only the final unexpandable command receives expanded delivery."
       ],
@@ -964,7 +1028,7 @@
         "Undefined expansion reports before frozen-relax substitution where permitted; missing endcsname stops name collection without swallowing enclosing input; backup preserves exact first/second-token order for expandafter."
       ],
       "semantic_owner": "tex-command::expansion",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/processor/expand/tests.rs",
@@ -1092,7 +1156,17 @@
       "stimulus": [
         "Phase 2 unit `converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion` plus minifixture `expansion-conversions.tex` cover all six conversions and token-valued the."
       ],
-      "planned_coverage": null,
+      "planned_coverage": [
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "expansion-conversions strict xfail",
+            "linked to umber2-johp.254",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
+        }
+      ],
       "expected_observations": [
         "Rendered bytes classify canonically, token values copy without stringification, and inserted output resumes expansion."
       ],
@@ -1106,7 +1180,7 @@
         "Invalid numeric or font operands finish their owning scanner recovery before rendering; string and meaning temporarily normalize scanner status so an outer operand is consumed exactly once."
       ],
       "semantic_owner": "tex-command::expansion",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/processor/expand/tests.rs",
@@ -1154,6 +1228,15 @@
         {
           "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "read_toks_collects_balanced_multiline_input_and_appends_one_eof_line"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "input-read-toks strict xfail",
+            "linked to umber2-johp.253",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ],
       "expected_observations": [
@@ -1169,7 +1252,7 @@
         "EOF contributes one final empty line; EOF with unmatched left braces reports and restores balance once; a right brace below the disabled alignment baseline consumes the rest of that line before returning."
       ],
       "semantic_owner": "tex-command::scan-toks",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.253"
@@ -1196,6 +1279,15 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "start_input_initializes_job_name_once"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "input-start-file strict xfail",
+            "linked to umber2-johp.244",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ],
       "expected_observations": [
@@ -1211,7 +1303,7 @@
         "A failed direct and default-area lookup retires the attempted level before prompting; inactive endlinechar decreases the first-line limit; repeated nested input never replaces an established job name."
       ],
       "semantic_owner": "tex-command::expansion",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.244"

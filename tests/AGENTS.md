@@ -92,6 +92,8 @@ the exact same files.
 
 `tests/corpus/command-semantic` contains the versioned schema and independently owned domain manifests for tiny property-scoped semantic inputs. The generic runner in `tools/tex-command-stream/tests/it/command_semantic.rs` discovers every domain without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, and strict xfail fingerprints, then compares concise canonical-main-control projections. Cargo tests invoke no live TeX and never read the long-document trace registry.
 
+The `input-expansion` domain owns the twelve audited input and expansion semantic tiers: four exact passes plus eight strict xfails linked to their existing canonical defect beads.
+
 `tests/corpus/command` contains committed canonical command-core fixtures.
 Each engine/fixture directory carries a canonical contract-v1 `manifest.json`,
 focused INITEX sources, a manifest-bound normalized schema-v1 `events.jsonl`,

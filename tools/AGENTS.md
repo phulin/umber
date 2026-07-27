@@ -48,7 +48,7 @@ portable `tex-oracle` schema, and reports a ranked worklist of up to
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.
 
-The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers versioned domain manifests under `tests/corpus/command-semantic`, validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `CanonicalMainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries.
+The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers versioned domain manifests under `tests/corpus/command-semantic`, validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `CanonicalMainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries. Manifests may select filtered canonical observation families and supply bounded in-memory terminal lines or named inputs, so pausing, read, and input-open cases remain hermetic.
 
 Comparison is a two-tier keyed sequence alignment, not an index-parallel
 scan: `src/compare.rs` splits each event into an identity key and a payload,

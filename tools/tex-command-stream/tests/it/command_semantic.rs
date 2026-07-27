@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tex_command::{
-    CommandObservation, CommandObserver, ObservedToken, RecoveryKind, RegisteredSourceKind,
-    SourceRegistration,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, InputReason,
+    InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind, SourceRegistration,
+    canonical_names,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::Universe;
@@ -29,6 +30,8 @@ const BUG_PREFIX: &str = "umber2-johp.";
 struct DomainManifest {
     schema: u32,
     domain: String,
+    #[serde(default)]
+    property_domain: Option<String>,
     cases: Vec<Case>,
 }
 
@@ -42,6 +45,10 @@ struct Case {
     projection: Projection,
     expected: Vec<String>,
     expectation: Expectation,
+    #[serde(default)]
+    terminal_lines: Vec<String>,
+    #[serde(default)]
+    inputs: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,9 +67,13 @@ struct Projection {
     count_registers: Vec<u16>,
     #[serde(default)]
     include_count_mutations: bool,
+    #[serde(default)]
+    kinds: Vec<ObservationKind>,
+    #[serde(default)]
+    commands: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum ProjectionKind {
     Classification,
@@ -70,6 +81,22 @@ enum ProjectionKind {
     SkippingConditionSteps,
     BranchSelections,
     PredicateOutcomes,
+    Observations,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum ObservationKind {
+    Command,
+    Input,
+    Recovery,
+    ScannerStatus,
+    Macro,
+    Scanner,
+    TokenList,
+    Mutation,
+    Diagnostic,
+    Effect,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,7 +241,7 @@ fn validate_expectation(expectation: &Expectation) -> Result<(), String> {
 
 fn validate_case(
     case: &Case,
-    domain: &str,
+    property_domain: &str,
     domain_dir: &Path,
     root: &Path,
     owners: &BTreeMap<String, String>,
@@ -223,7 +250,7 @@ fn validate_case(
         return Err(format!("case id {:?} is not a lower-kebab slug", case.id));
     }
     match owners.get(&case.property_id) {
-        Some(owner) if owner == domain => {}
+        Some(owner) if owner == property_domain => {}
         Some(owner) => {
             return Err(format!(
                 "case {} claims {} owned by domain {owner}",
@@ -301,6 +328,52 @@ fn validate_case(
             case.id
         ));
     }
+    if case.projection.kind == ProjectionKind::Observations {
+        if case.projection.kinds.is_empty() {
+            return Err(format!(
+                "case {} observations projection needs at least one kind",
+                case.id
+            ));
+        }
+        if case
+            .projection
+            .kinds
+            .iter()
+            .enumerate()
+            .any(|(index, kind)| case.projection.kinds[..index].contains(kind))
+        {
+            return Err(format!("case {} observation kinds must be unique", case.id));
+        }
+        if case
+            .projection
+            .commands
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(format!(
+                "case {} commands must be sorted and unique",
+                case.id
+            ));
+        }
+    } else if !case.projection.kinds.is_empty() || !case.projection.commands.is_empty() {
+        return Err(format!(
+            "case {} selects observations outside the observations projection",
+            case.id
+        ));
+    }
+    if case.terminal_lines.iter().any(|line| {
+        line.contains("\n") || line.contains("\r") || line.len() > MAX_SOURCE_BYTES as usize
+    }) {
+        return Err(format!("case {} has an invalid terminal line", case.id));
+    }
+    if case.inputs.iter().any(|(name, bytes)| {
+        !is_safe_relative(Path::new(name))
+            || name.is_empty()
+            || bytes.is_empty()
+            || bytes.len() > MAX_SOURCE_BYTES as usize
+    }) {
+        return Err(format!("case {} has an invalid named input", case.id));
+    }
     validate_expectation(&case.expectation).map_err(|error| format!("case {}: {error}", case.id))
 }
 fn claim_case_identity(
@@ -365,12 +438,23 @@ fn load_suite() -> Result<Vec<DeclaredCase>, String> {
                 manifest.domain
             ));
         }
+        let property_domain = manifest
+            .property_domain
+            .as_deref()
+            .unwrap_or(&manifest.domain);
+        if !valid_slug(property_domain) {
+            return Err(format!(
+                "{} property domain {:?} is not a lower-kebab slug",
+                manifest_path.display(),
+                property_domain
+            ));
+        }
         if manifest.cases.is_empty() {
             return Err(format!("{} declares no cases", manifest_path.display()));
         }
         let mut declared_sources = BTreeSet::new();
         for case in manifest.cases {
-            validate_case(&case, &manifest.domain, &domain_dir, &root, &owners)?;
+            validate_case(&case, property_domain, &domain_dir, &root, &owners)?;
             claim_case_identity(
                 &mut case_ids,
                 &mut sources,
@@ -409,9 +493,24 @@ fn load_suite() -> Result<Vec<DeclaredCase>, String> {
     Ok(declared)
 }
 
-fn execute(source: &[u8]) -> Result<SemanticRun, String> {
+fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let mut universe = Universe::new();
+    for line in &case.terminal_lines {
+        universe
+            .world_mut()
+            .push_memory_terminal_line(line.clone())
+            .map_err(|error| format!("terminal line registration: {error}"))?;
+    }
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    for (name, bytes) in &case.inputs {
+        control.capabilities_mut().register_input(
+            name,
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(bytes.as_bytes()),
+            ),
+        );
+    }
     let source = control
         .command_mut()
         .register_source(SourceRegistration::new(
@@ -427,8 +526,14 @@ fn execute(source: &[u8]) -> Result<SemanticRun, String> {
     for _ in 0..MAX_STEPS {
         match control
             .step_with_observer(&mut universe, &mut recorder)
-            .map_err(|error| format!("main-control step: {error:?}"))?
-        {
+            .map_err(|error| {
+                let rendered = format!("{error:?}");
+                if rendered.starts_with("Command(InputInvariant(") {
+                    "main-control step: Command(InputInvariant)".into()
+                } else {
+                    format!("main-control step: {rendered}")
+                }
+            })? {
             MainControlStep::Continue => {}
             MainControlStep::End | MainControlStep::EndOfInput => {
                 let counts = std::array::from_fn(|slot| {
@@ -524,6 +629,178 @@ fn predicate_outcomes(run: &SemanticRun) -> Vec<String> {
     outcomes
 }
 
+fn observed_token_text(token: &ObservedToken) -> String {
+    match token {
+        ObservedToken::Character { character, catcode } => format!(
+            "char:{}:{}",
+            canonical_names::catcode_name(*catcode),
+            u32::from(*character)
+        ),
+        ObservedToken::ControlSequence(name) => format!("cs:{name}"),
+        ObservedToken::MacroMatch => "macro-match".into(),
+        ObservedToken::MacroEndMatch => "macro-end-match".into(),
+        ObservedToken::Parameter(slot) => format!("parameter:{slot}"),
+        token => format!(
+            "cs:{}",
+            canonical_names::observed_token_control_sequence(token)
+                .expect("every frozen observed token has canonical control-sequence text")
+        ),
+    }
+}
+
+fn observed_tokens_text(tokens: &[ObservedToken]) -> String {
+    tokens
+        .iter()
+        .map(observed_token_text)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<String> {
+    let mut output = Vec::new();
+    for observation in &run.observations {
+        let item = match observation {
+            CommandObservation::Command(record)
+                if projection.kinds.contains(&ObservationKind::Command)
+                    && (projection.commands.is_empty()
+                        || projection.commands.contains(&record.command)) =>
+            {
+                let boundary = match record.boundary {
+                    CommandDeliveryBoundary::Raw => "raw",
+                    CommandDeliveryBoundary::Expanded => "expanded",
+                };
+                Some(format!(
+                    "command:{boundary}:{}:{}:{}",
+                    observed_token_text(&record.spelling),
+                    record.command,
+                    record
+                        .command_operand
+                        .map_or_else(|| "-".into(), |operand| operand.to_string())
+                ))
+            }
+            CommandObservation::Input(record)
+                if projection.kinds.contains(&ObservationKind::Input) =>
+            {
+                let transition = match record.transition {
+                    InputTransition::Push => "push",
+                    InputTransition::Retire => "retire",
+                    InputTransition::Stop => "stop",
+                    InputTransition::Backup => "backup",
+                    InputTransition::Recovery => "recovery",
+                };
+                let reason = match record.reason {
+                    InputReason::Source => "source",
+                    InputReason::Backup => "backup",
+                    InputReason::Macro => "macro",
+                    InputReason::Parameter => "parameter",
+                    InputReason::AlignmentUTemplate => "u-template",
+                    InputReason::AlignmentVTemplate => "v-template",
+                    InputReason::Recovery => "recovery",
+                    InputReason::TokenList => "token-list",
+                    InputReason::Write => "write",
+                };
+                Some(format!("input:{transition}:{reason}"))
+            }
+            CommandObservation::Recovery(record)
+                if projection.kinds.contains(&ObservationKind::Recovery) =>
+            {
+                let kind = match record.kind {
+                    RecoveryKind::Backup => "backup",
+                    RecoveryKind::InsertedToken => "inserted-token",
+                    RecoveryKind::InsertedControlSequence => "inserted-control-sequence",
+                };
+                Some(format!(
+                    "recovery:{kind}:{}",
+                    observed_tokens_text(&record.tokens)
+                ))
+            }
+            CommandObservation::ScannerStatus(record)
+                if projection.kinds.contains(&ObservationKind::ScannerStatus) =>
+            {
+                Some(format!("scanner-status:{}>{}", record.from, record.to))
+            }
+            CommandObservation::Macro(record)
+                if projection.kinds.contains(&ObservationKind::Macro) =>
+            {
+                Some(format!(
+                    "macro:{}:{}:{}:{}",
+                    if record.activation {
+                        "activate"
+                    } else {
+                        "argument"
+                    },
+                    record.control_sequence.as_deref().unwrap_or("-"),
+                    record
+                        .argument
+                        .map_or_else(|| "-".into(), |slot| slot.to_string()),
+                    observed_tokens_text(&record.tokens)
+                ))
+            }
+            CommandObservation::Scanner(record)
+                if projection.kinds.contains(&ObservationKind::Scanner) =>
+            {
+                Some(format!(
+                    "scanner:{}:{}:{}",
+                    record.kind,
+                    record.value,
+                    record
+                        .tokens
+                        .as_deref()
+                        .map_or_else(|| "-".into(), observed_tokens_text)
+                ))
+            }
+            CommandObservation::TokenList(record)
+                if projection.kinds.contains(&ObservationKind::TokenList) =>
+            {
+                Some(format!(
+                    "token-list:{}:{}:{}",
+                    record.transition,
+                    record.purpose,
+                    observed_tokens_text(&record.tokens)
+                ))
+            }
+            CommandObservation::Mutation(record)
+                if projection.kinds.contains(&ObservationKind::Mutation) =>
+            {
+                Some(format!(
+                    "mutation:{}:{}:{}:{}",
+                    record.target,
+                    record.key.as_deref().unwrap_or("-"),
+                    record.value,
+                    if record.global { "global" } else { "local" }
+                ))
+            }
+            CommandObservation::Diagnostic(record)
+                if projection.kinds.contains(&ObservationKind::Diagnostic) =>
+            {
+                let arguments = record
+                    .arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        DiagnosticArgument::Token(token) => observed_token_text(token),
+                        DiagnosticArgument::Name(name) => format!("name:{name}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                Some(format!(
+                    "diagnostic:{}:{}:{arguments}",
+                    record.severity, record.diagnostic
+                ))
+            }
+            CommandObservation::Effect(record)
+                if projection.kinds.contains(&ObservationKind::Effect) =>
+            {
+                Some(format!("effect:{}:{}", record.kind, record.detail))
+            }
+            _ => None,
+        };
+        if let Some(item) = item {
+            output.push(item);
+        }
+    }
+    output
+}
+
 fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
     let mut output = match projection.kind {
         ProjectionKind::Classification => {
@@ -580,6 +857,7 @@ fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
                 .collect()
         }
         ProjectionKind::PredicateOutcomes => predicate_outcomes(run),
+        ProjectionKind::Observations => observation_projection(run, projection),
     };
     if projection.include_count_mutations {
         output.extend(run.observations.iter().filter_map(|observation| {
@@ -680,7 +958,7 @@ fn declared_command_semantic_cases_match() {
         let label = format!("{}/{}", declared.domain, declared.case.id);
         let actual = fs::read(declared.domain_dir.join(&declared.case.source))
             .map_err(|error| format!("source read: {error}"))
-            .and_then(|source| execute(&source))
+            .and_then(|source| execute(&source, &declared.case))
             .map(|run| project(&run, &declared.case.projection));
         if let Err(error) =
             evaluate_expectation(&declared.case.expected, &actual, &declared.case.expectation)

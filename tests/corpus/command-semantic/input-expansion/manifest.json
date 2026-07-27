@@ -1,0 +1,528 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "command-code-boundaries",
+      "property_id": "tex82.input.command-code-boundaries",
+      "source": "command-code-boundaries.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          207,
+          208,
+          209
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "diagnostic"
+        ],
+        "commands": [
+          "relax",
+          "undefined_cs"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:relax:relax:256",
+        "command:expanded:cs:relax:relax:256",
+        "command:raw:cs:^^@:undefined_cs:-268435455",
+        "diagnostic:error:undefined_control_sequence:cs:^^@",
+        "command:expanded:cs:^^@:relax:256"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.240",
+        "mismatch": {
+          "index": 3,
+          "kind": "observation",
+          "expected": "diagnostic:error:undefined_control_sequence:cs:^^@",
+          "actual": "command:expanded:cs:^^@:undefined_cs:-268435455"
+        }
+      }
+    },
+    {
+      "id": "mode-activities",
+      "property_id": "tex82.modes.activity-diagnostics",
+      "source": "mode-activities.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          218,
+          219
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "effect"
+        ]
+      },
+      "expected": [
+        "effect:activities:mode=vertical"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.242",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "effect:activities:mode=vertical",
+          "actual": "main-control step: UnimplementedPrimitive { primitive: ShowLists, mode: Vertical, origin: OriginId(..) }"
+        }
+      }
+    },
+    {
+      "id": "input-control-sequences",
+      "property_id": "tex82.input.control-sequence-lookup",
+      "source": "input-control-sequences.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          259,
+          260
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "macro",
+          "token-list"
+        ],
+        "commands": [
+          "call",
+          "cs_name",
+          "end_cs_name"
+        ]
+      },
+      "expected": [
+        "token-list:complete:macro_replacement:char:letter:65",
+        "command:raw:cs:csname:cs_name:0",
+        "command:raw:cs:endcsname:end_cs_name:0",
+        "command:expanded:cs:endcsname:end_cs_name:0",
+        "command:raw:cs:made:call:-",
+        "macro:activate:made:0:"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "stored-token-replay",
+      "property_id": "tex82.input.stored-token-representation",
+      "source": "stored-token-replay.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          289,
+          290,
+          291
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "macro"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "macro:activate:b:0:",
+        "count:0=1"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "input-level-lifecycle",
+      "property_id": "tex82.input.level-lifecycle",
+      "source": "input-level-lifecycle.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          300,
+          301,
+          302,
+          303,
+          304,
+          305,
+          306,
+          307,
+          308,
+          309,
+          310,
+          321,
+          323,
+          325,
+          326,
+          327,
+          328,
+          330,
+          331
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "effect",
+          "input"
+        ]
+      },
+      "expected": [
+        "input:backup:backup",
+        "input:retire:backup",
+        "effect:input:child",
+        "input:backup:backup",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:retire:source",
+        "input:stop:source"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.245",
+        "mismatch": {
+          "index": 5,
+          "kind": "observation",
+          "expected": "input:retire:file",
+          "actual": "input:retire:source"
+        }
+      },
+      "inputs": {
+        "child": "C"
+      }
+    },
+    {
+      "id": "input-raw-delivery",
+      "property_id": "tex82.input.raw-delivery",
+      "source": "input-raw-delivery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          332,
+          333,
+          334,
+          335,
+          341,
+          342
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "letter",
+          "relax"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:relax:relax:256",
+        "command:expanded:cs:relax:relax:256",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "input-outer-recovery",
+      "property_id": "tex82.input.outer-validity-recovery",
+      "source": "input-outer-recovery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          336,
+          337,
+          338,
+          339,
+          340
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "diagnostic",
+          "recovery",
+          "scanner-status"
+        ]
+      },
+      "expected": [
+        "recovery:backup:char:other_char:61",
+        "recovery:backup:char:other_char:61",
+        "scanner-status:normal>defining",
+        "scanner-status:defining>normal",
+        "scanner-status:normal>defining",
+        "diagnostic:error:outer_validity_control_sequence:name:defining",
+        "recovery:backup:cs:boom",
+        "recovery:inserted-token:char:right_brace:125",
+        "scanner-status:defining>normal"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "input-tokenization-lifecycle",
+      "property_id": "tex82.input.tokenization",
+      "source": "input-tokenization-lifecycle.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          343,
+          344,
+          345,
+          346,
+          347,
+          348,
+          349,
+          350,
+          351,
+          352,
+          353,
+          354,
+          355,
+          356,
+          357,
+          358,
+          359,
+          360,
+          361,
+          362,
+          363,
+          364,
+          365
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "letter"
+        ]
+      },
+      "expected": [
+        "command:raw:char:letter:66:letter:66",
+        "command:expanded:char:letter:66:letter:66",
+        "command:raw:char:letter:66:letter:66",
+        "command:expanded:char:letter:66:letter:66"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.243",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "command:raw:char:letter:66:letter:66",
+          "actual": "command:raw:char:letter:65:letter:65"
+        }
+      },
+      "terminal_lines": [
+        "B"
+      ]
+    },
+    {
+      "id": "expansion-delivery",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "source": "expansion-delivery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          366,
+          367,
+          368,
+          369,
+          370,
+          371,
+          372,
+          373,
+          374,
+          375,
+          376,
+          377,
+          378,
+          379,
+          380,
+          381
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "diagnostic"
+        ],
+        "commands": [
+          "letter",
+          "relax",
+          "undefined_cs"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:^^@:undefined_cs:-268435455",
+        "diagnostic:error:undefined_control_sequence:cs:^^@",
+        "command:expanded:cs:^^@:relax:256",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.252",
+        "mismatch": {
+          "index": 1,
+          "kind": "observation",
+          "expected": "diagnostic:error:undefined_control_sequence:cs:^^@",
+          "actual": "command:expanded:cs:^^@:undefined_cs:-268435455"
+        }
+      }
+    },
+    {
+      "id": "expansion-conversions",
+      "property_id": "tex82.expansion.converted-token-lists",
+      "source": "expansion-conversions.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          464,
+          465,
+          466,
+          467,
+          468,
+          469,
+          470,
+          471,
+          472
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "diagnostic"
+        ]
+      },
+      "expected": [
+        "diagnostic:error:missing_font_identifier:"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.254",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "diagnostic:error:missing_font_identifier:",
+          "actual": "main-control step: Command(InputInvariant)"
+        }
+      }
+    },
+    {
+      "id": "input-read-toks",
+      "property_id": "tex82.input.read-token-list",
+      "source": "input-read-toks.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          480,
+          481,
+          482,
+          483,
+          484,
+          485,
+          486
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "macro",
+          "token-list"
+        ]
+      },
+      "expected": [
+        "token-list:complete:read:char:letter:82",
+        "macro:activate:readvalue:0:"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.253",
+        "mismatch": {
+          "index": 0,
+          "kind": "observation",
+          "expected": "token-list:complete:read:char:letter:82",
+          "actual": "macro:activate:readvalue:0:"
+        }
+      },
+      "terminal_lines": [
+        "R"
+      ]
+    },
+    {
+      "id": "input-start-file",
+      "property_id": "tex82.input.start-input-and-first-line",
+      "source": "input-start-file.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          537,
+          538
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "effect"
+        ],
+        "commands": [
+          "letter"
+        ]
+      },
+      "expected": [
+        "effect:input:nested.tex",
+        "command:raw:char:letter:78:letter:78",
+        "command:expanded:char:letter:78:letter:78",
+        "command:raw:char:letter:78:letter:78",
+        "command:expanded:char:letter:78:letter:78"
+      ],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-johp.244",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "effect:input:nested.tex",
+          "actual": "main-control step: MissingToken { context: \"\\\\input\" }"
+        }
+      },
+      "inputs": {
+        "nested.tex": "N"
+      }
+    }
+  ]
+}
