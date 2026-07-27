@@ -3,113 +3,321 @@
   "domain": "math-box-list-and-mode-semantics",
   "module_dispositions": [
     {
-      "modules": { "first": 644, "last": 679 },
+      "modules": {
+        "first": 644,
+        "last": 667
+      },
       "disposition": "property",
       "owner": "tex-typeset::packing",
-      "property_ids": ["tex82.boxes.packing"],
+      "property_ids": [
+        "tex82.boxes.hpack"
+      ],
       "gap_bead": null,
-      "rationale": "Defines TeX82 horizontal and vertical packing, glue setting, diagnostics, max-depth clamping, and vertical-list baseline insertion."
+      "rationale": "Horizontal packing measurement, glue setting, adjustment migration, and diagnostics."
     },
     {
-      "modules": { "first": 680, "last": 767 },
+      "modules": {
+        "first": 668,
+        "last": 679
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::packing",
+      "property_ids": [
+        "tex82.boxes.vpack-and-vlist-append"
+      ],
+      "gap_bead": null,
+      "rationale": "Vertical packing, depth clamping, diagnostics, and baseline-aware list append."
+    },
+    {
+      "modules": {
+        "first": 680,
+        "last": 698
+      },
       "disposition": "property",
       "owner": "tex-typeset::math",
-      "property_ids": ["tex82.math.model-and-lowering"],
+      "property_ids": [
+        "tex82.math.noad-model"
+      ],
       "gap_bead": null,
-      "rationale": "Defines math fields/noads/choices and the complete mlist-to-hlist lowering rules for delimiters, fractions, accents, operators, scripts, styles, spacing, and penalties."
+      "rationale": "Typed math fields, noads, choices, styles, display, and destruction invariants."
     },
     {
-      "modules": { "first": 1032, "last": 1044 },
+      "modules": {
+        "first": 699,
+        "last": 718
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::math",
+      "property_ids": [
+        "tex82.math.clean-box-delimiters-mu"
+      ],
+      "gap_bead": null,
+      "rationale": "Style parameters, clean boxes, variable delimiters, fraction reboxing, mu glue, and math kern helpers."
+    },
+    {
+      "modules": {
+        "first": 719,
+        "last": 733
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::math",
+      "property_ids": [
+        "tex82.math.mlist-first-pass"
+      ],
+      "gap_bead": null,
+      "rationale": "Mlist recursion, field fetch, choice selection, bin normalization, and nonscript/mu conversion."
+    },
+    {
+      "modules": {
+        "first": 734,
+        "last": 760
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::math",
+      "property_ids": [
+        "tex82.math.noad-construction"
+      ],
+      "gap_bead": null,
+      "rationale": "Rule, accent, fraction, operator, ligature, and script construction in the first pass."
+    },
+    {
+      "modules": {
+        "first": 761,
+        "last": 767
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::math",
+      "property_ids": [
+        "tex82.math.mlist-second-pass"
+      ],
+      "gap_bead": null,
+      "rationale": "Left/right construction, class spacing, style deletion, and math penalties in the second pass."
+    },
+    {
+      "modules": {
+        "first": 967,
+        "last": 969
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::vertical-break",
+      "property_ids": [
+        "tex82.vertical.prune-page-top"
+      ],
+      "gap_bead": null,
+      "rationale": "Prunes discardables and inserts adjusted split_top_skip before retained vertical material."
+    },
+    {
+      "modules": {
+        "first": 970,
+        "last": 976
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::vertical-break",
+      "property_ids": [
+        "tex82.vertical.best-break"
+      ],
+      "gap_bead": null,
+      "rationale": "Selects a vertical breakpoint by TeX82 height, depth, glue-order, penalty, badness, and shrink recovery rules."
+    },
+    {
+      "modules": {
+        "first": 977,
+        "last": 979
+      },
+      "disposition": "property",
+      "owner": "tex-exec::boxes",
+      "property_ids": [
+        "tex82.boxes.vsplit-kernel"
+      ],
+      "gap_bead": null,
+      "rationale": "Splits a vbox, updates split marks, prunes/repackages the remainder, and handles void or wrong-kind registers."
+    },
+    {
+      "modules": {
+        "first": 1032,
+        "last": 1044
+      },
       "disposition": "property",
       "owner": "tex-exec::main-control",
-      "property_ids": ["tex82.lists.text-material"],
+      "property_ids": [
+        "tex82.lists.text-material"
+      ],
       "gap_bead": null,
       "rationale": "Defines horizontal character, ligature/kern, language, and space insertion in the current list."
     },
     {
-      "modules": { "first": 1055, "last": 1062 },
+      "modules": {
+        "first": 1055,
+        "last": 1062
+      },
       "disposition": "property",
       "owner": "tex-exec::main-control",
-      "property_ids": ["tex82.lists.direct-material-and-groups"],
+      "property_ids": [
+        "tex82.lists.direct-material-and-groups"
+      ],
       "gap_bead": null,
       "rationale": "Defines direct rule/glue/kern material before the main-control shard's save-stack brace dispatch and restoration boundary; the same property separately owns §1070's post-unsave parameter clearing."
     },
     {
-      "modules": { "first": 1070, "last": 1070 },
+      "modules": {
+        "first": 1070,
+        "last": 1070
+      },
       "disposition": "property",
       "owner": "tex-exec::main-control",
-      "property_ids": ["tex82.lists.direct-material-and-groups"],
+      "property_ids": [
+        "tex82.lists.direct-material-and-groups"
+      ],
       "gap_bead": null,
       "rationale": "Clears group-reverting parameters after the save-stack restoration owned by the main-control shard."
     },
     {
-      "modules": { "first": 1071, "last": 1087 },
+      "modules": {
+        "first": 1071,
+        "last": 1087
+      },
       "disposition": "property",
       "owner": "tex-exec::boxes",
-      "property_ids": ["tex82.boxes.requests-and-lifecycle"],
+      "property_ids": [
+        "tex82.boxes.requests-and-lifecycle"
+      ],
       "gap_bead": null,
       "rationale": "Defines pack-spec scanning, box construction/register/shipout/leader continuations, shifts, copy/take/last/vsplit requests, group modes, hooks, and vtop adjustment."
     },
     {
-      "modules": { "first": 1088, "last": 1096 },
+      "modules": {
+        "first": 1088,
+        "last": 1096
+      },
       "disposition": "property",
       "owner": "tex-exec::paragraphs",
-      "property_ids": ["tex82.paragraphs.boundaries"],
+      "property_ids": [
+        "tex82.paragraphs.boundaries"
+      ],
       "gap_bead": null,
       "rationale": "Defines paragraph entry from vertical mode, indentation and everypar ordering, paragraph termination, and head-for-vmode recovery."
     },
     {
-      "modules": { "first": 1097, "last": 1113 },
+      "modules": {
+        "first": 1097,
+        "last": 1113
+      },
       "disposition": "property",
       "owner": "tex-exec::lists",
-      "property_ids": ["tex82.lists.structured-material"],
+      "property_ids": [
+        "tex82.lists.structured-material"
+      ],
       "gap_bead": null,
       "rationale": "Defines insertion/adjustment/mark/penalty material, tail deletion, unboxing, italic correction, and mode restrictions."
     },
     {
-      "modules": { "first": 1114, "last": 1125 },
+      "modules": {
+        "first": 1114,
+        "last": 1125
+      },
       "disposition": "property",
       "owner": "tex-exec::hmode-material",
-      "property_ids": ["tex82.lists.discretionary-and-accent"],
+      "property_ids": [
+        "tex82.lists.discretionary-and-accent"
+      ],
       "gap_bead": null,
       "rationale": "Defines explicit and hyphen discretionary list construction plus text accent scanning and kern placement."
     },
     {
-      "modules": { "first": 1136, "last": 1159 },
+      "modules": {
+        "first": 1136,
+        "last": 1149
+      },
       "disposition": "property",
       "owner": "tex-exec::math",
-      "property_ids": ["tex82.math.entry-fields-choices-scripts"],
+      "property_ids": [
+        "tex82.math.entry-and-display-setup"
+      ],
       "gap_bead": null,
-      "rationale": "Defines inline/display math entry, equation-number submode, field/group/mlist collection, and math atoms before the scanner-owned delimiter sections."
+      "rationale": "Inline/display entry, equation-number entry, paragraph interruption, and pre-display measurements."
     },
     {
-      "modules": { "first": 1162, "last": 1177 },
+      "modules": {
+        "first": 1150,
+        "last": 1159
+      },
       "disposition": "property",
       "owner": "tex-exec::math",
-      "property_ids": ["tex82.math.entry-fields-choices-scripts"],
+      "property_ids": [
+        "tex82.math.fields-and-atoms"
+      ],
       "gap_bead": null,
-      "rationale": "Defines executor-owned radical, accent, vcenter, style, choice, limit, and script construction after scanner-owned delimiter sections 1160–1161."
+      "rationale": "Braced/unbraced math fields and base atom construction before scanner-owned delimiter sections."
     },
     {
-      "modules": { "first": 1178, "last": 1192 },
+      "modules": {
+        "first": 1162,
+        "last": 1171
+      },
       "disposition": "property",
       "owner": "tex-exec::math",
-      "property_ids": ["tex82.math.fractions-and-left-right"],
+      "property_ids": [
+        "tex82.math.radicals-accents-styles-limits"
+      ],
+      "gap_bead": null,
+      "rationale": "Radical, accent, vcenter, style, and operator-limit request construction."
+    },
+    {
+      "modules": {
+        "first": 1172,
+        "last": 1174
+      },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": [
+        "tex82.math.choice-groups"
+      ],
+      "gap_bead": null,
+      "rationale": "Four independently grouped mathchoice arms and ordered choice completion."
+    },
+    {
+      "modules": {
+        "first": 1175,
+        "last": 1177
+      },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": [
+        "tex82.math.script-attachment"
+      ],
+      "gap_bead": null,
+      "rationale": "Subscript/superscript attachment, field collection, and duplicate-script recovery."
+    },
+    {
+      "modules": {
+        "first": 1178,
+        "last": 1192
+      },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": [
+        "tex82.math.fractions-and-left-right"
+      ],
       "gap_bead": null,
       "rationale": "Defines generalized fraction state, optional delimiters and thickness, duplicate-fraction recovery, and left/right group completion/mismatch recovery."
     },
     {
-      "modules": { "first": 1193, "last": 1205 },
+      "modules": {
+        "first": 1193,
+        "last": 1205
+      },
       "disposition": "property",
       "owner": "tex-exec::math",
-      "property_ids": ["tex82.math.exit-and-display"],
+      "property_ids": [
+        "tex82.math.exit-and-display"
+      ],
       "gap_bead": null,
       "rationale": "Defines the only math exit, font validation, inline lowering, display/equation-number packing, spacing, and penalties before the alignment-owned display completion."
     }
   ],
   "properties": [
     {
-      "id": "tex82.boxes.packing",
+      "id": "tex82.boxes.hpack",
       "sections": [
         644,
         645,
@@ -134,7 +342,45 @@
         664,
         665,
         666,
-        667,
+        667
+      ],
+      "claim": "hpack measures each legal hlist node, migrates adjustment material, selects the highest stretch or shrink order and canonical ratio, and reports underfull/tight/overfull boxes without changing packed content.",
+      "preconditions": [
+        "A finite hlist and live font, glue, hbadness and hfuzz state are available."
+      ],
+      "stimulus": [
+        "Pack empty and mixed hlists under natural, to and spread requests with finite/infinite glue and adjustments."
+      ],
+      "expected_observations": [
+        "Width, height, depth, glue sign/order/ratio, migrations and diagnostics follow §§644–667."
+      ],
+      "postconditions": [
+        "The box owns nonmigrating nodes once and preserves their order."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary: natural versus equal resolved targets, exact fit, empty list, all glue orders, shifted children; Phase 2 adds packing::tests::tex82_hpack_node_measurement_orders_and_adjustment_migration."
+      ],
+      "recovery_cases": [
+        "Normal over-shrink clamps and diagnoses; arithmetic overflow fails loudly."
+      ],
+      "semantic_owner": "tex-typeset::packing",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "hpack_sets_finite_stretch_order_and_ratio"
+        },
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "hpack_reports_insufficient_normal_shrink_even_below_infinite_badness"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.boxes.vpack-and-vlist-append",
+      "sections": [
         668,
         669,
         670,
@@ -148,47 +394,42 @@
         678,
         679
       ],
-      "claim": "hpack and vpackage measure every canonical node kind with checked scaled arithmetic, choose exactly the requested natural/additional/exact size, set the highest nonzero glue order and ratio, clamp only vertical depth to max_depth, issue TeX82 badness/fuzz diagnostics, migrate adjustment material from hpack, and append vertical boxes with baseline/line-skip glue determined by prev_depth.",
+      "claim": "vpackage measures vertical nodes, applies glue setting and diagnostics, clamps depth to max_depth, and append_to_vlist selects baseline_skip or line_skip from prev_depth before updating it.",
       "preconditions": [
-        "A finite acyclic hlist or vlist and its live glue, font, badness, fuzz, baseline, line-skip, and max-depth parameters are available.",
-        "The packing request distinguishes natural, to, and spread semantics before list ownership transfers."
+        "A finite vlist and live vertical packing and baseline parameters are available."
       ],
       "stimulus": [
-        "Pack empty and nonempty horizontal and vertical lists under natural, exact, and additional requests with finite/infinite stretch, normal/infinite shrink, shifted boxes, rules, kerns, math nodes, insertions, and migrating adjustments."
+        "Pack and append empty/mixed vlists at natural/exact/additional targets with depths around max_depth and baseline clearance."
       ],
       "expected_observations": [
-        "Natural dimensions, stretch/shrink totals by order, selected sign/order/ratio, box dimensions, migrated nodes, and diagnostics match §§644–679.",
-        "Appending a box/rule to a vlist inserts baseline glue when sufficient and line-skip otherwise, then updates prev_depth to the appended depth."
+        "Vertical dimensions, glue ratio, diagnostics, clamped depth and inserted interline glue follow §§668–679."
       ],
       "postconditions": [
-        "The packed box owns the original nonmigrating list exactly once and preserves node order.",
-        "No diagnostic changes the selected glue setting or dimensions; overflow fails instead of wrapping."
+        "The packed list is owned once and prev_depth equals the appended box/rule depth."
       ],
       "equivalence_cases": [
-        "Positive: natural hpack/vpack and to/spread requests agree when their resolved target is equal.",
-        "Boundary: empty lists, exact fit, zero stretch/shrink, highest infinite order, overfull normal shrink, and max_depth equality.",
-        "Nesting/mode: shifted child boxes and nested h/v boxes measure along the proper axis; outer/internal vertical append use their live prev_depth."
+        "Positive/boundary/nesting: exact fit, empty list, max_depth equality, leading glue, nested shifted boxes; Phase 2 adds packing::tests::tex82_vpack_depth_and_append_to_vlist_baseline_matrix."
       ],
       "recovery_cases": [
-        "Overfull, underfull, and tight diagnostics honor hbadness/vbadness and hfuzz/vfuzz without mutating content.",
-        "Arithmetic overflow is a loud packing error; infinite shrink follows TeX82's non-normal-order behavior."
+        "Infinite shrink and overfull/underfull states diagnose without reordering nodes."
       ],
       "semantic_owner": "tex-typeset::packing",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "hpack_sets_finite_stretch_order_and_ratio" },
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
-          "test": "hpack_reports_insufficient_normal_shrink_even_below_infinite_badness"
+          "test": "vpack_clamps_depth_to_box_max_depth"
         },
-        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "vpack_clamps_depth_to_box_max_depth" },
-        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "vtop_with_leading_glue_has_zero_height" }
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "vtop_with_leading_glue_has_zero_height"
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.228"
     },
     {
-      "id": "tex82.math.model-and-lowering",
+      "id": "tex82.math.noad-model",
       "sections": [
         680,
         681,
@@ -208,7 +449,41 @@
         695,
         696,
         697,
-        698,
+        698
+      ],
+      "claim": "Every TeX82 math node has the canonical field/noad/choice/style representation, initializes empty fields deterministically, displays recursively, and releases each owned field or mlist exactly once.",
+      "preconditions": [
+        "Typed field and noad variants can represent every §34 layout."
+      ],
+      "stimulus": [
+        "Construct, display and destroy every noad, choice arm, fraction field and nested mlist form."
+      ],
+      "expected_observations": [
+        "Class, subtype, fields, delimiters, styles and four choice arms remain distinct."
+      ],
+      "postconditions": [
+        "No field aliases mutable ownership and recursive release is complete."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: empty fields, all atom classes, null choices and deeply nested mlists; Phase 2 adds math::model::tests::tex82_noad_field_layout_initialization_and_release_matrix."
+      ],
+      "recovery_cases": [
+        "Malformed internal variants are rejected structurally rather than interpreted as another noad."
+      ],
+      "semantic_owner": "tex-typeset::math",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "deeply_nested_sub_boxes_use_an_explicit_work_stack"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.clean-box-delimiters-mu",
+      "sections": [
         699,
         700,
         701,
@@ -228,7 +503,45 @@
         715,
         716,
         717,
-        718,
+        718
+      ],
+      "claim": "Style selection supplies canonical font parameters; clean_box/rebox, overbar, variable-delimiter search and extensible assembly, mu-glue conversion and math-kern conversion produce style-correct boxes without losing field ownership.",
+      "preconditions": [
+        "Math families, metrics, style and parameters are available."
+      ],
+      "stimulus": [
+        "Clean empty/character/submlist fields, grow delimiters through variant and extensible chains, and convert mu glue/kerns in all styles."
+      ],
+      "expected_observations": [
+        "Delimiter choice, assembly dimensions, reboxing, overbar and mu scaling follow §§699–718."
+      ],
+      "postconditions": [
+        "Returned boxes are normalized and source fields are consumed once."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: null/small/large/extensible delimiters, empty fields, exact target extent and nested boxes; Phase 2 adds math::tests::tex82_clean_box_delimiter_and_mu_helper_matrix."
+      ],
+      "recovery_cases": [
+        "Missing variants fall through both families to null delimiter space; missing characters do not corrupt adjacent material."
+      ],
+      "semantic_owner": "tex-typeset::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "var_delimiter_searches_small_chain_before_large_and_builds_extensible"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "math_glue_converts_mu_dimensions_with_current_math_quad"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.mlist-first-pass",
+      "sections": [
         719,
         720,
         721,
@@ -243,7 +556,45 @@
         730,
         731,
         732,
-        733,
+        733
+      ],
+      "claim": "The first mlist pass recursively cleans fields, selects the current mathchoice arm, deletes style/choice wrappers, normalizes binary atoms from neighboring classes, and converts mu/nonscript nodes for the active style.",
+      "preconditions": [
+        "A valid mlist and style enter the first pass."
+      ],
+      "stimulus": [
+        "Process all atom-class neighborhoods, styles, choices, mu glue/kerns and nonscript markers."
+      ],
+      "expected_observations": [
+        "Choice/style effects and bin normalization precede construction and spacing."
+      ],
+      "postconditions": [
+        "No unresolved choice remains and each surviving noad has its final first-pass class."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: leading/trailing/consecutive bin atoms, cramped choices, deep choice nesting; Phase 2 adds math::convert::tests::tex82_first_pass_choice_bin_and_nonscript_matrix."
+      ],
+      "recovery_cases": [
+        "Undefined family characters diagnose locally while pass ordering and neighboring classes remain intact."
+      ],
+      "semantic_owner": "tex-typeset::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "deeply_nested_math_choices_use_an_explicit_work_stack"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "bin_normalization_runs_math_ligatures_before_translation"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.noad-construction",
+      "sections": [
         734,
         735,
         736,
@@ -270,51 +621,30 @@
         757,
         758,
         759,
-        760,
-        761,
-        762,
-        763,
-        764,
-        765,
-        766,
-        767
+        760
       ],
-      "claim": "Math lists retain typed noad fields, choices, styles, delimiters, fractions, radicals, accents, operators and scripts; mlist_to_hlist selects the current choice/style/font parameters, normalizes binary atoms, recursively cleans fields, constructs variants and extensibles, applies TeX82 clearances and italic corrections, inserts the class-spacing table glue and penalties, and consumes the mlist exactly once.",
+      "claim": "First-pass constructors implement rules, over/underlines, vcenters, accents, generalized fractions, operators and limits, math ligatures/kerns, and single/paired scripts with TeX82 style-dependent clearances and italic corrections.",
       "preconditions": [
-        "The complete frozen mlist, style, math families, font metrics, math parameters, delimiter codes, and mu glue are available.",
-        "Every field is empty, a math character, a sub-box, or a sub-mlist and every noad variant satisfies §§680–689."
+        "First-pass classes and cleaned fields plus live metrics/parameters are available."
       ],
       "stimulus": [
-        "Lower nested mlists containing all atom classes, four-way choices, style switches, nonscript/mu material, variable delimiters, fractions with and without rules, radicals, accents, operators with each limits mode, paired scripts, ligatures/kerns, and left/middle/right delimiters."
+        "Construct every noad family in display/text/script styles with empty, character, box and submlist nuclei."
       ],
       "expected_observations": [
-        "First-pass choice/style selection and bin normalization precede noad construction; second-pass spacing and penalties use the resulting classes.",
-        "Delimiter growth, fraction clearances, radical rule placement, accent skew/variant selection, operator centering/limits, and scripts follow the exact style-dependent parameters."
+        "Accent skew/variant, fraction clearance, limit placement, lig/kern and script shifts match §§734–760."
       ],
       "postconditions": [
-        "The output is a deterministic hlist with no unresolved noad/choice/style nodes and with named math-glue provenance retained.",
-        "Recursive inputs are released or transferred once; crampedness and style transitions remain exact at every depth."
+        "Each noad becomes one deterministic hlist fragment with no lost scripts or boxes."
       ],
       "equivalence_cases": [
-        "Positive: every atom pair and all display/text/script/scriptscript choices are covered by focused layout matrices.",
-        "Boundary: empty fields/mlists, missing family characters, smallest/largest delimiters, zero rule thickness, final binary atoms, and no-script glue.",
-        "Nesting/mode: deep choices, sub-mlists, fractions in scripts, accents over nested boxes, and left/right around nested material preserve style and ownership."
+        "Positive/boundary/nesting: ruled/ruleless fractions, limits modes, sub-only/sup-only/pairs, empty nuclei and nested accents; Phase 2 adds math::operators::tests::tex82_noad_constructor_clearance_and_italic_matrix."
       ],
       "recovery_cases": [
-        "Undefined families or missing characters diagnose and omit only the unavailable character while preserving surrounding structure.",
-        "Absent delimiter variants fall back through small/large families or null delimiter space; impossible arithmetic fails loudly."
+        "Missing glyphs/families omit only the unavailable glyph and preserve constructed siblings."
       ],
       "semantic_owner": "tex-typeset::math",
       "test_level": "rust-unit+dvi-semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-typeset/src/math/tests.rs",
-          "test": "deeply_nested_math_choices_use_an_explicit_work_stack"
-        },
-        {
-          "path": "crates/tex-typeset/src/math/tests.rs",
-          "test": "var_delimiter_searches_small_chain_before_large_and_builds_extensible"
-        },
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
           "test": "make_fraction_uses_default_rule_and_delimiter_target"
@@ -323,14 +653,198 @@
           "path": "crates/tex-typeset/src/math/tests.rs",
           "test": "display_operator_uses_larger_variant_and_places_limits"
         },
-        { "path": "crates/tex-typeset/src/math/tests.rs", "test": "math_accent_uses_skewchar_kern_and_larger_accent" }
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "math_accent_uses_skewchar_kern_and_larger_accent"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "script_pair_uses_italic_delta_scriptspace_and_cramped_substyle"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.mlist-second-pass",
+      "sections": [
+        761,
+        762,
+        763,
+        764,
+        765,
+        766,
+        767
+      ],
+      "claim": "The second pass builds sized left/right delimiters, applies the canonical 8-by-8 atom-class spacing table with style suppression, removes style nodes, and inserts penalties only at eligible class boundaries.",
+      "preconditions": [
+        "First-pass noad classes and constructed fragments are final."
+      ],
+      "stimulus": [
+        "Traverse every class pair in all styles with left/right delimiters and penalty insertion enabled/disabled."
+      ],
+      "expected_observations": [
+        "Spacing kind, delimiter extent and penalty placement follow §§761–767."
+      ],
+      "postconditions": [
+        "The output hlist contains no noad/style wrapper and preserves source order."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: all class pairs, null delimiters, cramped scripts and nested left/right; Phase 2 adds math::convert::tests::tex82_second_pass_spacing_delimiter_penalty_matrix."
+      ],
+      "recovery_cases": [
+        "Unavailable delimiters use null delimiter space without suppressing adjacent spacing."
+      ],
+      "semantic_owner": "tex-typeset::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "left_right_delimiters_size_to_enclosed_list"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "middle_delimiter_uses_common_extent_and_boundary_spacing"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.vertical.prune-page-top",
+      "sections": [
+        967,
+        968,
+        969
+      ],
+      "claim": "prune_page_top removes leading glue, kern and penalty nodes while preserving whatsits, marks and insertions, then inserts split_top_skip before the first box/rule with nonnegative width reduced by that node's height.",
+      "preconditions": [
+        "A vertical list and split_top_skip are available."
+      ],
+      "stimulus": [
+        "Prune lists with each discardable/preserved prefix and first box/rule heights below, equal to and above split_top_skip."
+      ],
+      "expected_observations": [
+        "Only leading discardables are freed and adjusted top glue is inserted at the first box/rule."
+      ],
+      "postconditions": [
+        "Preserved prefix order and remaining list ownership are unchanged."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: empty/all-discardable lists, marks before first box, equal/oversized height; Phase 2 adds vertical_break::tests::tex82_prune_page_top_prefix_and_split_skip_matrix."
+      ],
+      "recovery_cases": [
+        "An impossible vertical-list node kind fails loudly instead of being discarded."
+      ],
+      "semantic_owner": "tex-typeset::vertical-break",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.vertical.best-break",
+      "sections": [
+        970,
+        971,
+        972,
+        973,
+        974,
+        975,
+        976
+      ],
+      "claim": "vert_break scans legal vertical breakpoints, tracks height/depth and glue orders, computes penalty-adjusted badness, prefers the latest equal-cost champion, stops at forced/awful breaks, and normalizes infinite shrink after diagnosing it.",
+      "preconditions": [
+        "A legal vertical list, target height and max depth are available."
+      ],
+      "stimulus": [
+        "Evaluate glue, kern-before-glue, penalty and forced breakpoints across stretch/shrink orders and depth limits."
+      ],
+      "expected_observations": [
+        "Selected breakpoint and best_height_plus_depth match §§970–976."
+      ],
+      "postconditions": [
+        "Only infinite-shrink normalization mutates the list; all other measurement is observational."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: exact fit, equal costs, null forced end, negative max depth and nested boxes; Phase 2 adds vertical_break::tests::tex82_vert_break_cost_depth_and_tie_matrix."
+      ],
+      "recovery_cases": [
+        "Infinite shrink emits one diagnostic and becomes finite normal-order shrink before continuing."
+      ],
+      "semantic_owner": "tex-typeset::vertical-break",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/vertical_break.rs",
+          "test": "forced_penalty_breaks_before_the_penalty_node"
+        },
+        {
+          "path": "crates/tex-typeset/src/vertical_break.rs",
+          "test": "kern_before_glue_is_a_legal_break"
+        },
+        {
+          "path": "crates/tex-typeset/src/vertical_break.rs",
+          "test": "reports_infinite_shrink_glue_that_enters_accounting"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.boxes.vsplit-kernel",
+      "sections": [
+        977,
+        978,
+        979
+      ],
+      "claim": "vsplit clears prior split marks, rejects void/non-vbox registers canonically, selects and severs the best prefix, records first/bottom marks, prunes the remainder, replaces or voids the register, and exactly packages the extracted prefix.",
+      "preconditions": [
+        "The scanned box register and target height are complete and split parameters are live."
+      ],
+      "stimulus": [
+        "Split void, hbox and vbox registers at first, middle, artificial-end and penalty-first breaks with zero, one and multiple marks."
+      ],
+      "expected_observations": [
+        "Extracted box, remainder register, split marks and dimensions follow §§977–979."
+      ],
+      "postconditions": [
+        "Every node belongs to exactly one of extracted/remainder lists and register scope is preserved."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: exact/oversized target, complete extraction, penalty-first break and nested vboxes; Phase 2 adds boxes::vsplit::tests::tex82_vsplit_marks_remainder_and_trivial_case_matrix."
+      ],
+      "recovery_cases": [
+        "Void returns void; an hbox diagnoses and remains untouched."
+      ],
+      "semantic_owner": "tex-exec::boxes",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
+        }
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.228"
     },
     {
       "id": "tex82.lists.text-material",
-      "sections": [1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
+      "sections": [
+        1032,
+        1033,
+        1034,
+        1035,
+        1036,
+        1037,
+        1038,
+        1039,
+        1040,
+        1041,
+        1042,
+        1043,
+        1044
+      ],
       "claim": "Horizontal main control appends character and space material with TeX82 space-factor updates, boundary/ligature/kern processing, language whatsits, font-space caching, and xspace/xspaceskip scaling, while vertical-mode character material starts a paragraph and replays the triggering command.",
       "preconditions": [
         "A current mode, font, language, space factor, sfcode table, and font lig/kern program are live.",
@@ -351,7 +865,8 @@
       "equivalence_cases": [
         "Positive: literal, char_given, and char_num characters share lig/kern and space-factor behavior.",
         "Boundary: nullfont/missing glyph, sfcode 0/1000/>1000/<1000, boundary hit/miss, and xspaceskip present/absent.",
-        "Mode/nesting: outer vertical starts unrestricted hmode; restricted hmode stays restricted; math-mode text-only commands use recovery or their math meaning."
+        "Mode/nesting: outer vertical starts unrestricted hmode; restricted hmode stays restricted; math-mode text-only commands use recovery or their math meaning.",
+        "Phase 2 adds command_replay::tests::canonical_text_material_space_factor_and_ligature_matrix."
       ],
       "recovery_cases": [
         "A missing character emits the canonical warning and appends no character node.",
@@ -378,7 +893,17 @@
     },
     {
       "id": "tex82.lists.direct-material-and-groups",
-      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1070],
+      "sections": [
+        1055,
+        1056,
+        1057,
+        1058,
+        1059,
+        1060,
+        1061,
+        1062,
+        1070
+      ],
       "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes and invoke outer-vertical page building at the canonical boundary; after separately owned save-stack brace dispatch and restoration (§§1063–1069), §1070 clears the parameters whose values revert at group exit.",
       "preconditions": [
         "Current mode/list and live glue or dimension parameters are available.",
@@ -398,7 +923,8 @@
       "equivalence_cases": [
         "Positive: named and explicit skip/kern forms with equal values append equivalent nodes.",
         "Boundary: zero/negative dimensions, fil orders, omitted rule dimensions, and repeated keyword overrides.",
-        "Nesting/mode: rules, glue, and kerns append to the current outer/internal vertical, horizontal, or math list selected by canonical dispatch."
+        "Nesting/mode: rules, glue, and kerns append to the current outer/internal vertical, horizontal, or math list selected by canonical dispatch.",
+        "Phase 2 adds command_replay::tests::canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix."
       ],
       "recovery_cases": [
         "A failed optional rule keyword backs up the first nonkeyword command for main control.",
@@ -455,7 +981,8 @@
       "equivalence_cases": [
         "Positive: natural versus resolved-equal to/spread, brace aliases, nested hooks, and immediate/register box operands.",
         "Boundary: void registers, box255, empty vtop, leading glue vtop, exact split, oversized split, and zero shifts.",
-        "Mode/nesting: hbox restricted hmode versus vbox/vtop internal vmode, nested simple groups, and illegal complementary shift modes."
+        "Mode/nesting: hbox restricted hmode versus vbox/vtop internal vmode, nested simple groups, and illegal complementary shift modes.",
+        "Phase 2 adds command_replay::tests::canonical_box_request_lifecycle_mode_and_recovery_matrix."
       ],
       "recovery_cases": [
         "A missing opener backs up the rejected token as first body material; a missing box operand diagnoses and replays it.",
@@ -486,7 +1013,17 @@
     },
     {
       "id": "tex82.paragraphs.boundaries",
-      "sections": [1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096],
+      "sections": [
+        1088,
+        1089,
+        1090,
+        1091,
+        1092,
+        1093,
+        1094,
+        1095,
+        1096
+      ],
       "claim": "new_graf enters unrestricted horizontal mode from vertical mode, resets paragraph state, optionally appends the indent box, runs everypar after mode entry, and backs up the triggering command; end_graf removes terminal glue, adds paragraph fill/penalty structure, line-breaks only nonempty unrestricted paragraphs, appends lines to the enclosing vlist, updates prev_graf, and invokes page building only at outer vertical depth.",
       "preconditions": [
         "Vertical paragraph parameters, language/hyphen minima, everypar, parshape/hang settings, and line-breaking parameters are live.",
@@ -506,7 +1043,8 @@
       "equivalence_cases": [
         "Positive: explicit indent/noindent and implicit character/unhbox/valign triggers.",
         "Boundary: empty paragraph, only discardables, one line, terminal discretionary, and paragraph ending at group boundary.",
-        "Nesting/mode: paragraph inside vbox/insertion/output versus outer page; display interruption resumes vertical contribution correctly."
+        "Nesting/mode: paragraph inside vbox/insertion/output versus outer page; display interruption resumes vertical contribution correctly.",
+        "Phase 2 adds assignments::paragraph::tests::canonical_paragraph_entry_exit_mode_and_recovery_matrix."
       ],
       "recovery_cases": [
         "head_for_vmode backs up the vertical command then a frozen par in unrestricted hmode; restricted hmode uses off_save.",
@@ -571,7 +1109,8 @@
       "equivalence_cases": [
         "Positive: mark/penalty in all modes, insert in outer/internal vertical and hmode, vadjust migration, unbox versus copy-unbox.",
         "Boundary: insert classes 0/254/255/out-of-range, void/wrong-kind boxes, empty tails, zero italic correction.",
-        "Nesting/mode: structured material inside hbox and paragraph migrates outward; internal-vbox material remains owned by the box where required."
+        "Nesting/mode: structured material inside hbox and paragraph migrates outward; internal-vbox material remains owned by the box where required.",
+        "Phase 2 adds command_replay::tests::canonical_structured_list_material_mode_and_recovery_matrix."
       ],
       "recovery_cases": [
         "insert255 and out-of-range classes diagnose/clamp as specified while vadjust's internal 255 sentinel remains legal.",
@@ -602,7 +1141,20 @@
     },
     {
       "id": "tex82.lists.discretionary-and-accent",
-      "sections": [1114, 1115, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1123, 1124, 1125],
+      "sections": [
+        1114,
+        1115,
+        1116,
+        1117,
+        1118,
+        1119,
+        1120,
+        1121,
+        1122,
+        1123,
+        1124,
+        1125
+      ],
       "claim": "discretionary constructs exactly three isolated restricted-horizontal lists, enforces the replacement-count limit and admissible node kinds, attaches pre/post/replacement ownership once, and preserves aftergroup replay; text accent scans the accent and optional base character, computes slant/x-height placement, appends balancing kerns, and replays a noncharacter base command.",
       "preconditions": [
         "The discretionary command kind, current hmode, hyphen character, font metrics, and isolated group replay facility are available.",
@@ -622,7 +1174,8 @@
       "equivalence_cases": [
         "Positive: discretionary shorthand and explicit empty groups; accent with ordinary and slanted fonts.",
         "Boundary: 0/1/127/128 replacement nodes, empty branches, missing hyphen/accent/base glyphs, and zero skew.",
-        "Nesting/mode: discretionaries inside boxes/paragraphs and nested groups retain aftergroup and restricted-hmode ownership."
+        "Nesting/mode: discretionaries inside boxes/paragraphs and nested groups retain aftergroup and restricted-hmode ownership.",
+        "Phase 2 adds command_replay::tests::canonical_discretionary_and_text_accent_boundary_matrix."
       ],
       "recovery_cases": [
         "Excess replacement nodes and forbidden node kinds are diagnosed and flushed according to §§1120–1121.",
@@ -648,7 +1201,7 @@
       "gap_bead": "umber2-johp.228"
     },
     {
-      "id": "tex82.math.entry-fields-choices-scripts",
+      "id": "tex82.math.entry-and-display-setup",
       "sections": [
         1136,
         1137,
@@ -663,7 +1216,45 @@
         1146,
         1147,
         1148,
-        1149,
+        1149
+      ],
+      "claim": "Math shift enters inline or display mode with correct shift lookahead, paragraph interruption, group/hook ordering, equation-number submode, and pre-display size/width computation.",
+      "preconditions": [
+        "Horizontal mode, paragraph state, hooks and display parameters are live."
+      ],
+      "stimulus": [
+        "Enter inline/display math from unrestricted/restricted hmode and start eqno/leqno under fitting and overfull pre-display material."
+      ],
+      "expected_observations": [
+        "Mode/group transitions, everymath/everydisplay and paragraph break ordering follow §§1136–1149."
+      ],
+      "postconditions": [
+        "One active math mlist owns the new mode and parent lookahead is preserved."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: single/double shifts, empty paragraph, restricted hbox and display after nested boxes; Phase 2 adds math::tests::tex82_math_entry_display_probe_and_eqno_mode_matrix."
+      ],
+      "recovery_cases": [
+        "eqno outside display is illegal and consumes no field; failed display pairing preserves lookahead."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_init_math_probe_leaves_the_following_conditional_unexpanded"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.fields-and-atoms",
+      "sections": [
         1150,
         1151,
         1152,
@@ -673,7 +1264,45 @@
         1156,
         1157,
         1158,
-        1159,
+        1159
+      ],
+      "claim": "Math fields collect one unbraced atom or a balanced braced sub-mlist with exact group ownership, and character/atom commands append the canonical noad class and typed nucleus.",
+      "preconditions": [
+        "A live math mlist and command-owned field replay boundary are available."
+      ],
+      "stimulus": [
+        "Build empty, character, active, braced and nested fields for every atom command."
+      ],
+      "expected_observations": [
+        "Field simplification and noad class/nucleus follow §§1150–1159."
+      ],
+      "postconditions": [
+        "Each field episode retires before parent delivery and attaches once."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: unbraced/braced equal fields, empty group, active outer character and nested subformula; Phase 2 adds math::scan::tests::tex82_math_field_and_atom_construction_matrix."
+      ],
+      "recovery_cases": [
+        "Missing brace backs up the rejected command and opens the field logically without fabricating delivery."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "math_field_brace_opens_group_without_absorbing_its_body"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.radicals-accents-styles-limits",
+      "sections": [
         1162,
         1163,
         1164,
@@ -683,54 +1312,108 @@
         1168,
         1169,
         1170,
-        1171,
-        1172,
-        1173,
-        1174,
-        1175,
-        1176,
-        1177
+        1171
       ],
-      "claim": "A math shift enters inline or display math with the correct paragraph interruption, pairing lookahead, group/mode and everymath/everydisplay ordering; typed fields and braced mlists build math characters, atoms, delimiters, radicals, accents, vcenters, styles, four independent mathchoice arms, limits and scripts, with duplicate-script and missing-brace recovery preserving parent input.",
+      "claim": "Radical, math-accent, vcenter, style and limit commands append their typed noad/node after completing required delimiter, character or field operands, with mode legality and accent misuse recovery.",
       "preconditions": [
-        "The current horizontal context, math code/family tables, frozen hooks, mode/group stack, and command-owned math request scanner are available.",
-        "Display entry can inspect paragraph shape and pre-display material without consuming the post-shift parent token."
+        "A live math list and completed typed request are available; delimiter scanning remains owned by §§1160–1161."
       ],
       "stimulus": [
-        "Enter inline/display math from unrestricted/restricted hmode; build every atom/field form, nested groups, mathchoice arms, delimiters/radicals/accents/vcenter, style/limits switches and paired/duplicate scripts, including equation-number entry."
+        "Build radicals, accents, vcenters, every style and limits switch around character and compound nuclei."
       ],
       "expected_observations": [
-        "Shift pairing, paragraph break, mode/group entry and hooks occur in TeX82 order; each replay episode freezes before parent delivery resumes.",
-        "Noad classes, field kinds, delimiter codes, choice arms, style/limit nodes and script attachment preserve exact scanned operands and provenance."
+        "Noad type, delimiter/accent value, style and limits subtype follow §§1162–1171."
       ],
       "postconditions": [
-        "The active mlist contains only well-formed typed nodes and every temporary field/choice group has one matching save level.",
-        "Parent source position is unchanged except for tokens canonically consumed or backed up by the request."
+        "Each request appends once without rereading operands."
       ],
       "equivalence_cases": [
-        "Positive: mathchar/mathchardef/variable-family characters, unbraced/braced fields, all choice styles, limits/nolimits/displaylimits, and sub/sup/both scripts.",
-        "Boundary: empty mlist/field, family 0/15, mathcode active sentinel, delimiter 0/max, missing glyph, and second sub/sup marker.",
-        "Nesting/mode: choice inside alignment cells, scripts containing choices/fractions, eqno subformula, and restricted-hmode inline math."
+        "Positive/boundary/nesting: delimiter 0/max, all styles, limits before/after operators and nested accent fields; Phase 2 adds math::scan::tests::tex82_radical_accent_style_and_limits_request_matrix."
       ],
       "recovery_cases": [
-        "A missing field brace backs up the rejected command and opens the group logically; duplicate scripts insert a dummy noad and diagnose.",
-        "Math-only commands outside math insert frozen dollar; eqno outside display reports illegal without entering a subformula."
+        "A non-math accent command diagnoses the required mathaccent spelling; wrong-mode requests use main-control recovery."
       ],
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "math_field_brace_opens_group_without_absorbing_its_body"
-        },
+          "test": "math_delimiter_and_mu_requests_recover_and_consume_units"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.choice-groups",
+      "sections": [
+        1172,
+        1173,
+        1174
+      ],
+      "claim": "mathchoice collects display, text, script and scriptscript arms as four independent math groups in fixed order, restores style/group state between arms, and appends one choice node only after all four complete.",
+      "preconditions": [
+        "A live math list can open four isolated replay groups."
+      ],
+      "stimulus": [
+        "Build empty/nonempty/nested choices with local assignments and aftergroup material in each arm."
+      ],
+      "expected_observations": [
+        "Each arm freezes and retires independently in display-to-scriptscript order."
+      ],
+      "postconditions": [
+        "One choice node owns four distinct mlists and no arm consumes parent input."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: empty arms, deep choices and choice inside alignment/script; Phase 2 adds math::scan::tests::tex82_mathchoice_four_group_order_scope_and_retirement."
+      ],
+      "recovery_cases": [
+        "Missing arm braces recover at that arm only; premature parent input is not folded into a completed arm."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "math_choice_groups_are_completed_independently"
         },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
-        },
+          "test": "production_driver_math_choice_inside_alignment_cell_retires_cleanly"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.script-attachment",
+      "sections": [
+        1175,
+        1176,
+        1177
+      ],
+      "claim": "Subscript and superscript markers attach a completed field to the previous noad, synthesize an ordinary empty noad when no nucleus exists, and recover duplicate same-kind scripts without overwriting the first.",
+      "preconditions": [
+        "A live mlist and script-field replay boundary are available."
+      ],
+      "stimulus": [
+        "Attach sub-only, sup-only and paired scripts to existing/absent nuclei, then repeat either marker with nested fields."
+      ],
+      "expected_observations": [
+        "Field ownership and sub/sup slots follow §§1175–1177."
+      ],
+      "postconditions": [
+        "The first same-kind script remains attached once and later mlist order is intact."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: absent nucleus, empty fields, both orders and nested choice/fraction fields; Phase 2 adds math::scan::tests::tex82_script_attachment_dummy_noad_and_duplicate_matrix."
+      ],
+      "recovery_cases": [
+        "A duplicate marker diagnoses Double subscript/superscript and redirects the new field to a dummy noad."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_math_script_field_is_observed_like_every_other_episode"
@@ -741,7 +1424,23 @@
     },
     {
       "id": "tex82.math.fractions-and-left-right",
-      "sections": [1178, 1179, 1180, 1181, 1182, 1183, 1184, 1185, 1186, 1187, 1188, 1189, 1190, 1191, 1192],
+      "sections": [
+        1178,
+        1179,
+        1180,
+        1181,
+        1182,
+        1183,
+        1184,
+        1185,
+        1186,
+        1187,
+        1188,
+        1189,
+        1190,
+        1191,
+        1192
+      ],
       "claim": "A generalized-fraction command freezes the current mlist as numerator, scans optional left/right delimiters and rule thickness into one fraction noad, then collects the denominator until fin_mlist; left opens a math-left group with its delimiter, right alone can close it, and mismatches recover by inserting the exact structural closer without corrupting either mlist.",
       "preconditions": [
         "The current math list has no fraction noad yet or recovery can reject a duplicate.",
@@ -761,7 +1460,8 @@
       "equivalence_cases": [
         "Positive: all six generalized-fraction forms and left-right with null/growing delimiters.",
         "Boundary: empty numerator/denominator, zero/default/negative thickness, delimiter 0/max, and duplicate fraction in one mlist.",
-        "Nesting/mode: fractions within scripts/choices/left-right and nested left-right groups preserve inner-first completion."
+        "Nesting/mode: fractions within scripts/choices/left-right and nested left-right groups preserve inner-first completion.",
+        "Phase 2 adds math::scan::tests::canonical_fraction_and_left_right_nesting_recovery_matrix."
       ],
       "recovery_cases": [
         "A second generalized fraction is diagnosed and ignored without replacing the first numerator/state.",
@@ -778,7 +1478,10 @@
           "path": "crates/tex-typeset/src/math/tests.rs",
           "test": "make_fraction_uses_default_rule_and_delimiter_target"
         },
-        { "path": "crates/tex-typeset/src/math/tests.rs", "test": "left_right_delimiters_size_to_enclosed_list" },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "left_right_delimiters_size_to_enclosed_list"
+        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
@@ -789,7 +1492,21 @@
     },
     {
       "id": "tex82.math.exit-and-display",
-      "sections": [1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205],
+      "sections": [
+        1193,
+        1194,
+        1195,
+        1196,
+        1197,
+        1198,
+        1199,
+        1200,
+        1201,
+        1202,
+        1203,
+        1204,
+        1205
+      ],
       "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page; display-alignment completion and its error context are owned separately by tex82.align.display-finish (§§1206–1207).",
       "preconditions": [
         "A balanced math-shift group contains a finished mlist and optional equation-number mlist.",
@@ -809,7 +1526,8 @@
       "equivalence_cases": [
         "Positive: inline/display empty and populated formulas, eqno/leqno, fitting shared-line and forced separate-line equations.",
         "Boundary: absent symbol/extension font, zero display width, exact fit/shrink threshold, pre_display_size sentinel, and closing-shift lookahead.",
-        "Nesting/mode: inline math inside boxes/alignment cells, display after paragraph, and display alignment restore the proper enclosing list."
+        "Nesting/mode: inline math inside boxes/alignment cells, display after paragraph, and display alignment restore the proper enclosing list.",
+        "Phase 2 adds math::tests::canonical_math_exit_display_eqno_boundary_matrix."
       ],
       "recovery_cases": [
         "Missing/invalid math font dimensions diagnose before packaging and leave no half-lowered list.",
