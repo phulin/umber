@@ -7,7 +7,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
-use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior,
@@ -126,13 +126,63 @@ impl CommandProcessor<'_> {
         result
     }
 
+    /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
+    ///
+    /// `main_control`'s inner character loop (§1034) never returns to
+    /// `big_switch`'s `get_x_token` between adjacent characters. §1038 fetches
+    /// the next command with a bare `get_next` -- "set only `cur_cmd` and
+    /// `cur_chr`, for speed" -- and jumps straight back into the loop when
+    /// that raw command is `letter`, `other_char`, or `char_given`. Only a
+    /// raw command outside that set reaches `x_token`, which is the sole
+    /// reason a run of ordinary characters produces one raw delivery each and
+    /// no expanded delivery at all.
+    ///
+    /// `char_num` is deliberately *not* in the raw set: §1038 accepts it only
+    /// after `x_token`, because `\char` can be reached by expansion.
+    pub fn main_loop_lookahead(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.command.transient.active_expansion_depth += 1;
+        let result = self.main_loop_lookahead_scalar();
+        self.command.transient.active_expansion_depth -= 1;
+        result
+    }
+
+    fn main_loop_lookahead_scalar(
+        &mut self,
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        let Some(delivery) = self.get_next_with_replay_completion()? else {
+            return Ok(None);
+        };
+        let CommandReplayDelivery::Command(command) = delivery else {
+            return Ok(Some(delivery));
+        };
+        if is_main_loop_character(command.meaning()) {
+            return Ok(Some(CommandReplayDelivery::Command(command)));
+        }
+        self.expanded_delivery(Some(command))
+    }
+
     fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.expanded_delivery(None)
+    }
+
+    /// TeX.web §381's `x_token` loop, optionally entered with the raw command
+    /// §1038's lookahead has already fetched.
+    fn expanded_delivery(
+        &mut self,
+        mut pending: Option<CurrentCommand>,
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
-            let Some(delivery) = self.get_next_with_replay_completion()? else {
-                return Ok(None);
-            };
-            let CommandReplayDelivery::Command(mut command) = delivery else {
-                return Ok(Some(delivery));
+            let mut command = match pending.take() {
+                Some(command) => command,
+                None => {
+                    let Some(delivery) = self.get_next_with_replay_completion()? else {
+                        return Ok(None);
+                    };
+                    let CommandReplayDelivery::Command(command) = delivery else {
+                        return Ok(Some(delivery));
+                    };
+                    command
+                }
             };
             if matches!(
                 command.meaning(),
@@ -615,6 +665,21 @@ pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
         crate::InternalValue::Font(_) => None,
         crate::InternalValue::Tokens { .. } => None,
     }
+}
+
+/// TeX82 §1038's raw-accepted set: `letter`, `other_char`, and `char_given`.
+///
+/// These are exactly the three commands §1034's inner loop can continue on
+/// without expanding, so they are the only ones the lookahead delivers
+/// straight out of `get_next`.
+pub(crate) fn is_main_loop_character(meaning: Meaning) -> bool {
+    matches!(
+        meaning,
+        Meaning::CharToken {
+            cat: Catcode::Letter | Catcode::Other,
+            ..
+        } | Meaning::CharGiven(_)
+    )
 }
 
 fn is_expandable(meaning: Meaning) -> bool {

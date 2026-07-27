@@ -187,6 +187,112 @@ fn canonical_chardef_character_typesets_exactly_like_char() {
     );
 }
 
+/// Collects the delivery boundaries observed for each ordinary letter of the
+/// box body, in stream order, as `('A', [Raw, Expanded])` pairs.
+///
+/// Collection starts at `\hbox` so that the letters of a preceding
+/// `\font\f=cmr10` file name are not counted: those are delivered by
+/// `scan_file_name` (TeX82 §526), not by `main_control` at all.
+fn letter_delivery_boundaries(
+    observations: &[CommandObservation],
+) -> Vec<(char, Vec<CommandDeliveryBoundary>)> {
+    let mut collected: Vec<(char, Vec<CommandDeliveryBoundary>)> = Vec::new();
+    let mut in_box = false;
+    for observation in observations {
+        let CommandObservation::Command(delivery) = observation else {
+            continue;
+        };
+        if matches!(&delivery.spelling, ObservedToken::ControlSequence(name) if name == "hbox") {
+            in_box = true;
+            continue;
+        }
+        let ObservedToken::Character {
+            character,
+            catcode: tex_state::token::Catcode::Letter,
+        } = delivery.spelling
+        else {
+            continue;
+        };
+        if !in_box {
+            continue;
+        }
+        match collected.last_mut() {
+            Some((last, boundaries)) if *last == character => boundaries.push(delivery.boundary),
+            _ => collected.push((character, vec![delivery.boundary])),
+        }
+    }
+    collected
+}
+
+fn observe_run(source: &[u8]) -> Vec<(char, Vec<CommandDeliveryBoundary>)> {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    letter_delivery_boundaries(&observations.0)
+}
+
+/// TeX82 §1030 gives `main_control` two fetch labels. `big_switch` calls
+/// `get_x_token`, but §1034's inner character loop resumes at §1038's
+/// `main_loop_lookahead`, whose bare `get_next` returns a
+/// `letter`/`other_char`/`char_given` straight to the loop without ever
+/// reaching `x_token`.
+///
+/// So only the character that entered the loop is delivered twice; every
+/// later character of the run is delivered once. Before umber2-johp.172 every
+/// character went through `get_x_token`, which produced an extra expanded
+/// delivery per character from the first word of body text onward.
+#[test]
+fn canonical_character_run_lookahead_delivers_later_characters_raw_only() {
+    assert_eq!(
+        observe_run(br"\font\f=cmr10 \setbox0=\hbox{\f ABC}"),
+        vec![
+            (
+                'A',
+                vec![
+                    CommandDeliveryBoundary::Raw,
+                    CommandDeliveryBoundary::Expanded
+                ]
+            ),
+            ('B', vec![CommandDeliveryBoundary::Raw]),
+            ('C', vec![CommandDeliveryBoundary::Raw]),
+        ],
+        "only the character that entered §1034's main loop is delivered through x_token"
+    );
+}
+
+/// §1036's `main_loop_move+2` answers a character the current font does not
+/// contain with `char_warning`, frees the would-be node, and jumps to
+/// `big_switch` rather than to the lookahead. §552 gives `\nullfont`
+/// `font_bc=1` and `font_ec=0`, so it contains no character at all and every
+/// character of a font-free run is fetched at `big_switch`.
+#[test]
+fn canonical_character_run_under_nullfont_never_reaches_the_lookahead() {
+    let raw_and_expanded = vec![
+        CommandDeliveryBoundary::Raw,
+        CommandDeliveryBoundary::Expanded,
+    ];
+    assert_eq!(
+        observe_run(br"\setbox0=\hbox{ABC}"),
+        vec![
+            ('A', raw_and_expanded.clone()),
+            ('B', raw_and_expanded.clone()),
+            ('C', raw_and_expanded),
+        ],
+        "no \\nullfont character is appended, so none of them parks main control at §1038"
+    );
+}
+
 /// TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
 /// `prefixed_command`'s ordinary assignment forms; §1242 routes them to
 /// `alter_page_so_far` (§1245) and `alter_integer` (§1246). Neither had a

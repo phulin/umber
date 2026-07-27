@@ -81,7 +81,17 @@ impl CommandProcessor<'_> {
     /// it can report `ScannedStep::ReplayCompleted` exactly as ordinary
     /// (non-alignment) `scan_step` already does via
     /// `get_x_token_with_replay_completion`.
-    pub fn get_x_alignment_delivery(&mut self) -> Result<Option<AlignmentDelivery>, CommandError> {
+    ///
+    /// `main_loop_active` reports whether `main_control` is parked at TeX82
+    /// §1034's `main_loop_lookahead` rather than at §1030's `big_switch`. An
+    /// alignment cell body is ordinary `main_control` material, so the same
+    /// §1038 rule holds inside it: the first fetch is a bare `get_next`, and
+    /// a `letter`/`other_char`/`char_given` never reaches `x_token`.
+    pub fn get_x_alignment_delivery(
+        &mut self,
+        main_loop_active: bool,
+    ) -> Result<Option<AlignmentDelivery>, CommandError> {
+        let mut first = true;
         loop {
             let Some(mut command) = (match self.get_next_with_replay_completion()? {
                 Some(CommandReplayDelivery::Command(command)) => Some(command),
@@ -92,6 +102,16 @@ impl CommandProcessor<'_> {
             }) else {
                 return Ok(None);
             };
+            // §1038 short-circuits before every other test in this loop: it
+            // reads only `cur_cmd`/`cur_chr` and jumps straight back into the
+            // character loop. Neither alignment recovery predicate below can
+            // fire for these three commands, and none of them is expandable.
+            if std::mem::take(&mut first)
+                && main_loop_active
+                && crate::processor::expand::is_main_loop_character(command.meaning())
+            {
+                return Ok(Some(AlignmentDelivery::Command(command)));
+            }
             if matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
@@ -1739,10 +1759,10 @@ mod tests {
             .with_observer(&mut recorder);
 
         assert!(
-            matches!(processor.get_x_alignment_delivery().expect("brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::BeginGroup, .. }))
+            matches!(processor.get_x_alignment_delivery(false).expect("brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::BeginGroup, .. }))
         );
         let event = match processor
-            .get_x_alignment_delivery()
+            .get_x_alignment_delivery(false)
             .expect("unbalanced delimiter delivers")
         {
             Some(crate::AlignmentDelivery::Event(
@@ -1754,11 +1774,11 @@ mod tests {
             .recover_alignment_unbalanced_delimiter(event)
             .expect("TeX82 align_error recovery is command-owned");
         assert!(
-            matches!(processor.get_x_alignment_delivery().expect("inserted brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::EndGroup, .. }))
+            matches!(processor.get_x_alignment_delivery(false).expect("inserted brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::EndGroup, .. }))
         );
         assert!(matches!(
             processor
-                .get_x_alignment_delivery()
+                .get_x_alignment_delivery(false)
                 .expect("replayed tab intercepts"),
             Some(crate::AlignmentDelivery::Event(
                 crate::AlignmentDeliveryEvent::EndTemplate(_)
@@ -1802,7 +1822,7 @@ mod tests {
             .with_observer(&mut recorder);
 
         let event = match processor
-            .get_x_alignment_delivery()
+            .get_x_alignment_delivery(false)
             .expect("closing brace delivers")
         {
             Some(crate::AlignmentDelivery::Event(
@@ -1815,7 +1835,7 @@ mod tests {
             .expect("TeX82 §1103 recovery is command-owned");
         assert!(matches!(
             processor
-                .get_x_alignment_delivery()
+                .get_x_alignment_delivery(false)
                 .expect("frozen cr delivers"),
             Some(crate::AlignmentDelivery::Event(
                 crate::AlignmentDeliveryEvent::EndTemplate(_)
@@ -2677,7 +2697,7 @@ mod tests {
                 .expect("u-template token");
             assert!(matches!(u.meaning(), Meaning::CharToken { ch: 'u', .. }));
             let end_template = match processor
-                .get_x_alignment_delivery()
+                .get_x_alignment_delivery(false)
                 .expect("delimiter follows exhausted u-template")
                 .expect("intercepted delimiter")
             {
