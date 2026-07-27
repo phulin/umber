@@ -110,9 +110,23 @@ impl CommandContext<'_> {
     }
 
     /// Interns a control-sequence spelling without assigning it a meaning.
+    ///
+    /// This is TeX82 §259's `id_lookup` with `no_new_control_sequence` clear:
+    /// an absent name is entered into the hash table.
     #[must_use]
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         self.universe.intern(name).symbol()
+    }
+
+    /// Looks up an already-known control-sequence spelling without creating
+    /// one.
+    ///
+    /// This is TeX82 §259's `id_lookup` with `no_new_control_sequence` set:
+    /// an absent name resolves to §222's dummy location instead of becoming a
+    /// new hash entry.
+    #[must_use]
+    pub fn known_control_sequence(&self, name: &str) -> Option<Symbol> {
+        self.universe.symbol(name).map(|symbol| symbol.symbol())
     }
 
     /// Interns a name built by `\\csname` and installs TeX's `\\relax`

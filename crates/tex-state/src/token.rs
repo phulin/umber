@@ -9,8 +9,18 @@ pub struct FrozenToken(u16);
 impl FrozenToken {
     pub(crate) const END_TEMPLATE: Self = Self(0);
     pub(crate) const END_V: Self = Self(1);
+    /// TeX82 §222's `undefined_control_sequence`: the single dummy eqtb
+    /// location `id_lookup` returns (§259) whenever a multiletter name is
+    /// absent from the hash table and `no_new_control_sequence` is set. It is
+    /// never a hash entry, so it can carry no interned spelling.
+    pub(crate) const UNDEFINED_CONTROL_SEQUENCE: Self = Self(u16::MAX - 1);
     pub(crate) const EXPANDED_TEXT_BOUNDARY: Self = Self(u16::MAX);
     const PRIMITIVE_BASE: u16 = 2;
+    /// The lowest reserved sentinel value. Every frozen token at or above it
+    /// is an engine sentinel rather than a registered primitive, so the
+    /// primitive range is closed by one bound instead of by a growing list of
+    /// individually excluded values.
+    const SENTINEL_BASE: u16 = Self::UNDEFINED_CONTROL_SEQUENCE.0;
 
     pub(crate) const fn primitive(index: u16) -> Self {
         Self(Self::PRIMITIVE_BASE + index)
@@ -18,7 +28,7 @@ impl FrozenToken {
 
     #[must_use]
     pub const fn primitive_index(self) -> Option<u16> {
-        if self.0 >= Self::PRIMITIVE_BASE && self.0 != Self::EXPANDED_TEXT_BOUNDARY.0 {
+        if self.0 >= Self::PRIMITIVE_BASE && self.0 < Self::SENTINEL_BASE {
             Some(self.0 - Self::PRIMITIVE_BASE)
         } else {
             None
@@ -119,6 +129,22 @@ impl Token {
     #[must_use]
     pub const fn is_frozen_endv(self) -> bool {
         matches!(self, Self::Frozen(FrozenToken::END_V))
+    }
+
+    /// Returns TeX82 §222's dummy `undefined_control_sequence` location.
+    ///
+    /// §259's `id_lookup` yields it for every multiletter name that is not
+    /// already in the hash table while `no_new_control_sequence` holds, so
+    /// all such names share this one inaccessible identity.
+    #[must_use]
+    pub const fn undefined_control_sequence() -> Self {
+        Self::Frozen(FrozenToken::UNDEFINED_CONTROL_SEQUENCE)
+    }
+
+    /// Whether this is TeX82 §222's dummy `undefined_control_sequence`.
+    #[must_use]
+    pub const fn is_undefined_control_sequence(self) -> bool {
+        matches!(self, Self::Frozen(FrozenToken::UNDEFINED_CONTROL_SEQUENCE))
     }
 
     #[must_use]
