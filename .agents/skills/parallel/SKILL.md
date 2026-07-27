@@ -76,6 +76,21 @@ A worklist containing only `tex82/command-transitions-v1` means the document
 traces are not linked. An agent that skips this check can spend an entire run
 against a worklist its own stream was never part of; that has happened.
 
+### A missing artifact is never a repository gap
+
+Require every dispatch prompt to say this outright: a test that fails on a
+missing shared artifact means **this worktree's symlinks are incomplete**, not
+that the asset is absent from the repository. Before reporting any failure as
+pre-existing, environmental, or out of scope, check the main checkout for the
+file and say what was found there.
+
+An agent reported `e2e_conformance_trip` failing on a missing
+`tests/corpus/e2e/trip.expected.dvi` and concluded the asset was "absent from
+the main checkout too". It was present, and all seven conformance gates passed
+on the integration tip. A false pre-existing-failure claim is worse than the
+missing link: it invites the coordinator to integrate a branch whose test
+result was never actually established.
+
 `{BASE_REF}` is the current tip of the branch the work integrates onto. Pin it
 to an explicit commit hash rather than a branch name so concurrent jobs share a
 known base. Use `main` only when that is genuinely the integration branch;
