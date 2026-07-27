@@ -3357,6 +3357,36 @@ independent copies of a routing decision are the mechanism that lets that
 happen, so the fix is always to derive both paths from one shared commit
 rather than to repair the copy that drifted.
 
+### 33.6 The two math-shift probes are not one probe
+
+A `$` delivered to main control is followed by a lookahead in three of the
+six modes, and the lookahead is _not_ the same routine in all three. Keeping
+one shared "is the next token another `$`" helper is what let the opener
+inherit the closer's expansion policy (`umber2-johp.192`).
+
+- §1138 `init_math` -- `hmode+math_shift`, for either sign of `hmode`. The
+  probe is `get_token`, and tex.web says why on that line: "`get_x_token`
+  would fail on `\ifmmode`". The probe runs before the math nest is pushed,
+  so expanding a mode-sensitive conditional there answers for the mode the
+  `$` is leaving. It pairs only under `(cur_cmd=math_shift)and(mode>0)`: in
+  restricted horizontal mode `$$` is not a display opener, and the second
+  `$` is backed up and reread as the end of an empty inline formula. Every
+  other outcome runs §325 `back_input`, so exactly one raw delivery is ever
+  consumed without a backup level.
+- §1197's `@<Check that another \.\$ follows@>` -- reached from §1194
+  `after_math` when a display closes (`m>=0` with `a=null`) or when a
+  display's equation number closes (`mode=-m`). This one _is_
+  `get_x_token`, so the peeked token is expanded and observed as an expanded
+  delivery, and a non-shift reaches §327 `back_error` with the
+  `Display math should end with $$` diagnostic.
+- §1194's `m<0` closes inline math through `@<Finish math in text@>` and
+  probes nothing at all.
+
+The `mode>0` test belongs to §1138's probe alone, beside the decision to
+consume or back up the second `$`. A second copy of it in the step's
+application can disagree with the backup that already happened, and then the
+consumed token is simply lost.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:
