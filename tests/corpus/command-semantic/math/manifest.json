@@ -1,0 +1,478 @@
+{
+  "schema": 1,
+  "domain": "math",
+  "property_domain": "math-box-list-and-mode-semantics",
+  "cases": [
+    {
+      "id": "clean-box-delimiters-mu",
+      "property_id": "tex82.math.clean-box-delimiters-mu",
+      "source": "clean-box-delimiters-mu.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          699,
+          700,
+          701,
+          702,
+          703,
+          704,
+          705,
+          706,
+          707,
+          708,
+          709,
+          710,
+          711,
+          712,
+          713,
+          714,
+          715,
+          716,
+          717,
+          718
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "left_right",
+          "mkern"
+        ]
+      },
+      "expected": [
+        "command:left_right:30",
+        "command:left_right:30",
+        "command:mkern:99",
+        "command:left_right:31",
+        "command:left_right:31",
+        "artifact:706dd73ca4e7b38086cca0cf07a343fb27b5008b3b6fc86e4b847d1eddfd9f3c"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "mlist-first-pass",
+      "property_id": "tex82.math.mlist-first-pass",
+      "source": "mlist-first-pass.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          719,
+          720,
+          721,
+          722,
+          723,
+          724,
+          725,
+          726,
+          727,
+          728,
+          729,
+          730,
+          731,
+          732,
+          733
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "math_comp"
+        ]
+      },
+      "expected": [
+        "command:math_comp:18",
+        "command:math_comp:18",
+        "command:math_comp:19",
+        "artifact:680f703589d4043141353ef0924bb96ed22132b4a944e555e06edcf330c6ad99"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "noad-construction",
+      "property_id": "tex82.math.noad-construction",
+      "source": "noad-construction.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          734,
+          735,
+          736,
+          737,
+          738,
+          739,
+          740,
+          741,
+          742,
+          743,
+          744,
+          745,
+          746,
+          747,
+          748,
+          749,
+          750,
+          751,
+          752,
+          753,
+          754,
+          755,
+          756,
+          757,
+          758,
+          759,
+          760
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "limit_switch",
+          "math_comp"
+        ]
+      },
+      "expected": [
+        "command:math_comp:17",
+        "command:math_comp:17",
+        "command:limit_switch:2",
+        "artifact:5e4e3c6398f55977d6c47b713b790f2f14c04af81255502cb937da8e28606999"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "mlist-second-pass",
+      "property_id": "tex82.math.mlist-second-pass",
+      "source": "mlist-second-pass.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          761,
+          762,
+          763,
+          764,
+          765,
+          766,
+          767
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "math_comp"
+        ]
+      },
+      "expected": [
+        "command:math_comp:20",
+        "command:math_comp:20",
+        "command:math_comp:23",
+        "command:math_comp:21",
+        "artifact:680f703589d4043141353ef0924bb96ed22132b4a944e555e06edcf330c6ad99"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "entry-and-display-setup",
+      "property_id": "tex82.math.entry-and-display-setup",
+      "source": "entry-and-display-setup.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1136,
+          1137,
+          1138,
+          1139,
+          1140,
+          1141,
+          1142,
+          1143,
+          1144,
+          1145,
+          1146,
+          1147,
+          1148,
+          1149
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_mode_transitions": true,
+        "include_artifact_hashes": true,
+        "command_names": [
+          "mkern"
+        ]
+      },
+      "expected": [
+        "command:mkern:99",
+        "command:mkern:99",
+        "mode:vertical",
+        "mode:horizontal",
+        "mode:math",
+        "mode:horizontal",
+        "mode:vertical",
+        "artifact:988fc45e6b15c4bc34d4ecbf3a1bc2d9a8e9d07994b0cc14b7446b69155f549c"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "fields-and-atoms",
+      "property_id": "tex82.math.fields-and-atoms",
+      "source": "fields-and-atoms.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1150,
+          1151,
+          1152,
+          1153,
+          1154,
+          1155,
+          1156,
+          1157,
+          1158,
+          1159
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4,
+        "command_names": [
+          "math_comp"
+        ]
+      },
+      "expected": [
+        "command:math_comp:16",
+        "command:math_comp:16",
+        "box:0/0:hlist",
+        "box:0/0/0:math-on",
+        "box:0/0/1:math-off"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "radicals-accents-styles-limits",
+      "property_id": "tex82.math.radicals-accents-styles-limits",
+      "source": "radicals-accents-styles-limits.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1162,
+          1163,
+          1164,
+          1165,
+          1166,
+          1167,
+          1168,
+          1169,
+          1170,
+          1171
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "limit_switch",
+          "math_accent",
+          "math_comp",
+          "math_style",
+          "radical"
+        ]
+      },
+      "expected": [
+        "command:radical:0",
+        "command:radical:0",
+        "command:math_accent:0",
+        "command:math_style:4",
+        "command:math_comp:17",
+        "command:limit_switch:1",
+        "artifact:2a37a1229012706b3d22770ffcbea8370aebf92792df4b9961143727fd1231d1"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "choice-groups",
+      "property_id": "tex82.math.choice-groups",
+      "source": "choice-groups.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1172,
+          1173,
+          1174
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4,
+        "command_names": [
+          "math_choice"
+        ]
+      },
+      "expected": [
+        "command:math_choice:0",
+        "command:math_choice:0",
+        "box:0/0:hlist",
+        "box:0/0/0:math-on",
+        "box:0/0/1:math-off"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "script-attachment",
+      "property_id": "tex82.math.script-attachment",
+      "source": "script-attachment.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1175,
+          1176,
+          1177
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4
+      },
+      "expected": [
+        "box:0/0:hlist",
+        "box:0/0/0:math-on",
+        "box:0/0/1:kern",
+        "box:0/0/2:kern",
+        "box:0/0/3:math-off"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "fractions-and-left-right",
+      "property_id": "tex82.math.fractions-and-left-right",
+      "source": "fractions-and-left-right.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1178,
+          1179,
+          1180,
+          1181,
+          1182,
+          1183,
+          1184,
+          1185,
+          1186,
+          1187,
+          1188,
+          1189,
+          1190,
+          1191,
+          1192
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "above",
+          "left_right",
+          "mkern"
+        ]
+      },
+      "expected": [
+        "command:left_right:30",
+        "command:left_right:30",
+        "command:mkern:99",
+        "command:above:1",
+        "command:above:1",
+        "command:mkern:99",
+        "command:left_right:31",
+        "artifact:7197db6defb68d6bbf5a48fc002c8e2d608190297cd98fd146521b44714b0132"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "exit-and-display",
+      "property_id": "tex82.math.exit-and-display",
+      "source": "exit-and-display.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1193,
+          1194,
+          1195,
+          1196,
+          1197,
+          1198,
+          1199,
+          1200,
+          1201,
+          1202,
+          1203,
+          1204,
+          1205
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_mode_transitions": true,
+        "include_artifact_hashes": true,
+        "command_names": [
+          "mkern"
+        ]
+      },
+      "expected": [
+        "command:mkern:99",
+        "command:mkern:99",
+        "mode:vertical",
+        "mode:horizontal",
+        "mode:math",
+        "mode:horizontal",
+        "mode:vertical",
+        "artifact:988fc45e6b15c4bc34d4ecbf3a1bc2d9a8e9d07994b0cc14b7446b69155f549c"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

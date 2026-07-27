@@ -74,7 +74,8 @@
             "skipping-condition-steps",
             "branch-selections",
             "predicate-outcomes",
-            "observations"
+            "observations",
+            "execution-boundaries"
           ]
         },
         "count_registers": {
@@ -106,7 +107,20 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
-        }
+        },
+        "command_names": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "box_registers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 }
+        },
+        "node_depth": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "include_mode_transitions": { "type": "boolean" },
+        "include_artifact_hashes": { "type": "boolean" }
       }
     },
     "expectation": {

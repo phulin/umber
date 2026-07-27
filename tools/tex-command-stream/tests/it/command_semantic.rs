@@ -16,8 +16,8 @@ use tex_command::{
     InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind, SourceRegistration,
     canonical_names,
 };
-use tex_exec::{CanonicalMainControl, MainControlStep};
-use tex_state::Universe;
+use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
+use tex_state::{ContentHash, Universe, node::Node};
 
 const SCHEMA: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 4 * 1024;
@@ -71,6 +71,15 @@ struct Projection {
     kinds: Vec<ObservationKind>,
     #[serde(default)]
     commands: Vec<String>,
+    #[serde(default)]
+    command_names: Vec<String>,
+    #[serde(default)]
+    box_registers: Vec<u16>,
+    node_depth: Option<u8>,
+    #[serde(default)]
+    include_mode_transitions: bool,
+    #[serde(default)]
+    include_artifact_hashes: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -82,6 +91,7 @@ enum ProjectionKind {
     BranchSelections,
     PredicateOutcomes,
     Observations,
+    ExecutionBoundaries,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -147,6 +157,9 @@ impl CommandObserver for Recorder {
 struct SemanticRun {
     observations: Vec<CommandObservation>,
     counts: [i32; COUNT_SLOTS],
+    universe: Universe,
+    mode_transitions: Vec<Mode>,
+    artifacts: Vec<ContentHash>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -361,6 +374,41 @@ fn validate_case(
             case.id
         ));
     }
+    let has_execution_selector = !case.projection.command_names.is_empty()
+        || !case.projection.box_registers.is_empty()
+        || case.projection.include_mode_transitions
+        || case.projection.include_artifact_hashes;
+    if case.projection.kind == ProjectionKind::ExecutionBoundaries {
+        if !has_execution_selector {
+            return Err(format!(
+                "case {} execution-boundaries projection has no boundary selector",
+                case.id
+            ));
+        }
+        if case
+            .projection
+            .command_names
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+            || case
+                .projection
+                .box_registers
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || case.projection.command_names.iter().any(String::is_empty)
+            || case.projection.node_depth.is_some_and(|depth| depth > 8)
+        {
+            return Err(format!(
+                "case {} execution-boundary selectors are invalid",
+                case.id
+            ));
+        }
+    } else if has_execution_selector || case.projection.node_depth.is_some() {
+        return Err(format!(
+            "case {} selects execution boundaries outside that projection",
+            case.id
+        ));
+    }
     if case.terminal_lines.iter().any(|line| {
         line.contains("\n") || line.contains("\r") || line.len() > MAX_SOURCE_BYTES as usize
     }) {
@@ -523,8 +571,9 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         .open_registered_source(source)
         .map_err(|error| format!("source opening: {error:?}"))?;
     let mut recorder = Recorder::default();
+    let mut mode_transitions = vec![control.current_mode()];
     for _ in 0..MAX_STEPS {
-        match control
+        let step = control
             .step_with_observer(&mut universe, &mut recorder)
             .map_err(|error| {
                 let rendered = format!("{error:?}");
@@ -533,7 +582,12 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 } else {
                     format!("main-control step: {rendered}")
                 }
-            })? {
+            })?;
+        let mode = control.current_mode();
+        if mode_transitions.last() != Some(&mode) {
+            mode_transitions.push(mode);
+        }
+        match step {
             MainControlStep::Continue => {}
             MainControlStep::End | MainControlStep::EndOfInput => {
                 let counts = std::array::from_fn(|slot| {
@@ -541,9 +595,17 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                         u16::try_from(slot).expect("count slot fits in TeX82 register index"),
                     )
                 });
+                let artifacts = control
+                    .take_prepared_dvi_pages()
+                    .into_iter()
+                    .map(|page| page.hash())
+                    .collect();
                 return Ok(SemanticRun {
                     observations: recorder.0,
                     counts,
+                    universe,
+                    mode_transitions,
+                    artifacts,
                 });
             }
         }
@@ -558,6 +620,117 @@ fn push_counts(run: &SemanticRun, projection: &Projection, output: &mut Vec<Stri
             .iter()
             .map(|register| format!("count:{register}={}", run.counts[usize::from(*register)])),
     );
+}
+
+fn mode_name(mode: Mode) -> String {
+    match mode {
+        Mode::Vertical => "vertical",
+        Mode::Horizontal => "horizontal",
+        Mode::DisplayMath => "display-math",
+        Mode::InternalVertical => "internal-vertical",
+        Mode::RestrictedHorizontal => "restricted-horizontal",
+        Mode::Math => "math",
+    }
+    .into()
+}
+
+fn node_name(node: &Node) -> String {
+    match node {
+        Node::Char { .. } => "char",
+        Node::Lig { .. } => "ligature",
+        Node::Kern { .. } => "kern",
+        Node::Glue { .. } => "glue",
+        Node::Penalty(_) => "penalty",
+        Node::Rule { .. } => "rule",
+        Node::HList(_) => "hlist",
+        Node::VList(_) => "vlist",
+        Node::Unset(_) => "unset",
+        Node::Disc { .. } => "discretionary",
+        Node::Mark { .. } => "mark",
+        Node::Ins { .. } => "insertion",
+        Node::Whatsit(_) => "whatsit",
+        Node::MathOn(_) => "math-on",
+        Node::MathOff(_) => "math-off",
+        Node::Direction(_) => "direction",
+        Node::MathNoad(_) => "math-noad",
+        Node::FractionNoad(_) => "fraction-noad",
+        Node::MathStyle(_) => "math-style",
+        Node::MathChoice(_) => "math-choice",
+        Node::MathList(_) => "math-list",
+        Node::Nonscript => "nonscript",
+        Node::Adjust(_) => "adjust",
+    }
+    .into()
+}
+
+fn push_node_outline(
+    universe: &Universe,
+    list: tex_state::ids::NodeListId,
+    prefix: &str,
+    depth: u8,
+    output: &mut Vec<String>,
+) {
+    for (index, node) in universe.nodes(list).iter().enumerate() {
+        let node = node.to_owned();
+        let path = format!("{prefix}/{index}");
+        output.push(format!("{path}:{}", node_name(&node)));
+        if depth == 0 {
+            continue;
+        }
+        match &node {
+            Node::HList(boxed) | Node::VList(boxed) => {
+                push_node_outline(universe, boxed.children, &path, depth - 1, output);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn execution_boundaries(run: &SemanticRun, projection: &Projection) -> Vec<String> {
+    let mut output = run
+        .observations
+        .iter()
+        .filter_map(|observation| {
+            let CommandObservation::Command(record) = observation else {
+                return None;
+            };
+            (record.boundary == CommandDeliveryBoundary::Expanded
+                && projection.command_names.contains(&record.command))
+            .then(|| {
+                record.command_operand.map_or_else(
+                    || format!("command:{}", record.command),
+                    |operand| format!("command:{}:{operand}", record.command),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for register in &projection.box_registers {
+        match run.universe.box_reg(*register) {
+            Some(list) => push_node_outline(
+                &run.universe,
+                list,
+                &format!("box:{register}"),
+                projection.node_depth.unwrap_or(3),
+                &mut output,
+            ),
+            None => output.push(format!("box:{register}:void")),
+        }
+    }
+    if projection.include_mode_transitions {
+        output.extend(
+            run.mode_transitions
+                .iter()
+                .map(|mode| format!("mode:{}", mode_name(*mode))),
+        );
+    }
+    if projection.include_artifact_hashes {
+        output.extend(
+            run.artifacts
+                .iter()
+                .map(|artifact| format!("artifact:{}", artifact.hex())),
+        );
+    }
+    output
 }
 
 fn condition_observations(run: &SemanticRun) -> Vec<String> {
@@ -858,6 +1031,7 @@ fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
         }
         ProjectionKind::PredicateOutcomes => predicate_outcomes(run),
         ProjectionKind::Observations => observation_projection(run, projection),
+        ProjectionKind::ExecutionBoundaries => execution_boundaries(run, projection),
     };
     if projection.include_count_mutations {
         output.extend(run.observations.iter().filter_map(|observation| {

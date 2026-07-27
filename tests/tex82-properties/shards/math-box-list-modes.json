@@ -540,7 +540,7 @@
         "Missing variants fall through both families to null delimiter space; missing characters do not corrupt adjacent material."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -553,6 +553,10 @@
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
           "test": "tex82_clean_box_delimiter_and_mu_helper_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -598,7 +602,7 @@
         "Undefined family characters diagnose locally while pass ordering and neighboring classes remain intact."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -611,6 +615,10 @@
         {
           "path": "crates/tex-typeset/src/math/convert/tests.rs",
           "test": "tex82_first_pass_choice_bin_and_nonscript_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -668,7 +676,7 @@
         "Missing glyphs/families omit only the unavailable glyph and preserve constructed siblings."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -689,6 +697,10 @@
         {
           "path": "crates/tex-typeset/src/math/operators/tests.rs",
           "test": "tex82_noad_constructor_clearance_and_italic_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -726,7 +738,7 @@
         "Unavailable delimiters use null delimiter space without suppressing adjacent spacing."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -739,6 +751,10 @@
         {
           "path": "crates/tex-typeset/src/math/convert/tests.rs",
           "test": "tex82_second_pass_spacing_delimiter_penalty_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1313,7 +1329,7 @@
         "eqno outside display is illegal and consumes no field; failed display pairing preserves lookahead."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1326,6 +1342,10 @@
         {
           "path": "crates/tex-exec/src/math/tests.rs",
           "test": "tex82_math_entry_display_probe_and_eqno_mode_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1366,7 +1386,7 @@
         "Missing brace backs up the rejected command and opens the field logically without fabricating delivery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1379,6 +1399,10 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "tex82_math_field_and_atom_construction_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1419,7 +1443,7 @@
         "A non-math accent command diagnoses the required mathaccent spelling; wrong-mode requests use main-control recovery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1428,6 +1452,10 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "tex82_radical_accent_style_and_limits_request_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1461,7 +1489,7 @@
         "Missing arm braces recover at that arm only; premature parent input is not folded into a completed arm."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1474,6 +1502,10 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "tex82_mathchoice_four_group_order_scope_and_retirement"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1507,7 +1539,7 @@
         "A duplicate marker diagnoses Double subscript/superscript and redirects the new field to a dummy noad."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1516,6 +1548,10 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "tex82_script_attachment_dummy_noad_and_duplicate_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1567,7 +1603,7 @@
         "Missing right inserts frozen right-dot; extra/mismatched right takes off_save or mismatch recovery with the offending command replayed in order."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1588,6 +1624,10 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "canonical_fraction_and_left_right_nesting_recovery_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1637,7 +1677,7 @@
         "A single display-closing dollar inserts the required second dollar; an unexpected equation-number closer follows group-specific recovery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+planned-dvi-semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1654,6 +1694,10 @@
         {
           "path": "crates/tex-exec/src/math/tests.rs",
           "test": "canonical_math_exit_display_eqno_boundary_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",

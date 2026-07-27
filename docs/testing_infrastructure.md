@@ -199,12 +199,15 @@ Rust registry or add a top-level integration target. Each versioned manifest
 binds a tiny source to its catalogue property, exact canonical authority and
 sections, projection kind, short expected observations, and either `pass` or a
 strict `xfail` expectation. Discovery rejects malformed, duplicate, unsafe, or
-unowned cases and sources.
+unowned cases and sources. A manifest whose short directory name differs from
+its catalogue shard declares `property_domain`; ownership validation remains
+exact.
 
 The runner drives each input through instrumented
 `tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile and compares
-only the declared concise projection of committed
-`tex_command::CommandObservation` records. An xfail must link a concrete Beads
+only the declared concise projection of committed command observations or selected
+canonical-main-control boundaries: mode changes, final box-register node outlines,
+and committed shipout artifact identities. An xfail must link a concrete Beads
 bug and pin the first mismatch's index, kind, expected value, and actual value;
 XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
