@@ -1578,11 +1578,33 @@ Catcode lookup happens per delivered character. A catcode assignment between
 tokens is immediately observable. Source lines are never pre-tokenized beyond
 the next command.
 
-`get_token` temporarily enables the canonical control-sequence creation policy.
-Ordinary `get_next` preserves the reference engine's
-`no_new_control_sequence` behavior. The modern interner may allocate a spelling
-for diagnostics, but doing so cannot define a meaning or change future
-semantic lookup.
+`get_token` temporarily enables the canonical control-sequence creation policy;
+ordinary `get_next` preserves TeX82's `no_new_control_sequence`. TeX82 §257
+sets that flag, §365 clears it only around `get_token`, and §374 clears it only
+around `\csname`'s own `id_lookup`, so a raw scan may not enter a name in the
+hash table at all — the interner is that hash table, and interning during raw
+delivery is not a diagnostic convenience but a semantic mutation, because the
+name becomes findable by every later scan.
+
+Only §356's multiletter branch (`k>loc+1`) consults the hash. §354 resolves a
+control symbol to `single_base+c` and an escape at normalized line end to
+`null_cs`, and §351 gives a blank line's `\par` `par_loc`; those are permanent
+`eqtb` locations that exist before any scan, so the creation policy never
+applies to them. For a multiletter name the hash table has never held, §259's
+`id_lookup` returns §222's single dummy `undefined_control_sequence` location.
+Umber models that location as an inaccessible frozen token rather than an
+interned spelling, exactly because it is not a hash entry: it carries §222's
+permanent `undefined_cs` meaning, cannot be assigned, and every such name
+shares the one identity. Its observed spelling is `^^@`, which is what §263's
+`sprint_cs` prints for the slot — web2c sizes `hash` through it and clears it
+with `hash[hash_base]`, whose `text` §257 sets to 0, and §48 builds string 0 as
+the printable form of character 0.
+
+Because the policy is a property of the reader, every raw-delivery caller must
+match the section it implements: §442's alphabetic character constant and
+§477's unexpanded `scan_toks` read with `get_token`, while §380's
+`get_x_token`, §478's expanded `scan_toks`, §494's `pass_text`, and §507's
+`\ifx` operands read with `get_next`.
 
 Invalid input emits the canonical recoverable diagnostic and restarts raw
 delivery after consuming the offending character.
