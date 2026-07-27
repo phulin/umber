@@ -2101,6 +2101,29 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Scans the `to`/`spread` clause of TeX82 §645's `scan_spec`.
+    ///
+    /// §645 is the single routine every specification-taking group opener
+    /// runs: `if scan_keyword("to") then spec_code:=exactly else if
+    /// scan_keyword("spread") then spec_code:=additional else begin
+    /// spec_code:=additional; cur_val:=0; goto found end; scan_normal_dimen`.
+    /// An absent clause is `spread 0pt`, which packs at natural size.
+    ///
+    /// Both call sites in this crate -- §1083's box construction and §774's
+    /// `init_align` -- must share it: `\halign to <dimen>{`, `\halign spread
+    /// <dimen>{`, and `\hbox to <dimen>{` are the same scan, and a site that
+    /// skipped straight to §403's mandatory left brace would reject the `t`
+    /// of `to` as a missing brace.
+    fn scan_spec_packing(&mut self) -> Result<ScannedPackingSpec, CommandError> {
+        if self.scan_keyword("to")?.value {
+            Ok(ScannedPackingSpec::Exactly(self.scan_dimension()?.value))
+        } else if self.scan_keyword("spread")?.value {
+            Ok(ScannedPackingSpec::Spread(self.scan_dimension()?.value))
+        } else {
+            Ok(ScannedPackingSpec::Natural)
+        }
+    }
+
     /// Scans TeX82 §1083's complete box-construction prefix: §645's
     /// `scan_spec`, whose optional `to`/`spread` clause and mandatory left
     /// brace are both consumed before replay enters the box group.
@@ -2114,13 +2137,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::VTop => ScannedBoxKind::VTop,
             _ => return Err(CommandError::input_invariant()),
         };
-        let packing = if self.scan_keyword("to")?.value {
-            ScannedPackingSpec::Exactly(self.scan_dimension()?.value)
-        } else if self.scan_keyword("spread")?.value {
-            ScannedPackingSpec::Spread(self.scan_dimension()?.value)
-        } else {
-            ScannedPackingSpec::Natural
-        };
+        let packing = self.scan_spec_packing()?;
         self.scan_box_group_opening()?;
         Ok(ScannedBoxConstruction { kind, packing })
     }
@@ -2228,30 +2245,25 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Validates an alignment preamble's required opening brace, then restores
-    /// it for canonical preamble delivery.
+    /// Runs TeX82 §774 `init_align`'s `scan_spec(align_group,false)`: §645's
+    /// optional `to`/`spread` clause followed by §403's mandatory left brace.
     ///
-    /// TeX.web's `init_align` consumes this brace through expanded command
-    /// input before `get_preamble_token` starts.  The subsequent
-    /// `back_input` is therefore not an executor replay path: it is the one
-    /// command-owned backup level whose literal-brace adjustment is undone
-    /// before the preamble sees the same brace again.
-    pub fn scan_alignment_preamble_opening(&mut self) -> Result<(), CommandError> {
-        let opening = self.scan_left_brace(true)?;
-        self.back_input(opening)
-    }
-
-    /// Replays the alignment preamble's opening brace into the next scanner
-    /// episode.
+    /// `\halign`/`\valign` take the same specification as `\hbox`, and §805
+    /// packages the preamble prototype box with `hpack(preamble, saved(1),
+    /// saved(0))` -- the very values §645 scanned here -- so the clause is
+    /// returned rather than discarded.
     ///
-    /// TeX.web's first `get_preamble_token` consumes the backup made by
-    /// `init_align`, then backs that same brace up once more before the
-    /// preamble scanner starts.  Retiring the exhausted first backup is part
-    /// of this input transition, so it must remain command-owned rather than
-    /// being recreated by replay main control.
-    pub fn replay_alignment_preamble_opening(&mut self) -> Result<(), CommandError> {
-        let opening = self.scan_left_brace(true)?;
-        self.back_input(opening)
+    /// The brace is *consumed*, not backed up, exactly as §645 leaves it: the
+    /// following `@<Scan the preamble...@>` starts from the token after it.
+    /// The two input backups an oracle trace shows here are §407
+    /// `scan_keyword`'s own, one per failed keyword, and they are produced by
+    /// running the real keyword scans rather than by replaying the brace.
+    pub fn scan_alignment_preamble_opening(
+        &mut self,
+    ) -> Result<ScannedPackingSpec, CommandError> {
+        let packing = self.scan_spec_packing()?;
+        let _ = self.scan_left_brace(true)?;
+        Ok(packing)
     }
 
     /// Delivers the first alignment cell's lookahead, then backs it up before
@@ -2365,11 +2377,10 @@ impl CommandProcessor<'_> {
     /// to the command-owned input transition, rather than to executor replay
     /// or the preamble parser.
     pub fn begin_alignment_preamble_scan(&mut self) -> Result<(), CommandError> {
-        // The second opener backup is retired by this expanded brace scan.
-        // TeX82's following `get_preamble_token` must therefore start with
-        // the first template token; an additional raw fetch would discard an
-        // immediate `#` in a nested `\\halign{#\\cr}` preamble.
-        let _ = self.scan_left_brace(true)?;
+        // TeX82 §776's `@<Scan the preamble...@>` opens with the comment
+        // "at this point, |cur_cmd=left_brace|": `scan_spec` has already
+        // consumed the opener, so this must not fetch another token. A raw
+        // fetch here would discard an immediate `#` in `\\halign{#\\cr}`.
         let alignment = self
             .command
             .alignment

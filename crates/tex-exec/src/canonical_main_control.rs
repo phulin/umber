@@ -159,11 +159,13 @@ impl ReplayBoxKind {
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
     kind: AlignmentKind,
+    /// TeX82 §645's `scan_spec` result, kept from `init_align` until §805
+    /// packages the preamble prototype box with it.
+    packing: AlignmentPackSpec,
     columns: Vec<AlignmentCellTemplates>,
     repeat_start: Option<usize>,
     column: usize,
     preamble_opening_pending: bool,
-    preamble_opening_replay_pending: bool,
     preamble_start_pending: bool,
     cell_opening_pending: bool,
     next_cell_opening_pending: bool,
@@ -713,7 +715,6 @@ impl CanonicalMainControl {
             && active.identity == identity
         {
             active.preamble_opening_pending = false;
-            active.preamble_opening_replay_pending = false;
         }
         Ok(())
     }
@@ -2541,9 +2542,7 @@ enum ScannedStep {
     },
     AlignmentPreambleOpening {
         alignment: AlignmentIdentity,
-    },
-    AlignmentPreambleOpeningReplay {
-        alignment: AlignmentIdentity,
+        packing: ScannedPackingSpec,
     },
     AlignmentPreambleStart {
         alignment: AlignmentIdentity,
@@ -2780,16 +2779,10 @@ fn scan_replay_step(
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
             AlignmentPreamblePhase::Opening => {
-                processor
+                let packing = processor
                     .scan_alignment_preamble_opening()
                     .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentPreambleOpening { alignment })
-            }
-            AlignmentPreamblePhase::ReplayOpening => {
-                processor
-                    .replay_alignment_preamble_opening()
-                    .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentPreambleOpeningReplay { alignment })
+                Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing })
             }
             AlignmentPreamblePhase::Start => {
                 processor
@@ -2846,7 +2839,6 @@ fn scan_replay_step(
 #[derive(Clone, Copy)]
 enum AlignmentPreamblePhase {
     Opening,
-    ReplayOpening,
     Start,
     CellOpening,
     NextCellOpening,
@@ -2861,8 +2853,6 @@ fn alignment_preamble(
     let active = active?;
     if active.preamble_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::Opening))
-    } else if active.preamble_opening_replay_pending {
-        Some((active.identity, AlignmentPreamblePhase::ReplayOpening))
     } else if active.preamble_start_pending {
         Some((active.identity, AlignmentPreamblePhase::Start))
     } else if active.cell_opening_pending {
@@ -6678,7 +6668,6 @@ fn applied_mutation_observation(
         | ScannedStep::BeginShipout
         | ScannedStep::BeginAlignment { .. }
         | ScannedStep::AlignmentPreambleOpening { .. }
-        | ScannedStep::AlignmentPreambleOpeningReplay { .. }
         | ScannedStep::AlignmentPreambleStart { .. }
         | ScannedStep::AlignmentCellOpening { .. }
         | ScannedStep::AlignmentCellFinish { .. }
@@ -7223,6 +7212,16 @@ fn finish_replay_alignment_row(
     Ok(())
 }
 
+/// Carries TeX82 §645's `spec_code`/`cur_val` pair from the command-owned
+/// `scan_spec` to the alignment state §805 packs the prototype box with.
+fn alignment_pack_spec(packing: ScannedPackingSpec) -> AlignmentPackSpec {
+    match packing {
+        ScannedPackingSpec::Natural => AlignmentPackSpec::Natural,
+        ScannedPackingSpec::Exactly(size) => AlignmentPackSpec::Exactly(size),
+        ScannedPackingSpec::Spread(size) => AlignmentPackSpec::Spread(size),
+    }
+}
+
 fn finish_replay_alignment(
     active: &mut ActiveReplayAlignment,
     modes: &mut ModeNest,
@@ -7244,7 +7243,7 @@ fn finish_replay_alignment(
         .collect();
     let state = AlignState::new(
         active.kind,
-        AlignmentPackSpec::Natural,
+        active.packing,
         columns,
         vec![active.tabskip; active.columns.len().saturating_add(1)],
         active.tabskip,
@@ -8875,11 +8874,11 @@ fn apply_scanned_step(
                 } else {
                     AlignmentKind::HAlign
                 },
+                packing: AlignmentPackSpec::Natural,
                 columns: Vec::new(),
                 repeat_start: None,
                 column: 0,
                 preamble_opening_pending: true,
-                preamble_opening_replay_pending: false,
                 preamble_start_pending: false,
                 cell_opening_pending: false,
                 next_cell_opening_pending: false,
@@ -8899,7 +8898,7 @@ fn apply_scanned_step(
             }));
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::AlignmentPreambleOpening { alignment } => {
+        ScannedStep::AlignmentPreambleOpening { alignment, packing } => {
             command
                 .apply_alignment_request(AlignmentRequest::Preamble(alignment))
                 .map_err(|_| ExecError::MissingToken {
@@ -8908,16 +8907,8 @@ fn apply_scanned_step(
             if let Some(active) = active_alignment.as_mut()
                 && active.identity == alignment
             {
+                active.packing = alignment_pack_spec(packing);
                 active.preamble_opening_pending = false;
-                active.preamble_opening_replay_pending = true;
-            }
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::AlignmentPreambleOpeningReplay { alignment } => {
-            if let Some(active) = active_alignment.as_mut()
-                && active.identity == alignment
-            {
-                active.preamble_opening_replay_pending = false;
                 active.preamble_start_pending = true;
             }
             Ok(ReplayStep::Continue)

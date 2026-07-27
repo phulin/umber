@@ -4326,7 +4326,6 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         repeat_start: None,
         column: 0,
         preamble_opening_pending: false,
-        preamble_opening_replay_pending: false,
         preamble_start_pending: false,
         cell_opening_pending: false,
         next_cell_opening_pending: false,
