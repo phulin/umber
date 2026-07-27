@@ -2201,7 +2201,7 @@ restricted scan selects a class rather than open-coding a range test. Only
 §434's maximum is profile-dependent: TeX82's character domain is `0..=255`,
 which the Unicode profile widens to the Unicode scalar values (§6.1).
 
-The bound is part of the *scan*, never of the command that consumes it. TeX82
+The bound is part of the _scan_, never of the command that consumes it. TeX82
 recovers `cur_val` before `shorthand_def` (§1224), `def_code` (§1232),
 `def_family` (§1234), a math noad (§1151/§1154), or `\ifeof` (§501) ever reads
 it, so the value the assignment commits -- and therefore every observation
