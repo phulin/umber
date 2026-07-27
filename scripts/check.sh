@@ -101,8 +101,16 @@ run_biome() {
 }
 
 run_clippy() {
+  # One clippy invocation lints one feature resolution, and Cargo unifies
+  # features across everything the invocation selects, so no single command can
+  # lint both the whole-workspace test union and the resolution the shipped
+  # binary is built in. The gate therefore runs a declared set of passes;
+  # `scripts/check-lint-passes.py` documents and verifies what each one covers.
+  # Its own guards are self-tested first, because a coverage check that cannot
+  # fail is worth less than no check at all.
+  python3 scripts/test-check-lint-passes.py || return 1
   CARGO_TARGET_DIR="${CLIPPY_TARGET_DIR:-target/clippy}" \
-    cargo clippy --all-targets --quiet -- -D warnings
+    python3 scripts/check-lint-passes.py
 }
 
 gate dprint run_dprint
