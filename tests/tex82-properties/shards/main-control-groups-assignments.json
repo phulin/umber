@@ -1,0 +1,621 @@
+{
+  "domain": "main-control-groups-assignments",
+  "module_dispositions": [
+    {
+      "modules": { "first": 220, "last": 221 },
+      "disposition": "context_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Eqtb representation establishes assignment-state vocabulary."
+    },
+    {
+      "modules": { "first": 223, "last": 223 },
+      "disposition": "context_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Eqtb display establishes assignment-state vocabulary."
+    },
+    {
+      "modules": { "first": 224, "last": 224 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.eqtb-regions"],
+      "gap_bead": null,
+      "rationale": "Glue registers and parameters occupy typed eqtb slots."
+    },
+    {
+      "modules": { "first": 225, "last": 227 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Symbolic printing definitions only."
+    },
+    {
+      "modules": { "first": 228, "last": 228 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.eqtb-regions"],
+      "gap_bead": null,
+      "rationale": "Glue entries have canonical shared-zero initialization."
+    },
+    {
+      "modules": { "first": 229, "last": 229 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Diagnostic rendering only."
+    },
+    {
+      "modules": { "first": 230, "last": 230 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.eqtb-regions"],
+      "gap_bead": null,
+      "rationale": "Local meanings and token parameters occupy typed eqtb slots."
+    },
+    {
+      "modules": { "first": 231, "last": 235 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Initialization and diagnostic definitions only."
+    },
+    {
+      "modules": { "first": 236, "last": 236 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.eqtb-regions"],
+      "gap_bead": null,
+      "rationale": "Integer parameters and registers have canonical identities."
+    },
+    {
+      "modules": { "first": 237, "last": 246 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Names, initialization helpers, and diagnostics only."
+    },
+    {
+      "modules": { "first": 247, "last": 247 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.eqtb-regions"],
+      "gap_bead": null,
+      "rationale": "Dimension parameters and registers have canonical identities."
+    },
+    {
+      "modules": { "first": 248, "last": 255 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Installation, initialization, display, and debugging definitions only."
+    },
+    {
+      "modules": { "first": 268, "last": 268 },
+      "disposition": "context_only",
+      "owner": "tex-exec::save-stack",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Save-stack representation context."
+    },
+    {
+      "modules": { "first": 269, "last": 274 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.group.save-level-lifecycle"],
+      "gap_bead": null,
+      "rationale": "Typed groups push boundaries and prior state."
+    },
+    {
+      "modules": { "first": 275, "last": 279 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.assignment.local-global-save"],
+      "gap_bead": null,
+      "rationale": "Local definitions save once while globals bypass restoration."
+    },
+    {
+      "modules": { "first": 280, "last": 280 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.group.aftergroup-replay"],
+      "gap_bead": null,
+      "rationale": "Aftergroup tokens are retained on the save stack."
+    },
+    {
+      "modules": { "first": 281, "last": 284 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.group.unsave-restoration"],
+      "gap_bead": null,
+      "rationale": "Unsave restores or retains meanings and replays aftergroup tokens."
+    },
+    {
+      "modules": { "first": 285, "last": 285 },
+      "disposition": "context_only",
+      "owner": "tex-exec::save-stack",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Debug-memory pointer search only."
+    },
+    {
+      "modules": { "first": 286, "last": 288 },
+      "disposition": "property",
+      "owner": "tex-exec::assignment-state",
+      "property_ids": ["tex82.assignment.mag-freeze"],
+      "gap_bead": null,
+      "rationale": "Magnification is checked and frozen at first preparation."
+    },
+    {
+      "modules": { "first": 1029, "last": 1033 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.mode-dispatch"],
+      "gap_bead": null,
+      "rationale": "The chief executive dispatches expanded commands by mode."
+    },
+    {
+      "modules": { "first": 1045, "last": 1047 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.mode-dispatch"],
+      "gap_bead": null,
+      "rationale": "Mode-table fallbacks complete top-level dispatch."
+    },
+    {
+      "modules": { "first": 1048, "last": 1054 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.error-and-stop"],
+      "gap_bead": null,
+      "rationale": "Errors, privilege checks, and stop handling are main-control policy."
+    },
+    {
+      "modules": { "first": 1063, "last": 1067 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.group.brace-dispatch"],
+      "gap_bead": null,
+      "rationale": "Braces open groups or select finite mismatch recovery."
+    },
+    {
+      "modules": { "first": 1068, "last": 1070 },
+      "disposition": "property",
+      "owner": "tex-exec::save-stack",
+      "property_ids": ["tex82.group.unsave-restoration"],
+      "gap_bead": null,
+      "rationale": "Typed right-brace handling restores scoped state."
+    },
+    {
+      "modules": { "first": 1208, "last": 1214 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.prefix-collection"],
+      "gap_bead": null,
+      "rationale": "Prefixes expand, accumulate, validate, and resolve scope."
+    },
+    {
+      "modules": { "first": 1215, "last": 1225 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.definitions"],
+      "gap_bead": null,
+      "rationale": "Definition families install scoped meanings."
+    },
+    {
+      "modules": { "first": 1226, "last": 1240 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.parameters-registers-arithmetic"],
+      "gap_bead": null,
+      "rationale": "Typed parameters, registers, code tables, and arithmetic scan and commit."
+    },
+    {
+      "modules": { "first": 1241, "last": 1265 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.non-eqtb-effects"],
+      "gap_bead": null,
+      "rationale": "Remaining assignments apply canonical typed effects."
+    },
+    {
+      "modules": { "first": 1266, "last": 1269 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.afterassignment"],
+      "gap_bead": null,
+      "rationale": "Afterassignment stores and inserts one token after commit."
+    },
+    {
+      "modules": { "first": 1270, "last": 1271 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.command-terminator"],
+      "gap_bead": null,
+      "rationale": "Assignment helpers retain the next substantive command."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.assignment.eqtb-regions",
+      "sections": [224, 228, 230, 236, 247],
+      "claim": "Glue, meaning and token, integer, and dimension state occupy distinct canonical eqtb regions with typed defaults and selector identities.",
+      "preconditions": ["INITEX eqtb initialization has completed."],
+      "stimulus": [
+        "Phase 2 unit `eqtb_regions_keep_parameter_register_kinds_and_shared_zero_glue_distinct` reads defaults and mutates each family."
+      ],
+      "expected_observations": [
+        "Each selector reaches only its typed family and zero glue sharing does not alias muglue or scalars."
+      ],
+      "postconditions": [
+        "Unchanged entries retain identity and changed entries retain typed values until restoration."
+      ],
+      "equivalence_cases": ["Named/numbered, ordinary/prefixed, local/global, nested, and source/replay selectors."],
+      "recovery_cases": ["Invalid selectors recover without mutating neighboring regions."],
+      "semantic_owner": "tex-exec::assignment-state",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.group.save-level-lifecycle",
+      "sections": [269, 270, 271, 272, 273, 274],
+      "claim": "Opening a typed group pushes one boundary carrying prior group, boundary line, and level until matching unsave.",
+      "preconditions": ["An outer group is current and save-stack capacity remains."],
+      "stimulus": [
+        "Phase 2 unit `nested_typed_groups_push_one_boundary_and_restore_outer_metadata` enters every group kind."
+      ],
+      "expected_observations": ["Each entry increments level once and records one typed boundary."],
+      "postconditions": ["Nested entry preserves outer metadata and aftergroup records."],
+      "equivalence_cases": ["Ordinary, explicit, box, math, alignment-shaped, and replay-created groups."],
+      "recovery_cases": ["Overflow reports before a partial boundary becomes current."],
+      "semantic_owner": "tex-exec::save-stack",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.local-global-save",
+      "sections": [275, 276, 277, 278, 279],
+      "claim": "The first local mutation at a group level saves its prior value; repeated locals reuse that record, while effective globals survive exit and suppress stale restoration.",
+      "preconditions": ["A nested group and outer meaning/fullword values exist."],
+      "stimulus": ["Apply repeated local, explicit global, and globaldefs-forced/suppressed mutations."],
+      "expected_observations": [
+        "Locals restore, globals survive, and deeper globals are never overwritten by stale saves."
+      ],
+      "postconditions": ["Ownership balances and the save stack returns to its boundary."],
+      "equivalence_cases": [
+        "Meaning/register/parameter/code-table, ordinary/prefixed, nested, and replay assignments."
+      ],
+      "recovery_cases": ["Failed value scans create no save record or mutation."],
+      "semantic_owner": "tex-exec::save-stack",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/groups.rs",
+          "test": "brace_and_begingroup_groups_restore_local_assignments"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_globaldefs_forces_and_suppresses_global_assignments"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.group.aftergroup-replay",
+      "sections": [280],
+      "claim": "Aftergroup tokens are saved in encounter order and, after restoration, backed up for FIFO replay before outer input.",
+      "preconditions": ["A group is active and distinguishable tokens can be scheduled."],
+      "stimulus": ["Schedule tokens around nested local/global assignments and close both groups."],
+      "expected_observations": ["Inner tokens wait for inner restoration; each level replays FIFO."],
+      "postconditions": ["No aftergroup record remains on the retired level."],
+      "equivalence_cases": ["Ordinary, prefixed, local/global, nested, and source/replay groups."],
+      "recovery_cases": ["Mismatch recovery never replays tokens from a still-open level."],
+      "semantic_owner": "tex-exec::save-stack",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        { "path": "crates/tex-exec/src/tests/groups.rs", "test": "aftergroup_replays_tokens_fifo_on_group_exit" },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.group.unsave-restoration",
+      "sections": [281, 282, 283, 284, 1068, 1069, 1070],
+      "claim": "Closing a typed group restores saved locals unless globally superseded, restores outer metadata, and only then resumes token delivery.",
+      "preconditions": ["A non-bottom group has local and globally superseded saves."],
+      "stimulus": ["Close ordinary and replay-created nested groups and observe state before the next token."],
+      "expected_observations": [
+        "Locals restore, globals remain, outer group metadata becomes current, and lifetimes balance."
+      ],
+      "postconditions": ["The save pointer names the outer boundary with no reachable inner state."],
+      "equivalence_cases": ["Brace, explicit, box, math, and nested replay closures."],
+      "recovery_cases": ["Mismatched closers do not unsave the wrong group."],
+      "semantic_owner": "tex-exec::save-stack",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/groups.rs",
+          "test": "brace_and_begingroup_groups_restore_local_assignments"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_grouping_reports_and_recovers_extra_closers"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.assignment.mag-freeze",
+      "sections": [286, 287, 288],
+      "claim": "Magnification is range-checked when prepared, invalid values recover to 1000, and the first prepared value is frozen against later incompatible assignments.",
+      "preconditions": ["Magnification is not prepared."],
+      "stimulus": [
+        "Phase 2 unit and `assignment-mag-freeze.tex` prepare valid, invalid, repeated-equal, and repeated-different values."
+      ],
+      "expected_observations": [
+        "Only 1..32768 is accepted initially; later differences diagnose and retain the frozen value."
+      ],
+      "postconditions": ["Prepared magnification is not undone as an ordinary scoped assignment."],
+      "equivalence_cases": ["Ordinary/global and nested/restored assignments before and after preparation."],
+      "recovery_cases": ["Invalid values diagnose and retain the canonical effective value."],
+      "semantic_owner": "tex-exec::assignment-state",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.mode-dispatch",
+      "sections": [1029, 1030, 1031, 1032, 1033, 1045, 1046, 1047],
+      "claim": "Main control obtains one expanded command, dispatches on absolute mode plus command, and routes mode-independent meanings without consuming a second command.",
+      "preconditions": ["A resolved command and canonical mode are current."],
+      "stimulus": [
+        "Phase 2 table unit `main_control_dispatch_matrix_consumes_each_command_once` and `main-control-modes.tex` cover every mode class."
+      ],
+      "expected_observations": ["One named arm owns each pair; illegal pairs reach specified recovery."],
+      "postconditions": ["The command is consumed once and input resumes at the next boundary."],
+      "equivalence_cases": [
+        "Vertical/horizontal/restricted/math/display, source/replay, ordinary/prefixed assignment."
+      ],
+      "recovery_cases": ["Wrong-mode commands diagnose or insert canonical recovery without silent success."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.error-and-stop",
+      "sections": [1048, 1049, 1050, 1051, 1052, 1053, 1054],
+      "claim": "Main-control errors identify command and mode, privileged operations reject internal modes, and stop with page material first forces page completion.",
+      "preconditions": ["A wrong-mode, nonprivileged, or stop command is current."],
+      "stimulus": [
+        "Phase 2 unit `main_control_error_privilege_and_stop_paths_are_finite` and `main-control-recovery.tex`."
+      ],
+      "expected_observations": ["Rejected effects do not commit and stop terminates or drives the page builder first."],
+      "postconditions": ["Recovery leaves coherent mode/group/save state."],
+      "equivalence_cases": ["Outer/internal modes and source/replay after local/global histories."],
+      "recovery_cases": ["Repeated invalid input remains finite and stop cannot bypass pending material."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.group.brace-dispatch",
+      "sections": [1063, 1064, 1065, 1066, 1067],
+      "claim": "Left braces open simple groups; right braces dispatch by current group, while extra or mismatched closers use finite off-save recovery.",
+      "preconditions": ["A known mode and group are current."],
+      "stimulus": ["Deliver correct and incorrect closers through ordinary and explicit nested groups."],
+      "expected_observations": [
+        "Correct braces change one level; mismatches insert the canonical closer and replay the offender."
+      ],
+      "postconditions": ["Mode, group, save pointer, and replay order agree after closure."],
+      "equivalence_cases": ["Simple/semi-simple/box/math/alignment-shaped and source/replay groups."],
+      "recovery_cases": ["Bottom-level, wrong-type, and excess closers diagnose once and progress."],
+      "semantic_owner": "tex-exec::save-stack",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_grouping_reports_and_recovers_extra_closers"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "off_save_reports_before_replaying_its_inserted_closer"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.assignment.prefix-collection",
+      "sections": [1208, 1209, 1210, 1211, 1212, 1213, 1214],
+      "claim": "Expandable material between prefixes is expanded, legal bits accumulate idempotently, illegal prefixes diagnose, and globaldefs determines effective scope.",
+      "preconditions": ["Main control delivered a prefix."],
+      "stimulus": [
+        "Collect repeated and macro-produced prefixes before definitions, assignments, and nonprefixable commands."
+      ],
+      "expected_observations": [
+        "One normalized prefix set reaches the command; rejection retains the substantive command."
+      ],
+      "postconditions": ["Prefix state clears and demand resumes exactly."],
+      "equivalence_cases": ["Repeated/expanded, local/global/globaldefs, nested, and replay cases."],
+      "recovery_cases": ["Illegal combinations report and execute or replay the retained command once."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/grouping_parity.rs",
+          "test": "prefix_expands_macros_before_selecting_the_assignment"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_assignments_cover_code_tables_and_reject_macro_prefixes"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.assignment.definitions",
+      "sections": [1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1225],
+      "claim": "Def, let/futurelet, shorthand character/math/register, and font-family assignments scan complete targets and install meanings at effective scope.",
+      "preconditions": ["A legal definition and target follow prefix collection."],
+      "stimulus": ["Phase 2 matrix covers def-family, let/futurelet, shorthand definitions, and family assignments."],
+      "expected_observations": [
+        "Installed meanings are exact; expanded forms expand only at definition time; futurelet preserves lookahead."
+      ],
+      "postconditions": ["Locals restore, globals survive, and token meanings retain ownership."],
+      "equivalence_cases": ["Ordinary/prefixed, local/global/globaldefs, nested replay, alias/literal target."],
+      "recovery_cases": [
+        "Missing targets, illegal prefixes, bad indices, and runaway definitions never partially install."
+      ],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.parameters-registers-arithmetic",
+      "sections": [1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240],
+      "claim": "Token, scalar, glue, muglue, code-table, and arithmetic assignments scan typed operands, normalize values, and commit at effective scope.",
+      "preconditions": ["A typed selector is current after prefix collection."],
+      "stimulus": ["Assign direct/copied values and apply arithmetic at bounds in nested scopes."],
+      "expected_observations": [
+        "Types and ownership persist; zero glue normalizes; arithmetic failure makes no partial write."
+      ],
+      "postconditions": ["Locals restore, globals survive, and copied values remain independently owned."],
+      "equivalence_cases": ["Named/numbered, ordinary/prefixed, local/global, replay/restoration, direct/copied RHS."],
+      "recovery_cases": ["Bad braces/indices/ranges, overflow, and zero divisors retain prior values as specified."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_assignments_apply_prefix_globaldefs_registers_and_arithmetic"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/assignments.rs",
+          "test": "code_table_assignments_obey_groups_global_prefix_and_globaldefs"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.assignment.non-eqtb-effects",
+      "sections": [
+        1241,
+        1242,
+        1243,
+        1244,
+        1245,
+        1246,
+        1247,
+        1248,
+        1249,
+        1250,
+        1251,
+        1252,
+        1253,
+        1254,
+        1255,
+        1256,
+        1257,
+        1258,
+        1259,
+        1260,
+        1261,
+        1262,
+        1263,
+        1264,
+        1265
+      ],
+      "claim": "Mode auxiliaries, boxes, paragraph shape, hyphenation, interaction, and font definitions apply distinct canonical effects and lifetimes.",
+      "preconditions": ["The assignment is legal and operands/resources are available."],
+      "stimulus": ["Phase 2 focused units and `assignment-effects.tex` cover every family."],
+      "expected_observations": [
+        "Each command mutates only its canonical owner and equal font specifications reuse identity."
+      ],
+      "postconditions": ["Eqtb-scoped effects restore; non-eqtb effects retain canonical lifetime."],
+      "equivalence_cases": ["Ordinary/prefixed, local/global, nested/restored, repeated-equal, and source/replay."],
+      "recovery_cases": [
+        "Wrong mode, unavailable font, malformed operands, and illegal prefixes roll back before retry."
+      ],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.afterassignment",
+      "sections": [1266, 1267, 1268, 1269],
+      "claim": "Afterassignment stores one unexpanded token, overwrites the slot on repetition, and inserts it after the next successful assignment before aftergroup or outer input.",
+      "preconditions": ["No assignment is mid-commit."],
+      "stimulus": [
+        "Store, overwrite, and fire around local/global assignments, pending aftergroup, and a failed-assignment control."
+      ],
+      "expected_observations": ["Only the newest token fires once after effects and before aftergroup."],
+      "postconditions": ["The slot clears and the token retains inserted provenance."],
+      "equivalence_cases": [
+        "Ordinary/prefixed, local/global/globaldefs, nested/replay/restoration, and assignment families."
+      ],
+      "recovery_cases": ["Failure or nonassignment does not fire or lose the token; retry fires once."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/groups.rs",
+          "test": "afterassignment_slot_is_single_token_and_overwrites_previous"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    },
+    {
+      "id": "tex82.assignment.command-terminator",
+      "sections": [1270, 1271],
+      "claim": "Assignment scanning skips spaces and relax commands and retains the first nonblank nonrelax expanded command exactly once.",
+      "preconditions": ["An assignment helper needs its next substantive command."],
+      "stimulus": [
+        "Phase 2 unit `assignment_terminator_skips_space_and_relax_but_retains_first_command` uses source and replay."
+      ],
+      "expected_observations": [
+        "Spaces/relax disappear, expansion occurs, and the substantive command remains current."
+      ],
+      "postconditions": ["Input resumes after canonical consumption."],
+      "equivalence_cases": ["Ordinary/prefixed, nested replay, and local/global continuations."],
+      "recovery_cases": ["EOF or malformed expansion recovers finitely without fabricating a terminator."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    }
+  ]
+}
