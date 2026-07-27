@@ -19,15 +19,7 @@
       "rationale": "Defines math fields/noads/choices and the complete mlist-to-hlist lowering rules for delimiters, fractions, accents, operators, scripts, styles, spacing, and penalties."
     },
     {
-      "modules": { "first": 1029, "last": 1029 },
-      "disposition": "context_only",
-      "owner": "tex-exec::main-control",
-      "property_ids": [],
-      "gap_bead": null,
-      "rationale": "Introduces the chief executive and its global dispatch variables; executable mode-specific transitions are classified in the following properties."
-    },
-    {
-      "modules": { "first": 1030, "last": 1044 },
+      "modules": { "first": 1034, "last": 1044 },
       "disposition": "property",
       "owner": "tex-exec::main-control",
       "property_ids": ["tex82.lists.text-material"],
@@ -35,20 +27,12 @@
       "rationale": "Defines horizontal character, ligature/kern, language, and space insertion in the current list."
     },
     {
-      "modules": { "first": 1045, "last": 1054 },
-      "disposition": "property",
-      "owner": "tex-exec::main-control",
-      "property_ids": ["tex82.modes.dispatch-and-recovery"],
-      "gap_bead": null,
-      "rationale": "Defines absolute-mode dispatch, math-shift recovery, illegal/privileged cases, and the sole outer-vertical termination path."
-    },
-    {
-      "modules": { "first": 1055, "last": 1070 },
+      "modules": { "first": 1055, "last": 1062 },
       "disposition": "property",
       "owner": "tex-exec::main-control",
       "property_ids": ["tex82.lists.direct-material-and-groups"],
       "gap_bead": null,
-      "rationale": "Defines direct rule/glue/kern material, simple groups, right-brace dispatch, and off-save recovery."
+      "rationale": "Defines direct rule/glue/kern material before the main-control shard's save-stack brace dispatch and restoration boundary."
     },
     {
       "modules": { "first": 1071, "last": 1087 },
@@ -107,12 +91,20 @@
       "rationale": "Defines generalized fraction state, optional delimiters and thickness, duplicate-fraction recovery, and left/right group completion/mismatch recovery."
     },
     {
-      "modules": { "first": 1193, "last": 1207 },
+      "modules": { "first": 1193, "last": 1205 },
       "disposition": "property",
       "owner": "tex-exec::math",
       "property_ids": ["tex82.math.exit-and-display"],
       "gap_bead": null,
-      "rationale": "Defines the only math exit, font validation, inline lowering, display/equation-number packing, spacing, penalties, and display-alignment completion."
+      "rationale": "Defines the only math exit, font validation, inline lowering, display/equation-number packing, spacing, and penalties before the alignment-owned display completion."
+    },
+    {
+      "modules": { "first": 1207, "last": 1207 },
+      "disposition": "context_only",
+      "owner": "tex-exec::math",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Explains display-alignment error context after §1206, whose executable completion is owned by tex82.align.display-finish."
     }
   ],
   "properties": [
@@ -338,10 +330,11 @@
     },
     {
       "id": "tex82.lists.text-material",
-      "sections": [1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
+      "sections": [1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
       "claim": "Horizontal main control appends character and space material with TeX82 space-factor updates, boundary/ligature/kern processing, language whatsits, font-space caching, and xspace/xspaceskip scaling, while vertical-mode character material starts a paragraph and replays the triggering command.",
       "preconditions": [
         "A current mode, font, language, space factor, sfcode table, and font lig/kern program are live.",
+        "Expanded-command delivery and absolute-mode routing are governed by tex82.main-control.mode-dispatch (§§1029–1033); this property begins only after that non-owning dispatch boundary.",
         "The current command is an ordinary character, char_given/char_num, spacer, or no_boundary dispatch."
       ],
       "stimulus": [
@@ -384,79 +377,32 @@
       "gap_bead": "umber2-johp.228"
     },
     {
-      "id": "tex82.modes.dispatch-and-recovery",
-      "sections": [1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054],
-      "claim": "Main control dispatches on command plus absolute mode, inserts a frozen dollar before retrying math-only/nonmath-only commands in the wrong mode, reports illegal or unprivileged cases without consuming operands, and exits only when stop in outer vertical mode finds both page and contribution lists empty after any required forced-page ejection.",
-      "preconditions": [
-        "The live mode distinguishes outer/internal vertical, unrestricted/restricted horizontal, and display/inline/subformula math.",
-        "The current command identity and innermost group are known before any operand scan."
-      ],
-      "stimulus": [
-        "Dispatch representative legal and cross-mode commands, stop/end/dump in every mode, privileged commands inside internal modes, and a nonempty page/contribution list requiring forced ejection."
-      ],
-      "expected_observations": [
-        "Wrong-math-mode recovery backs up the offending command then inserted dollar; illegal/unprivileged cases scan nothing.",
-        "Only outer-vertical stop can return from main control, and it first empties pending material using TeX82's hbox/vfill/eject sequence."
-      ],
-      "postconditions": [
-        "Recovered commands are retried in the resulting mode exactly once and group/mode stacks remain balanced.",
-        "A successful terminal stop abandons rather than reads remaining input levels."
-      ],
-      "equivalence_cases": [
-        "Positive: legal commands in each absolute mode reach their one typed owner.",
-        "Boundary: empty versus nonempty page/contribution, dead-cycle state, and stop at every internal-mode depth.",
-        "Nesting: stop inside hbox/math/output follows head_for_vmode, dollar insertion, or privilege recovery before outer retry."
-      ],
-      "recovery_cases": [
-        "Inserted dollar identity is frozen against redefinition and its diagnostic precedes replay.",
-        "Illegal cases preserve the unscanned following token and report the exact current mode text."
-      ],
-      "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "final_stop_retires_its_backup_before_starting_output_input"
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.228"
-    },
-    {
       "id": "tex82.lists.direct-material-and-groups",
-      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070],
-      "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes; braces use save-stack group identity alone; right-brace dispatch unsaves the matching group; and off_save drops an impossible closer at bottom level or backs up the command and inserts the exact frozen structural closer for the live group.",
+      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062],
+      "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes and invoke outer-vertical page building at the canonical boundary; save-stack brace dispatch and restoration are owned separately by tex82.group.brace-dispatch and tex82.group.unsave-restoration (§§1063–1070).",
       "preconditions": [
-        "Current mode/list/group and live glue or dimension parameters are available.",
+        "Current mode/list and live glue or dimension parameters are available.",
         "Command-owned scanners retain failed-keyword and rejected-opener backup ordering."
       ],
       "stimulus": [
-        "Append h/v rules, skip and kern variants in legal modes; open/close nested simple groups; deliver mismatched closers in bottom, semi-simple, math-shift, math-left, box, insertion and alignment group contexts."
+        "Append h/v rules, skip and kern variants with zero, finite and infinite-order values in every legal mode."
       ],
       "expected_observations": [
         "Nodes carry the scanned value and subtype and outer vertical appends invoke page building at the canonical boundary.",
-        "off_save selects endgroup, dollar, right-dot, or right brace solely from cur_group and reports before replay."
+        "Each complete scanner consumes only its own operand and preserves failed-keyword backup ordering."
       ],
       "postconditions": [
-        "Legal close restores scoped state and replays aftergroup material FIFO; recovered close balances one structural level before retry.",
-        "No executor path re-reads a scalar operand or fabricates an opener command."
+        "The current list owns each appended rule, glue, or kern exactly once.",
+        "No executor path re-reads a scalar operand."
       ],
       "equivalence_cases": [
         "Positive: named and explicit skip/kern forms with equal values append equivalent nodes.",
-        "Boundary: zero/negative dimensions, fil orders, unmatched bottom closer, and malformed mandatory opener.",
-        "Nesting/mode: simple groups inside every box/math group close independently; restricted hmode vskip takes off_save."
+        "Boundary: zero/negative dimensions, fil orders, omitted rule dimensions, and repeated keyword overrides.",
+        "Nesting/mode: rules, glue, and kerns append to the current outer/internal vertical, horizontal, or math list selected by canonical dispatch."
       ],
       "recovery_cases": [
-        "math_left_group inserts the two-token frozen right-dot closer; other structural groups insert exactly one token.",
-        "At bottom level the current token is dropped after the Extra diagnostic and no backup level survives."
+        "A failed optional rule keyword backs up the first nonkeyword command for main control.",
+        "Cross-mode illegal and off-save recovery are non-owning dependencies on the main-control and group properties and scan no direct-material operand here."
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
@@ -464,14 +410,6 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_initex_replay_scans_complete_rule_specs_through_command_control"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "off_save_reports_before_replaying_its_inserted_closer"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_vskip_in_restricted_horizontal_closes_a_semisimple_group_first"
         }
       ],
       "status": "gap",
@@ -851,8 +789,8 @@
     },
     {
       "id": "tex82.math.exit-and-display",
-      "sections": [1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205, 1206, 1207],
-      "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page or display alignment.",
+      "sections": [1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205],
+      "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page; display-alignment completion is owned separately by tex82.align.display-finish (§1206).",
       "preconditions": [
         "A balanced math-shift group contains a finished mlist and optional equation-number mlist.",
         "Live math fonts/parameters, display width/indent/skips/penalties, pre-display size/direction, and enclosing mode are available."
