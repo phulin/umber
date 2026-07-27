@@ -193,7 +193,6 @@ pub(crate) enum StoredReplayReason {
     OutputRoutine,
     Write,
     Discretionary,
-    AfterGroup,
     AfterAssignment,
 }
 

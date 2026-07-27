@@ -286,6 +286,32 @@ impl CommandObserver for ObservationBuffer {
 /// The borrows are passed individually rather than as `&mut self` so that a
 /// caller can still lend main control's disjoint replay state -- notably
 /// `boxes` -- to the scanner it drives with the returned processor.
+/// The command machine's four borrowed halves, bundled.
+///
+/// [`command_processor`] deliberately takes them apart so that main control
+/// can lend its other disjoint replay state at the same time. A helper that
+/// needs to build a processor of its own -- rather than being handed one --
+/// takes this instead, so passing the command machine along costs one
+/// parameter instead of four.
+struct CommandMachine<'a> {
+    state: &'a mut CommandState,
+    runtime: &'a mut CommandRuntime,
+    capabilities: &'a mut CommandHostCapabilities,
+    observations: &'a mut ObservationSlot,
+}
+
+impl CommandMachine<'_> {
+    fn processor<'a>(&'a mut self, stores: &'a mut Universe) -> CommandProcessor<'a> {
+        command_processor(
+            self.state,
+            self.runtime,
+            self.capabilities,
+            self.observations,
+            stores,
+        )
+    }
+}
+
 fn command_processor<'a>(
     command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,
@@ -605,6 +631,19 @@ impl CanonicalMainControl {
     /// frees the would-be node, and jumps straight back to `big_switch`. With
     /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
     /// character at all exists -- that is every character in the document.
+    /// Lends the whole command machine at once, for helpers that build their
+    /// own processor rather than being handed one. A caller that must keep
+    /// another of main control's fields borrowed at the same time builds the
+    /// bundle from those fields directly instead.
+    fn command_machine(&mut self) -> CommandMachine<'_> {
+        CommandMachine {
+            state: &mut self.command,
+            runtime: &mut self.runtime,
+            capabilities: &mut self.capabilities,
+            observations: &mut self.operation_observations,
+        }
+    }
+
     fn park_main_control(&mut self, character: Option<char>, stores: &Universe) {
         self.main_loop_active = character.is_some_and(|character| {
             matches!(
@@ -791,7 +830,12 @@ impl CanonicalMainControl {
             &mut self.modes,
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
-            &mut self.command,
+            &mut CommandMachine {
+                state: &mut self.command,
+                runtime: &mut self.runtime,
+                capabilities: &mut self.capabilities,
+                observations: &mut self.operation_observations,
+            },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
@@ -896,27 +940,10 @@ impl CanonicalMainControl {
                 .map_err(|_| ExecError::MissingToken {
                     context: "discretionary group",
                 })?;
-        if !aftergroup.is_empty() {
-            let traced: Vec<_> = aftergroup
-                .into_iter()
-                .map(|token| {
-                    let origin = stores.inserted_origin(
-                        tex_state::provenance::InsertedOriginKind::AfterGroup,
-                        token,
-                        tex_state::token::OriginId::UNKNOWN,
-                    );
-                    tex_state::token::TracedTokenWord::pack(token, origin)
-                })
-                .collect();
-            let aftergroup = self
-                .command
-                .push_aftergroup(stores.finish_traced_token_list(&traced));
-            self.main_loop_active = false;
-            while self.command.replay_episode_is_active(aftergroup) {
-                let _ = self.step_once(stores)?;
-            }
-            self.main_loop_active = false;
-        }
+        // §1120's `build_discretionary` opens with a bare `unsave`, so the
+        // tokens §282 backs up land in the ordinary input stream and are read
+        // by whatever reads next -- there is no private replay loop for them.
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok(nodes)
     }
 
@@ -1018,7 +1045,12 @@ impl CanonicalMainControl {
             &mut self.modes,
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
-            &mut self.command,
+            &mut CommandMachine {
+                state: &mut self.command,
+                runtime: &mut self.runtime,
+                capabilities: &mut self.capabilities,
+                observations: &mut self.operation_observations,
+            },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
@@ -1474,7 +1506,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "math shift group",
             })?;
-        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok(())
     }
 
@@ -1491,7 +1523,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "equation number group",
             })?;
-        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.finish_canonical_display_math(stores, Some(finished))
     }
 
@@ -1515,7 +1547,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "display math group",
             })?;
-        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_canonical_display(stores, interrupt.active_directions)
     }
 
@@ -1806,7 +1838,12 @@ impl CanonicalMainControl {
             &mut self.modes,
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
-            &mut self.command,
+            &mut CommandMachine {
+                state: &mut self.command,
+                runtime: &mut self.runtime,
+                capabilities: &mut self.capabilities,
+                observations: &mut self.operation_observations,
+            },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         );
@@ -7399,7 +7436,7 @@ fn apply_scanned_step(
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
     active_alignment: &mut Option<ActiveReplayAlignment>,
-    command: &mut CommandState,
+    command: &mut CommandMachine<'_>,
     boxes: &mut ReplayBoxes,
     prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
 ) -> Result<ReplayStep, ExecError> {
@@ -7515,7 +7552,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command, modes, stores, true)?;
+                start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             crate::assignments::flush_pending_hchars(modes, stores)?;
             modes.current_list_mut().push(Node::Glue {
@@ -7653,7 +7690,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command, modes, stores, true)?;
+                start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             crate::assignments::append_canonical_character(
                 modes,
@@ -7677,7 +7714,7 @@ fn apply_scanned_step(
                     });
                 }
                 Mode::Vertical | Mode::InternalVertical => {
-                    start_canonical_paragraph(command, modes, stores, true)?;
+                    start_canonical_paragraph(command.state, modes, stores, true)?;
                     crate::assignments::append_canonical_control_space(modes, stores)?;
                 }
                 _ => {
@@ -7772,7 +7809,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command, modes, stores, true)?;
+                start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             crate::assignments::flush_pending_hchars(modes, stores)?;
             modes.current_list_mut().push(Node::Glue {
@@ -7834,7 +7871,7 @@ fn apply_scanned_step(
                     )));
                 }
             } else {
-                start_canonical_paragraph(command, modes, stores, indent)?;
+                start_canonical_paragraph(command.state, modes, stores, indent)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -8401,7 +8438,15 @@ fn apply_scanned_step(
             height,
             depth,
             horizontal,
-        } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
+        } => apply_scanned_rule(
+            command.state,
+            modes,
+            stores,
+            width,
+            height,
+            depth,
+            horizontal,
+        ),
         ScannedStep::Message { tokens, error } => {
             let text = replay_text(stores.tokens(tokens.token_list()));
             if error {
@@ -8623,7 +8668,7 @@ fn apply_scanned_step(
                 leader_kind: None,
                 shift: None,
             });
-            schedule_everybox(command, stores, kind.horizontal());
+            schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginInsert(construction) => {
@@ -8725,10 +8770,10 @@ fn apply_scanned_step(
                 leader_kind: Some(leader_kind),
                 shift: None,
             });
-            schedule_everybox(command, stores, kind.horizontal());
+            schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxShift(shift) => apply_box_shift(shift, command, modes, stores, boxes),
+        ScannedStep::BoxShift(shift) => apply_box_shift(shift, command.state, modes, stores, boxes),
         ScannedStep::IllegalBoxShift { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
@@ -8804,7 +8849,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "semi simple group",
                 })?;
-            schedule_aftergroup(command, stores, aftergroup);
+            schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraRightBrace => {
@@ -8823,7 +8868,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "semi simple group right-brace recovery",
                 })?;
-            schedule_aftergroup(command, stores, aftergroup);
+            schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraEndGroup => {
@@ -8861,7 +8906,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "ordinary simple group",
                 })?;
-            schedule_aftergroup(command, stores, aftergroup);
+            schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndMathGroup => {
@@ -8874,7 +8919,7 @@ fn apply_scanned_step(
                     context: "math group",
                 }
             })?;
-            schedule_aftergroup(command, stores, aftergroup);
+            schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentRecovery { opens_simple_group } => {
@@ -8997,6 +9042,7 @@ fn apply_scanned_step(
         ScannedStep::BeginAlignment { vertical } => {
             if let Some(outer) = active_alignment.take() {
                 command
+                    .state
                     .apply_alignment_request(AlignmentRequest::Suspend(outer.identity))
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment suspension",
@@ -9006,6 +9052,7 @@ fn apply_scanned_step(
             let identity = AlignmentIdentity::new(*next_alignment_identity);
             *next_alignment_identity = next_alignment_identity.wrapping_add(1);
             command
+                .state
                 .apply_alignment_request(AlignmentRequest::Begin(identity))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
@@ -9043,6 +9090,7 @@ fn apply_scanned_step(
         }
         ScannedStep::AlignmentPreambleOpening { alignment, packing } => {
             command
+                .state
                 .apply_alignment_request(AlignmentRequest::Preamble(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment preamble lifecycle",
@@ -9058,6 +9106,7 @@ fn apply_scanned_step(
         }
         ScannedStep::AlignmentPreambleStart { alignment } => {
             let preamble = command
+                .state
                 .take_completed_alignment_preamble(alignment)
                 .map_err(|_| ExecError::MissingToken {
                     context: "completed alignment preamble",
@@ -9124,6 +9173,7 @@ fn apply_scanned_step(
                         context: "next alignment preamble column",
                     })?;
             command
+                .state
                 .apply_alignment_request(AlignmentRequest::BeginCell {
                     alignment,
                     templates,
@@ -9135,11 +9185,13 @@ fn apply_scanned_step(
             active.align_peek_pending = false;
             if omit {
                 command
+                    .state
                     .apply_alignment_request(AlignmentRequest::PrepareCellLookahead(alignment))
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit lookahead lifecycle",
                     })?;
                 command
+                    .state
                     .apply_alignment_request(AlignmentRequest::InstallOmitCellTemplate(alignment))
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit-cell lifecycle",
@@ -9150,6 +9202,7 @@ fn apply_scanned_step(
                 // `align_peek`. A second lookahead would re-deliver that
                 // command before the template is installed.
                 command
+                    .state
                     .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment next-row cell-template lifecycle",
@@ -9196,6 +9249,7 @@ fn apply_scanned_step(
         }
         ScannedStep::AlignmentCellOpening { alignment, opening } => {
             command
+                .state
                 .apply_alignment_request(match opening {
                     AlignmentCellOpening::Template => {
                         AlignmentRequest::InstallCellTemplate(alignment)
@@ -9217,6 +9271,7 @@ fn apply_scanned_step(
         }
         ScannedStep::AlignmentCellFinish { alignment } => {
             let finished = command
+                .state
                 .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment end-v lifecycle",
@@ -9227,7 +9282,7 @@ fn apply_scanned_step(
             begin_next_replay_alignment_cell(
                 alignment,
                 finished.delimiter,
-                command,
+                command.state,
                 active_alignment,
                 modes,
                 stores,
@@ -9245,6 +9300,7 @@ fn apply_scanned_step(
                 .expect("active replay alignment was checked");
             finish_replay_alignment(active, modes, stores)?;
             command
+                .state
                 .apply_alignment_request(AlignmentRequest::Finish(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment finish lifecycle",
@@ -9252,6 +9308,7 @@ fn apply_scanned_step(
             *active_alignment = None;
             if let Some(outer) = boxes.suspended_alignments.pop() {
                 command
+                    .state
                     .apply_alignment_request(AlignmentRequest::Resume(outer.identity))
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment resumption",
@@ -9281,7 +9338,7 @@ fn apply_scanned_step(
             unreachable!("apply_host_owned_step applies canonical math shifts")
         }
         ScannedStep::ParagraphStart => {
-            start_canonical_paragraph(command, modes, stores, true)?;
+            start_canonical_paragraph(command.state, modes, stores, true)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Character { ch, cat, origin } => {
@@ -9318,7 +9375,7 @@ fn apply_scanned_step(
                         modes.current_mode(),
                         Mode::Vertical | Mode::InternalVertical
                     ) {
-                        start_canonical_paragraph(command, modes, stores, true)?;
+                        start_canonical_paragraph(command.state, modes, stores, true)?;
                     }
                     crate::assignments::append_canonical_character(modes, stores, ch, origin)?;
                 }
@@ -9331,7 +9388,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command, modes, stores, true)?;
+                start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             apply_scanned_accent(modes, stores, accent)
         }
@@ -9344,11 +9401,31 @@ fn apply_scanned_step(
     }
 }
 
-/// Moves TeX's FIFO group-exit payload into a command-owned replay level only
-/// after `Universe` has restored the enclosing group state.
-fn schedule_aftergroup(command: &mut CommandState, stores: &mut Universe, tokens: Vec<Token>) {
+/// TeX82 §282's `insert_token` arm, the only way an `\aftergroup` token ever
+/// re-enters the input.
+///
+/// §282 is `unsave`'s `@<Clear off top level from |save_stack|@>`: it walks
+/// the level downwards and, for every `insert_token` entry, runs
+/// §326 `@<Insert token |p| into \TeX's input@>` -- `t:=cur_tok; cur_tok:=p;
+/// back_input; cur_tok:=t`. So each saved token gets its own full §325
+/// `back_input`: its own stack-conservation loop, so a macro body that ended
+/// with the closing brace retires *before* the first backup pushes; its own
+/// one-token `backed_up` level; and its own recovery record. A single level
+/// carrying the whole payload is not the same object and is not observed the
+/// same way.
+///
+/// Because §282 clears the level from the top down while `\aftergroup` saved
+/// from the bottom up, the last-saved token is backed up first and ends up
+/// deepest, so rereading restores save order. `Universe` hands the payload
+/// over in save order, so backing it up in reverse reproduces both the input
+/// structure and the order `unsave` observes it in.
+fn schedule_aftergroup(
+    command: &mut CommandMachine<'_>,
+    stores: &mut Universe,
+    tokens: Vec<Token>,
+) -> Result<(), ExecError> {
     if tokens.is_empty() {
-        return;
+        return Ok(());
     }
     let traced: Vec<_> = tokens
         .into_iter()
@@ -9360,8 +9437,14 @@ fn schedule_aftergroup(command: &mut CommandState, stores: &mut Universe, tokens
             );
             tex_state::token::TracedTokenWord::pack(token, origin)
         })
-        .collect();
-    let _ = command.push_aftergroup(stores.finish_traced_token_list(&traced));
+        .collect::<Vec<_>>();
+    let mut processor = command.processor(stores);
+    for spelling in traced.into_iter().rev() {
+        processor
+            .back_input_token(spelling)
+            .map_err(command_error)?;
+    }
+    Ok(())
 }
 
 /// Releases the single pending after-assignment token only after the typed

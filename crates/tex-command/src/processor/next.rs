@@ -25,6 +25,7 @@ use crate::{
 use super::CommandProcessor;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
+use super::alignment::AlignmentDeliveryState;
 #[cfg(any(test, feature = "instrumentation"))]
 use super::alignment::CELL_ALIGN_STATE;
 
@@ -550,16 +551,34 @@ impl CommandProcessor<'_> {
         }));
     }
 
-    /// Backs up a token manufactured by command processing rather than by a
-    /// preceding raw delivery. TeX82 §25 uses this for the control sequence
-    /// constructed by `\\csname`: after name lookup it assigns `cur_tok` and
-    /// calls `back_input`, so the token must have the same ordinary backup
-    /// lifecycle as a delivered command without requiring a delivery stamp.
-    pub(crate) fn back_input_synthesized(
-        &mut self,
-        spelling: TracedTokenWord,
-    ) -> Result<(), CommandError> {
+    /// TeX82 §325's `back_input` driven by a token rather than by the live
+    /// delivery: the §326 shape `cur_tok:=p; back_input`, where `p` is a
+    /// token the caller holds instead of one it just consumed.
+    ///
+    /// §325 requires only that `cur_tok` name the token to be reread. It runs
+    /// the stack-conservation loop, derives its `align_state` change from
+    /// `cur_tok`'s own category ([`AlignmentDeliveryState::back_input_adjustment`]),
+    /// and pushes a one-token `backed_up` list. No delivery stamp is involved,
+    /// so this serves every caller whose token is not the last raw delivery:
+    ///
+    /// - §372's `\\csname`: `cur_tok:=cur_cs+cs_token_flag; back_input` backs
+    ///   up a control sequence that was never delivered at all.
+    /// - §282's `unsave`, through §326: each `insert_token` entry left by
+    ///   `\\aftergroup` is backed up as the group's save-stack level is
+    ///   cleared off, long after that token was scanned.
+    ///
+    /// [`Self::back_input_saved`] is the sibling for a caller that still holds
+    /// the `CurrentCommand`: §342's alignment interception records transitions
+    /// that set `align_state` outright rather than stepping it, so a delivery
+    /// that is available must have its own adjustment reversed, not one
+    /// recomputed from the token.
+    pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
         self.conserve_input_stack()?;
+        self.command
+            .alignment
+            .undo_delivery(AlignmentDeliveryState::back_input_adjustment(
+                spelling.semantic_token(),
+            ));
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling,

@@ -734,6 +734,38 @@ impl AlignmentDeliveryState {
         }
     }
 
+    /// TeX82 §325's own brace rule, stated over `cur_tok` alone:
+    /// `if cur_tok<right_brace_limit then if cur_tok<left_brace_limit then
+    /// decr(align_state) else incr(align_state)`.
+    ///
+    /// `back_input` never consults the delivery that produced `cur_tok`; it
+    /// reads the token's own category. §326 (`cur_tok:=p; back_input`) is
+    /// exactly why that matters -- its token was saved long before, or, as
+    /// with §372's `\\csname`, was never delivered at all -- so a caller
+    /// without a live [`CurrentCommand`] classifies here instead of recalling
+    /// an adjustment. Control-sequence and active tokens carry
+    /// `cs_token_flag`, so they exceed `right_brace_limit` and never adjust.
+    ///
+    /// The result is fed to [`Self::undo_delivery`] because §325's sign is
+    /// the reverse of delivery's: a left brace that incremented on the way
+    /// out decrements on the way back in, and is incremented again when the
+    /// backup level redelivers it.
+    pub(crate) const fn back_input_adjustment(token: Token) -> AlignmentDeliveryAdjustment {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => AlignmentDeliveryAdjustment::BeginGroup,
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => AlignmentDeliveryAdjustment::EndGroup,
+            Token::Char { .. } | Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+                AlignmentDeliveryAdjustment::None
+            }
+        }
+    }
+
     pub(crate) fn undo_delivery(&mut self, adjustment: AlignmentDeliveryAdjustment) {
         match adjustment {
             AlignmentDeliveryAdjustment::None => {}

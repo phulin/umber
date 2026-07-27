@@ -393,7 +393,7 @@ impl CommandProcessor<'_> {
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
-        self.back_input_synthesized(TracedTokenWord::pack(Token::Cs(symbol), origin))
+        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
