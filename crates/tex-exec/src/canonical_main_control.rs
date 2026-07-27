@@ -1002,7 +1002,6 @@ impl CanonicalMainControl {
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
@@ -1017,7 +1016,6 @@ impl CanonicalMainControl {
             scan_replay_step(
                 &mut processor,
                 mode,
-                starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
@@ -1813,7 +1811,6 @@ impl CanonicalMainControl {
         // paragraph-start transition).
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
-        let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
@@ -1828,7 +1825,6 @@ impl CanonicalMainControl {
             scan_replay_step(
                 &mut processor,
                 mode,
-                starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
@@ -2969,7 +2965,6 @@ enum ArithmeticOperand {
 fn scan_replay_step(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
-    starts_paragraph: bool,
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
     innermost_group: Option<GroupKind>,
@@ -3028,7 +3023,6 @@ fn scan_replay_step(
     scan_step(
         processor,
         mode,
-        starts_paragraph,
         boxes,
         innermost_group,
         job_is_all_over,
@@ -3143,7 +3137,6 @@ fn scan_noalign_body(
             processor,
             command,
             mode,
-            false,
             boxes,
             innermost_group,
             job_is_all_over,
@@ -3215,7 +3208,6 @@ fn scan_alignment_delivery_step(
                 processor,
                 command,
                 mode,
-                false,
                 boxes,
                 innermost_group,
                 job_is_all_over,
@@ -3245,7 +3237,6 @@ fn scan_alignment_delivery_step(
 fn scan_step(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
-    starts_paragraph: bool,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
@@ -3274,7 +3265,6 @@ fn scan_step(
         processor,
         command,
         mode,
-        starts_paragraph,
         boxes,
         innermost_group,
         job_is_all_over,
@@ -3310,7 +3300,6 @@ fn dispatch_main_control_command(
     processor: &mut CommandProcessor<'_>,
     mut command: tex_command::CurrentCommand,
     mode: Mode,
-    starts_paragraph: bool,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
@@ -3362,7 +3351,6 @@ fn dispatch_main_control_command(
             global,
             flags,
             mode,
-            starts_paragraph,
             boxes,
             innermost_group,
             job_is_all_over,
@@ -3523,6 +3511,70 @@ fn scan_leader_glue_command(
     }))
 }
 
+/// Recognizes membership in TeX82 §1090's shared vertical-mode
+/// `back_input; new_graf(true)` case, listed there as
+/// `vmode+letter,vmode+other_char,vmode+char_num,vmode+char_given,`
+/// `vmode+math_shift,vmode+un_hbox,vmode+vrule,vmode+accent,`
+/// `vmode+discretionary,vmode+hskip,vmode+valign,vmode+ex_space,`
+/// `vmode+no_boundary`.
+///
+/// The caller has already established that the mode is (internal) vertical:
+/// tex.web's big case is `case abs(mode)+cur_cmd of`, so `vmode+x` covers both
+/// `vmode` and `-vmode`. Membership is decided purely from the delivered
+/// command, exactly as tex.web decides it from `cur_cmd`.
+fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
+    match meaning {
+        // `vmode+letter`, `vmode+other_char`, and `vmode+math_shift`. A
+        // `spacer` is deliberately absent: §1045's `vmode+spacer: do_nothing`
+        // leaves vertical mode untouched, and every other category code
+        // (braces, `#`, `^`, `_`, `~`) has its own case elsewhere.
+        Meaning::CharToken { cat, .. } => {
+            matches!(cat, Catcode::Letter | Catcode::Other | Catcode::MathShift)
+        }
+        // `vmode+char_given`: a `\chardef`'d token (§1224 installs it as
+        // `char_given`), which §1090 treats exactly like `char_num`.
+        Meaning::CharGiven(_) => true,
+        Meaning::UnexpandablePrimitive(primitive) => matches!(
+            primitive,
+            // `vmode+char_num`: §265's `primitive("char",char_num,0)`.
+            UnexpandablePrimitive::Char
+                // `vmode+un_hbox`: §1107 installs `\unhbox` and
+                // `\unhcopy` under the one `un_hbox` command code. `un_vbox`
+                // is not in this group -- `\unvbox` legitimately appends an
+                // unboxed vertical list to the enclosing vertical list.
+                | UnexpandablePrimitive::UnHBox
+                | UnexpandablePrimitive::UnHCopy
+                // `vmode+vrule`: §265's `primitive("vrule",vrule,0)`.
+                // `\hrule` is instead §1056's `vmode+hrule:
+                // tail_append(scan_rule_spec)`, which stays in vertical mode.
+                | UnexpandablePrimitive::VRule
+                // `vmode+accent`: §265's `primitive("accent",accent,0)`.
+                | UnexpandablePrimitive::Accent
+                // `vmode+discretionary`: §1114 installs both `\-`
+                // (chr 1) and `\discretionary` (chr 0) as `discretionary`.
+                | UnexpandablePrimitive::Discretionary
+                | UnexpandablePrimitive::DiscretionaryHyphen
+                // `vmode+hskip`: §1058 installs `\hskip`, `\hfil`,
+                // `\hfill`, `\hss`, and `\hfilneg` under the one `hskip`
+                // command code. `\kern` is `kern`, not `hskip`, and §1057's
+                // `vmode+kern` appends to the vertical list instead.
+                | UnexpandablePrimitive::HSkip
+                | UnexpandablePrimitive::HFil
+                | UnexpandablePrimitive::HFill
+                | UnexpandablePrimitive::HSs
+                | UnexpandablePrimitive::HFilNeg
+                // `vmode+valign`: §265's `primitive("valign",valign,0)`.
+                | UnexpandablePrimitive::VAlign
+                // `vmode+ex_space`: §265's `primitive("␣",ex_space,0)`.
+                | UnexpandablePrimitive::ControlSpace
+                // `vmode+no_boundary`: §265's
+                // `primitive("noboundary",no_boundary,0)`.
+                | UnexpandablePrimitive::NoBoundary
+        ),
+        _ => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command(
     processor: &mut CommandProcessor<'_>,
@@ -3530,7 +3582,6 @@ fn scan_command(
     global: bool,
     flags: MeaningFlags,
     mode: Mode,
-    starts_paragraph: bool,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
@@ -3793,6 +3844,33 @@ fn scan_command(
         )
     {
         return Ok(ScannedStep::EndOutputRoutine);
+    }
+    // TeX82 §1090's `@<Cases of |main_control| that build boxes and lists@>`
+    // opens with one shared vertical-mode case, not thirteen separate ones:
+    //
+    //     vmode+letter,vmode+other_char,vmode+char_num,vmode+char_given,
+    //     vmode+math_shift,vmode+un_hbox,vmode+vrule,
+    //     vmode+accent,vmode+discretionary,vmode+hskip,vmode+valign,
+    //     vmode+ex_space,vmode+no_boundary:
+    //       begin back_input; new_graf(true); end;
+    //
+    // Every member takes the same two actions in the same order, *before* any
+    // operand of its own is looked at: the triggering command is pushed back
+    // (§325 `back_input`, which opens a `backed_up` input level), and §1091
+    // `new_graf` then opens the paragraph and pushes `\everypar`. The backed-up
+    // command is redelivered afterwards and dispatched again, now in horizontal
+    // mode, where it scans its operand.
+    //
+    // Scanning the operand here instead -- `\char`'s character number,
+    // `\hskip`'s glue, `\vrule`'s rule spec, `\accent`'s accent number and base
+    // character, `\discretionary`'s three lists -- reads it in vertical mode,
+    // before `\everypar` has run and before the paragraph's horizontal list
+    // exists, and skips the backup level and redelivery entirely.
+    if matches!(mode, Mode::Vertical | Mode::InternalVertical)
+        && starts_paragraph_in_vertical_mode(command.meaning())
+    {
+        processor.back_input(command).map_err(command_error)?;
+        return Ok(ScannedStep::ParagraphStart);
     }
     match command.meaning() {
         Meaning::CharToken {
@@ -4647,19 +4725,10 @@ fn scan_command(
                 ships_out: boxes.pending_shipout,
             })
         }
-        // TeX82 §1090's vmode-paragraph-starting list includes
-        // `vmode+un_hbox` (but not `vmode+un_vbox`, which legitimately
-        // appends an unboxed vlist directly to the enclosing vertical list):
-        // `\unhbox`/`\unhcopy` in (internal) vertical mode back up the token
-        // and start a paragraph, exactly like `vmode+math_shift` and
-        // `vmode+no_boundary` above, before their register operand is ever
-        // scanned. `\unvbox`/`\unvcopy` are unaffected.
-        Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy,
-        ) if matches!(mode, Mode::Vertical | Mode::InternalVertical) => {
-            processor.back_input(command).map_err(command_error)?;
-            Ok(ScannedStep::ParagraphStart)
-        }
+        // `\unhbox`/`\unhcopy` in (internal) vertical mode never reach here:
+        // `starts_paragraph_in_vertical_mode` routes `vmode+un_hbox` through
+        // §1090's shared backup above, before this register operand is ever
+        // scanned. `\unvbox`/`\unvcopy` are not in that group.
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::UnHBox
             | UnexpandablePrimitive::UnHCopy
@@ -4771,19 +4840,11 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
         }
-        // TeX82 §1090's vmode-paragraph-starting list includes
-        // `vmode+valign` (unlike `vmode+halign` above): a bare `\valign` in
-        // (internal) vertical mode backs up the token and starts a
-        // paragraph first, then reprocesses `\valign` as `hmode+valign`
-        // (embedded alignment material inside the resulting paragraph's
-        // horizontal list) exactly like `vmode+math_shift` and
-        // `vmode+no_boundary` above.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign)
-            if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
-        {
-            processor.back_input(command).map_err(command_error)?;
-            Ok(ScannedStep::ParagraphStart)
-        }
+        // Only `hmode+valign` reaches here: §1090 lists `vmode+valign` (unlike
+        // `vmode+halign` above), so the shared backup already turned a bare
+        // `\valign` in (internal) vertical mode into a paragraph start, and
+        // the redelivered token arrives as `hmode+valign` -- embedded
+        // alignment material inside the resulting paragraph's horizontal list.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: true })
         }
@@ -4792,11 +4853,11 @@ fn scan_command(
             cat: Catcode::MathShift,
             ..
         } => match mode {
-            // §1090 retries this exact shift after `new_graf`; probing it
-            // here would run before `\everypar`.
+            // §1090's shared backup already retried this exact shift after
+            // `new_graf`; probing it in vertical mode would run before
+            // `\everypar`.
             Mode::Vertical | Mode::InternalVertical => {
-                processor.back_input(command).map_err(command_error)?;
-                Ok(ScannedStep::ParagraphStart)
+                unreachable!("§1090 backs a vertical-mode math shift up first")
             }
             // §1138 `init_math`: `hmode+math_shift`, for either sign of
             // `hmode`. The probe is `get_token`, and only `mode>0` -- the
@@ -4826,17 +4887,10 @@ fn scan_command(
             // text@>`, which probes nothing at all.
             Mode::Math => Ok(ScannedStep::MathShift { paired: false }),
         },
-        Meaning::CharToken {
-            cat: Catcode::Letter | Catcode::Other,
-            ..
-        } if starts_paragraph => {
-            // TeX82 main_control backs up the first ordinary character before
-            // new_graf. The command processor retains exact-delivery proof
-            // for that operation; executor replay only applies its typed mode
-            // transition after this borrow ends.
-            processor.back_input(command).map_err(command_error)?;
-            Ok(ScannedStep::ParagraphStart)
-        }
+        // §1090's shared backup already handled `vmode+letter` and
+        // `vmode+other_char`, so a letter or other character reaching here is
+        // in horizontal or math mode. `vmode+spacer` is §1045's `do_nothing`
+        // and is the one category code of the three that stays here.
         Meaning::CharToken {
             ch,
             cat: cat @ (Catcode::Letter | Catcode::Other | Catcode::Space),
@@ -4868,18 +4922,12 @@ fn scan_command(
                 Ok(ScannedStep::ItalicCorrection)
             }
         }
-        // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
-        // friends: back up the token and start the paragraph, then let the
-        // backed-up `\noboundary` be redelivered in horizontal mode. §1030's
-        // `hmode+no_boundary` and §1045's `mmode+no_boundary` (`do_nothing`)
-        // both need only the live mode at apply time, with no scan here.
+        // §1090's `vmode+no_boundary` was already backed up above, so only
+        // §1030's `hmode+no_boundary` and §1045's `mmode+no_boundary`
+        // (`do_nothing`) reach here; both need only the live mode at apply
+        // time, with no scan of their own.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary) => {
-            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                processor.back_input(command).map_err(command_error)?;
-                Ok(ScannedStep::ParagraphStart)
-            } else {
-                Ok(ScannedStep::NoBoundary)
-            }
+            Ok(ScannedStep::NoBoundary)
         }
         // TeX82 §1171's `mmode+non_script` vs. §1046's `non_math(non_script)`
         // recovery, exactly mirroring the `\vskip`-in-math-mode gate above

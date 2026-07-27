@@ -4255,6 +4255,69 @@ fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
+/// Steps once and returns everything the step committed.
+fn step_observations(
+    control: &mut CommandReplayControl,
+    universe: &mut Universe,
+    what: &str,
+) -> Vec<CommandObservation> {
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(universe, &mut observations)
+            .unwrap_or_else(|error| panic!("{what}: {error:?}")),
+        ReplayStep::Continue
+    );
+    observations.0
+}
+
+fn scanned_any(observations: &[CommandObservation]) -> bool {
+    observations
+        .iter()
+        .any(|observation| matches!(observation, CommandObservation::Scanner(_)))
+}
+
+fn scanned(observations: &[CommandObservation], kind: &str, value: &str) -> bool {
+    observations.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == kind && scanner.value == value
+        )
+    })
+}
+
+/// Asserts the two records TeX82 §1090's `back_input` commits before §1091
+/// `new_graf` runs: §325 pushes a one-token `backed_up` level and records the
+/// token it holds.
+fn assert_backed_up_paragraph_start(observations: &[CommandObservation], what: &str) {
+    assert!(
+        observations.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup
+                    && record.reason == InputReason::Backup
+        )),
+        "{what}: §1090 must push a backed_up input level, got {observations:?}"
+    );
+    assert!(
+        observations.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Recovery(record) if record.kind == RecoveryKind::Backup
+        )),
+        "{what}: §1090's backup must be recorded, got {observations:?}"
+    );
+    assert!(
+        !scanned_any(observations),
+        "{what}: §1090 scans no operand before `new_graf`, got {observations:?}"
+    );
+}
+
+// TeX82 §1090's `vmode+vrule` is one member of the shared
+// `begin back_input; new_graf(true); end` case, so the first main-control step
+// for a vertical-mode `\vrule` scans no operand at all: it pushes the token
+// back and opens the paragraph. The rule specification is scanned only when
+// the backed-up `\vrule` is redelivered in horizontal mode.
 #[test]
 fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
     let mut universe = Universe::new_with_plain_catcodes();
@@ -4263,44 +4326,91 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
         &mut control,
         br"\vrule width1pt height2pt depth0pt\hrule width3pt height4pt depth1pt\end",
     );
-    let mut observations = ObservationRecorder::default();
 
-    assert_eq!(
-        control
-            .step_with_observer(&mut universe, &mut observations)
-            .expect("vertical rule"),
-        ReplayStep::Continue
-    );
-    assert!(observations.0.iter().any(|observation| {
-        matches!(
-            observation,
-            CommandObservation::Scanner(scanner)
-                if scanner.kind == "dimension" && scanner.value == "65536"
-        )
-    }));
-    assert!(observations.0.iter().any(|observation| {
-        matches!(
+    let start = step_observations(&mut control, &mut universe, "vertical rule starts a paragraph");
+    assert_backed_up_paragraph_start(&start, "vmode+vrule");
+
+    let spec = step_observations(&mut control, &mut universe, "redelivered vertical rule");
+    assert!(scanned(&spec, "dimension", "65536"), "{spec:?}");
+    assert!(
+        spec.iter().any(|observation| matches!(
             observation,
             CommandObservation::Command(delivery)
                 if matches!(delivery.spelling, ObservedToken::Character { character: 'w', .. })
-        )
-    }));
-
-    observations.0.clear();
-    assert_eq!(
-        control
-            .step_with_observer(&mut universe, &mut observations)
-            .expect("horizontal rule"),
-        ReplayStep::Continue
+        )),
+        "{spec:?}"
     );
-    assert!(observations.0.iter().any(|observation| {
-        matches!(
-            observation,
-            CommandObservation::Scanner(scanner)
-                if scanner.kind == "dimension" && scanner.value == "196608"
-        )
-    }));
-    assert_end_after_ejecting_residual_page(&mut control, &mut universe);
+
+    // §1095 `head_for_vmode` ends the paragraph and retries `\hrule` in
+    // vertical mode, so the horizontal rule's own spec is scanned a few steps
+    // later rather than immediately.
+    let mut horizontal = Vec::new();
+    for _ in 0..8 {
+        horizontal = step_observations(&mut control, &mut universe, "horizontal rule");
+        if scanned(&horizontal, "dimension", "196608") {
+            break;
+        }
+    }
+    assert!(scanned(&horizontal, "dimension", "196608"), "{horizontal:?}");
+}
+
+// The rest of §1090's shared vertical-mode case, each checked the same way:
+// the delivering step commits the backup and scans nothing, and the operand is
+// scanned only after the backed-up token is redelivered in horizontal mode.
+// `\char` is the case the canonical gentle trace caught: its `scan_int` ran in
+// vertical mode, so the character number was read before `\everypar`.
+#[test]
+fn canonical_vertical_char_num_backs_up_before_scanning_its_number() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\char92 \end");
+
+    let start = step_observations(&mut control, &mut universe, "\\char starts a paragraph");
+    assert_backed_up_paragraph_start(&start, "vmode+char_num");
+
+    let number = step_observations(&mut control, &mut universe, "redelivered \\char");
+    assert!(scanned(&number, "integer", "92"), "{number:?}");
+}
+
+#[test]
+fn canonical_vertical_hskip_backs_up_before_scanning_its_glue() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\hskip 3pt\end");
+
+    let start = step_observations(&mut control, &mut universe, "\\hskip starts a paragraph");
+    assert_backed_up_paragraph_start(&start, "vmode+hskip");
+
+    let glue = step_observations(&mut control, &mut universe, "redelivered \\hskip");
+    assert!(scanned(&glue, "dimension", "196608"), "{glue:?}");
+}
+
+#[test]
+fn canonical_vertical_accent_backs_up_before_scanning_its_number() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\accent23 \end");
+
+    let start = step_observations(&mut control, &mut universe, "\\accent starts a paragraph");
+    assert_backed_up_paragraph_start(&start, "vmode+accent");
+
+    let number = step_observations(&mut control, &mut universe, "redelivered \\accent");
+    assert!(scanned(&number, "integer", "23"), "{number:?}");
+}
+
+// `\hfil`, `\hfill`, `\hss`, and `\hfilneg` share tex.web's `hskip` command
+// code (§1058), and `\ ` is `ex_space` (§265); neither scans an operand, so
+// the proof for these is the backup itself.
+#[test]
+fn canonical_vertical_hfil_and_control_space_back_up_before_new_graf() {
+    for source in [&b"\\hfil\\end"[..], &b"\\ \\end"[..]] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+
+        let start = step_observations(&mut control, &mut universe, "paragraph start");
+        assert_backed_up_paragraph_start(&start, &String::from_utf8_lossy(source));
+    }
 }
 
 #[derive(Default)]
