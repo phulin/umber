@@ -21,6 +21,14 @@ scripts/test-oracle-regeneration.sh
 # because `reference-tools` is a resolution no other gate builds.
 cargo test -q -p parity-harness --tests --features reference-tools
 
+# The `[workspace] exclude` directories: each is its own workspace with its own
+# lockfile, so `--workspace` cannot reach them and `scripts/run-native-tests.py`
+# requires them to name a gate that does. This is that gate; the 23 tests here
+# ran nowhere at all before umber2-johp.211.
+cargo test -q --tests --manifest-path tools/corpus-sync/Cargo.toml
+cargo test -q --tests --manifest-path tools/fixturegen/Cargo.toml
+cargo test -q --tests --manifest-path tools/texlive-wasm-publish/Cargo.toml
+
 CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" \
   cargo clippy -q -p profile-analyzer -p refexec -p parity-harness \
     --all-targets --features parity-harness/reference-tools -- -D warnings

@@ -43,13 +43,16 @@ def parsed(passed: int, failed: int, ignored: int):
     return match
 
 
-def run_plan(members: dict, excluded: dict):
-    saved = runner.EXCLUDED_PACKAGES
+def run_plan(members: dict, excluded: dict, workspaces: dict | None = None):
+    saved_packages = runner.EXCLUDED_PACKAGES
+    saved_workspaces = runner.EXCLUDED_WORKSPACES
     runner.EXCLUDED_PACKAGES = excluded
+    runner.EXCLUDED_WORKSPACES = {} if workspaces is None else workspaces
     try:
-        return runner.plan(members)
+        return runner.plan(members, list(runner.EXCLUDED_WORKSPACES))
     finally:
-        runner.EXCLUDED_PACKAGES = saved
+        runner.EXCLUDED_PACKAGES = saved_packages
+        runner.EXCLUDED_WORKSPACES = saved_workspaces
 
 
 def raises_coverage(members: dict, excluded: dict) -> bool:
@@ -57,6 +60,18 @@ def raises_coverage(members: dict, excluded: dict) -> bool:
         run_plan(members, excluded)
     except runner.CoverageError:
         return True
+    return False
+
+
+def raises_workspace_coverage(declared: list[str], workspaces: dict) -> bool:
+    saved = runner.EXCLUDED_WORKSPACES
+    runner.EXCLUDED_WORKSPACES = workspaces
+    try:
+        runner.check_excluded_workspaces(declared)
+    except runner.CoverageError:
+        return True
+    finally:
+        runner.EXCLUDED_WORKSPACES = saved
     return False
 
 
@@ -85,6 +100,22 @@ expect(
 # ... and one that still names a member is honoured.
 selected, _ = run_plan({"a": LIB, "b": LIB}, {"b": "reason"})
 expect(selected == ["a"], "a live exclusion was not applied")
+
+# A directory pushed out of the workspace must name the gate that runs it.
+expect(
+    raises_workspace_coverage(["tools/new-thing"], {}),
+    "an undeclared `[workspace] exclude` directory did not fail the run",
+)
+expect(
+    raises_workspace_coverage([], {"tools/gone": "scripts/check-tools.sh"}),
+    "a declaration for a directory no longer excluded did not fail the run",
+)
+expect(
+    not raises_workspace_coverage(
+        ["tools/thing"], {"tools/thing": "scripts/check-tools.sh"}
+    ),
+    "a correct `[workspace] exclude` declaration was rejected",
+)
 
 # A selection that cannot fail is not allowed to report success.
 expect(raises_coverage({"a": LIB}, {"a": "reason"}), "an empty selection passed")
