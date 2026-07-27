@@ -7041,6 +7041,12 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                 // reports it for every non-terminal, non-DVI effect kind; the
                 // `\0` separates channel from detail and must be present even
                 // when a close carries no detail (`umber2-johp.141`).
+                //
+                // A close carries no detail because TeX82 §1374 closes
+                // `write_file[j]` without naming it: only its open branch
+                // assigns `cur_name`/`cur_area`/`cur_ext`, and §1378 closes
+                // any surviving stream the same way. The stream number is the
+                // whole committed identity (`umber2-johp.189`).
                 tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
                     kind: "close",
                     detail: format!("stream:{}\0", slot.raw()),

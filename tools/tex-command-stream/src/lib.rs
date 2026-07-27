@@ -775,7 +775,6 @@ struct Recorder {
     registered_inputs: BTreeMap<String, Arc<[u8]>>,
     next_registered_source: u32,
     alignment_nesting: AlignmentNesting,
-    open_write_targets: BTreeMap<String, String>,
     events: Vec<ObservedEvent>,
 }
 
@@ -796,7 +795,6 @@ impl Recorder {
             registered_inputs,
             next_registered_source: 2,
             alignment_nesting: AlignmentNesting::default(),
-            open_write_targets: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -863,7 +861,7 @@ fn canonical_trace_source_name(name: &str) -> String {
 }
 
 impl CommandObserver for Recorder {
-    fn committed(&mut self, mut observation: CommandObservation) {
+    fn committed(&mut self, observation: CommandObservation) {
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
@@ -874,19 +872,6 @@ impl CommandObserver for Recorder {
             // the portable trace observes only the resulting source push.
             self.activate_registered_input(detail);
             return;
-        }
-        if let CommandObservation::Effect(effect) = &mut observation {
-            if effect.kind == "open"
-                && let Some((stream, target)) = effect.detail.split_once('\0')
-            {
-                self.open_write_targets.insert(stream.into(), target.into());
-            } else if effect.kind == "close"
-                && !effect.detail.contains('\0')
-                && let Some(target) = self.open_write_targets.remove(&effect.detail)
-            {
-                effect.detail.push('\0');
-                effect.detail.push_str(&target);
-            }
         }
         let (source_name, source_id, source_bytes) = {
             let source = self.current_source();
@@ -1460,6 +1445,19 @@ fn translate_effect(record: EffectRecord) -> Event {
     if record.kind == "terminate" {
         return Event::Effect(EffectEvent {
             kind: EffectKind::Terminate,
+            channel,
+            value: CanonicalValue::None,
+        });
+    }
+    if record.kind == "close" {
+        // tex.web §1374's close branch closes `write_file[j]` without naming
+        // it -- only the open branch assigns `cur_name`/`cur_area`/`cur_ext`,
+        // and TeX keeps no name for an open stream (§1378 closes the
+        // survivors the same way). The stream number in `channel` is the
+        // whole committed identity, so the value is `None` rather than an
+        // empty name.
+        return Event::Effect(EffectEvent {
+            kind: EffectKind::Close,
             channel,
             value: CanonicalValue::None,
         });

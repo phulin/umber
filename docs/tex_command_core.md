@@ -2838,6 +2838,17 @@ DVI output. The final TeX82 change also observes assignment-scoped committed
 meaning, catcode, code-table, parameter, and register writes, plus committed
 message, expanded-write, stream-open/close, and successful-shipout effects.
 Transparency includes exact generated write-file bytes.
+
+A stream-open effect carries the opened file name, because §1374's open branch
+assigns `cur_name`, `cur_area`, and `cur_ext` from the whatsit before packing
+it. A stream-close effect carries no value at all: §1374 closes `write_file[j]`
+without naming it, and TeX keeps no name for an open stream, so §1378 closes
+the survivors at job end the same way. Instrumentation must not read the
+file-name globals there -- they still hold whatever was packed last, such as
+the most recent `\input` or the job name §529's `pack_job_name` installs for
+the log or DVI file -- and must not shadow the open target in engine state TeX
+does not have. The stream number in the effect's channel is the whole of a
+close's committed identity.
 Cargo correctness tests never acquire or execute this live oracle.
 
 For e-TeX 2.6, `scripts/regen-fixtures.sh --oracle etex26 --profile

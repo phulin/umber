@@ -1764,7 +1764,15 @@ umber_trace_effect(1,j,1,def_ref);
     else if j<16 then
 @y
   else  begin if write_open[j] then begin a_close(write_file[j]);
-      write_open[j]:=false; umber_trace_effect(3,j,3,0); end;
+      write_open[j]:=false;
+      {Section 1374 closes the stream without naming it: only the open branch
+      below assigns cur_name, cur_area, and cur_ext, and TeX retains no name
+      for an open stream (section 1378 closes the survivors the same way).
+      A file-name value here would publish whatever those globals last held,
+      such as the most recent input file or the job name that section 529's
+      pack_job_name leaves behind. So the close effect carries no value, and
+      the stream number in the channel is its whole committed identity.}
+      umber_trace_effect(3,j,4,0); end;
     if subtype(p)=close_node then do_nothing {already closed}
     else if j<16 then
 @z
