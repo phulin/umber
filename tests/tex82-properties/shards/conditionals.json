@@ -95,9 +95,9 @@
       "modules": { "first": 501, "last": 501 },
       "disposition": "property",
       "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.scalar-state-predicates"],
+      "property_ids": ["tex82.conditionals.predicate-dispatch"],
       "gap_bead": null,
-      "rationale": "Dispatches every TeX82 comparison family to its canonical operand scanner or state query."
+      "rationale": "Dispatches all seventeen TeX82 predicates, including mode, inner, stream, and constant state queries, to their canonical evaluators."
     },
     {
       "modules": { "first": 502, "last": 502 },
@@ -108,12 +108,28 @@
       "rationale": "Tracing-only display of an already computed boolean; it adds no independent conditional transition."
     },
     {
-      "modules": { "first": 503, "last": 505 },
+      "modules": { "first": 503, "last": 503 },
       "disposition": "property",
       "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.scalar-state-predicates"],
+      "property_ids": ["tex82.conditionals.ordered-relations"],
       "gap_bead": null,
-      "rationale": "Defines integer/dimension relations and recovery, oddness, and box-register predicates."
+      "rationale": "Defines integer and dimension comparison scanning, relation selection, and missing-relation recovery."
+    },
+    {
+      "modules": { "first": 504, "last": 504 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.odd-integer"],
+      "gap_bead": null,
+      "rationale": "Defines the integer oddness predicate."
+    },
+    {
+      "modules": { "first": 505, "last": 505 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.box-register-kind"],
+      "gap_bead": null,
+      "rationale": "Defines void, hbox, and vbox tests over a scanned box register."
     },
     {
       "modules": { "first": 506, "last": 508 },
@@ -130,14 +146,6 @@
       "property_ids": ["tex82.conditionals.branch-and-delimiters"],
       "gap_bead": null,
       "rationale": "Defines ifcase limb selection and legal, premature, and extra delimiter handling through fi."
-    },
-    {
-      "modules": { "first": 1335, "last": 1335 },
-      "disposition": "property",
-      "owner": "tex-command::conditionals",
-      "property_ids": ["tex82.conditionals.final-cleanup-recovery"],
-      "gap_bead": null,
-      "rationale": "Reports and unwinds every condition frame still incomplete at final cleanup."
     }
   ],
   "properties": [
@@ -161,15 +169,15 @@
         "Primitive aliases preserve the same command and operand identity."
       ],
       "equivalence_cases": [
-        "Existing exact tests tex82_conditionals_use_shared_if_test_identity and tex82_conditional_delimiters_use_shared_fi_or_else_identity cover all public primitive identities.",
-        "Phase 2 adds conditionals::tests::tex82_predicates_and_delimiters_classify_and_dispatch_from_aliases plus a scanner-conditionals recovery case with a redefined public fi."
+        "A primitive token and any control-sequence alias with the same installed meaning have identical command and operand identity.",
+        "All predicate names occupy one contiguous if_test operand family, while fi, else, and or remain distinct operands of one fi_or_else family."
       ],
       "recovery_cases": [
         "An inserted frozen fi is unaffected by a live fi redefinition.",
         "A delimiter delivered with no live condition is classified normally before extra-delimiter recovery."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/observation/mod.rs",
@@ -181,7 +189,12 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "gap_bead": "umber2-johp.225",
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::tex82_predicate_aliases_preserve_classification",
+        "semantic case scanner-conditionals.tex::classification-aliases",
+        "recovery case scanner-conditionals.tex::frozen-fi-after-public-fi-redefinition"
+      ]
     },
     {
       "id": "tex82.conditionals.stack-lifecycle",
@@ -203,15 +216,15 @@
         "Input-level pushes/pops and grouping do not own or reorder condition frames."
       ],
       "equivalence_cases": [
-        "Nested source, macro, and token-list inputs share one independent condition stack.",
-        "Existing condition_identity_updates_outer_frame_after_nested_push covers stable identity; Phase 2 adds conditionals::tests::stack_preserves_lines_limits_and_independence_across_all_pop_paths."
+        "Source, macro, and token-list nesting share the same independent condition-stack order.",
+        "A stable frame identity selects the same outer frame whether zero, one, or several recursively evaluated frames temporarily lie above it."
       ],
       "recovery_cases": [
         "Recursive evaluation may temporarily place a newer frame above the saved frame without retargeting its limit change.",
-        "Final cleanup reports source lines from top to bottom before freeing incomplete frames."
+        "Job-finalization reporting belongs to the broader final_cleanup contract and is not claimed from §1335 by this shard."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -223,7 +236,12 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "gap_bead": "umber2-johp.225",
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::condition_stack_preserves_lines_limits_and_input_independence",
+        "semantic case scanner-conditionals.tex::stack-nesting-source-macro-token-list",
+        "recovery case scanner-conditionals.tex::recursive-operand-frame-retargeting"
+      ]
     },
     {
       "id": "tex82.conditionals.skipped-text",
@@ -245,15 +263,15 @@
         "The independent condition stack is changed only by the caller or by nested-fi cleanup required by §500."
       ],
       "equivalence_cases": [
-        "Literal and control-sequence braces have no grouping effect while skipped.",
-        "Existing pass_text_uses_get_next_and_skips_nested_conditionals covers raw nesting; Phase 2 adds conditionals::tests::pass_text_does_not_expand_or_execute_skipped_tokens and scanner-conditionals skipped-side-effect markers."
+        "Literal braces and control sequences meaning braces are equally inert as grouping operations while skipped.",
+        "Skipped source and token-list input use the same raw-command nesting count and stop at the same outer delimiter."
       ],
       "recovery_cases": [
         "An outer token during skipping is backed up and recovery inserts frozen fi.",
         "EOF during skipping reports the skip start line before inserted-fi replay."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -261,7 +279,12 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "gap_bead": "umber2-johp.225",
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::pass_text_does_not_expand_or_execute_skipped_tokens",
+        "semantic case scanner-conditionals.tex::skipped-side-effects-and-braces",
+        "recovery case scanner-conditionals-eof.tex::skipped-child-eof-frozen-fi"
+      ]
     },
     {
       "id": "tex82.conditionals.branch-and-delimiters",
@@ -284,15 +307,15 @@
         "After the matching fi, the prior condition frame and limit are restored."
       ],
       "equivalence_cases": [
-        "Zero ifcase selects the first limb without pass_text; positive indices select the corresponding or-delimited limb.",
-        "Existing focused tests cover selected/exhausted positive cases; Phase 2 adds conditionals::tests::ifcase_zero_negative_else_and_fi_boundaries and scanner-conditionals transcript markers for every case boundary."
+        "Ifcase zero selects the first limb directly, while each positive index selects the identically positioned or-delimited limb after that many skips.",
+        "A false boolean ending at else and an exhausted ifcase ending at else share common_ending limit transition and later fi pop behavior."
       ],
       "recovery_cases": [
         "An or encountered while seeking a false boolean's else/fi is diagnosed as extra and skipping continues.",
         "A delimiter above an evaluating limit inserts relax; above any completed limit it emits the matching Extra diagnostic and is ignored."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -312,46 +335,44 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "gap_bead": "umber2-johp.225",
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifcase_zero_negative_else_and_fi_boundaries",
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::conditional_delimiter_legality_matrix",
+        "semantic case scanner-conditionals.tex::ifcase-zero-positive-negative-boundaries",
+        "recovery case scanner-conditionals.tex::premature-and-extra-delimiters"
+      ]
     },
     {
-      "id": "tex82.conditionals.scalar-state-predicates",
-      "sections": [501, 503, 504, 505],
-      "claim": "TeX82 evaluates integer and dimension relations, oddness, mode/inner state, box kind/voidness, stream EOF state, and constant true/false predicates through their canonical scanners and executor-owned state without changing the tested values.",
+      "id": "tex82.conditionals.predicate-dispatch",
+      "sections": [501],
+      "claim": "The conditional evaluator dispatches each of the seventeen TeX82 predicate kinds to exactly one canonical operand evaluator; mode and inner predicates query current mode state, ifeof queries a scanned read-stream slot, and iftrue and iffalse return constants.",
       "preconditions": [
-        "Typed integer, normal-dimension, register, box, mode, and read-stream queries expose canonical current state.",
-        "Predicate operands are scanned after the evaluating frame has been pushed."
+        "An evaluating frame has been pushed with one TeX82 predicate kind.",
+        "Typed mode, box, stream, scanner, and token services expose current state without transferring ownership to the condition stack."
       ],
       "stimulus": [
-        "Exercise less/equal/greater integer and dimension comparisons, odd positive/zero/negative integers, every outer/inner mode family, void/hbox/vbox registers, open/closed streams, and true/false constants."
+        "Evaluate every predicate kind, including all signed mode families, inner and outer states, open and closed streams, and both constant predicates."
       ],
       "expected_observations": [
-        "ifnum and ifdim consume two typed operands and one relation; ifodd uses Pascal odd semantics.",
-        "Mode predicates use absolute mode, ifinner uses negative mode, box predicates distinguish null/hlist/vlist, and ifeof tests the scanned four-bit stream."
+        "Each predicate reaches its unique §501 arm and returns one boolean to the shared branch machine.",
+        "Mode tests use absolute mode, ifinner uses the mode sign, ifeof scans one four-bit stream selector, and constant predicates consume no operand."
       ],
       "postconditions": [
-        "Predicate reads do not mutate registers, boxes, mode, or stream-open state.",
-        "The selected boolean is handed to the common branch machine."
+        "Dispatch does not mutate queried mode or stream state.",
+        "Operand-owning predicates consume only the scanner or tokens specified by their dedicated sections."
       ],
       "equivalence_cases": [
-        "Literal, signed-radix, register, parameter, and internal values with equal canonical values compare identically.",
-        "Existing tests cover representative numeric, dimension, mode, box, and stream cases; Phase 2 adds conditionals::tests::all_scalar_and_state_predicate_truth_tables and scanner-conditionals reference-visible truth-table markers."
+        "Positive and negative modes of the same family agree for ifvmode, ifhmode, and ifmmode, while only negative modes satisfy ifinner.",
+        "Any two stream slots with the same open or closed state give the same ifeof result, independent of slot identity."
       ],
       "recovery_cases": [
-        "A missing relation reports Missing = inserted, backs up the nonrelation token, and compares for equality.",
-        "An out-of-range stream or box number follows its canonical scanner recovery before the predicate query."
+        "An invalid stream selector completes canonical four-bit scanner recovery before ifeof queries the recovered slot.",
+        "A delimiter reached during delegated operand evaluation uses evaluating-limit recovery before dispatch completes."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifdim_uses_typed_units_and_internal_dimensions"
-        },
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
@@ -360,6 +381,139 @@
           "path": "crates/tex-command/src/conditionals/tests.rs",
           "test": "ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number"
         }
+      ],
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::predicate_dispatch_covers_all_seventeen_kinds_and_state_queries",
+        "semantic case scanner-conditionals.tex::mode-inner-eof-and-constant-truth-table",
+        "recovery case scanner-conditionals.tex::ifeof-four-bit-selector-recovery"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.ordered-relations",
+      "sections": [503],
+      "claim": "Ifnum scans integers and ifdim scans normal dimensions on both sides of one less-than, equality, or greater-than relation, then compares the two canonical values with that relation.",
+      "preconditions": [
+        "An evaluating ifnum or ifdim frame is current.",
+        "Integer and normal-dimension scanners commit values before relation scanning."
+      ],
+      "stimulus": [
+        "Compare lesser, equal, and greater literal, register, parameter, and internal operands for both integer and dimension families."
+      ],
+      "expected_observations": [
+        "The left operand is retained across relation and right-operand scanning.",
+        "A valid other-character relation selects the corresponding signed comparison."
+      ],
+      "postconditions": [
+        "Exactly two typed values and one relation are consumed.",
+        "The comparison result enters the shared boolean branch machine without mutating either operand source."
+      ],
+      "equivalence_cases": [
+        "Literal, radix, register, parameter, and internal integer spellings with equal values produce equal comparison results.",
+        "Dimensions expressed in different legal units but resolving to equal scaled points compare equal."
+      ],
+      "recovery_cases": [
+        "A missing relation reports Missing = inserted, backs up the nonrelation token, and compares for equality.",
+        "Operand scanner recovery completes before relation truth is computed."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifdim_uses_typed_units_and_internal_dimensions"
+        }
+      ],
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifnum_ifdim_relation_and_missing_equals_matrix",
+        "semantic case scanner-conditionals.tex::ifnum-ifdim-three-relations",
+        "recovery case scanner-conditionals.tex::missing-relation-inserts-equals"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.odd-integer",
+      "sections": [504],
+      "claim": "Ifodd scans one integer and is true exactly when the canonical signed integer is odd.",
+      "preconditions": [
+        "An evaluating ifodd frame is current.",
+        "The integer scanner supplies one canonical signed value."
+      ],
+      "stimulus": [
+        "Evaluate zero, positive and negative even values, and positive and negative odd values from literal and internal sources."
+      ],
+      "expected_observations": [
+        "Exactly one integer scanner result precedes the boolean branch.",
+        "Oddness depends on parity and not on sign or spelling."
+      ],
+      "postconditions": [
+        "The scanned source value is unchanged.",
+        "The parity result enters the shared boolean branch machine."
+      ],
+      "equivalence_cases": [
+        "Positive and negative integers with the same odd magnitude both satisfy ifodd.",
+        "Decimal, radix, register, and internal spellings of one integer have identical parity."
+      ],
+      "recovery_cases": [
+        "Integer scanner recovery supplies its canonical fallback before parity is tested.",
+        "A premature delimiter during integer scanning follows evaluating-limit recovery and then completes the operand."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifodd_signed_parity_and_scanner_recovery_matrix",
+        "semantic case scanner-conditionals.tex::ifodd-zero-positive-negative-parity",
+        "recovery case scanner-conditionals.tex::ifodd-premature-delimiter"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.box-register-kind",
+      "sections": [505],
+      "claim": "Ifvoid, ifhbox, and ifvbox scan one eight-bit box register and distinguish null, hlist, and vlist values without consuming or changing the register.",
+      "preconditions": [
+        "An evaluating box predicate frame is current.",
+        "The aggregate box query distinguishes absent, horizontal-list, and vertical-list values."
+      ],
+      "stimulus": [
+        "Evaluate all three predicates over void, hbox, and vbox registers, including register selectors at the legal boundaries."
+      ],
+      "expected_observations": [
+        "Ifvoid is true only for null; ifhbox and ifvbox are false for null and true only for their matching list type.",
+        "One eight-bit register scan precedes one aggregate box-kind query."
+      ],
+      "postconditions": [
+        "The tested box register retains the same node list and ownership.",
+        "The box-kind result enters the shared boolean branch machine."
+      ],
+      "equivalence_cases": [
+        "Empty and nonempty boxes of one list type give the same type-predicate result.",
+        "Equivalent register-number spellings select the same box and produce the same truth value."
+      ],
+      "recovery_cases": [
+        "An out-of-range register selector completes canonical eight-bit scanner recovery before the box query.",
+        "A void register never dereferences a node-list type."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
+        }
+      ],
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::ifvoid_ifhbox_ifvbox_register_kind_matrix",
+        "semantic case scanner-conditionals.tex::box-predicate-void-hbox-vbox-matrix",
+        "recovery case scanner-conditionals.tex::box-register-selector-recovery"
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.225"
@@ -384,15 +538,15 @@
         "Macro reference/storage identity has no effect on ifx equality."
       ],
       "equivalence_cases": [
-        "Distinct macro allocations containing identical flags and tokens compare equal; expanded definitions with different stored tokens compare unequal.",
-        "Existing tests cover normalization, raw delivery, flags, and noexpand-active behavior; Phase 2 adds conditionals::tests::if_ifcat_and_ifx_complete_operand_matrix and matching scanner-conditionals markers."
+        "Distinct macro allocations containing identical flags and token texts compare equal, while a flag or token-text difference compares unequal.",
+        "Character operands produced directly or by expansion compare identically after if and ifcat normalization."
       ],
       "recovery_cases": [
         "A delimiter encountered while either operand is being obtained follows evaluating-limit inserted-relax recovery.",
         "A noncharacter operand to if/ifcat is normalized rather than diagnosed."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -412,38 +566,12 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.225"
-    },
-    {
-      "id": "tex82.conditionals.final-cleanup-recovery",
-      "sections": [1335],
-      "claim": "End or dump reports and unwinds every still-open condition with its kind and source line; skipped-input EOF and outer-token recovery remains owned by tex82.input.outer-validity-recovery.",
-      "preconditions": [
-        "Final cleanup begins with one or more live condition frames.",
-        "Each condition's kind and entry line have been retained."
-      ],
-      "stimulus": [
-        "Invoke end or dump with nested incomplete conditions still present on the independent condition stack."
-      ],
-      "expected_observations": [
-        "Final cleanup reports incomplete frames from innermost to outermost with nonzero source lines and frees the entire stack."
-      ],
-      "postconditions": [
-        "After final cleanup no condition node remains live."
-      ],
-      "equivalence_cases": [
-        "End and dump use the same incomplete-condition reporting and unwind order before their distinct terminal actions.",
-        "Phase 2 adds conditionals::tests::final_cleanup_reports_and_unwinds_nested_conditions plus nested end/dump semantic cases."
-      ],
-      "recovery_cases": [
-        "Skipped-input EOF and outer-token recovery are cross-referenced to tex82.input.outer-validity-recovery and do not claim §336 here.",
-        "Multiple incomplete conditions at final cleanup each produce one ordered report rather than one collapsed diagnostic."
-      ],
-      "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.225"
+      "gap_bead": "umber2-johp.225",
+      "planned_coverage": [
+        "rust-unit crates/tex-command/src/conditionals/tests.rs::if_ifcat_and_ifx_complete_operand_matrix",
+        "semantic case scanner-conditionals.tex::character-category-and-raw-ifx-matrix",
+        "recovery case scanner-conditionals.tex::token-predicate-premature-delimiter"
+      ]
     }
   ]
 }
