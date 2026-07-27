@@ -28,7 +28,7 @@ pass.
 | `\scantokens`        | done   | Serializes unexpanded general text with TeX's `new_string` character behavior, splits `\newlinechar` into pseudo-file records, and reprocesses under current catcodes and `^^` notation.                                                              |
 | `\everyeof`          | done   | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. Its grouped, snapshot-covered token parameter is distinct from TeX's `\errhelp` cell. |
 | `\unless`            | done   | Negates every boolean conditional through the shared conditional-frame path and rejects `\ifcase` as the manual requires.                                                                                                                             |
-| `\tracingscantokens` | done   | Positive values trace `(` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6.                                                                                                                                |
+| `\tracingscantokens` | done   | Positive values trace `(␣` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6.                                                                                                                               |
 
 The committed `etex_exec/expansion_virtual_input` reference fixture covers
 the observable family against pdfTeX/e-TeX. Focused tests additionally cover
