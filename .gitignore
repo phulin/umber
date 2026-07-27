@@ -17,6 +17,11 @@ __pycache__
 
 .umber
 
+# Deferred-tier run records, written by scripts/tier-runner.sh and printed by
+# the routine gates. They are facts about one working tree, not about a branch:
+# a tier that passed in another checkout is no evidence for this one.
+/.tier-stamps/
+
 # Parallel subagent worktrees
 .worktrees/
 
