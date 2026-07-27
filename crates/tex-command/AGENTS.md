@@ -85,7 +85,9 @@ Private state-machine modules must not be widened for compatibility with
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, invocation/argument activation ownership, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine.
-- `src/scan_toks.rs`: private canonical token-list scanner.
+- `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
+  scanner and focused parameter, collection, expansion, scanner-status, and
+  recovery tests.
 - `src/provenance.rs`: private command provenance construction.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the
   record union and the exhaustive `Meaning`-level command classification;

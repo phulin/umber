@@ -278,7 +278,7 @@
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scanner_syntax_mandatory_brace_skips_relax",
           "cases": ["expanded relax", "unexpanded relax", "brace after relax", "umber2-johp.209"]
         },
@@ -987,31 +987,31 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "eof_recovery_restores_defining_status_before_macro_replacement_completes"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "macro_definition_converts_parameters_and_preserves_doubled_hashes"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "macro_definition_hash_brace_reuses_the_left_brace_after_the_body"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "expanded_collection_expands_a_macro_one_step_at_a_time"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scan_toks_all_parameter_number_success_and_diagnostic_boundaries"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scan_toks_all_scanner_status_outer_and_eof_recovery"
         }
       ],

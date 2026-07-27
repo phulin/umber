@@ -1125,7 +1125,7 @@
           "test": "string_reads_its_target_with_normal_scanner_status_then_restores_definition"
         },
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector"
         }
       ],
@@ -1152,7 +1152,7 @@
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-command/src/scan_toks.rs",
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "read_toks_collects_balanced_multiline_input_and_appends_one_eof_line"
         }
       ],
