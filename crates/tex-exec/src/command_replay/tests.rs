@@ -822,6 +822,58 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     );
 }
 
+/// TeX82 §1138 `init_math` opens with `get_token`, and the comment on that
+/// very line says why: "`get_x_token` would fail on `\ifmmode`". The probe
+/// runs while the mode nest is still horizontal, so expanding it there
+/// evaluates `\ifmmode` against the wrong mode and takes the wrong branch.
+///
+/// §1138 backs the peeked token up unconditionally when it is not a paired
+/// shift, so the conditional is expanded once, by the main loop, after
+/// `@<Go into ordinary math mode@>` has pushed the math nest.
+#[test]
+fn canonical_init_math_probe_leaves_the_following_conditional_unexpanded() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::RestrictedHorizontal);
+    register_source(
+        &mut control,
+        br"$\ifmmode\global\count0=1 \else\global\count0=2 \fi$",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.count(0),
+        1,
+        "§1138's `get_token` must let \\ifmmode reach the main loop unexpanded, \
+         so it evaluates inside the math nest it opened"
+    );
+}
+
+/// TeX82 §1138 pairs the two shifts only under `(cur_cmd=math_shift)and(mode>0)`.
+/// In restricted horizontal mode `mode<0`, so `$$` is *not* a display opener:
+/// the second `$` is backed up and immediately reread as the end of an empty
+/// inline formula, leaving the mode nest exactly where it started.
+#[test]
+fn canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::RestrictedHorizontal);
+    let depth = control.modes.depth();
+    register_source(&mut control, br"$$");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        control.current_mode(),
+        Mode::RestrictedHorizontal,
+        "the backed-up second `$` must close the empty formula §1138 opened"
+    );
+    assert_eq!(
+        control.modes.depth(),
+        depth,
+        "a consumed second `$` would strand the math nest open"
+    );
+}
+
 /// TeX82 §1137's `hmode+math_shift: init_math` and §1193's
 /// `mmode+math_shift: if cur_group=math_shift_group then after_math` are
 /// applied by `CanonicalMainControl::apply_host_owned_step`, which every
