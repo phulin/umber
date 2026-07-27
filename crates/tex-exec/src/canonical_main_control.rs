@@ -1596,7 +1596,37 @@ impl CanonicalMainControl {
         self.modes
             .current_list_mut()
             .append(directions.into_iter().map(Node::Direction));
-        crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
+        self.scan_canonical_optional_space(stores)?;
+        crate::math::display::build_page_after_display_resume(&self.modes, stores)
+    }
+
+    /// TeX82 §443's `@<Scan an optional space@>`: `get_x_token; if
+    /// cur_cmd<>spacer then back_input`.
+    ///
+    /// §1200's `resume_after_display` ends with this scan, after `push_nest`
+    /// and before its `build_page`. Skipping it left the space that follows a
+    /// closing `$$` to reach main control as ordinary interword glue, so the
+    /// resumed paragraph was no longer null and §1096's `if head=tail then
+    /// pop_nest {null paragraphs are ignored}` never fired: the enclosing
+    /// vertical list gained an empty line box and its interline glue
+    /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
+    /// following the display is expanded here exactly as TeX82 expands it.
+    fn scan_canonical_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let mut machine = self.command_machine();
+        let mut processor = machine.processor(stores);
+        let Some(command) = processor.get_x_token().map_err(command_error)? else {
+            return Ok(());
+        };
+        if !matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            processor.back_input(command).map_err(command_error)?;
+        }
+        Ok(())
     }
 
     fn apply_canonical_math_delimiter(

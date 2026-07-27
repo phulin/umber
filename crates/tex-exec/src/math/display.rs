@@ -422,14 +422,19 @@ pub(super) fn resume_after_display(
     Ok(())
 }
 
-fn build_page_after_display_resume(
+pub(crate) fn build_page_after_display_resume(
     nest: &ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
-    // TeX.web resumes a display by pushing horizontal mode and then calls
-    // build_page when that new level sits directly above outer vertical mode.
-    // Looking only at the current mode would miss the just-appended display
-    // penalties and defer a forced break until unrelated later material.
+    // tex.web §1200's closing `if nest_ptr=1 then build_page`. `nest_ptr` is
+    // the number of levels pushed above the outermost vertical list, so the
+    // test is satisfied by exactly the horizontal level `resume_after_display`
+    // has just pushed directly above outer vertical mode -- Umber's
+    // `depth()==2` with that level current. `build_page_if_outer_vertical`
+    // alone can never fire here, because the current mode is always the
+    // freshly pushed horizontal one; using it would miss the just-appended
+    // display penalties and defer a forced break until unrelated later
+    // material.
     if nest.depth() == 2 && nest.current_mode() == Mode::Horizontal {
         crate::page_builder::build_page(stores)
     } else {

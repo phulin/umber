@@ -6532,3 +6532,75 @@ fn vertical_box_group_end_runs_end_graf_before_packaging() {
         );
     }
 }
+
+/// tex.web §1200's `resume_after_display` ends with §443's
+/// `@<Scan an optional space@>`. Without it the space following a closing
+/// `$$` becomes interword glue, the resumed paragraph is no longer null, and
+/// §1096's `if head=tail then pop_nest {null paragraphs are ignored}` never
+/// fires -- leaving an extra empty line box and its interline glue in the
+/// enclosing vertical list (`umber2-johp.231`).
+#[test]
+fn display_resumption_scans_tex82_s1200_optional_space() {
+    // Both variants must produce the same vertical list: with the optional
+    // space consumed, the trailing `\par` sees a null paragraph either way.
+    let mut lists = Vec::new();
+    for body in [
+        &br"\setbox1=\vbox{\hsize=100pt\noindent\hbox{}$$\hbox{}$$\par}"[..],
+        &br"\setbox1=\vbox{\hsize=100pt\noindent\hbox{}$$\hbox{}$$ \par}"[..],
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, body);
+        run_to_end(&mut control, &mut universe);
+
+        let stored = universe
+            .box_reg(1)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("setbox1 stores a vbox");
+        let Node::VList(stored) = stored else {
+            panic!("setbox1 contains a vbox");
+        };
+        lists.push(
+            universe
+                .nodes(stored.children)
+                .iter()
+                .map(|node| vertical_node_shape(&node.to_owned()))
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(
+        lists[0], lists[1],
+        "a space between the closing $$ and \\par is consumed by §1200, so it \
+         cannot make the resumed paragraph non-null"
+    );
+    assert!(
+        !lists[1]
+            .last()
+            .is_some_and(|node| node.starts_with("hlist")),
+        "the resumed null paragraph contributes no line box: {:?}",
+        lists[1]
+    );
+}
+
+/// Node identity for a vertical list, with arena handles erased: two
+/// independent runs allocate different `NodeListId`s for structurally
+/// identical material, so only kind and dimensions may be compared.
+fn vertical_node_shape(node: &Node) -> String {
+    match node {
+        Node::HList(box_node) => format!(
+            "hlist {} {} {}",
+            box_node.width.raw(),
+            box_node.height.raw(),
+            box_node.depth.raw()
+        ),
+        Node::VList(box_node) => format!(
+            "vlist {} {} {}",
+            box_node.width.raw(),
+            box_node.height.raw(),
+            box_node.depth.raw()
+        ),
+        Node::Glue { kind, .. } => format!("glue {kind:?}"),
+        Node::Penalty(penalty) => format!("penalty {penalty}"),
+        other => format!("{other:?}"),
+    }
+}
