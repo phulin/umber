@@ -1,4 +1,4 @@
-{"schema":1,"manifest":"bd07148f98c1dbe7bea20287301ac29ff457bac5a9dd06d4a23005717d71a39b"}
+{"schema":1,"manifest":"2baa6958e22266f16bee69d7f9a7b2daca242399cac7eb70e38cad5cb8e83fd3"}
 {"sequence":0,"semantic":{"event":"command","data":{"delivery":"raw","command":{"command":"letter","operand":{"type":"integer","value":116}}}}}
 {"sequence":1,"semantic":{"event":"command","data":{"delivery":"expanded","command":{"command":"letter","operand":{"type":"integer","value":116}}}}}
 {"sequence":2,"semantic":{"event":"input","data":{"transition":"push","reason":"backup","name":"backup"}}}
@@ -5891,7 +5891,7 @@
 {"sequence":5889,"semantic":{"event":"command","data":{"delivery":"raw","command":{"command":"spacer","operand":{"type":"integer","value":32},"location":{"source":"transitions.tex","line":51,"byte":20}}}}}
 {"sequence":5890,"semantic":{"event":"command","data":{"delivery":"expanded","command":{"command":"spacer","operand":{"type":"integer","value":32},"location":{"source":"transitions.tex","line":51,"byte":20}}}}}
 {"sequence":5891,"semantic":{"event":"scanner","data":{"scanner":"integer","result":{"type":"integer","value":0}}}}
-{"sequence":5892,"semantic":{"event":"effect","data":{"kind":"close","channel":"stream:0","value":{"type":"name","value":"transitions-effects.out"}}}}
+{"sequence":5892,"semantic":{"event":"effect","data":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}}
 {"sequence":5893,"semantic":{"event":"command","data":{"delivery":"raw","command":{"command":"leader_ship","operand":{"type":"integer","value":99},"control_sequence":"shipout","location":{"source":"transitions.tex","line":52,"byte":7}}}}}
 {"sequence":5894,"semantic":{"event":"command","data":{"delivery":"expanded","command":{"command":"leader_ship","operand":{"type":"integer","value":99},"control_sequence":"shipout","location":{"source":"transitions.tex","line":52,"byte":7}}}}}
 {"sequence":5895,"semantic":{"event":"command","data":{"delivery":"raw","command":{"command":"make_box","operand":{"type":"integer","value":5},"control_sequence":"vbox","location":{"source":"transitions.tex","line":52,"byte":12}}}}}
