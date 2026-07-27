@@ -11,7 +11,7 @@ mod tokenizer;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
     SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, StoredReplayReason, TokenBehavior,
-    TokenCursor, TokenPayload, TransientReplayReason,
+    TokenCursor, TokenPayload,
 };
 pub(crate) use source::{RegisteredSource, SourceCursor};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues

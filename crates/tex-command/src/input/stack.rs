@@ -439,7 +439,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
         ReplayTrace::UTemplate | ReplayTrace::VTemplate => {
             unreachable!("alignment template behavior must accompany its replay trace")
         }
-        ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
+        ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
         ReplayTrace::Stored(_) => InputRetirementReason::TokenList,
     }
 }

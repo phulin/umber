@@ -277,7 +277,7 @@ impl CommandProcessor<'_> {
             )])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Input(InputRecord {
@@ -344,7 +344,7 @@ impl CommandProcessor<'_> {
             )])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;
@@ -618,7 +618,7 @@ impl CommandProcessor<'_> {
             TokenPayload::Transient(SharedTokenBuffer::new(vec![par])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;
@@ -665,7 +665,7 @@ impl CommandProcessor<'_> {
             TokenPayload::Transient(SharedTokenBuffer::new(vec![dollar])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;
@@ -754,7 +754,7 @@ impl CommandProcessor<'_> {
             )),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;
@@ -1530,7 +1530,7 @@ impl CommandProcessor<'_> {
             TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;
