@@ -23,7 +23,9 @@ use tex_state::{
 
 const SCHEMA: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 4 * 1024;
-const MAX_STEPS: usize = 512;
+// TeX82 permits 255 spans before the 256-span confusion boundary, so the
+// bounded semantic runner must admit that one deliberately maximal case.
+const MAX_STEPS: usize = 2_048;
 const COUNT_SLOTS: usize = 256;
 const BUG_PREFIX: &str = "umber2-";
 

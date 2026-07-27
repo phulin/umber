@@ -664,7 +664,8 @@
         "A row has started or a completed nonspan cell advances to another span start."
       ],
       "stimulus": [
-        "Phase 2 unit `init_span_sets_mode_aux_and_cur_span` and semantic case `alignment-span-start`."
+        "Phase 2 unit `init_span_sets_mode_aux_and_cur_span` and semantic case `alignment-span-start`.",
+        "Committed command-semantic case `span-start` observes the remaining boundary as a strict xfail linked to umber2-hq8l."
       ],
       "expected_observations": [
         "The span start is the current column and subsequent span delimiters retain the same cell-list level."
@@ -677,10 +678,11 @@
         "Boundary: enter valign with paragraph state requiring normal_paragraph and halign with nondefault space_factor."
       ],
       "recovery_cases": [
-        "Recovery: §787 defines no error branch; tests assert only calls satisfying init_span preconditions."
+        "Recovery: §787 defines no error branch; tests assert only calls satisfying init_span preconditions.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -688,6 +690,15 @@
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "init_span_sets_mode_aux_and_cur_span"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "span-start strict xfail",
+            "linked to umber2-hq8l",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -823,7 +834,8 @@
         "§796 produced natural extent w with cur_span different from cur_align."
       ],
       "stimulus": [
-        "Phase 2 unit `span_width_list_orders_counts_and_keeps_maximum` and semantic case `alignment-span-width-record`."
+        "Phase 2 unit `span_width_list_orders_counts_and_keeps_maximum` and semantic case `alignment-span-width-record`.",
+        "Committed command-semantic case `span-width-record` observes the remaining boundary as a strict xfail linked to umber2-cpwg."
       ],
       "expected_observations": [
         "Span nodes remain ordered by span count and repeated observations update width only when the new natural extent is larger."
@@ -836,10 +848,11 @@
         "Boundary: one-column cells bypass the span list; the largest representable count is accepted."
       ],
       "recovery_cases": [
-        "Recovery: a count beyond max_quarterword invokes TeX82 confusion(256 spans); no replacement width is recorded."
+        "Recovery: a count beyond max_quarterword invokes TeX82 confusion(256 spans); no replacement width is recorded.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -847,6 +860,15 @@
         {
           "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
           "test": "span_width_list_orders_counts_and_keeps_maximum"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "span-width-record strict xfail",
+            "linked to umber2-cpwg",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -860,7 +882,8 @@
         "fin_col reported a row-ending cr or crcr and the row list contains its tabskip and unset cells."
       ],
       "stimulus": [
-        "Phase 2 unit `fin_row_packages_modes_adjustments_every_cr_and_peek` and semantic case `alignment-package-unset-row`."
+        "Phase 2 unit `fin_row_packages_modes_adjustments_every_cr_and_peek` and semantic case `alignment-package-unset-row`.",
+        "Committed command-semantic case `package-unset-row` observes the remaining boundary as a strict xfail linked to umber2-fr3l."
       ],
       "expected_observations": [
         "The row is one unset box in the enclosing list; halign adjustments follow it, valign resets space_factor, and every_cr precedes lookahead."
@@ -873,10 +896,11 @@
         "Boundary: empty row material, one cell, multiple cells, and the final row before alignment close."
       ],
       "recovery_cases": [
-        "Recovery: §799 defines no error branch; malformed row termination is handled earlier by §§791–792 and §§1126–1132."
+        "Recovery: §799 defines no error branch; malformed row termination is handled earlier by §§791–792 and §§1126–1132.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -884,6 +908,15 @@
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "fin_row_packages_modes_adjustments_every_cr_and_peek"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "package-unset-row strict xfail",
+            "linked to umber2-fr3l",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -897,7 +930,8 @@
         "align_peek has delivered the alignment-closing right brace and the current group should be align_group."
       ],
       "stimulus": [
-        "Phase 2 unit `fin_align_orders_groups_packing_pop_and_insertion` and semantic case `alignment-finish-orchestration`."
+        "Phase 2 unit `fin_align_orders_groups_packing_pop_and_insertion` and semantic case `alignment-finish-orchestration`.",
+        "Committed command-semantic case `finish-orchestration` observes the remaining boundary as a strict xfail linked to umber2-16zz."
       ],
       "expected_observations": [
         "The two align groups are removed before width work; pop_alignment occurs after the prototype is freed and before environment insertion."
@@ -910,10 +944,11 @@
         "Boundary: zero and nonzero display_indent, empty and nonempty completed alignment lists."
       ],
       "recovery_cases": [
-        "Recovery: a missing expected align_group invokes TeX82 confusion(align1) or confusion(align0) at the corresponding check."
+        "Recovery: a missing expected align_group invokes TeX82 confusion(align1) or confusion(align0) at the corresponding check.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -929,6 +964,15 @@
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "finish-orchestration strict xfail",
+            "linked to umber2-16zz",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1023,7 +1067,8 @@
         "The prototype box is available and the current list contains unset rows and possibly rule nodes."
       ],
       "stimulus": [
-        "Phase 2 unit `set_alignment_list_extends_running_rules_and_offsets_display_rules` and semantic case `alignment-running-rules`."
+        "Phase 2 unit `set_alignment_list_extends_running_rules_and_offsets_display_rules` and semantic case `alignment-running-rules`.",
+        "Committed command-semantic case `running-rules` observes the remaining boundary as a strict xfail linked to umber2-jnfg."
       ],
       "expected_observations": [
         "Only dimensions marked running are replaced; fixed rule dimensions remain fixed, and display-offset rules are h-packed and shifted by o."
@@ -1036,10 +1081,11 @@
         "Boundary: zero/nonzero display offset and null/non-null neighbors around a rule."
       ],
       "recovery_cases": [
-        "Recovery: §§805–806 specify no diagnostic branch; non-unset non-rule nodes are traversed unchanged."
+        "Recovery: §§805–806 specify no diagnostic branch; non-unset non-rule nodes are traversed unchanged.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -1047,6 +1093,15 @@
         {
           "path": "crates/tex-exec/src/align/widths/set/tests.rs",
           "test": "set_alignment_list_extends_running_rules_and_offsets_display_rules"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "running-rules strict xfail",
+            "linked to umber2-jnfg",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1222,7 +1277,8 @@
         "Frozen end-template has expanded to effective endv."
       ],
       "stimulus": [
-        "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 unit `do_endv_validates_template_and_group_matrix` and semantic case `alignment-endv-off-save`."
+        "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 unit `do_endv_validates_template_and_group_matrix` and semantic case `alignment-endv-off-save`.",
+        "Committed command-semantic case `endv-off-save` observes the remaining boundary as a strict xfail linked to umber2-rt66."
       ],
       "expected_observations": [
         "Input-stack validation precedes end_graf and fin_col, and fin_row is called exactly when fin_col returns true."
@@ -1235,10 +1291,11 @@
         "Boundary: nonempty intervening level, absent v_template, align_group, another save group, and bottom-level off_save."
       ],
       "recovery_cases": [
-        "Recovery: absent/nonempty v_template ancestry raises interwoven-preamble failure; a wrong current group follows TeX82 off_save behavior, and bottom-level handling is defined by off_save rather than this section."
+        "Recovery: absent/nonempty v_template ancestry raises interwoven-preamble failure; a wrong current group follows TeX82 off_save behavior, and bottom-level handling is defined by off_save rather than this section.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -1246,6 +1303,15 @@
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "do_endv_validates_template_and_group_matrix"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "endv-off-save strict xfail",
+            "linked to umber2-rt66",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -1300,7 +1366,8 @@
         "align_peek selected noalign, consumed its opening brace, and no_align_group is current."
       ],
       "stimulus": [
-        "Phase 2 unit `noalign_close_resumes_row_lookahead_in_both_modes` and semantic case `alignment-noalign-group`."
+        "Phase 2 unit `noalign_close_resumes_row_lookahead_in_both_modes` and semantic case `alignment-noalign-group`.",
+        "Committed command-semantic case `noalign-group` observes the remaining boundary as a strict xfail linked to umber2-usol."
       ],
       "expected_observations": [
         "Noalign material occupies the enclosing row-list orientation and group close is followed by row lookahead, not cell-template replay."
@@ -1313,10 +1380,11 @@
         "Boundary: nested alignment noalign, repeated noalign, following crcr, next row, and immediate alignment close."
       ],
       "recovery_cases": [
-        "Recovery: missing noalign opener uses scan_left_brace recovery; misplaced noalign is handled by §1129 and never creates this group."
+        "Recovery: missing noalign opener uses scan_left_brace recovery; misplaced noalign is handled by §1129 and never creates this group.",
+        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.227",
@@ -1324,6 +1392,15 @@
         {
           "path": "crates/tex-exec/src/align/noalign/tests.rs",
           "test": "noalign_close_resumes_row_lookahead_in_both_modes"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "noalign-group strict xfail",
+            "linked to umber2-usol",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },

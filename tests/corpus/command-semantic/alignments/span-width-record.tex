@@ -1,0 +1,5 @@
+\catcode`{=1 \catcode`}=2 \catcode`\#=6 \catcode`\&=4
+\def\a{\span}\def\b{\a\a}\def\c{\b\b}\def\d{\c\c}
+\def\e{\d\d}\def\f{\e\e}\def\g{\f\f}\def\h{\g\g}\def\i{\h\h}
+\setbox0=\vbox{\halign{#&&#\cr\relax\i\relax\cr}}
+\global\count0=1\end
