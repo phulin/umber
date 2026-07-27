@@ -2943,3 +2943,7 @@ fn provenance(scanned: &ScannedToks) -> StructuredProvenance {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "filename/tests.rs"]
+mod filename_tests;

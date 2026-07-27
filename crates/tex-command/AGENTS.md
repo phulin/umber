@@ -73,6 +73,8 @@ Private state-machine modules must not be widened for compatibility with
   the character: §207 makes `spacer` the command a category-10 character
   carries, and §349 is what normalizes such a character's `cur_chr` to a
   space inside §341's `get_next`.
+  `filename/tests.rs` owns focused expanded filename scanning, termination,
+  replay, and registered-source retry tests.
   `restricted.rs` owns TeX82 §433-§437's five restricted integer classes as a
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the

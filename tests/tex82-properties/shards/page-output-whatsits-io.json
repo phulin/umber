@@ -122,7 +122,7 @@
         "last": 641
       },
       "disposition": "property",
-      "owner": "tex-out::dvi",
+      "owner": "tex-exec::shipout + tex-out::dvi",
       "property_ids": [
         "tex82.shipout.page-output"
       ],
@@ -445,16 +445,7 @@
       "stimulus": [
         "Feed simple names, explicit areas, multiple dots, a space terminator, and a noncharacter terminator to the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_components_split_area_name_and_extension_canonically"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_component_terminators_and_string_overflow_follow_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "The three components and backed-up noncharacter match §§511–520; packed and printed spellings preserve their canonical concatenation."
       ],
@@ -468,10 +459,19 @@
         "String-table exhaustion follows §517 overflow; a terminating noncharacter is backed up for ordinary delivery."
       ],
       "semantic_owner": "tex-command::filenames",
-      "test_level": "planned-rust-unit",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_components_split_area_name_and_extension_canonically"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_component_terminators_and_string_overflow_follow_tex82"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "gap_bead": "umber2-p67i"
     },
     {
       "id": "tex82.io.filename-scan-and-retry",
@@ -490,16 +490,7 @@
       "stimulus": [
         "Exercise expandable names, a backed-up control sequence, recursive input during a name scan, unset/set job names, extension defaults, and retry modes in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_scan_expands_characters_and_backs_up_first_noncharacter"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_scan_recursion_guard_and_retry_modes_follow_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "The scan returns exact components, preserves the first nonfilename token, blocks recursive start_input, and produces the TeX82 retry or fatal path."
       ],
@@ -513,10 +504,19 @@
         "Nonstop and batch retry abort with the §530 fatal file error; recursive filename initiation is suppressed by the §527 guard."
       ],
       "semantic_owner": "tex-command::filenames",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_scan_expands_characters_and_backs_up_first_noncharacter"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_scan_recursion_guard_and_retry_modes_follow_tex82"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "gap_bead": "umber2-p67i"
     },
     {
       "id": "tex82.io.job-output-names-and-log",
@@ -560,7 +560,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "gap_bead": "umber2-7e32"
     },
     {
       "id": "tex82.shipout.dvi-byte-stream",
@@ -816,12 +816,7 @@
       "stimulus": [
         "Ship valid h/v roots with distinct counts and offsets, then cross each huge-page bound in the structured Phase 2 units below and byte fixture `shipout-counts-and-rejection.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "ship_out_rejects_each_huge_page_dimension_boundary"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Valid pages add exactly one bop/body/eop and page count; rejected pages add none and show the canonical huge-page diagnostic."
       ],
@@ -834,7 +829,7 @@
       "recovery_cases": [
         "Each huge-page predicate takes the §641 deletion path and, when tracing_output is nonpositive, displays the deleted box."
       ],
-      "semantic_owner": "tex-out::dvi",
+      "semantic_owner": "tex-exec::shipout + tex-out::dvi",
       "test_level": "rust-unit",
       "coverage": [
         {
@@ -848,10 +843,14 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "ship_out_frames_counts_offsets_page_accounting_and_box_retirement"
+        },
+        {
+          "path": "crates/tex-exec/src/assignments/shipout/tests.rs",
+          "test": "ship_out_rejects_each_huge_page_dimension_boundary"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.shipout.dvi-finalization",
@@ -1378,16 +1377,7 @@
       "stimulus": [
         "Resolve and dispatch all six primitives in outer/internal vmode, hmode, and math mode in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "extension_primitives_preserve_tex82_selectors_and_any_mode_dispatch"
-        },
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "unknown_extension_selector_fails_loudly_at_dispatch"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Raw command identity and selector match §§1344 and 1347 before subtype-specific scanning."
       ],
@@ -1401,10 +1391,19 @@
         "An unknown extension selector takes TeX82 confusion ext1 rather than silently succeeding."
       ],
       "semantic_owner": "tex-command::extension-dispatch",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "extension_primitives_preserve_tex82_selectors_and_any_mode_dispatch"
+        },
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "unknown_extension_selector_fails_loudly_at_dispatch"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "gap_bead": "umber2-r9nt"
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",

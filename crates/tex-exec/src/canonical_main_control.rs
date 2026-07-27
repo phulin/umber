@@ -7552,6 +7552,14 @@ fn shipout_replay_box(
     Ok(receipt)
 }
 
+#[cfg(test)]
+pub(crate) fn test_shipout_replay_box(
+    node: Node,
+    stores: &mut Universe,
+) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
+    shipout_replay_box(node, stores)
+}
+
 #[cfg(any(test, feature = "instrumentation"))]
 /// Renders a committed meaning the way the reference instrumentation's
 /// `umber_trace_meaning_value` does.

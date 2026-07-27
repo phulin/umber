@@ -14,6 +14,9 @@ use crate::dispatch::PreparedDviPage;
 
 mod direct;
 
+#[cfg(test)]
+mod tests;
+
 const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
 const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
 const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;

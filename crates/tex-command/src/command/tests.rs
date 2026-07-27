@@ -3,6 +3,7 @@ use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning, Unexpand
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandIdentity, ConvertSelector, CurrentCommand, DeliveryStamp, XRaySelector};
+use crate::observation::canonical_command_identity;
 
 fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCommand {
     let mut state = universe.command_context();
@@ -292,4 +293,39 @@ fn primitive_installation_binds_spelling_command_operand_and_level() {
         CommandIdentity::Convert(ConvertSelector::Number)
     );
     assert_eq!(ConvertSelector::Number.operand(), 0);
+}
+
+#[test]
+fn extension_primitives_preserve_tex82_selectors_and_any_mode_dispatch() {
+    let mut universe = Universe::new();
+    for (name, primitive, selector) in [
+        ("openout", UnexpandablePrimitive::OpenOut, 0),
+        ("write", UnexpandablePrimitive::Write, 1),
+        ("closeout", UnexpandablePrimitive::CloseOut, 2),
+        ("special", UnexpandablePrimitive::Special, 3),
+        ("immediate", UnexpandablePrimitive::Immediate, 4),
+        ("setlanguage", UnexpandablePrimitive::SetLanguage, 5),
+    ] {
+        let meaning = Meaning::UnexpandablePrimitive(primitive);
+        universe.install_primitive_meaning(name, meaning);
+        let symbol = universe
+            .symbol(name)
+            .expect("extension primitive spelling is installed");
+        let command = resolve(&mut universe, Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
+
+        assert_eq!(command.meaning(), meaning);
+        assert_eq!(
+            canonical_command_identity(command.meaning()),
+            ("extension".to_owned(), Some(selector))
+        );
+    }
+}
+
+#[test]
+fn unknown_extension_selector_fails_loudly_at_dispatch() {
+    let unknown = tex_state::meaning::RawMeaning::testing_new(u8::MAX, 6);
+    assert_eq!(
+        canonical_command_identity(Meaning::Unknown(unknown)),
+        ("undecodable_meaning".to_owned(), None)
+    );
 }
