@@ -202,12 +202,52 @@
       "rationale": "Prefixes expand, accumulate, validate, and resolve scope."
     },
     {
-      "modules": { "first": 1215, "last": 1225 },
+      "modules": { "first": 1215, "last": 1216 },
       "disposition": "property",
       "owner": "tex-exec::assignments",
-      "property_ids": ["tex82.assignment.definitions"],
+      "property_ids": ["tex82.assignment.redefinable-target"],
       "gap_bead": null,
-      "rationale": "Definition families install scoped meanings."
+      "rationale": "Definition targets recover non-control-sequence tokens with the inaccessible control sequence."
+    },
+    {
+      "modules": { "first": 1217, "last": 1217 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.current-font-selection"],
+      "gap_bead": null,
+      "rationale": "A set-font command assigns the current-font meaning with effective scope."
+    },
+    {
+      "modules": { "first": 1218, "last": 1218 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.macro-definitions"],
+      "gap_bead": null,
+      "rationale": "Def-family commands scan and install scoped macro token lists."
+    },
+    {
+      "modules": { "first": 1219, "last": 1221 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.let-and-futurelet"],
+      "gap_bead": null,
+      "rationale": "Let and futurelet install copied meanings with distinct lookahead delivery."
+    },
+    {
+      "modules": { "first": 1222, "last": 1224 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.shorthand-definitions"],
+      "gap_bead": null,
+      "rationale": "Character, math-character, and register shorthand definitions scan bounded operands."
+    },
+    {
+      "modules": { "first": 1225, "last": 1225 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.read-to-definition"],
+      "gap_bead": null,
+      "rationale": "Read-to defines one macro from the selected input stream with missing-keyword recovery."
     },
     {
       "modules": { "first": 1226, "last": 1240 },
@@ -218,12 +258,76 @@
       "rationale": "Typed parameters, registers, code tables, and arithmetic scan and commit."
     },
     {
-      "modules": { "first": 1241, "last": 1265 },
+      "modules": { "first": 1241, "last": 1241 },
       "disposition": "property",
       "owner": "tex-exec::assignments",
-      "property_ids": ["tex82.assignment.non-eqtb-effects"],
+      "property_ids": ["tex82.assignment.setbox-request"],
       "gap_bead": null,
-      "rationale": "Remaining assignments apply canonical typed effects."
+      "rationale": "Setbox encodes effective scope in a deferred box-construction request."
+    },
+    {
+      "modules": { "first": 1242, "last": 1247 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.auxiliary-state"],
+      "gap_bead": null,
+      "rationale": "Mode, page, and box auxiliary setters validate and mutate their distinct stores."
+    },
+    {
+      "modules": { "first": 1248, "last": 1248 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.parshape"],
+      "gap_bead": null,
+      "rationale": "Parshape scans a bounded indentation/width vector and assigns it with eqtb scope."
+    },
+    {
+      "modules": { "first": 1249, "last": 1249 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignments",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Compile-time capacity assertion only."
+    },
+    {
+      "modules": { "first": 1250, "last": 1252 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.hyphenation-data"],
+      "gap_bead": null,
+      "rationale": "Hyphenation exceptions and INITEX-only patterns have distinct global effects."
+    },
+    {
+      "modules": { "first": 1253, "last": 1255 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.font-parameters"],
+      "gap_bead": null,
+      "rationale": "Font dimensions, hyphen characters, and skew characters mutate global font state."
+    },
+    {
+      "modules": { "first": 1256, "last": 1260 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.font-definition"],
+      "gap_bead": null,
+      "rationale": "Font definition scans size, loads or reuses a font, and binds its identifier."
+    },
+    {
+      "modules": { "first": 1261, "last": 1261 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::assignments",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Diagnostic spelling for selected fonts only."
+    },
+    {
+      "modules": { "first": 1262, "last": 1265 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.interaction-mode"],
+      "gap_bead": null,
+      "rationale": "Interaction primitives update process-global interaction and print selection."
     },
     {
       "modules": { "first": 1266, "last": 1269 },
@@ -240,6 +344,78 @@
       "property_ids": ["tex82.assignment.command-terminator"],
       "gap_bead": null,
       "rationale": "Assignment helpers retain the next substantive command."
+    },
+    {
+      "modules": { "first": 1272, "last": 1275 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.input-stream-open-close"],
+      "gap_bead": null,
+      "rationale": "Openin and closein replace read-stream state after bounded filename scanning."
+    },
+    {
+      "modules": { "first": 1276, "last": 1280 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.messages"],
+      "gap_bead": null,
+      "rationale": "Message commands expand text and select terminal or error behavior."
+    },
+    {
+      "modules": { "first": 1281, "last": 1284 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.errmessage-help"],
+      "gap_bead": null,
+      "rationale": "Errmessage selects user help or bounded built-in help and invokes error handling."
+    },
+    {
+      "modules": { "first": 1285, "last": 1289 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.case-shift"],
+      "gap_bead": null,
+      "rationale": "Case shift substitutes code-table characters in a scanned token list and replays it."
+    },
+    {
+      "modules": { "first": 1290, "last": 1293 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.show-dispatch"],
+      "gap_bead": null,
+      "rationale": "Show dispatch selects activities, box, meaning, or value inspection."
+    },
+    {
+      "modules": { "first": 1294, "last": 1295 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.show-meaning"],
+      "gap_bead": null,
+      "rationale": "Show reports one raw token meaning with canonical names."
+    },
+    {
+      "modules": { "first": 1296, "last": 1296 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.show-box"],
+      "gap_bead": null,
+      "rationale": "Showbox scans one register and displays void or box content."
+    },
+    {
+      "modules": { "first": 1297, "last": 1297 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.show-value"],
+      "gap_bead": null,
+      "rationale": "Showthe renders one internal value through the_toks."
+    },
+    {
+      "modules": { "first": 1298, "last": 1298 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.show-completion"],
+      "gap_bead": null,
+      "rationale": "Show diagnostics terminate with canonical interaction-dependent completion."
     }
   ],
   "properties": [
@@ -288,7 +464,9 @@
       "sections": [275, 276, 277, 278, 279],
       "claim": "The first local mutation at a group level saves its prior value; repeated locals reuse that record, while effective globals survive exit and suppress stale restoration.",
       "preconditions": ["A nested group and outer meaning/fullword values exist."],
-      "stimulus": ["Apply repeated local, explicit global, and globaldefs-forced/suppressed mutations."],
+      "stimulus": [
+        "Phase 2 white-box unit `save_stack_local_global_redefinition_restores_once_per_level` applies repeated local, explicit global, and globally superseded mutations."
+      ],
       "expected_observations": [
         "Locals restore, globals survive, and deeper globals are never overwritten by stale saves."
       ],
@@ -298,48 +476,37 @@
       ],
       "recovery_cases": ["Failed value scans create no save record or mutation."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/groups.rs",
-          "test": "brace_and_begingroup_groups_restore_local_assignments"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_globaldefs_forces_and_suppresses_global_assignments"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
       "id": "tex82.group.aftergroup-replay",
       "sections": [280],
       "claim": "Aftergroup tokens are saved in encounter order and, after restoration, backed up for FIFO replay before outer input.",
       "preconditions": ["A group is active and distinguishable tokens can be scheduled."],
-      "stimulus": ["Schedule tokens around nested local/global assignments and close both groups."],
+      "stimulus": [
+        "Phase 2 white-box unit `save_stack_aftergroup_tokens_replay_fifo_after_unsave` schedules tokens at two nested levels around restoration."
+      ],
       "expected_observations": ["Inner tokens wait for inner restoration; each level replays FIFO."],
       "postconditions": ["No aftergroup record remains on the retired level."],
       "equivalence_cases": ["Ordinary, prefixed, local/global, nested, and source/replay groups."],
       "recovery_cases": ["Mismatch recovery never replays tokens from a still-open level."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        { "path": "crates/tex-exec/src/tests/groups.rs", "test": "aftergroup_replays_tokens_fifo_on_group_exit" },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
       "id": "tex82.group.unsave-restoration",
       "sections": [281, 282, 283, 284, 1068, 1069],
       "claim": "Closing a typed group restores saved locals unless globally superseded, restores outer metadata, and only then resumes token delivery.",
       "preconditions": ["A non-bottom group has local and globally superseded saves."],
-      "stimulus": ["Close ordinary and replay-created nested groups and observe state before the next token."],
+      "stimulus": [
+        "Phase 2 white-box unit `unsave_restores_local_entries_retains_globals_then_replays_tokens` closes nested groups and inspects state before delivery."
+      ],
       "expected_observations": [
         "Locals restore, globals remain, outer group metadata becomes current, and lifetimes balance."
       ],
@@ -347,19 +514,10 @@
       "equivalence_cases": ["Brace, explicit, box, math, and nested replay closures."],
       "recovery_cases": ["Mismatched closers do not unsave the wrong group."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/groups.rs",
-          "test": "brace_and_begingroup_groups_restore_local_assignments"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_grouping_reports_and_recovers_extra_closers"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
       "id": "tex82.assignment.mag-freeze",
@@ -367,7 +525,7 @@
       "claim": "Magnification is range-checked when prepared, invalid values recover to 1000, and the first prepared value is frozen against later incompatible assignments.",
       "preconditions": ["Magnification is not prepared."],
       "stimulus": [
-        "Phase 2 unit and `assignment-mag-freeze.tex` prepare valid, invalid, repeated-equal, and repeated-different values."
+        "Phase 2 white-box unit `prepare_mag_bounds_and_freezes_first_effective_value` and minifixture `assignment-mag-freeze.tex` cover valid, invalid, repeated-equal, and repeated-different values."
       ],
       "expected_observations": [
         "Only 1..32768 is accepted initially; later differences diagnose and retain the frozen value."
@@ -424,7 +582,9 @@
       "sections": [1063, 1064, 1065, 1066, 1067],
       "claim": "Left braces open simple groups; right braces dispatch by current group, while extra or mismatched closers use finite off-save recovery.",
       "preconditions": ["A known mode and group are current."],
-      "stimulus": ["Deliver correct and incorrect closers through ordinary and explicit nested groups."],
+      "stimulus": [
+        "Phase 2 white-box unit `brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer` drives normal and erroneous typed closures."
+      ],
       "expected_observations": [
         "Correct braces change one level; mismatches insert the canonical closer and replay the offender."
       ],
@@ -432,19 +592,10 @@
       "equivalence_cases": ["Simple/semi-simple/box/math/alignment-shaped and source/replay groups."],
       "recovery_cases": ["Bottom-level, wrong-type, and excess closers diagnose once and progress."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_grouping_reports_and_recovers_extra_closers"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "off_save_reports_before_replaying_its_inserted_closer"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
       "id": "tex82.assignment.prefix-collection",
@@ -452,7 +603,7 @@
       "claim": "Expandable material between prefixes is expanded, legal bits accumulate idempotently, illegal prefixes diagnose, and globaldefs determines effective scope.",
       "preconditions": ["Main control delivered a prefix."],
       "stimulus": [
-        "Collect repeated and macro-produced prefixes before definitions, assignments, and nonprefixable commands."
+        "Phase 2 white-box unit `prefix_collection_expands_repeats_validates_and_resolves_globaldefs` covers definitions, assignments, and nonprefixable commands."
       ],
       "expected_observations": [
         "One normalized prefix set reaches the command; rejection retains the substantive command."
@@ -461,34 +612,119 @@
       "equivalence_cases": ["Repeated/expanded, local/global/globaldefs, nested, and replay cases."],
       "recovery_cases": ["Illegal combinations report and execute or replay the retained command once."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/grouping_parity.rs",
-          "test": "prefix_expands_macros_before_selecting_the_assignment"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_assignments_cover_code_tables_and_reject_macro_prefixes"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
-      "id": "tex82.assignment.definitions",
-      "sections": [1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1225],
-      "claim": "Def, let/futurelet, shorthand character/math/register, and font-family assignments scan complete targets and install meanings at effective scope.",
-      "preconditions": ["A legal definition and target follow prefix collection."],
-      "stimulus": ["Phase 2 matrix covers def-family, let/futurelet, shorthand definitions, and family assignments."],
+      "id": "tex82.assignment.redefinable-target",
+      "sections": [1215, 1216],
+      "claim": "Target scanning skips spaces and substitutes the frozen inaccessible control sequence when the token is not redefinable.",
+      "preconditions": ["A definition command requires a control-sequence target."],
+      "stimulus": [
+        "Phase 2 white-box unit `get_r_token_skips_spaces_and_recovers_non_control_sequence_targets` covers valid and invalid targets."
+      ],
       "expected_observations": [
-        "Installed meanings are exact; expanded forms expand only at definition time; futurelet preserves lookahead."
+        "Valid targets remain; invalid tokens are backed up when required and inaccessible is inserted before restart."
       ],
-      "postconditions": ["Locals restore, globals survive, and token meanings retain ownership."],
-      "equivalence_cases": ["Ordinary/prefixed, local/global/globaldefs, nested replay, alias/literal target."],
-      "recovery_cases": [
-        "Missing targets, illegal prefixes, bad indices, and runaway definitions never partially install."
+      "postconditions": ["Scanning returns one redefinable control-sequence identity."],
+      "equivalence_cases": ["Direct/replayed targets with zero, one, or many spaces."],
+      "recovery_cases": ["Character and frozen targets diagnose and restart without defining them."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.current-font-selection",
+      "sections": [1217],
+      "claim": "Selecting a font defines the current-font eqtb entry to the selected internal font at effective scope.",
+      "preconditions": ["A resolved set-font command is current."],
+      "stimulus": [
+        "Phase 2 white-box unit `set_font_assignment_obeys_local_global_and_globaldefs_scope` selects distinct fonts across groups."
       ],
+      "expected_observations": ["The entry changes to the command operand at the effective level."],
+      "postconditions": ["Local selection restores and effective global selection survives exit."],
+      "equivalence_cases": ["Ordinary/global/globaldefs and direct/replayed selection."],
+      "recovery_cases": ["Unresolved font meanings are rejected before assignment."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.macro-definitions",
+      "sections": [1218],
+      "claim": "Def-family commands select expanded versus unexpanded token scanning and install call, long, and outer meanings at effective scope.",
+      "preconditions": ["Prefix and target scanning completed."],
+      "stimulus": [
+        "Phase 2 white-box unit `def_family_selects_expansion_flags_meaning_kind_and_effective_scope` covers all four def commands."
+      ],
+      "expected_observations": [
+        "Only expanded forms expand replacement text during definition and exact tokens remain installed."
+      ],
+      "postconditions": ["Local meanings restore and effective globals survive exit."],
+      "equivalence_cases": ["Def/gdef/edef/xdef with long/outer and direct/replayed replacements."],
+      "recovery_cases": ["Runaway or outer input follows scan_toks recovery without changing target identity."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.let-and-futurelet",
+      "sections": [1219, 1220, 1221],
+      "claim": "Let copies one resolved meaning after optional equals/spaces, while futurelet copies lookahead meaning and restores both tokens in order.",
+      "preconditions": ["A redefinable target has been scanned."],
+      "stimulus": [
+        "Phase 2 white-box unit `let_and_futurelet_copy_meaning_and_preserve_lookahead_order` covers reference ownership and replay."
+      ],
+      "expected_observations": [
+        "The target receives the exact command/operand and futurelet leaves input order unchanged."
+      ],
+      "postconditions": ["Copied token-list meanings retain one reference and obey scope."],
+      "equivalence_cases": ["Let with/without equals; futurelet over character, primitive, and macro tokens."],
+      "recovery_cases": ["Invalid targets recover before source meaning is copied."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.shorthand-definitions",
+      "sections": [1222, 1223, 1224],
+      "claim": "Character, math-character, and register shorthands temporarily relax their target, scan a bounded operand, and install canonical command/operand pairs.",
+      "preconditions": ["A shorthand command and target are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `shorthand_definitions_install_each_command_operand_and_bound_recovery` covers all seven kinds."
+      ],
+      "expected_observations": ["Each meaning identifies its command and character code or register eqtb location."],
+      "postconditions": ["The temporary relax meaning is replaced at effective scope."],
+      "equivalence_cases": ["All kinds with optional equals, self-reference, local/global/globaldefs, and replay."],
+      "recovery_cases": ["Out-of-range operands recover before final installation."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.read-to-definition",
+      "sections": [1225],
+      "claim": "Read-to scans a stream number, recovers a missing `to`, scans a target, and installs the read token list as a macro.",
+      "preconditions": ["A read-to command is current and stream state exists."],
+      "stimulus": [
+        "Phase 2 white-box unit `read_to_definition_scans_stream_keyword_target_and_installs_tokens` covers file, terminal, and closed streams."
+      ],
+      "expected_observations": ["The target receives exactly the token list returned by read_toks."],
+      "postconditions": ["Stream and scanner status reach canonical post-read state."],
+      "equivalence_cases": ["Present/missing `to`, direct/replayed targets, and all stream classes."],
+      "recovery_cases": ["Missing `to` diagnoses then continues; invalid targets recover through get_r_token."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
@@ -500,7 +736,9 @@
       "sections": [1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240],
       "claim": "Token, scalar, glue, muglue, code-table, and arithmetic assignments scan typed operands, normalize values, and commit at effective scope.",
       "preconditions": ["A typed selector is current after prefix collection."],
-      "stimulus": ["Assign direct/copied values and apply arithmetic at bounds in nested scopes."],
+      "stimulus": [
+        "Phase 2 white-box unit `typed_parameter_register_and_arithmetic_assignments_cover_scope_copy_and_bounds` exercises every family in nested scopes."
+      ],
       "expected_observations": [
         "Types and ownership persist; zero glue normalizes; arithmetic failure makes no partial write."
       ],
@@ -508,60 +746,141 @@
       "equivalence_cases": ["Named/numbered, ordinary/prefixed, local/global, replay/restoration, direct/copied RHS."],
       "recovery_cases": ["Bad braces/indices/ranges, overflow, and zero divisors retain prior values as specified."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_assignments_apply_prefix_globaldefs_registers_and_arithmetic"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/assignments.rs",
-          "test": "code_table_assignments_obey_groups_global_prefix_and_globaldefs"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
-      "id": "tex82.assignment.non-eqtb-effects",
-      "sections": [
-        1241,
-        1242,
-        1243,
-        1244,
-        1245,
-        1246,
-        1247,
-        1248,
-        1249,
-        1250,
-        1251,
-        1252,
-        1253,
-        1254,
-        1255,
-        1256,
-        1257,
-        1258,
-        1259,
-        1260,
-        1261,
-        1262,
-        1263,
-        1264,
-        1265
+      "id": "tex82.assignment.setbox-request",
+      "sections": [1241],
+      "claim": "Setbox scans a register and optional equals, encodes effective scope in the box-context flag, and starts box scanning only when allowed.",
+      "preconditions": ["A setbox command is current after prefix resolution."],
+      "stimulus": [
+        "Phase 2 white-box unit `setbox_request_encodes_scope_and_rejects_disallowed_contexts` covers local/global and forbidden contexts."
       ],
-      "claim": "Mode auxiliaries, boxes, paragraph shape, hyphenation, interaction, and font definitions apply distinct canonical effects and lifetimes.",
-      "preconditions": ["The assignment is legal and operands/resources are available."],
-      "stimulus": ["Phase 2 focused units and `assignment-effects.tex` cover every family."],
+      "expected_observations": ["Local indices remain 0..255 and effective globals become 256..511 before scan_box."],
+      "postconditions": ["Allowed commands yield one typed box request; forbidden commands yield none."],
+      "equivalence_cases": ["Local/global/globaldefs and direct/replayed setbox with optional equals."],
+      "recovery_cases": ["Forbidden alignment/accent contexts diagnose improper setbox without scanning a box."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.auxiliary-state",
+      "sections": [1242, 1243, 1244, 1245, 1246, 1247],
+      "claim": "Auxiliary setters validate mode or bounds and update space factor, previous depth/graf, page totals, counters, or box dimensions with their canonical global behavior.",
+      "preconditions": ["One auxiliary assignment and its owning mode/store are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state` covers every setter."
+      ],
       "expected_observations": [
-        "Each command mutates only its canonical owner and equal font specifications reuse identity."
+        "Only the selected auxiliary field changes and global prefixes do not alter commands that ignore them."
       ],
-      "postconditions": ["Eqtb-scoped effects restore; non-eqtb effects retain canonical lifetime."],
-      "equivalence_cases": ["Ordinary/prefixed, local/global, nested/restored, repeated-equal, and source/replay."],
-      "recovery_cases": [
-        "Wrong mode, unavailable font, malformed operands, and illegal prefixes roll back before retry."
+      "postconditions": ["Mode nest, page state, or box memory contains the scanned value exactly where specified."],
+      "equivalence_cases": ["Valid boundary values in outer/internal modes and direct/replayed commands."],
+      "recovery_cases": ["Wrong mode, bad space factor/prevgraf, and void box diagnose or no-op as specified."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.parshape",
+      "sections": [1248],
+      "claim": "Parshape scans a signed count, maps nonpositive counts to null, otherwise stores exactly that many indentation/width pairs at eqtb scope.",
+      "preconditions": ["A set-shape command is current."],
+      "stimulus": [
+        "Phase 2 white-box unit `parshape_assignment_scans_pair_count_and_restores_local_shape` covers negative, zero, one, and multiple pairs."
       ],
+      "expected_observations": ["Positive shapes preserve pair order and count; nonpositive input yields null."],
+      "postconditions": ["Local shapes restore and effective globals survive group exit."],
+      "equivalence_cases": ["Optional equals, local/global/globaldefs, nested restoration, and replay."],
+      "recovery_cases": ["Dimension scanner recovery supplies each malformed pair component before installation."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.hyphenation-data",
+      "sections": [1250, 1251, 1252],
+      "claim": "Hyphenation loads exception words in all profiles, while patterns load only under INITEX and otherwise flush one braced argument after diagnosis.",
+      "preconditions": ["A hyphenation-data command and braced input are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery` covers both profile classes."
+      ],
+      "expected_observations": [
+        "Exceptions update the exception table; INITEX patterns update tries; production patterns do neither."
+      ],
+      "postconditions": ["The entire braced argument is consumed and global hyphenation state has canonical lifetime."],
+      "equivalence_cases": [
+        "Exceptions/patterns with empty, singleton, and multiple entries in INITEX and production profiles."
+      ],
+      "recovery_cases": ["Production pattern use diagnoses and flushes through the matching right brace."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.font-parameters",
+      "sections": [1253, 1254, 1255],
+      "claim": "Fontdimen, hyphenchar, and skewchar assignments scan a font and value then update strictly global font information.",
+      "preconditions": ["A loaded font and font-parameter assignment are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar` covers each selector."
+      ],
+      "expected_observations": ["Only the selected font field changes to the scanned dimension or integer."],
+      "postconditions": ["Group exit does not restore font information."],
+      "equivalence_cases": ["Direct font identifiers, current-font aliases, nested groups, and repeated assignment."],
+      "recovery_cases": ["Invalid fontdimen and font identifier scans diagnose before mutation."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.font-definition",
+      "sections": [1256, 1257, 1258, 1259, 1260],
+      "claim": "Font definition scans a target, filename, and default/at/scaled size, reuses an equal loaded font or loads one, and records the newest identifier.",
+      "preconditions": ["A def-font command and font resource boundary are available."],
+      "stimulus": [
+        "Phase 2 white-box unit `font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values` covers default, at, scaled, reuse, and load."
+      ],
+      "expected_observations": [
+        "Equal name/area/effective size reuses identity; otherwise one font loads and target/id text bind it."
+      ],
+      "postconditions": ["The target meaning obeys effective scope while loaded font data remains global."],
+      "equivalence_cases": [
+        "Default/at/scaled equal sizes, case-distinct names, local/global targets, and retry after resource supply."
+      ],
+      "recovery_cases": ["Illegal scaled values become 1000 and improper at sizes become 10pt before load/reuse."],
+      "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.assignment.interaction-mode",
+      "sections": [1262, 1263, 1264, 1265],
+      "claim": "Interaction commands set the global interaction mode and recompute print selection according to terminal and open-log state.",
+      "preconditions": ["One interaction primitive is current."],
+      "stimulus": [
+        "Phase 2 white-box unit `interaction_assignment_updates_mode_and_selector_for_log_state` covers all four modes with log open/closed."
+      ],
+      "expected_observations": ["Interaction equals the command operand and selector matches terminal/log policy."],
+      "postconditions": ["The mode survives groups and subsequent assignments."],
+      "equivalence_cases": ["All four modes, log open/closed, nested groups, and repeated commands."],
+      "recovery_cases": ["No value scanning occurs; an unresolved primitive is rejected before this action."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
@@ -574,7 +893,7 @@
       "claim": "Afterassignment stores one unexpanded token, overwrites the slot on repetition, and inserts it after the next successful assignment before aftergroup or outer input.",
       "preconditions": ["No assignment is mid-commit."],
       "stimulus": [
-        "Store, overwrite, and fire around local/global assignments, pending aftergroup, and a failed-assignment control."
+        "Phase 2 white-box unit `afterassignment_slot_overwrites_and_fires_once_after_successful_assignment` covers pending aftergroup and failed assignments."
       ],
       "expected_observations": ["Only the newest token fires once after effects and before aftergroup."],
       "postconditions": ["The slot clears and the token retains inserted provenance."],
@@ -583,19 +902,10 @@
       ],
       "recovery_cases": ["Failure or nonassignment does not fire or lose the token; retry fires once."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/groups.rs",
-          "test": "afterassignment_slot_is_single_token_and_overwrites_previous"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
     },
     {
       "id": "tex82.assignment.command-terminator",
@@ -612,6 +922,186 @@
       "equivalence_cases": ["Ordinary/prefixed, nested replay, and local/global continuations."],
       "recovery_cases": ["EOF or malformed expansion recovers finitely without fabricating a terminator."],
       "semantic_owner": "tex-exec::assignments",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.input-stream-open-close",
+      "sections": [1272, 1273, 1274, 1275],
+      "claim": "Closein closes an open read stream; openin first closes the prior stream, scans a filename with default .tex extension, and records closed or just-open state from the open result.",
+      "preconditions": ["A four-bit stream selector and host-neutral input capability are available."],
+      "stimulus": [
+        "Phase 2 white-box unit `openin_closein_replace_stream_state_and_apply_default_extension` covers open, replacement, failed open, and close."
+      ],
+      "expected_observations": [
+        "The selected stream alone transitions to closed or just-open with the scanned canonical filename."
+      ],
+      "postconditions": ["Any prior handle is closed before replacement and other streams remain unchanged."],
+      "equivalence_cases": ["Explicit/missing extension, optional equals, streams 0/15, and direct/replayed commands."],
+      "recovery_cases": ["Failed open leaves the stream closed after retiring its prior handle."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.messages",
+      "sections": [1276, 1277, 1278, 1279, 1280],
+      "claim": "Message commands scan expanded balanced text, render it once, and route ordinary messages to terminal output with canonical line-spacing behavior.",
+      "preconditions": ["A message command and print selector state are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `message_expands_balanced_text_and_applies_terminal_line_spacing` covers short, wrapping, and nested expanded text."
+      ],
+      "expected_observations": [
+        "Rendered text reflects expansion and ordinary message updates the terminal exactly once."
+      ],
+      "postconditions": ["The temporary token list/string is released and selector is restored."],
+      "equivalence_cases": ["Empty/nonempty, short/wrapping, nested macro, and source/replay message text."],
+      "recovery_cases": ["Runaway text follows scan_toks recovery before any partial message is emitted."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.errmessage-help",
+      "sections": [1281, 1282, 1283, 1284],
+      "claim": "Errmessage prints expanded text, prefers errhelp when present, otherwise emits long built-in help at most once in non-error-stop interaction, then invokes error handling.",
+      "preconditions": ["Expanded errmessage text and interaction/errhelp state are available."],
+      "stimulus": [
+        "Phase 2 white-box unit `errmessage_selects_user_or_once_only_builtin_help_and_clears_flag` covers all help branches."
+      ],
+      "expected_observations": [
+        "User help wins; otherwise first and repeated built-in help differ exactly as canonical interaction requires."
+      ],
+      "postconditions": ["use_err_help is false after error returns and long_help_seen has canonical value."],
+      "equivalence_cases": ["Errhelp present/absent, first/repeated, scroll/error-stop interaction, and replay."],
+      "recovery_cases": ["Error continuation preserves input and does not retain temporary message storage."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.case-shift",
+      "sections": [1285, 1286, 1287, 1288, 1289],
+      "claim": "Uppercase/lowercase scan an unexpanded token list, substitute nonzero code-table values in character and active-character tokens without changing command kind, then replay the list.",
+      "preconditions": ["Case-code tables and a balanced token-list argument exist."],
+      "stimulus": [
+        "Phase 2 white-box unit `case_shift_substitutes_character_codes_preserves_commands_and_replays` covers letters, other/active tokens, control sequences, and zero mappings."
+      ],
+      "expected_observations": [
+        "Only eligible character codes with nonzero mappings change and replay order is preserved."
+      ],
+      "postconditions": ["The scanned list becomes replay input without a retained definition reference."],
+      "equivalence_cases": [
+        "Upper/lower, letter/other/active, zero/nonzero mapping, nested groups, and stored replay."
+      ],
+      "recovery_cases": ["Runaway or missing brace follows scan_toks recovery before transformation."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.show-dispatch",
+      "sections": [1290, 1291, 1292, 1293],
+      "claim": "Mode-independent show dispatch selects activities, box, raw meaning, or internal-value inspection from the show operand.",
+      "preconditions": ["One xray command is current in any mode."],
+      "stimulus": [
+        "Phase 2 white-box unit `show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence` covers all four operands."
+      ],
+      "expected_observations": ["Exactly one inspection branch begins and operands are scanned only by that branch."],
+      "postconditions": ["Control reaches common diagnostic completion once."],
+      "equivalence_cases": ["All show commands in vertical, horizontal, and math modes from source and replay."],
+      "recovery_cases": [
+        "Invalid command operands are impossible after primitive resolution and fail loudly if constructed."
+      ],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.show-meaning",
+      "sections": [1294, 1295],
+      "claim": "Show consumes one raw token and prints its control-sequence spelling when present followed by the canonical meaning vocabulary.",
+      "preconditions": ["Show-meaning dispatch has begun."],
+      "stimulus": [
+        "Phase 2 white-box unit `show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind` covers undefined, primitive, and macro kinds."
+      ],
+      "expected_observations": [
+        "The token is not expanded and its exact current command/operand determines the rendering."
+      ],
+      "postconditions": ["No assignment, expansion, or replay mutation occurs."],
+      "equivalence_cases": ["Control sequence/character and call/long/outer/long-outer/end-template meanings."],
+      "recovery_cases": ["EOF raw-token recovery precedes meaning rendering."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.show-box",
+      "sections": [1296],
+      "claim": "Showbox scans an eight-bit register and displays either void or that box through diagnostic box rendering.",
+      "preconditions": ["Showbox dispatch and box registers are available."],
+      "stimulus": [
+        "Phase 2 white-box unit `showbox_scans_register_and_distinguishes_void_from_box_contents` covers registers 0/255 and empty/nonempty values."
+      ],
+      "expected_observations": ["The heading names the scanned register and the body matches void or box content."],
+      "postconditions": ["The box register is not consumed or changed."],
+      "equivalence_cases": ["Void/nonvoid, boundary registers, nested groups, and replay."],
+      "recovery_cases": ["Out-of-range selectors recover through the eight-bit scanner before inspection."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.show-value",
+      "sections": [1297],
+      "claim": "Showthe scans one internal quantity through the_toks and prints then releases the resulting token list.",
+      "preconditions": ["Showthe dispatch and an internal quantity are current."],
+      "stimulus": [
+        "Phase 2 white-box unit `showthe_uses_the_toks_for_each_internal_value_family_and_releases_output` covers scalar, glue, font, and token values."
+      ],
+      "expected_observations": ["Printed tokens equal the canonical the_toks result for the selected value."],
+      "postconditions": ["Temporary output tokens are freed and source state follows the scanned quantity."],
+      "equivalence_cases": ["Integer/dimension/glue/muglue/token/font values from named and register sources."],
+      "recovery_cases": ["Invalid internal quantities follow the_toks scanner recovery before printing."],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226"
+    },
+    {
+      "id": "tex82.main-control.show-completion",
+      "sections": [1298],
+      "claim": "Every show diagnostic ends diagnostics, reports OK, adjusts terminal/transcript routing, and supplies interaction-dependent non-error help.",
+      "preconditions": ["One show inspection branch has completed."],
+      "stimulus": [
+        "Phase 2 white-box unit `show_completion_routes_transcript_and_adjusts_error_count_by_interaction` covers online/offline and interaction modes."
+      ],
+      "expected_observations": [
+        "The transcript hint appears only when required and show does not count as an error below error-stop mode."
+      ],
+      "postconditions": ["Diagnostic selector and error count match canonical completion state."],
+      "equivalence_cases": ["Tracing online positive/nonpositive and error-stop versus lower interaction."],
+      "recovery_cases": [
+        "Interactive continuation returns through the ordinary error routine without duplicating inspection."
+      ],
+      "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
