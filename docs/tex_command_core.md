@@ -436,6 +436,18 @@ the DVI-page effect is consequently published before that terminator backup
 retires on the next raw fetch. The executor receives the completed box node,
 not an input capability or a token to reread.
 
+The shipout effect itself belongs to the page commit, never to a command.
+TeX82 §640's `dvi_out(eop); incr(total_pages)` is the only place a page
+reaches the DVI file and §638's `ship_out` is the only routine that reaches
+it, so replay derives the effect from the committed-artifact delta across an
+applied step rather than from the step's identity. That covers both of
+tex.web's entry points into `ship_out` by construction: §1075's `box_end` for
+an explicit `\shipout`, and §1012's `fire_up` through §1025's null-`\output`
+case for every residual page §994's `build_page` ejects on its own -- notably
+the one §1054's `its_all_over` forces before `\end` may finish. As in §640
+the published page number is read after the increment, so it is the one-based
+ordinal of the page just committed.
+
 Likewise, `\box` is observed as `make_box` with `cur_chr` 0 before command
 control invokes TeX82 §1079's `scan_int` for its box-register operand. That
 command-owned scan preserves raw digit delivery and any terminator backup;
