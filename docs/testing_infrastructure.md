@@ -44,11 +44,53 @@ two-minute local budget. Naming gates on its command line, as in
 full run uses; `scripts/check.sh node-width-budget` is the explicit form of the
 `CHECK_BENCH=1` opt-in. That argument form exists so no one retypes a gate's
 invocation by hand: a bare `cargo clippy` exits 0 on warn-level lints, and
-`cargo clippy -p <crate>` resolves a narrower feature union than the
-whole-workspace gate, so a hand-written clippy run can be green while the gate
-is red. Only `scripts/check.sh` output may be reported as a gate result.
+`cargo clippy -p <crate>` resolves a different feature union than the gate, so
+a hand-written clippy run can be green while the gate is red. Only
+`scripts/check.sh` output may be reported as a gate result.
 `scripts/check-and-test.sh` runs the default native correctness suite followed
 by that quality gate.
+
+### What The Clippy Gate Covers
+
+One `cargo clippy` invocation lints one feature resolution, and Cargo unifies
+features across every package the invocation selects. A whole-workspace
+`--all-targets` run therefore always resolves `tex-command` and `tex-exec` with
+`instrumentation` enabled, because `tools/tex-command-stream` depends on that
+feature and `tex-exec`'s dev-dependencies enable it. No command of that shape
+can lint the resolution a released `umber` is built in, so the gate runs a
+declared set of passes instead of one command. `scripts/check-lint-passes.py`
+holds the declaration and runs them all:
+
+- **union**: default members, all targets, dev-dependency feature union. This
+  is the historical gate command.
+- **shipping**: every workspace member's lib and bin targets, no
+  dev-dependencies, `tex-command-stream` excluded. This is the resolution
+  behind `cargo build -p umber`, `cargo run-dev -p umber`, and
+  `cargo test -p umber --test it`, and it is the only pass that lints the
+  `bib-*` crates, `umber-wasm`, `umber-interrupt`, `refexec`, and
+  `profile-analyzer`, which the union pass compiles but never lints.
+
+The declaration is verified rather than trusted. Each pass records the exact
+feature set it expects Cargo to resolve for every workspace package and checks
+it against Cargo's own `compiler-artifact` records; every feature a workspace
+member declares must be enabled in a pass that lints its owner or be listed in
+`UNCOVERED_ENABLED_FEATURES` with a reason; and every member must be linted
+rather than merely compiled. Adding a feature, or changing which member enables
+one, fails the gate until someone decides how it is covered. The features
+listed as out of scope today are the opt-in profiling, `shadow`, `dvi-tools`,
+and `reference-tools` configurations, several of which
+`scripts/check-tools.sh` lints through `umber`.
+
+Denial happens in the script rather than through `-D warnings`: any diagnostic
+from a workspace crate fails a pass, including one from a crate in dependency
+position, which `-D warnings` never applied to. A known-dirty configuration is
+quarantined per package and lint with an exact count and an issue id -- today
+only `tex-command`'s nine `unused_variables` warnings in the shipping
+resolution (`umber2-johp.200`). Quarantined renderings are held back so a green
+run prints no warning text, and the count is checked in both directions: fixing
+the warnings fails the gate until the quarantine entry is deleted, so an
+exception cannot outlive its issue. `scripts/test-check-lint-passes.py` proves
+each of these guards fails when it should, and the clippy gate runs it first.
 
 Commands that execute Umber, including Cargo tests whose selected test enters
 the engine, must run through the shared process-group guard when investigating

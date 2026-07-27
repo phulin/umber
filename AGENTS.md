@@ -83,9 +83,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   To run one gate alone, name it: `scripts/check.sh clippy` runs byte-identical
   commands to the full run. Never hand-write a `cargo clippy` invocation and
   call the result "clippy clean": a bare `cargo clippy` exits 0 on warn-level
-  lints such as the `clippy.toml` host-I/O policy, and `-p <crate>` resolves a
-  narrower feature union than the whole-workspace gate, so both can look green
-  while the gate is red.
+  lints such as the `clippy.toml` host-I/O policy, and any one invocation lints
+  a single feature resolution, while the gate lints every resolution the tree
+  is built in, so a hand-written run can look green while the gate is red.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
 - Direct `cargo build` output to a log file; it has verbose output.

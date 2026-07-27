@@ -126,10 +126,16 @@ tests. Report its final verdict line.
 
 Never substitute a hand-written `cargo clippy` for the clippy gate, and never
 report "clippy clean" from one. A bare `cargo clippy` leaves warn-level lints
-at warn and exits 0 on a real violation, and `-p <crate>` resolves a different
-feature union than the whole-workspace gate does, so both can be green while
-the gate is red. To run one gate on its own, name it: `scripts/check.sh clippy`
-runs the identical command the full run uses. `e2e_conformance_story_canonical` (see
+at warn and exits 0 on a real violation, and any single invocation lints one
+feature resolution, while the gate lints the declared set of resolutions the
+tree is actually built in -- so a hand-written run can be green while the gate
+is red, and vice versa. To run one gate on its own, name it:
+`scripts/check.sh clippy` runs the identical passes the full run uses. What
+those passes cover, and how a known-dirty configuration is quarantined against
+its issue, is recorded under "What The Clippy Gate Covers" in
+[Testing Infrastructure](testing_infrastructure.md); a warning you can
+reproduce by hand but the gate does not report is itself a gate defect to file.
+`e2e_conformance_story_canonical` (see
 "Canonical Story Regression Gate" in
 [Testing Infrastructure](testing_infrastructure.md)) must stay byte-exact
 against real pdfTeX output — never weaken or skip that comparison. Its live

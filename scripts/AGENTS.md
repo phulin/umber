@@ -15,6 +15,15 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
+- `check-lint-passes.py`: the clippy gate's declared lint passes; verifies each
+  pass's feature resolution against Cargo's own records, requires every
+  workspace member to be linted and every declared feature's enabled state to
+  be either covered or recorded as out of scope, and holds known-dirty
+  configurations in an exact, issue-bearing quarantine that fails when it goes
+  stale in either direction.
+- `test-check-lint-passes.py`: synthetic-input proof that each coverage guard
+  in `check-lint-passes.py` fails when it should; the clippy gate runs it
+  before trusting them.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
 - `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
   output-progress, fuel, and termination defaults.
