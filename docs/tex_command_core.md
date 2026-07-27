@@ -39,7 +39,7 @@ backed-up input level.
 Canonical `\font` definitions scan their target, optional equals, expanded
 filename, and `at`/`scaled` clause into an immutable `FontLoadRequest`. TeX82
 §1257's `new_font` runs `define(u,set_font,null_font)` on the `get_r_token`
-target *before* the optional equals and filename, so `CommandProcessor` makes
+target _before_ the optional equals and filename, so `CommandProcessor` makes
 that provisional null-font definition and publishes its meaning mutation
 there, under the `\global`/`\globaldefs` scope main control selects, exactly
 as §1224's provisional `\relax` is. §1257's `common_ending: equiv(u):=f` then
@@ -98,8 +98,8 @@ parent token merely to discover that a stored episode ended.
 
 Because ordinary `get_x_token` consumes that boundary internally, the
 one-shot `Completed` event is only guaranteed to surface at the executor's
-own top-level fetch for the *next* command. A scalar operand scan belonging
-to the episode's own *last* command (`scan_dimen`'s optional-space lookahead
+own top-level fetch for the _next_ command. A scalar operand scan belonging
+to the episode's own _last_ command (`scan_dimen`'s optional-space lookahead
 after a trailing `\kern1pt`, for example, per TeX82 §455) can just as well be
 the exact probe that retires the stored level, and that swallowed retirement
 never reaches the executor as an event. A driving loop must therefore treat
@@ -271,7 +271,7 @@ completion-aware raw fetch as ordinary (non-alignment) `get_x_token`
 identically here): the retiring level can sit below several other
 exhausted-but-unpopped levels (nested macro expansions, parameter
 substitutions, a trailing operand scan with no lookahead of its own), so the
-next real token the cascade finds can belong to the *enclosing* cell/field
+next real token the cascade finds can belong to the _enclosing_ cell/field
 context rather than the episode. `scan_alignment_delivery_step` reports this
 as `ScannedStep::ReplayCompleted`, exactly like ordinary `scan_step` already
 does via `get_x_token_with_replay_completion`, rather than risking that
@@ -697,7 +697,7 @@ observable scanner and backup ordering.
 For `\hbox`, `\vbox`, and `\vtop`, command processing owns all of TeX82
 §645's `scan_spec` -- the optional `to`/`spread` packing clause and dimension,
 and then the mandatory opening brace, which §403's `scan_left_brace`
-*consumes*. That brace is never redelivered to main control: `scan_spec` runs
+_consumes_. That brace is never redelivered to main control: `scan_spec` runs
 `new_save_level(c)` before it, so the group it opens is exactly the one replay
 enters when it receives the construction. Replay enters the typed group and
 mode, schedules the matching immutable `\everyhbox`/`\everyvbox` command
@@ -722,7 +722,7 @@ family's brace-matching bookkeeping (`active_boxes`/`BoxBeginGroup`/
 `BoxEndGroup`) purely for nested-brace counting -- an insertion body is not a
 box and schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
 dedicated branch (`finish_insert_or_adjust_group`): §1100's `end_graf`, then
-TeX82's `vpack` macro (unconstrained depth, but the box's *current*
+TeX82's `vpack` macro (unconstrained depth, but the box's _current_
 `\vbadness`/`\vfuzz`, unlike an ordinary `\vbox`) packages the body, and the
 resulting `ins_node` is appended to whatever list was open when `\insert`
 began -- not a side channel -- exactly like `\mark`/`\penalty`. Outer vertical
@@ -835,8 +835,8 @@ it first). `\eqno`/`\leqno` are deliberately excluded even though tex.web
 registers them under the same `eq_no` command code as the math-request
 vocabulary: TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)` (added to the
 shared Forbidden-cases list first built at §1048) routes vmode/hmode
-`\eqno`/`\leqno` through the same `report_illegal_case` ("You can't use
-`\eqno' in ... mode") already reused by `IllegalBoxShift`/
+`\eqno`/`\leqno` through the same `report_illegal_case` (``You can't use
+`\eqno' in ... mode``) already reused by `IllegalBoxShift`/
 `IllegalItalicCorrection`/`IllegalInsertOrAdjust`, via their own dedicated
 `ScannedStep::IllegalEqNo` arm (umber2-johp.88), not `insert_dollar_sign`.
 `mmode+eq_no` itself (gated by `privileged`/`cur_group`, §§1140-1142) is
@@ -2991,7 +2991,7 @@ control has already consumed the primitive's own token, so if its scanner
 never runs, any mandatory operand (an integer, dimension, glue, or braced
 group) is left in the input stream and gets typeset as literal document text
 arbitrarily far downstream of the real gap. `\patterns`/`\hyphenation`
-(Beads `umber2-johp.67`), `\penalty` (`umber2-johp.68`), `\ ` (control space),
+(Beads `umber2-johp.67`), `\penalty` (`umber2-johp.68`), `\␣` (control space),
 and `\prevdepth` (both `umber2-johp.73`) were each found only after silently
 corrupting output this way; `umber2-johp.69` replaced the wildcard with the
 mechanism below after a survey found roughly half of

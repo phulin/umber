@@ -4,6 +4,8 @@ This checklist tracks the original TeX82 primitive set, grouped by subsystem. En
 
 Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after the description when behavior is partial or deliberately differs.
 
+`␣` stands for a literal space character, so `\␣` is the control-space primitive (a backslash followed by a space), which is not the same primitive as `\`.
+
 ## Boxes And Rules
 
 - [x] `\badness` - Reports the badness of the glue setting in the last box made. Implemented as a read-only internal integer backed by execution-side packing records.
@@ -38,7 +40,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Characters And Case
 
-- [x] `\` - Inserts an explicit control space as normal current-font interword glue with space factor 1000.
+- [x] `\␣` - Inserts an explicit control space as normal current-font interword glue with space factor 1000.
 - [x] `\accent` - Places a text accent over the following character.
 - [x] `\catcode` - Reads or assigns a character's category code; assignments use the code-table facade and bump generations.
 - [x] `\char` - Produces a character token by numeric character code.

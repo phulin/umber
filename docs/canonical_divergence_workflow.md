@@ -24,7 +24,7 @@ Scope: working a semantic or byte-level divergence between Umber's canonical
 3. The retired Umber implementation (`Executor`/`InputStack`, `tex-lex`,
    `tex-expand`) is never an oracle for expected behavior, at any step, for
    any reason (`docs/tex_command_core.md` §35.7 and §4's non-goals). It may
-   remain a migration *target* — code being deleted or routed away from —
+   remain a migration _target_ — code being deleted or routed away from —
    but never a source of expected results. Do not consult its behavior to
    decide what canonical code should do.
 
