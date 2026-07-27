@@ -9,6 +9,7 @@ use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use crate::command::DeliveryStamp;
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior,
     SharedBackedUpBuffer, SharedTokenBuffer, TokenBehavior, TokenPayload,
@@ -98,9 +99,23 @@ impl CommandProcessor<'_> {
     /// canonical command state and restarts here; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.get_x_token_from(None)
+    }
+
+    /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
+    ///
+    /// §381 does not begin with `get_next`: it expands whatever the caller
+    /// left in the current command and only then reads on. Ordinary delivery
+    /// leaves nothing, which is [`Self::get_x_token`]; §1152 loads an active
+    /// character's meaning directly and passes it here, so that meaning is
+    /// expanded without ever having been delivered raw.
+    fn get_x_token_from(
+        &mut self,
+        mut pending: Option<CurrentCommand>,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
         self.command.transient.active_expansion_depth += 1;
         let result = loop {
-            match self.get_x_token_scalar()? {
+            match self.expanded_delivery(pending.take())? {
                 Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => break Ok(None),
@@ -108,6 +123,52 @@ impl CommandProcessor<'_> {
         };
         self.command.transient.active_expansion_depth -= 1;
         result
+    }
+
+    /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
+    ///
+    /// ```text
+    /// begin cur_cs:=cur_chr+active_base;
+    /// cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+    /// x_token; back_input;
+    /// end
+    /// ```
+    ///
+    /// This is the whole of TeX's `\mathcode` escape hatch. §1155's
+    /// `set_math_char` and §1151's `scan_math` both branch here when a
+    /// character's `math_code` is `@'100000`, which is what makes plain
+    /// TeX's ``\mathcode`\'="8000`` route `'` through the active `'` macro
+    /// that builds `\prime` lists.
+    ///
+    /// The character is not backed up and reread. §1152 loads the
+    /// `active_base + c` cell's meaning straight into `cur_cmd`/`cur_chr`,
+    /// so there is no raw delivery for it at all: `x_token` expands that
+    /// meaning in place -- observing a macro push, not a backup -- and only
+    /// the unexpandable token expansion settles on is backed up, from where
+    /// the caller rereads it. An active character bound to an unexpandable
+    /// meaning still reaches §381's tail, so it is still observed as one
+    /// expanded delivery and backed up unchanged.
+    pub fn treat_as_active_character(
+        &mut self,
+        ch: char,
+        origin: OriginId,
+    ) -> Result<(), CommandError> {
+        let spelling = TracedTokenWord::pack(
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            },
+            origin,
+        );
+        let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
+        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        let command = CurrentCommand::resolve(spelling, stamp, None, false, &mut self.state);
+        let Some(settled) = self.get_x_token_from(Some(command))? else {
+            return Ok(());
+        };
+        // §325 needs only `cur_tok`; the settled token is `x_token`'s result
+        // rather than a delivery this call is undoing, exactly as in §326.
+        self.back_input_saved(settled)
     }
 
     /// TeX82 §404's `<Get the next non-blank non-relax non-call token>`:
