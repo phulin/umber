@@ -688,6 +688,57 @@ fn an_em_unit_consumes_exactly_one_following_space() {
     ));
 }
 
+/// TeX82 §455's internal-unit probe opens with §406's "Get the next non-blank
+/// non-call token", so spaces before an internal unit are skipped.
+///
+/// §449 reaches §453's unit scan directly when the coefficient was an
+/// `int_val` internal quantity, and nothing on that path has absorbed an
+/// optional space -- §445's and §452's trailing-space rules belong to the
+/// digit scans, which never ran. `\dimen0=\pretolerance␣\dimen2` is therefore
+/// the ordinary shape in which §455 meets a space. Reading a single token
+/// instead ended the probe on it, so §453's keyword scan found no unit and
+/// §459 recovered the whole dimension as `pt` (umber2-johp.115).
+#[test]
+fn an_internal_dimension_unit_may_be_preceded_by_a_space() {
+    use tex_state::env::banks::IntParam;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+    use tex_state::scaled::Scaled;
+
+    const PRETOLERANCE: u16 = 0;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::new(PRETOLERANCE), 3);
+    universe.set_dimen(2, Scaled::from_raw(5 * Scaled::UNITY));
+    let coefficient = universe.intern("pretolerance").symbol();
+    universe.set_meaning(coefficient, Meaning::IntParam(PRETOLERANCE));
+    let dimen = universe.intern("dimen").symbol();
+    universe.set_meaning(dimen, Meaning::UnexpandablePrimitive(P::Dimen));
+
+    push(
+        &mut command,
+        vec![
+            Token::Cs(coefficient),
+            space_token(),
+            Token::Cs(dimen),
+            char_token('2'),
+        ],
+    );
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let scanned = processor.scan_dimension().expect("dimension scans");
+    assert_eq!(scanned.value.raw(), 15 * Scaled::UNITY);
+    assert_eq!(scanned.recovery, ScalarRecovery::None);
+}
+
 #[test]
 fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
     use tex_state::font::NULL_FONT;

@@ -1358,8 +1358,28 @@ impl CommandProcessor<'_> {
     /// token replayed by the fractional scanner, TeX's `back_input` first
     /// retires that exhausted backup before installing the new one.
     fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
-        let Some(command) = self.get_x_token()? else {
-            return Ok(None);
+        // §455 opens with §406's "Get the next non-blank non-call token"
+        // (`repeat get_x_token until cur_cmd<>spacer`), and only the surviving
+        // non-internal token is backed up -- the spaces it skipped are gone.
+        // §445 and §452 absorb one trailing space each, so this loop is what
+        // covers the coefficient forms that ran neither: §449's `int_val`
+        // internal quantity, and §448's `shortcut`. Reading a single token
+        // instead ended the probe on that space, so `\dimen0=\pretolerance
+        // \hsize` found no unit and §459 recovered it as `pt`
+        // (umber2-johp.115).
+        let command = loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok(None);
+            };
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                break command;
+            }
         };
         // §455 asks at `mu_val` when `mu` and at `dimen_val` otherwise, so
         // §429 lowers an internal glue to its width for an ordinary unit.

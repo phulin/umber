@@ -167,10 +167,13 @@ impl CommandProcessor<'_> {
     /// the caller can apply §403's "behave as though a `{` had been read"
     /// recovery where that recovery is observable.
     ///
-    /// §403 skips spaces *and* `\relax` ("\TeX\ allows \relax to appear
-    /// before the left_brace", §406's non-blank-non-relax-non-call loop).
-    /// Only spaces are skipped here; the missing `\relax` arm is
-    /// `umber2-johp.209`.
+    /// §403 opens with §404's "Get the next non-blank non-relax non-call
+    /// token" -- `repeat get_x_token until (cur_cmd<>spacer)and
+    /// (cur_cmd<>relax)` -- because, in §403's own words, "\TeX\ allows
+    /// \.{\\relax} to appear before the |left_brace|". Skipping only spaces
+    /// rejected the brace in `\message\relax{...}` and every plain-TeX idiom
+    /// that parks a `\relax` in front of a mandatory group
+    /// (`umber2-johp.209`).
     pub(crate) fn scan_left_brace(
         &mut self,
         expanded: bool,
@@ -186,7 +189,8 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                } => continue,
+                }
+                | Meaning::Relax => continue,
                 Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
@@ -1146,6 +1150,65 @@ mod tests {
         let scanned = processor
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded scan succeeds");
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }]
+        );
+    }
+
+    /// TeX82 §403 opens with §404's "Get the next non-blank non-relax
+    /// non-call token", so a `\relax` before a mandatory `{` is skipped
+    /// rather than treated as the missing brace.
+    ///
+    /// §403 states the rule in prose too: "\TeX\ allows \relax to appear
+    /// before the left_brace". Skipping only spaces made every mandatory
+    /// group that a `\relax` guards -- the plain-TeX idiom for stopping an
+    /// unwanted lookahead -- take §403's `back_error` recovery instead
+    /// (umber2-johp.209).
+    #[test]
+    fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let relax = universe.intern("relax").symbol();
+        universe.set_meaning(relax, Meaning::Relax);
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Cs(relax),
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Cs(relax),
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let scanned = processor
+            .scan_toks(ScanToksMode::General { expanded: false })
+            .expect("§404 skips the guarding `\\relax`");
         assert_eq!(
             processor
                 .state
