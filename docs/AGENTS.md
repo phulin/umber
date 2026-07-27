@@ -49,6 +49,8 @@ incrementality, reference oracles, and optimization promotion.
 conformance work; each note names the governing TeX82 section and the adopted
 semantic boundary, not temporary implementation plans.
 
+`tex82_property_catalogue.md` defines the pinned 1,380-module TeX82 inventory, explicit disposition and executable-property schemas, reviewed shard contract, and hermetic completeness gate.
+
 `command_semantic_fixtures.md` defines repository fixture contract v1 for
 committed canonical command streams, profile/tool/source/output identity,
 mandatory WEB citations, hermetic correctness consumption, and explicit live

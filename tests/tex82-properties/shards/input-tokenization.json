@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "domain": "input-tokenization",
+  "reviewed": true,
+  "properties": [
+    {
+      "id": "tex82.input.tokenization",
+      "sections": [
+        343,
+        344,
+        345,
+        346,
+        347,
+        348,
+        349,
+        350,
+        351,
+        352,
+        353,
+        354,
+        355,
+        356,
+        357,
+        358,
+        359,
+        360,
+        361,
+        362,
+        363,
+        364,
+        365
+      ],
+      "claim": "Raw input delivery implements TeX82's M/N/S tokenizer, control-sequence scanning, superscript reduction, line retirement, token-list replay, and no-new-control-sequence guard.",
+      "preconditions": [
+        "The exact eight-bit TeX82 profile is active.",
+        "Catcodes and endlinechar are the values committed before the next token boundary."
+      ],
+      "stimulus": [
+        "Deliver physical source lines and token-list levels containing spaces, comments, endlines, control words and symbols, active characters, superscript notation, and macro parameters."
+      ],
+      "expected_observations": [
+        "M/N/S state transitions emit or suppress spaces and paragraph tokens exactly at the canonical line boundary.",
+        "Control sequences and active characters preserve canonical spelling and source ranges.",
+        "Superscript notation reduces only complete canonical forms and restarts tokenization after invalid reductions.",
+        "Token-list parameters replay the selected argument without re-tokenizing it."
+      ],
+      "postconditions": [
+        "The source or token-list cursor advances by exactly the consumed canonical input.",
+        "Scanner state and control-sequence creation policy remain owned by CommandState."
+      ],
+      "equivalence_cases": [
+        "LF, CR, CRLF, and missing-final-terminator inputs share the same normalized tokenizer contract.",
+        "All canonical dialect profiles use the same exact-byte tokenizer."
+      ],
+      "recovery_cases": [
+        "An invalid reduced character is consumed once before delivery restarts.",
+        "force_eof retires the current source only at the canonical refill boundary."
+      ],
+      "semantic_owner": "tex-command::input",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
+          "test": "m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines"
+        },
+        {
+          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
+          "test": "constructs_words_symbols_active_characters_and_null_names_with_exact_ranges"
+        },
+        {
+          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
+          "test": "canonical_superscript_forms_use_lowercase_hex_and_complete_ranges"
+        },
+        {
+          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
+          "test": "all_canonical_dialects_share_the_exact_byte_state_machine"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
+    }
+  ]
+}
