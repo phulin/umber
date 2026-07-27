@@ -12,6 +12,9 @@ use super::{
     delimiters, fractions, left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FetchedChar {
     pub(crate) font: FontId,

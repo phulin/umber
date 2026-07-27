@@ -17,6 +17,9 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/alignment/tests.rs`: unit tests for independent alignment width planning.
 - `src/expansion.rs`: pure pdfTeX font-expansion validation, capacity, final-ratio, and discrete-step arithmetic.
 - `src/math/`: pure Appendix G math-list conversion helpers, including the iterative choice/view pass driver, style transitions, math parameter snapshots, compound fractions/operators/radicals/delimiters/accents, script placement, iterative arena traversal, and inter-noad spacing over owned hlist output.
+- `src/math/model/tests.rs`: direct TeX82 math-field, noad-kind, fraction, choice-arm, and style-model tests.
+- `src/math/convert/tests.rs`: direct TeX82 first/second mlist-pass, choice, bin, nonscript, spacing, delimiter, and penalty tests.
+- `src/math/operators/tests.rs`: direct TeX82 noad-construction, limits, italic-correction, script, fraction, radical, accent, and rule tests.
 - `src/math/variants.rs`: deterministic OpenType MATH size-variant selection and horizontal/vertical glyph-assembly planning.
 - `src/math/variants/tests.rs`: connector, overlap, extender-repetition, and malformed-construction tests.
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.

@@ -16,7 +16,7 @@ use tex_state::math::{
 use tex_state::node::{BoxNode, BoxNodeFields, Sign};
 use tex_state::scaled::GlueSetRatio;
 
-fn sc(raw: i32) -> Scaled {
+pub(super) fn sc(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
 }
 
@@ -1449,6 +1449,93 @@ fn nested_under_overline_retains_inner_vertical_box() {
     ));
 }
 
+#[test]
+fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
+    let mut stores = setup_universe();
+    let params = MathParams::read(&stores);
+    let mut ctx = Context {
+        state: &stores,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(60),
+        layout: MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+    };
+
+    let empty = clean_box(&mut ctx, &MathField::Empty, Style::TEXT);
+    assert_eq!(
+        (empty.width, empty.height, empty.depth),
+        (sc(0), sc(0), sc(0))
+    );
+    let character = clean_box(&mut ctx, &MathField::MathChar(math_char('a')), Style::TEXT);
+    assert_eq!(character.width, sc(12));
+
+    let children = stores.freeze_node_list(&[]);
+    let boxed = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(17),
+        height: sc(9),
+        depth: sc(3),
+        shift: sc(0),
+        display: true,
+        glue_set: GlueSetRatio::from_raw(7),
+        glue_sign: Sign::Stretching,
+        glue_order: Order::Fil,
+        children,
+    }))]);
+    let mut ctx = Context {
+        state: &stores,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(60),
+        layout: MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+    };
+    let clean = clean_box(&mut ctx, &MathField::SubBox(boxed), Style::TEXT);
+    assert_eq!(
+        (clean.width, clean.height, clean.depth),
+        (sc(17), sc(9), sc(3))
+    );
+    assert!(clean.display);
+    assert_eq!(clean.glue_set, GlueSetRatio::from_raw(7));
+
+    let delimiter = delimiter_code(1, b'(', 1, b'|');
+    let (small_layout, small) =
+        test_var_delimiter(&stores, &params, delimiter, MathFontSize::Text, sc(25));
+    assert!(matches!(
+        list_nodes(&small_layout, small.list).as_slice(),
+        [MathNode::Char { ch: '[', .. }]
+    ));
+    let (large_layout, large) =
+        test_var_delimiter(&stores, &params, delimiter, MathFontSize::Text, sc(35));
+    assert_eq!(large.axis, BoxAxis::Vertical);
+    assert_eq!(list_nodes(&large_layout, large.list).len(), 5);
+
+    let glue = math_glue(
+        GlueSpec {
+            width: sc(3 * Scaled::UNITY),
+            stretch: sc(2 * Scaled::UNITY),
+            stretch_order: Order::Normal,
+            shrink: sc(Scaled::UNITY),
+            shrink_order: Order::Fil,
+        },
+        sc(60),
+    );
+    assert_eq!((glue.width, glue.stretch), (sc(180), sc(120)));
+    assert_eq!(math_kern(sc(2 * Scaled::UNITY), sc(60)), sc(120));
+
+    let overline = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Overline,
+        MathField::MathChar(math_char('a')),
+    ))]);
+    let layout = mlist_to_hlist(&stores, overline, Style::TEXT, false, &params);
+    assert!(matches!(
+        root_nodes(&layout).as_slice(),
+        [MathNode::VList(_)]
+    ));
+}
+
 fn assert_glue_width(node: &MathNode, expected: i32) {
     let MathNode::Glue { spec, .. } = node else {
         panic!("expected glue, got {node:?}");
@@ -1504,19 +1591,19 @@ fn assert_radical_clearance(layout: &MathLayout, expected: Scaled) {
     assert_eq!(*amount, expected);
 }
 
-fn root_nodes(layout: &MathLayout) -> Vec<&MathNode> {
+pub(super) fn root_nodes(layout: &MathLayout) -> Vec<&MathNode> {
     layout.logical_nodes(layout.root())
 }
 
-fn list_nodes(layout: &MathLayout, list: FrozenHList) -> Vec<&MathNode> {
+pub(super) fn list_nodes(layout: &MathLayout, list: FrozenHList) -> Vec<&MathNode> {
     layout.logical_nodes(list)
 }
 
-fn noad(class: NoadClass, ch: char) -> MathNoad {
+pub(super) fn noad(class: NoadClass, ch: char) -> MathNoad {
     MathNoad::new(NoadKind::Normal(class), MathField::MathChar(math_char(ch)))
 }
 
-fn math_char(ch: char) -> MathChar {
+pub(super) fn math_char(ch: char) -> MathChar {
     MathChar {
         family: 0,
         character: ch,
@@ -1524,7 +1611,7 @@ fn math_char(ch: char) -> MathChar {
     }
 }
 
-fn setup_universe() -> Universe {
+pub(super) fn setup_universe() -> Universe {
     let mut universe = Universe::new();
     let text = universe.intern_font(test_font("math-text", 10));
     let script = universe.intern_font(test_font("math-script", 8));

@@ -6,6 +6,9 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::{add, sub};
 
+#[cfg(test)]
+mod tests;
+
 /// One converted math layout backed by a contiguous node arena.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MathLayout {

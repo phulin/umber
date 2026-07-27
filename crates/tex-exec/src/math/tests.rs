@@ -1,8 +1,10 @@
 use super::*;
 use tex_lex::MemoryInput;
-use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
+use tex_state::GroupKind;
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::{BoxNode, BoxNodeFields, Sign};
+use tex_state::math::{MathChar, MathNoad, NoadClass, NoadKind};
+use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::GlueSetRatio;
 use tex_state::{EffectRecord, PrintSink};
 
@@ -150,4 +152,210 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
             cat: Catcode::Letter,
         }
     );
+}
+
+fn horizontal_nest(mode: Mode) -> ModeNest {
+    let mut nest = ModeNest::new();
+    nest.push(mode);
+    nest
+}
+
+fn next_semantic(input: &mut InputStack, stores: &mut Universe) -> Option<Token> {
+    input
+        .next_traced_token(stores)
+        .expect("input read succeeds")
+        .map(tex_expand::semantic_token)
+}
+
+fn pending_terminal_text(stores: &Universe) -> String {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tex82_math_entry_display_probe_and_eqno_mode_matrix() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let hook = stores.intern_token_list(&[Token::Char {
+        ch: 'q',
+        cat: Catcode::Letter,
+    }]);
+    stores.set_tok_param(TokParam::EVERY_MATH, hook);
+    let mut nest = horizontal_nest(Mode::Horizontal);
+    let mut input = InputStack::new(MemoryInput::new("x"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    assert_eq!(
+        enter_math(&mut nest, &mut input, &mut stores, &mut execution).expect("inline math enters"),
+        DispatchAction::Continue
+    );
+    assert_eq!(nest.current_mode(), Mode::Math);
+    assert_eq!(stores.innermost_group_kind(), Some(GroupKind::MathShift));
+    assert!(matches!(
+        next_semantic(&mut input, &mut stores),
+        Some(Token::Char { ch: 'q', .. })
+    ));
+    assert!(matches!(
+        next_semantic(&mut input, &mut stores),
+        Some(Token::Char { ch: 'x', .. })
+    ));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut restricted = horizontal_nest(Mode::RestrictedHorizontal);
+    let mut input = InputStack::new(MemoryInput::new("$"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut restricted, &mut input, &mut stores, &mut execution)
+        .expect("restricted hmode enters inline math");
+    assert_eq!(restricted.current_mode(), Mode::Math);
+    assert!(matches!(
+        next_semantic(&mut input, &mut stores),
+        Some(Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        })
+    ));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut display = horizontal_nest(Mode::Horizontal);
+    let mut input = InputStack::new(MemoryInput::new("$"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut display, &mut input, &mut stores, &mut execution)
+        .expect("paired shifts enter display math");
+    assert_eq!(display.current_mode(), Mode::DisplayMath);
+    assert_eq!(stores.innermost_group_kind(), Some(GroupKind::MathShift));
+    testing_start_eq_no(&mut display, &mut stores, UnexpandablePrimitive::LeftEqNo)
+        .expect("leqno starts only in display math");
+    assert_eq!(display.current_mode(), Mode::Math);
+    assert!(display.current_list().display_eq_no().is_some());
+    assert_eq!(stores.innermost_group_kind(), Some(GroupKind::MathShift));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut inline = horizontal_nest(Mode::Math);
+    assert!(testing_start_eq_no(&mut inline, &mut stores, UnexpandablePrimitive::EqNo).is_err());
+}
+
+#[test]
+fn canonical_math_exit_display_eqno_boundary_matrix() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut nest = horizontal_nest(Mode::Horizontal);
+    let mut opening = InputStack::new(MemoryInput::new(""));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut nest, &mut opening, &mut stores, &mut execution).expect("inline math enters");
+    finish_math(
+        &mut nest,
+        &mut opening,
+        &mut stores,
+        &mut execution,
+        OriginId::UNKNOWN,
+    )
+    .expect("inline math exits");
+    assert_eq!(nest.current_mode(), Mode::Horizontal);
+    assert_eq!(stores.innermost_group_kind(), None);
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::MathOn(_), Node::MathOff(_)]
+    ));
+    assert_eq!(nest.current_list().space_factor(), 1000);
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut display = horizontal_nest(Mode::Horizontal);
+    let mut opening = InputStack::new(MemoryInput::new("$"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut display, &mut opening, &mut stores, &mut execution).expect("display enters");
+    let mut closing = InputStack::new(MemoryInput::new("$x"));
+    finish_math(
+        &mut display,
+        &mut closing,
+        &mut stores,
+        &mut execution,
+        OriginId::UNKNOWN,
+    )
+    .expect("paired display shifts exit");
+    assert_eq!(display.current_mode(), Mode::Horizontal);
+    assert!(
+        stores
+            .current_page_nodes()
+            .iter()
+            .chain(stores.page_contributions().iter())
+            .any(|node| matches!(node, Node::HList(boxed) if boxed.display))
+    );
+    assert!(matches!(
+        next_semantic(&mut closing, &mut stores),
+        Some(Token::Char { ch: 'x', .. })
+    ));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut display = horizontal_nest(Mode::Horizontal);
+    let mut opening = InputStack::new(MemoryInput::new("$"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut display, &mut opening, &mut stores, &mut execution).expect("display enters");
+    testing_start_eq_no(&mut display, &mut stores, UnexpandablePrimitive::EqNo)
+        .expect("eqno enters negative math mode");
+    let mut closing = InputStack::new(MemoryInput::new("$z"));
+    finish_math(
+        &mut display,
+        &mut closing,
+        &mut stores,
+        &mut execution,
+        OriginId::UNKNOWN,
+    )
+    .expect("eqno and display finish together");
+    assert_eq!(display.current_mode(), Mode::Horizontal);
+    assert_eq!(stores.innermost_group_kind(), None);
+    assert!(matches!(
+        next_semantic(&mut closing, &mut stores),
+        Some(Token::Char { ch: 'z', .. })
+    ));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut display = horizontal_nest(Mode::Horizontal);
+    let mut opening = InputStack::new(MemoryInput::new("$"));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut display, &mut opening, &mut stores, &mut execution).expect("display enters");
+    let mut malformed = InputStack::new(MemoryInput::new("r"));
+    finish_math(
+        &mut display,
+        &mut malformed,
+        &mut stores,
+        &mut execution,
+        OriginId::UNKNOWN,
+    )
+    .expect("missing second shift recovers");
+    assert!(pending_terminal_text(&stores).contains("Display math should end with $$"));
+    assert!(matches!(
+        next_semantic(&mut malformed, &mut stores),
+        Some(Token::Char { ch: 'r', .. })
+    ));
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut inline = horizontal_nest(Mode::Horizontal);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut execution = crate::ExecutionContext::new("texput");
+    enter_math(&mut inline, &mut input, &mut stores, &mut execution).expect("inline enters");
+    inline.current_list_mut().push(Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(MathChar {
+            family: 0,
+            character: 'a',
+            origin: OriginId::UNKNOWN,
+        }),
+    )));
+    finish_math(
+        &mut inline,
+        &mut input,
+        &mut stores,
+        &mut execution,
+        OriginId::UNKNOWN,
+    )
+    .expect("missing math fonts diagnose before lowering");
+    assert!(pending_terminal_text(&stores).contains("fontdimen"));
+    assert!(matches!(
+        inline.current_list().nodes(),
+        [Node::MathOn(_), Node::MathOff(_)]
+    ));
 }

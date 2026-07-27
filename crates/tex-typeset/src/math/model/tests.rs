@@ -1,0 +1,101 @@
+use tex_state::Universe;
+use tex_state::math::{
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
+    MathStyle, NoadClass, NoadKind,
+};
+use tex_state::node::Node;
+use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
+
+fn math_char(ch: char) -> MathChar {
+    MathChar {
+        family: 3,
+        character: ch,
+        origin: OriginId::UNKNOWN,
+    }
+}
+
+#[test]
+fn tex82_noad_field_layout_initialization_and_release_matrix() {
+    let nucleus = MathField::MathChar(math_char('x'));
+    let classes = [
+        NoadClass::Ord,
+        NoadClass::Op,
+        NoadClass::Bin,
+        NoadClass::Rel,
+        NoadClass::Open,
+        NoadClass::Close,
+        NoadClass::Punct,
+        NoadClass::Inner,
+    ];
+    for class in classes {
+        let noad = MathNoad::new(NoadKind::Normal(class), nucleus.clone());
+        assert_eq!(noad.kind, NoadKind::Normal(class));
+        assert_eq!(noad.nucleus, nucleus);
+        assert_eq!(noad.subscript, MathField::Empty);
+        assert_eq!(noad.superscript, MathField::Empty);
+    }
+
+    let special = [
+        NoadKind::Operator(LimitType::DisplayLimits),
+        NoadKind::Operator(LimitType::Limits),
+        NoadKind::Operator(LimitType::NoLimits),
+        NoadKind::Radical {
+            delimiter: 0x07ff_ffff,
+        },
+        NoadKind::Accent {
+            accent: math_char('^'),
+        },
+        NoadKind::LeftDelimiter { delimiter: 1 },
+        NoadKind::RightDelimiter { delimiter: 2 },
+        NoadKind::MiddleDelimiter { delimiter: 3 },
+        NoadKind::Underline,
+        NoadKind::Overline,
+        NoadKind::VCenter,
+    ];
+    for kind in special {
+        let noad = MathNoad::new(kind.clone(), nucleus.clone());
+        assert_eq!(noad.kind, kind);
+        assert_eq!(noad.subscript, MathField::Empty);
+        assert_eq!(noad.superscript, MathField::Empty);
+    }
+
+    let mut stores = Universe::new();
+    let arms = [1, 2, 3, 4].map(|penalty| stores.freeze_node_list(&[Node::Penalty(penalty)]));
+    let choice = MathChoice {
+        display: arms[0],
+        text: arms[1],
+        script: arms[2],
+        script_script: arms[3],
+    };
+    assert_eq!(stores.nodes(choice.display).to_vec(), [Node::Penalty(1)]);
+    assert_eq!(stores.nodes(choice.text).to_vec(), [Node::Penalty(2)]);
+    assert_eq!(stores.nodes(choice.script).to_vec(), [Node::Penalty(3)]);
+    assert_eq!(
+        stores.nodes(choice.script_script).to_vec(),
+        [Node::Penalty(4)]
+    );
+
+    let fraction = MathFraction {
+        numerator: arms[0],
+        denominator: arms[1],
+        thickness: FractionThickness::Explicit(Scaled::from_raw(-1)),
+        left_delimiter: Some(0),
+        right_delimiter: Some(0x07ff_ffff),
+    };
+    assert_ne!(fraction.numerator, fraction.denominator);
+    assert_eq!(fraction.left_delimiter, Some(0));
+    assert_eq!(fraction.right_delimiter, Some(0x07ff_ffff));
+
+    let styles = [
+        MathStyle::Display,
+        MathStyle::Text,
+        MathStyle::Script,
+        MathStyle::ScriptScript,
+    ];
+    for (index, style) in styles.iter().enumerate() {
+        assert!(!styles[..index].contains(style));
+    }
+
+    drop((choice, fraction, stores));
+}

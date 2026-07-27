@@ -11,6 +11,9 @@ use super::{
     clean_box, fetch, neg, sub, variant_box,
 };
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct OperatorResult {
     pub hlist: FrozenHList,
     pub delta: Scaled,

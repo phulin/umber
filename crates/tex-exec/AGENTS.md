@@ -52,7 +52,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/effects/tests.rs`: canonical-replay tests for stream lifecycle, immediate and deferred effects, and shipout-time special/write/open/close behavior.
 - `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
-- `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules, with direct display-alignment finish tests in `src/math/tests.rs`.
+- `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
+- `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata; alignment brace depth belongs exclusively to `tex-lex`, not this execution-state projection.
 - `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
