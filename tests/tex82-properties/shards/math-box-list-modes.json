@@ -1,0 +1,900 @@
+{
+  "schema": 1,
+  "domain": "math-box-list-and-mode-semantics",
+  "module_dispositions": [
+    {
+      "modules": { "first": 644, "last": 679 },
+      "disposition": "property",
+      "owner": "tex-typeset::packing",
+      "property_ids": ["tex82.boxes.packing"],
+      "gap_bead": null,
+      "rationale": "Defines TeX82 horizontal and vertical packing, glue setting, diagnostics, max-depth clamping, and vertical-list baseline insertion."
+    },
+    {
+      "modules": { "first": 680, "last": 767 },
+      "disposition": "property",
+      "owner": "tex-typeset::math",
+      "property_ids": ["tex82.math.model-and-lowering"],
+      "gap_bead": null,
+      "rationale": "Defines math fields/noads/choices and the complete mlist-to-hlist lowering rules for delimiters, fractions, accents, operators, scripts, styles, spacing, and penalties."
+    },
+    {
+      "modules": { "first": 1029, "last": 1029 },
+      "disposition": "context_only",
+      "owner": "tex-exec::main-control",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Introduces the chief executive and its global dispatch variables; executable mode-specific transitions are classified in the following properties."
+    },
+    {
+      "modules": { "first": 1030, "last": 1044 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.lists.text-material"],
+      "gap_bead": null,
+      "rationale": "Defines horizontal character, ligature/kern, language, and space insertion in the current list."
+    },
+    {
+      "modules": { "first": 1045, "last": 1054 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.modes.dispatch-and-recovery"],
+      "gap_bead": null,
+      "rationale": "Defines absolute-mode dispatch, math-shift recovery, illegal/privileged cases, and the sole outer-vertical termination path."
+    },
+    {
+      "modules": { "first": 1055, "last": 1070 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.lists.direct-material-and-groups"],
+      "gap_bead": null,
+      "rationale": "Defines direct rule/glue/kern material, simple groups, right-brace dispatch, and off-save recovery."
+    },
+    {
+      "modules": { "first": 1071, "last": 1087 },
+      "disposition": "property",
+      "owner": "tex-exec::boxes",
+      "property_ids": ["tex82.boxes.requests-and-lifecycle"],
+      "gap_bead": null,
+      "rationale": "Defines pack-spec scanning, box construction/register/shipout/leader continuations, shifts, copy/take/last/vsplit requests, group modes, hooks, and vtop adjustment."
+    },
+    {
+      "modules": { "first": 1088, "last": 1096 },
+      "disposition": "property",
+      "owner": "tex-exec::paragraphs",
+      "property_ids": ["tex82.paragraphs.boundaries"],
+      "gap_bead": null,
+      "rationale": "Defines paragraph entry from vertical mode, indentation and everypar ordering, paragraph termination, and head-for-vmode recovery."
+    },
+    {
+      "modules": { "first": 1097, "last": 1113 },
+      "disposition": "property",
+      "owner": "tex-exec::lists",
+      "property_ids": ["tex82.lists.structured-material"],
+      "gap_bead": null,
+      "rationale": "Defines insertion/adjustment/mark/penalty material, tail deletion, unboxing, italic correction, and mode restrictions."
+    },
+    {
+      "modules": { "first": 1114, "last": 1125 },
+      "disposition": "property",
+      "owner": "tex-exec::hmode-material",
+      "property_ids": ["tex82.lists.discretionary-and-accent"],
+      "gap_bead": null,
+      "rationale": "Defines explicit and hyphen discretionary list construction plus text accent scanning and kern placement."
+    },
+    {
+      "modules": { "first": 1136, "last": 1159 },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": ["tex82.math.entry-fields-choices-scripts"],
+      "gap_bead": null,
+      "rationale": "Defines inline/display math entry, equation-number submode, field/group/mlist collection, and math atoms before the scanner-owned delimiter sections."
+    },
+    {
+      "modules": { "first": 1162, "last": 1177 },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": ["tex82.math.entry-fields-choices-scripts"],
+      "gap_bead": null,
+      "rationale": "Defines executor-owned radical, accent, vcenter, style, choice, limit, and script construction after scanner-owned delimiter sections 1160–1161."
+    },
+    {
+      "modules": { "first": 1178, "last": 1192 },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": ["tex82.math.fractions-and-left-right"],
+      "gap_bead": null,
+      "rationale": "Defines generalized fraction state, optional delimiters and thickness, duplicate-fraction recovery, and left/right group completion/mismatch recovery."
+    },
+    {
+      "modules": { "first": 1193, "last": 1207 },
+      "disposition": "property",
+      "owner": "tex-exec::math",
+      "property_ids": ["tex82.math.exit-and-display"],
+      "gap_bead": null,
+      "rationale": "Defines the only math exit, font validation, inline lowering, display/equation-number packing, spacing, penalties, and display-alignment completion."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.boxes.packing",
+      "sections": [
+        644,
+        645,
+        646,
+        647,
+        648,
+        649,
+        650,
+        651,
+        652,
+        653,
+        654,
+        655,
+        656,
+        657,
+        658,
+        659,
+        660,
+        661,
+        662,
+        663,
+        664,
+        665,
+        666,
+        667,
+        668,
+        669,
+        670,
+        671,
+        672,
+        673,
+        674,
+        675,
+        676,
+        677,
+        678,
+        679
+      ],
+      "claim": "hpack and vpackage measure every canonical node kind with checked scaled arithmetic, choose exactly the requested natural/additional/exact size, set the highest nonzero glue order and ratio, clamp only vertical depth to max_depth, issue TeX82 badness/fuzz diagnostics, migrate adjustment material from hpack, and append vertical boxes with baseline/line-skip glue determined by prev_depth.",
+      "preconditions": [
+        "A finite acyclic hlist or vlist and its live glue, font, badness, fuzz, baseline, line-skip, and max-depth parameters are available.",
+        "The packing request distinguishes natural, to, and spread semantics before list ownership transfers."
+      ],
+      "stimulus": [
+        "Pack empty and nonempty horizontal and vertical lists under natural, exact, and additional requests with finite/infinite stretch, normal/infinite shrink, shifted boxes, rules, kerns, math nodes, insertions, and migrating adjustments."
+      ],
+      "expected_observations": [
+        "Natural dimensions, stretch/shrink totals by order, selected sign/order/ratio, box dimensions, migrated nodes, and diagnostics match §§644–679.",
+        "Appending a box/rule to a vlist inserts baseline glue when sufficient and line-skip otherwise, then updates prev_depth to the appended depth."
+      ],
+      "postconditions": [
+        "The packed box owns the original nonmigrating list exactly once and preserves node order.",
+        "No diagnostic changes the selected glue setting or dimensions; overflow fails instead of wrapping."
+      ],
+      "equivalence_cases": [
+        "Positive: natural hpack/vpack and to/spread requests agree when their resolved target is equal.",
+        "Boundary: empty lists, exact fit, zero stretch/shrink, highest infinite order, overfull normal shrink, and max_depth equality.",
+        "Nesting/mode: shifted child boxes and nested h/v boxes measure along the proper axis; outer/internal vertical append use their live prev_depth."
+      ],
+      "recovery_cases": [
+        "Overfull, underfull, and tight diagnostics honor hbadness/vbadness and hfuzz/vfuzz without mutating content.",
+        "Arithmetic overflow is a loud packing error; infinite shrink follows TeX82's non-normal-order behavior."
+      ],
+      "semantic_owner": "tex-typeset::packing",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "hpack_sets_finite_stretch_order_and_ratio" },
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "hpack_reports_insufficient_normal_shrink_even_below_infinite_badness"
+        },
+        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "vpack_clamps_depth_to_box_max_depth" },
+        { "path": "crates/tex-typeset/src/packing/tests.rs", "test": "vtop_with_leading_glue_has_zero_height" }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.model-and-lowering",
+      "sections": [
+        680,
+        681,
+        682,
+        683,
+        684,
+        685,
+        686,
+        687,
+        688,
+        689,
+        690,
+        691,
+        692,
+        693,
+        694,
+        695,
+        696,
+        697,
+        698,
+        699,
+        700,
+        701,
+        702,
+        703,
+        704,
+        705,
+        706,
+        707,
+        708,
+        709,
+        710,
+        711,
+        712,
+        713,
+        714,
+        715,
+        716,
+        717,
+        718,
+        719,
+        720,
+        721,
+        722,
+        723,
+        724,
+        725,
+        726,
+        727,
+        728,
+        729,
+        730,
+        731,
+        732,
+        733,
+        734,
+        735,
+        736,
+        737,
+        738,
+        739,
+        740,
+        741,
+        742,
+        743,
+        744,
+        745,
+        746,
+        747,
+        748,
+        749,
+        750,
+        751,
+        752,
+        753,
+        754,
+        755,
+        756,
+        757,
+        758,
+        759,
+        760,
+        761,
+        762,
+        763,
+        764,
+        765,
+        766,
+        767
+      ],
+      "claim": "Math lists retain typed noad fields, choices, styles, delimiters, fractions, radicals, accents, operators and scripts; mlist_to_hlist selects the current choice/style/font parameters, normalizes binary atoms, recursively cleans fields, constructs variants and extensibles, applies TeX82 clearances and italic corrections, inserts the class-spacing table glue and penalties, and consumes the mlist exactly once.",
+      "preconditions": [
+        "The complete frozen mlist, style, math families, font metrics, math parameters, delimiter codes, and mu glue are available.",
+        "Every field is empty, a math character, a sub-box, or a sub-mlist and every noad variant satisfies §§680–689."
+      ],
+      "stimulus": [
+        "Lower nested mlists containing all atom classes, four-way choices, style switches, nonscript/mu material, variable delimiters, fractions with and without rules, radicals, accents, operators with each limits mode, paired scripts, ligatures/kerns, and left/middle/right delimiters."
+      ],
+      "expected_observations": [
+        "First-pass choice/style selection and bin normalization precede noad construction; second-pass spacing and penalties use the resulting classes.",
+        "Delimiter growth, fraction clearances, radical rule placement, accent skew/variant selection, operator centering/limits, and scripts follow the exact style-dependent parameters."
+      ],
+      "postconditions": [
+        "The output is a deterministic hlist with no unresolved noad/choice/style nodes and with named math-glue provenance retained.",
+        "Recursive inputs are released or transferred once; crampedness and style transitions remain exact at every depth."
+      ],
+      "equivalence_cases": [
+        "Positive: every atom pair and all display/text/script/scriptscript choices are covered by focused layout matrices.",
+        "Boundary: empty fields/mlists, missing family characters, smallest/largest delimiters, zero rule thickness, final binary atoms, and no-script glue.",
+        "Nesting/mode: deep choices, sub-mlists, fractions in scripts, accents over nested boxes, and left/right around nested material preserve style and ownership."
+      ],
+      "recovery_cases": [
+        "Undefined families or missing characters diagnose and omit only the unavailable character while preserving surrounding structure.",
+        "Absent delimiter variants fall back through small/large families or null delimiter space; impossible arithmetic fails loudly."
+      ],
+      "semantic_owner": "tex-typeset::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "deeply_nested_math_choices_use_an_explicit_work_stack"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "var_delimiter_searches_small_chain_before_large_and_builds_extensible"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "make_fraction_uses_default_rule_and_delimiter_target"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "display_operator_uses_larger_variant_and_places_limits"
+        },
+        { "path": "crates/tex-typeset/src/math/tests.rs", "test": "math_accent_uses_skewchar_kern_and_larger_accent" }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.lists.text-material",
+      "sections": [1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044],
+      "claim": "Horizontal main control appends character and space material with TeX82 space-factor updates, boundary/ligature/kern processing, language whatsits, font-space caching, and xspace/xspaceskip scaling, while vertical-mode character material starts a paragraph and replays the triggering command.",
+      "preconditions": [
+        "A current mode, font, language, space factor, sfcode table, and font lig/kern program are live.",
+        "The current command is an ordinary character, char_given/char_num, spacer, or no_boundary dispatch."
+      ],
+      "stimulus": [
+        "Deliver characters and spaces across font boundaries, ligature/kern instructions, boundary suppression, sfcode zero/low/high values, xspaceskip/space_skip/font glue choices, and vertical-mode paragraph entry."
+      ],
+      "expected_observations": [
+        "Character nodes, ligatures, kerns and spaces are appended in source order and space_factor follows §1034 before glue scaling.",
+        "Vertical entry backs up the trigger, starts the paragraph, runs everypar, and then reprocesses it exactly once."
+      ],
+      "postconditions": [
+        "The current hlist tail and space_factor describe precisely the delivered text; no raw input is read by the executor.",
+        "Cached font glue is copied before space-factor modification."
+      ],
+      "equivalence_cases": [
+        "Positive: literal, char_given, and char_num characters share lig/kern and space-factor behavior.",
+        "Boundary: nullfont/missing glyph, sfcode 0/1000/>1000/<1000, boundary hit/miss, and xspaceskip present/absent.",
+        "Mode/nesting: outer vertical starts unrestricted hmode; restricted hmode stays restricted; math-mode text-only commands use recovery or their math meaning."
+      ],
+      "recovery_cases": [
+        "A missing character emits the canonical warning and appends no character node.",
+        "A vertical-mode trigger survives paragraph-start backup with provenance and expansion order intact."
+      ],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "production_driver_replays_paragraph_backup_and_typed_assignment"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_character_run_lookahead_delivers_later_characters_raw_only"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_noboundary_in_vertical_mode_starts_a_paragraph"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.modes.dispatch-and-recovery",
+      "sections": [1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054],
+      "claim": "Main control dispatches on command plus absolute mode, inserts a frozen dollar before retrying math-only/nonmath-only commands in the wrong mode, reports illegal or unprivileged cases without consuming operands, and exits only when stop in outer vertical mode finds both page and contribution lists empty after any required forced-page ejection.",
+      "preconditions": [
+        "The live mode distinguishes outer/internal vertical, unrestricted/restricted horizontal, and display/inline/subformula math.",
+        "The current command identity and innermost group are known before any operand scan."
+      ],
+      "stimulus": [
+        "Dispatch representative legal and cross-mode commands, stop/end/dump in every mode, privileged commands inside internal modes, and a nonempty page/contribution list requiring forced ejection."
+      ],
+      "expected_observations": [
+        "Wrong-math-mode recovery backs up the offending command then inserted dollar; illegal/unprivileged cases scan nothing.",
+        "Only outer-vertical stop can return from main control, and it first empties pending material using TeX82's hbox/vfill/eject sequence."
+      ],
+      "postconditions": [
+        "Recovered commands are retried in the resulting mode exactly once and group/mode stacks remain balanced.",
+        "A successful terminal stop abandons rather than reads remaining input levels."
+      ],
+      "equivalence_cases": [
+        "Positive: legal commands in each absolute mode reach their one typed owner.",
+        "Boundary: empty versus nonempty page/contribution, dead-cycle state, and stop at every internal-mode depth.",
+        "Nesting: stop inside hbox/math/output follows head_for_vmode, dollar insertion, or privilege recovery before outer retry."
+      ],
+      "recovery_cases": [
+        "Inserted dollar identity is frozen against redefinition and its diagnostic precedes replay.",
+        "Illegal cases preserve the unscanned following token and report the exact current mode text."
+      ],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "final_stop_retires_its_backup_before_starting_output_input"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.lists.direct-material-and-groups",
+      "sections": [1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070],
+      "claim": "Rule, glue and kern commands scan complete typed operands before appending mode-appropriate nodes; braces use save-stack group identity alone; right-brace dispatch unsaves the matching group; and off_save drops an impossible closer at bottom level or backs up the command and inserts the exact frozen structural closer for the live group.",
+      "preconditions": [
+        "Current mode/list/group and live glue or dimension parameters are available.",
+        "Command-owned scanners retain failed-keyword and rejected-opener backup ordering."
+      ],
+      "stimulus": [
+        "Append h/v rules, skip and kern variants in legal modes; open/close nested simple groups; deliver mismatched closers in bottom, semi-simple, math-shift, math-left, box, insertion and alignment group contexts."
+      ],
+      "expected_observations": [
+        "Nodes carry the scanned value and subtype and outer vertical appends invoke page building at the canonical boundary.",
+        "off_save selects endgroup, dollar, right-dot, or right brace solely from cur_group and reports before replay."
+      ],
+      "postconditions": [
+        "Legal close restores scoped state and replays aftergroup material FIFO; recovered close balances one structural level before retry.",
+        "No executor path re-reads a scalar operand or fabricates an opener command."
+      ],
+      "equivalence_cases": [
+        "Positive: named and explicit skip/kern forms with equal values append equivalent nodes.",
+        "Boundary: zero/negative dimensions, fil orders, unmatched bottom closer, and malformed mandatory opener.",
+        "Nesting/mode: simple groups inside every box/math group close independently; restricted hmode vskip takes off_save."
+      ],
+      "recovery_cases": [
+        "math_left_group inserts the two-token frozen right-dot closer; other structural groups insert exactly one token.",
+        "At bottom level the current token is dropped after the Extra diagnostic and no backup level survives."
+      ],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_initex_replay_scans_complete_rule_specs_through_command_control"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "off_save_reports_before_replaying_its_inserted_closer"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_vskip_in_restricted_horizontal_closes_a_semisimple_group_first"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.boxes.requests-and-lifecycle",
+      "sections": [
+        1071,
+        1072,
+        1073,
+        1074,
+        1075,
+        1076,
+        1077,
+        1078,
+        1079,
+        1080,
+        1081,
+        1082,
+        1083,
+        1084,
+        1085,
+        1086,
+        1087
+      ],
+      "claim": "Box requests complete packing-spec/open-brace scans command-side, enter the selected restricted-h/internal-v group and everybox hook, then package once on the matching close; box_end assigns, ships, leads, shifts, or appends the completed box, while box/copy/lastbox/vsplit preserve their destructive versus nondestructive register semantics and vtop resets height from its first item.",
+      "preconditions": [
+        "The typed box continuation, effective assignment scope, mode, register bank, and packing parameters are retained through the body episode.",
+        "The mandatory opener has been consumed or canonically recovered before the executor enters the body."
+      ],
+      "stimulus": [
+        "Construct empty/nested hbox, vbox, and vtop under natural/to/spread specs; target setbox/global setbox, shipout, leaders and signed shifts; use box/copy/lastbox/vsplit and invalid/missing operands in all legal and forbidden modes."
+      ],
+      "expected_observations": [
+        "Packing specs and hooks run in TeX82 order, local body assignments restore on close, and the continuation receives exactly one completed box.",
+        "box empties its register, copy preserves it, lastbox removes only a legal tail box, vsplit returns the requested top and replaces the register with the remainder."
+      ],
+      "postconditions": [
+        "Every active construction and save level is retired exactly once; register/global scope and aftergroup replay are preserved.",
+        "Appended/shifted/leader/shipout boxes retain packed children and dimensions without reopening input."
+      ],
+      "equivalence_cases": [
+        "Positive: natural versus resolved-equal to/spread, brace aliases, nested hooks, and immediate/register box operands.",
+        "Boundary: void registers, box255, empty vtop, leading glue vtop, exact split, oversized split, and zero shifts.",
+        "Mode/nesting: hbox restricted hmode versus vbox/vtop internal vmode, nested simple groups, and illegal complementary shift modes."
+      ],
+      "recovery_cases": [
+        "A missing opener backs up the rejected token as first body material; a missing box operand diagnoses and replays it.",
+        "lastbox in forbidden outer vertical/page state and invalid vsplit targets recover without stealing unrelated material."
+      ],
+      "semantic_owner": "tex-exec::boxes",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_box_construction_scans_specs_hooks_and_scopes_targets"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_box_lifecycle_unboxing_and_leaders_do_not_reopen_input"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_box_shift_missing_box_operand_recovers_and_replays_the_command"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.paragraphs.boundaries",
+      "sections": [1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096],
+      "claim": "new_graf enters unrestricted horizontal mode from vertical mode, resets paragraph state, optionally appends the indent box, runs everypar after mode entry, and backs up the triggering command; end_graf removes terminal glue, adds paragraph fill/penalty structure, line-breaks only nonempty unrestricted paragraphs, appends lines to the enclosing vlist, updates prev_graf, and invokes page building only at outer vertical depth.",
+      "preconditions": [
+        "Vertical paragraph parameters, language/hyphen minima, everypar, parshape/hang settings, and line-breaking parameters are live.",
+        "Paragraph entry knows whether indentation is requested and whether the trigger must be replayed."
+      ],
+      "stimulus": [
+        "Start indented/noindent/implicit paragraphs in outer and internal vertical mode, include empty and nonempty bodies with nested groups and migrating marks/inserts/adjustments, and terminate by par, vertical command, display math, or enclosing group close."
+      ],
+      "expected_observations": [
+        "Mode/everypar/indent/trigger ordering matches §§1088–1091 and paragraph end constructs and breaks the exact current hlist.",
+        "Outer completion reaches the contribution/page builder; internal completion returns the lines to its enclosing list only."
+      ],
+      "postconditions": [
+        "The paragraph hlist is consumed once, horizontal state resets, and the enclosing vertical mode receives ordered line boxes plus migrating material.",
+        "prev_graf and paragraph group scope are updated without leaking restricted-hmode bodies."
+      ],
+      "equivalence_cases": [
+        "Positive: explicit indent/noindent and implicit character/unhbox/valign triggers.",
+        "Boundary: empty paragraph, only discardables, one line, terminal discretionary, and paragraph ending at group boundary.",
+        "Nesting/mode: paragraph inside vbox/insertion/output versus outer page; display interruption resumes vertical contribution correctly."
+      ],
+      "recovery_cases": [
+        "head_for_vmode backs up the vertical command then a frozen par in unrestricted hmode; restricted hmode uses off_save.",
+        "A recovered triggering token retains provenance and runs only after everypar."
+      ],
+      "semantic_owner": "tex-exec::paragraphs",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "production_driver_replays_paragraph_backup_and_typed_assignment"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "paragraph_start_backs_up_the_triggering_macro_parameter_before_replay"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_paragraph_page_builder_is_observer_neutral"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.lists.structured-material",
+      "sections": [
+        1097,
+        1098,
+        1099,
+        1100,
+        1101,
+        1102,
+        1103,
+        1104,
+        1105,
+        1106,
+        1107,
+        1108,
+        1109,
+        1110,
+        1111,
+        1112,
+        1113
+      ],
+      "claim": "Insert, vadjust and mark groups freeze and append their typed material to the originating list; penalties append directly; delete-last removes only a matching legal tail; unbox/copy-unbox splice compatible box lists with the correct register destruction; and italic correction appends its font-derived kern only in legal h/math modes.",
+      "preconditions": [
+        "The originating list/mode and relevant box/register/material parameters remain live across any nested construction.",
+        "Insertion class, mark text, penalty, delete subtype, unbox register and italic font metrics are completely scanned command-side."
+      ],
+      "stimulus": [
+        "Build insert/vadjust/mark/penalty nodes in every legal mode, migrate them through boxes and paragraph lines, delete matching/nonmatching tails, unbox h/v boxes by move/copy, and request italic correction after characters, noncharacters, and in forbidden vertical mode."
+      ],
+      "expected_observations": [
+        "Each node enters the current list in source order; migration preserves order and insert packaging snapshots the closing parameters.",
+        "Destructive operations change only their matching register/tail; copied operations preserve source ownership."
+      ],
+      "postconditions": [
+        "Completed group bodies and box lists have one owner; page building is invoked only at the specified outer-vertical boundaries.",
+        "Forbidden or inapplicable operations leave unrelated list/register state unchanged."
+      ],
+      "equivalence_cases": [
+        "Positive: mark/penalty in all modes, insert in outer/internal vertical and hmode, vadjust migration, unbox versus copy-unbox.",
+        "Boundary: insert classes 0/254/255/out-of-range, void/wrong-kind boxes, empty tails, zero italic correction.",
+        "Nesting/mode: structured material inside hbox and paragraph migrates outward; internal-vbox material remains owned by the box where required."
+      ],
+      "recovery_cases": [
+        "insert255 and out-of-range classes diagnose/clamp as specified while vadjust's internal 255 sentinel remains legal.",
+        "Forbidden vadjust/unbox/italic/delete-last paths scan no extra operand beyond their canonical scanner boundary and preserve following input."
+      ],
+      "semantic_owner": "tex-exec::lists",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_insert_recovers_reserved_and_out_of_range_class_numbers"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_vadjust_splices_across_a_paragraph_line_break"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_delete_last_removes_only_matching_tail_node"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_italic_correction_uses_the_font_metric_amount"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.lists.discretionary-and-accent",
+      "sections": [1114, 1115, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1123, 1124, 1125],
+      "claim": "discretionary constructs exactly three isolated restricted-horizontal lists, enforces the replacement-count limit and admissible node kinds, attaches pre/post/replacement ownership once, and preserves aftergroup replay; text accent scans the accent and optional base character, computes slant/x-height placement, appends balancing kerns, and replays a noncharacter base command.",
+      "preconditions": [
+        "The discretionary command kind, current hmode, hyphen character, font metrics, and isolated group replay facility are available.",
+        "Accent scanning has a valid accent code or a recoverable noncharacter lookahead."
+      ],
+      "stimulus": [
+        "Build explicit and automatic-hyphen discretionaries with empty/nonempty/nested parts and aftergroup effects; accent characters with and without bases, slanted fonts, missing glyphs, and noncharacter base commands."
+      ],
+      "expected_observations": [
+        "Each discretionary part retires at its own replay boundary and the final Disc node retains exact part order/provenance without changing space_factor.",
+        "Accent and base positioning/kerns match §1123 and a noncharacter base is backed up after the accent is appended."
+      ],
+      "postconditions": [
+        "No part consumes parent material and all part-local groups/definitions are unsaved.",
+        "The final hlist owns each discretionary/accent node once and following input remains ordered."
+      ],
+      "equivalence_cases": [
+        "Positive: discretionary shorthand and explicit empty groups; accent with ordinary and slanted fonts.",
+        "Boundary: 0/1/127/128 replacement nodes, empty branches, missing hyphen/accent/base glyphs, and zero skew.",
+        "Nesting/mode: discretionaries inside boxes/paragraphs and nested groups retain aftergroup and restricted-hmode ownership."
+      ],
+      "recovery_cases": [
+        "Excess replacement nodes and forbidden node kinds are diagnosed and flushed according to §§1120–1121.",
+        "A noncharacter accent base is replayed exactly once; a missing mandatory discretionary brace follows frozen group recovery."
+      ],
+      "semantic_owner": "tex-exec::hmode-material",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "discretionary_scanner_freezes_all_three_groups_with_provenance"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "production_driver_executes_discretionary_parts_in_isolated_hmode_episodes"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "accent_scanner_returns_completed_operands_and_replays_noncharacter_base"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.entry-fields-choices-scripts",
+      "sections": [
+        1136,
+        1137,
+        1138,
+        1139,
+        1140,
+        1141,
+        1142,
+        1143,
+        1144,
+        1145,
+        1146,
+        1147,
+        1148,
+        1149,
+        1150,
+        1151,
+        1152,
+        1153,
+        1154,
+        1155,
+        1156,
+        1157,
+        1158,
+        1159,
+        1162,
+        1163,
+        1164,
+        1165,
+        1166,
+        1167,
+        1168,
+        1169,
+        1170,
+        1171,
+        1172,
+        1173,
+        1174,
+        1175,
+        1176,
+        1177
+      ],
+      "claim": "A math shift enters inline or display math with the correct paragraph interruption, pairing lookahead, group/mode and everymath/everydisplay ordering; typed fields and braced mlists build math characters, atoms, delimiters, radicals, accents, vcenters, styles, four independent mathchoice arms, limits and scripts, with duplicate-script and missing-brace recovery preserving parent input.",
+      "preconditions": [
+        "The current horizontal context, math code/family tables, frozen hooks, mode/group stack, and command-owned math request scanner are available.",
+        "Display entry can inspect paragraph shape and pre-display material without consuming the post-shift parent token."
+      ],
+      "stimulus": [
+        "Enter inline/display math from unrestricted/restricted hmode; build every atom/field form, nested groups, mathchoice arms, delimiters/radicals/accents/vcenter, style/limits switches and paired/duplicate scripts, including equation-number entry."
+      ],
+      "expected_observations": [
+        "Shift pairing, paragraph break, mode/group entry and hooks occur in TeX82 order; each replay episode freezes before parent delivery resumes.",
+        "Noad classes, field kinds, delimiter codes, choice arms, style/limit nodes and script attachment preserve exact scanned operands and provenance."
+      ],
+      "postconditions": [
+        "The active mlist contains only well-formed typed nodes and every temporary field/choice group has one matching save level.",
+        "Parent source position is unchanged except for tokens canonically consumed or backed up by the request."
+      ],
+      "equivalence_cases": [
+        "Positive: mathchar/mathchardef/variable-family characters, unbraced/braced fields, all choice styles, limits/nolimits/displaylimits, and sub/sup/both scripts.",
+        "Boundary: empty mlist/field, family 0/15, mathcode active sentinel, delimiter 0/max, missing glyph, and second sub/sup marker.",
+        "Nesting/mode: choice inside alignment cells, scripts containing choices/fractions, eqno subformula, and restricted-hmode inline math."
+      ],
+      "recovery_cases": [
+        "A missing field brace backs up the rejected command and opens the group logically; duplicate scripts insert a dummy noad and diagnose.",
+        "Math-only commands outside math insert frozen dollar; eqno outside display reports illegal without entering a subformula."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "math_field_brace_opens_group_without_absorbing_its_body"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "math_choice_groups_are_completed_independently"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_math_script_field_is_observed_like_every_other_episode"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.fractions-and-left-right",
+      "sections": [1178, 1179, 1180, 1181, 1182, 1183, 1184, 1185, 1186, 1187, 1188, 1189, 1190, 1191, 1192],
+      "claim": "A generalized-fraction command freezes the current mlist as numerator, scans optional left/right delimiters and rule thickness into one fraction noad, then collects the denominator until fin_mlist; left opens a math-left group with its delimiter, right alone can close it, and mismatches recover by inserting the exact structural closer without corrupting either mlist.",
+      "preconditions": [
+        "The current math list has no fraction noad yet or recovery can reject a duplicate.",
+        "Delimiter scans use live delcode/radical semantics and the save stack distinguishes math_shift, math, and math_left groups."
+      ],
+      "stimulus": [
+        "Use over/atop/above and with-delimiters variants with empty/nonempty numerators/denominators and nested fractions; build nested left/middle/right groups and deliver missing, extra, or mismatched closers."
+      ],
+      "expected_observations": [
+        "Numerator ownership transfers before denominator collection and default versus explicit thickness/delimiters remain distinct.",
+        "right finalizes the inner mlist and delimiter pair before appending one inner noad to its parent."
+      ],
+      "postconditions": [
+        "Exactly one fraction noad owns its two mlists; exactly one left/right noad owns a balanced delimited sub-mlist.",
+        "The group/mode stack and following parent token are unchanged by successful completion beyond their canonical transitions."
+      ],
+      "equivalence_cases": [
+        "Positive: all six generalized-fraction forms and left-right with null/growing delimiters.",
+        "Boundary: empty numerator/denominator, zero/default/negative thickness, delimiter 0/max, and duplicate fraction in one mlist.",
+        "Nesting/mode: fractions within scripts/choices/left-right and nested left-right groups preserve inner-first completion."
+      ],
+      "recovery_cases": [
+        "A second generalized fraction is diagnosed and ignored without replacing the first numerator/state.",
+        "Missing right inserts frozen right-dot; extra/mismatched right takes off_save or mismatch recovery with the offending command replayed in order."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "generalized_fraction_delimiters_read_delimiter_codes_not_integers"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "make_fraction_uses_default_rule_and_delimiter_target"
+        },
+        { "path": "crates/tex-typeset/src/math/tests.rs", "test": "left_right_delimiters_size_to_enclosed_list" },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    },
+    {
+      "id": "tex82.math.exit-and-display",
+      "sections": [1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205, 1206, 1207],
+      "claim": "Math leaves only through after_math: it validates required symbol/extension font parameters, finishes any equation-number subformula, lowers inline math between boundary nodes or packages display math/equation number with TeX82 width, shrink, centering, displacement, skip and penalty decisions, then restores grouping and resumes the enclosing paragraph/page or display alignment.",
+      "preconditions": [
+        "A balanced math-shift group contains a finished mlist and optional equation-number mlist.",
+        "Live math fonts/parameters, display width/indent/skips/penalties, pre-display size/direction, and enclosing mode are available."
+      ],
+      "stimulus": [
+        "Close empty/nonempty inline and display formulas with one/two shift lookahead, eqno/leqno of fitting/nonfitting widths, nested styles/boxes, missing font parameters, and display halign completion."
+      ],
+      "expected_observations": [
+        "Inline exit appends math-on/hlist/math-off and restores hmode; display exit packages formula/eqno and selects above/below skips and penalties exactly from §§1198–1205.",
+        "The second closing shift is consumed only for display math; a nonshift lookahead is backed up and replayed."
+      ],
+      "postconditions": [
+        "All math group levels and temporary mlists are retired once, enclosing mode resumes, and display contributions enter the vertical list in canonical order.",
+        "No lowering or diagnostic reads source tokens or changes frozen input observations."
+      ],
+      "equivalence_cases": [
+        "Positive: inline/display empty and populated formulas, eqno/leqno, fitting shared-line and forced separate-line equations.",
+        "Boundary: absent symbol/extension font, zero display width, exact fit/shrink threshold, pre_display_size sentinel, and closing-shift lookahead.",
+        "Nesting/mode: inline math inside boxes/alignment cells, display after paragraph, and display alignment restore the proper enclosing list."
+      ],
+      "recovery_cases": [
+        "Missing/invalid math font dimensions diagnose before packaging and leave no half-lowered list.",
+        "A single display-closing dollar inserts the required second dollar; an unexpected equation-number closer follows group-specific recovery."
+      ],
+      "semantic_owner": "tex-exec::math",
+      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_init_math_probe_leaves_the_following_conditional_unexpanded"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_math_shift_replays_identically_with_and_without_an_observer"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_eqno_inside_display_math_is_unaffected"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.228"
+    }
+  ]
+}
