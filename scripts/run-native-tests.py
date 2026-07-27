@@ -17,6 +17,9 @@ whoever typed it:
 * every exclusion carries a reason and the exact command that does run it, and
   an exclusion naming a package the workspace no longer has fails the run, so a
   stale declaration cannot outlive the thing it excused;
+* the same is required of every `[workspace] exclude` directory, which
+  `--workspace` cannot reach at all, so pushing a crate out of the workspace
+  cannot quietly take its tests out of every gate on the way;
 * the number of test binaries Cargo's own manifests say the selection has is
   computed up front and compared against the number that actually reported, so
   a run that quietly executed fewer binaries than it built fails instead of
@@ -39,6 +42,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +62,17 @@ EXCLUDED_PACKAGES = {
         "tests. `scripts/check-wasm.sh` runs them for real with "
         "`wasm-pack test --headless --firefox crates/umber-wasm`."
     ),
+}
+
+# `[workspace] exclude` paths, which `--workspace` cannot reach at all: each is
+# its own workspace with its own lockfile and target directory.  Keyed by the
+# path exactly as `Cargo.toml` writes it, and checked against that list, so a
+# directory pushed out of the workspace cannot take its tests out of every gate
+# on the way.
+EXCLUDED_WORKSPACES = {
+    "tools/corpus-sync": "scripts/check-tools.sh",
+    "tools/fixturegen": "scripts/check-tools.sh",
+    "tools/texlive-wasm-publish": "scripts/check-tools.sh",
 }
 
 # Cargo target kinds that `--tests` builds in test mode.  Integration tests are
@@ -91,6 +106,25 @@ def workspace_members() -> dict[str, list[dict]]:
     return {package["name"]: package["targets"] for package in metadata["packages"]}
 
 
+def check_excluded_workspaces(declared_excludes: list[str]) -> None:
+    """Every `[workspace] exclude` path must name the gate that does run it."""
+    listed = set(declared_excludes)
+    undeclared = sorted(listed - set(EXCLUDED_WORKSPACES))
+    if undeclared:
+        raise CoverageError(
+            "`[workspace] exclude` lists directories with no declared gate: "
+            + ", ".join(undeclared)
+            + "\nA directory outside the workspace is outside `--workspace`. Add "
+            "it to EXCLUDED_WORKSPACES naming the command that runs its tests."
+        )
+    stale = sorted(set(EXCLUDED_WORKSPACES) - listed)
+    if stale:
+        raise CoverageError(
+            "EXCLUDED_WORKSPACES names directories `[workspace] exclude` no "
+            "longer lists: " + ", ".join(stale)
+        )
+
+
 def expected_test_binaries(targets: list[dict]) -> int:
     return sum(
         1
@@ -99,8 +133,17 @@ def expected_test_binaries(targets: list[dict]) -> int:
     )
 
 
-def plan(members: dict[str, list[dict]]) -> tuple[list[str], int]:
+def declared_workspace_excludes() -> list[str]:
+    with (REPO_ROOT / "Cargo.toml").open("rb") as manifest:
+        return tomllib.load(manifest)["workspace"].get("exclude", [])
+
+
+def plan(
+    members: dict[str, list[dict]], declared_excludes: list[str]
+) -> tuple[list[str], int]:
     """Resolve the selection, or explain why the declaration is wrong."""
+    check_excluded_workspaces(declared_excludes)
+
     unknown = sorted(set(EXCLUDED_PACKAGES) - set(members))
     if unknown:
         raise CoverageError(
@@ -202,7 +245,7 @@ def main(argv: list[str]) -> int:
 
     members = workspace_members()
     try:
-        selected, expected_binaries = plan(members)
+        selected, expected_binaries = plan(members, declared_workspace_excludes())
     except CoverageError as error:
         print(f"\nrun-native-tests: VERDICT: COVERAGE - {error}", file=sys.stderr)
         return EXIT_COVERAGE

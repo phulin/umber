@@ -17,9 +17,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
 - `run-native-tests.py`: the routine native correctness suite; selects
   `--workspace` minus a declared, verified exclusion list so a new workspace
-  member is covered by construction, checks the number of test binaries that
-  reported against the number the selected manifests declare, and ends in a
-  `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
+  member is covered by construction, requires every `[workspace] exclude`
+  directory to name the gate that runs it instead, checks the number of test
+  binaries that reported against the number the selected manifests declare, and
+  ends in a `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
 - `test-run-native-tests.py`: synthetic-input proof that each guard in
   `run-native-tests.py` fails when it should; the runner runs it before
   trusting its own verdict.

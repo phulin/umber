@@ -71,6 +71,10 @@ instead of a property of whoever typed it:
 - each exclusion carries a reason and the exact command that does run it, and
   an exclusion naming a package the workspace no longer has fails the run, so a
   stale excuse cannot outlive the thing it excused;
+- the same declaration is required of every `[workspace] exclude` directory,
+  which `--workspace` cannot reach at all because each is its own workspace
+  with its own lockfile, so pushing a crate out of the workspace cannot quietly
+  take its tests out of every gate on the way;
 - the number of test binaries the selected manifests declare is read from
   `cargo metadata` and compared against the number that actually reported, so a
   run that executed fewer binaries than it built fails rather than passes;
@@ -89,6 +93,13 @@ builds a cdylib and reports three test binaries containing zero tests, for
 about six seconds of incremental link time and roughly 160 seconds on a cold
 tree. `scripts/check-wasm.sh` runs those tests for real with
 `wasm-pack test --headless --firefox crates/umber-wasm`.
+
+The three `[workspace] exclude` directories -- `tools/corpus-sync`,
+`tools/fixturegen`, `tools/texlive-wasm-publish` -- hold 23 tests between them
+that likewise ran nowhere. They are separate workspaces with separate lockfiles
+and target directories, so they belong in the explicit tool tier rather than in
+the routine one: `scripts/check-tools.sh` runs each by manifest path, and
+`run-native-tests.py` fails if a fourth appears without naming its gate.
 
 Roughly 940 of the tests the gate now runs report as ignored. They are
 `bib-engine`'s `#[ignore = "xfail: <specific production gap>"]` markers against
