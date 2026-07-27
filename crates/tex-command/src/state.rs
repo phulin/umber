@@ -104,11 +104,6 @@ impl CommandState {
         self.push_stored_episode(tokens, crate::input::StoredReplayReason::Discretionary)
     }
 
-    /// Replays `\\aftergroup` payload after its owning executor group exits.
-    pub fn push_aftergroup(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        self.push_stored_episode(tokens, crate::input::StoredReplayReason::AfterGroup)
-    }
-
     fn push_stored_episode(
         &mut self,
         tokens: TracedTokenList,

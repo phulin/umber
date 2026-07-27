@@ -4340,7 +4340,12 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut control.modes,
         &mut control.next_alignment_identity,
         &mut control.active_alignment,
-        &mut control.command,
+        &mut CommandMachine {
+            state: &mut control.command,
+            runtime: &mut control.runtime,
+            capabilities: &mut control.capabilities,
+            observations: &mut control.operation_observations,
+        },
         &mut control.boxes,
         &mut control.prepared_dvi_pages,
     )
@@ -4357,7 +4362,12 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut control.modes,
         &mut control.next_alignment_identity,
         &mut control.active_alignment,
-        &mut control.command,
+        &mut CommandMachine {
+            state: &mut control.command,
+            runtime: &mut control.runtime,
+            capabilities: &mut control.capabilities,
+            observations: &mut control.operation_observations,
+        },
         &mut control.boxes,
         &mut control.prepared_dvi_pages,
     )
