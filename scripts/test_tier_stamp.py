@@ -28,6 +28,7 @@ _SPEC.loader.exec_module(tier_stamp)
 
 TIER = "check-tools.sh"
 AT_HEAD = tier_stamp.Position("at HEAD", True)
+AT_HEAD_EDITED = tier_stamp.Position("at HEAD", True, dirty_now=True)
 BEHIND = tier_stamp.Position("at 5e2d2799, 12 commits before HEAD", False)
 UNRELATED = tier_stamp.Position("at 5e2d2799, which is not an ancestor of HEAD", False)
 
@@ -115,6 +116,13 @@ def main() -> int:
             AT_HEAD,
             tier_stamp.STATE_STALE,
             ["STALE", "modified tree"],
+        ),
+        (
+            "a pass stops being evidence the moment the tree is edited under it",
+            stamp(),
+            AT_HEAD_EDITED,
+            tier_stamp.STATE_STALE,
+            ["STALE", "before the working tree was modified"],
         ),
         (
             "a pass from an ancestor commit is stale, and must say how stale",

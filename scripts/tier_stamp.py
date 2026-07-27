@@ -102,10 +102,17 @@ TIERS: dict[str, TierSpec] = {
 
 @dataclasses.dataclass(frozen=True)
 class Position:
-    """Where a recorded run sits relative to the tree being reported on."""
+    """Where a recorded run sits relative to the tree being reported on.
+
+    `dirty_now` is the working tree's state at report time, not at record time.
+    Both matter and neither implies the other: a run recorded against a modified
+    tree never described a committed state, and a run recorded against a clean
+    tree stops describing the tree the moment someone edits it.
+    """
 
     phrase: str
     at_head: bool
+    dirty_now: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -140,6 +147,8 @@ def describe(tier: str, stamp: dict | None, position: Position) -> Report:
     when = f"{position.phrase} on {stamp['recorded_at']}"
     if stamp["dirty"]:
         when += ", against a modified tree"
+    elif position.dirty_now:
+        when += ", before the working tree was modified"
 
     if stamp["status"] == STATUS_FAIL:
         named = ", ".join(failed) or "unnamed steps"
@@ -167,7 +176,7 @@ def describe(tier: str, stamp: dict | None, position: Position) -> Report:
             f"is not evidence for the {total - selected} steps it did not select",
         )
 
-    if position.at_head and not stamp["dirty"]:
+    if position.at_head and not stamp["dirty"] and not position.dirty_now:
         return Report(
             tier,
             STATE_PASSED,
@@ -226,18 +235,24 @@ def tree_is_dirty() -> bool:
     return bool(result.stdout.strip()) if result.returncode == 0 else True
 
 
-def position_of(commit: str, head: str | None) -> Position:
+def position_of(commit: str, head: str | None, dirty_now: bool) -> Position:
     """Locate a recorded commit relative to HEAD, without trusting either."""
     if head is None:
-        return Position(f"at {commit[:8]}, in a checkout with no HEAD", False)
+        return Position(f"at {commit[:8]}, in a checkout with no HEAD", False, dirty_now)
     if commit == head:
-        return Position("at HEAD", True)
+        return Position("at HEAD", True, dirty_now)
     if git("cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
-        return Position(f"at {commit[:8]}, a commit this checkout does not have", False)
+        return Position(
+            f"at {commit[:8]}, a commit this checkout does not have", False, dirty_now
+        )
     if git("merge-base", "--is-ancestor", commit, head).returncode == 0:
         distance = git("rev-list", "--count", f"{commit}..{head}").stdout.strip()
-        return Position(f"at {commit[:8]}, {distance} commits before HEAD", False)
-    return Position(f"at {commit[:8]}, which is not an ancestor of HEAD", False)
+        return Position(
+            f"at {commit[:8]}, {distance} commits before HEAD", False, dirty_now
+        )
+    return Position(
+        f"at {commit[:8]}, which is not an ancestor of HEAD", False, dirty_now
+    )
 
 
 def stamp_path(tier: str) -> Path:
@@ -257,13 +272,14 @@ def load_stamp(tier: str) -> dict | None:
 
 def collect(tiers: list[str]) -> list[Report]:
     head = head_commit()
+    dirty_now = tree_is_dirty()
     reports = []
     for tier in tiers:
         stamp = load_stamp(tier)
         position = (
-            Position("with no commit recorded", False)
+            Position("with no commit recorded", False, dirty_now)
             if stamp is None
-            else position_of(stamp["commit"], head)
+            else position_of(stamp["commit"], head, dirty_now)
         )
         reports.append(describe(tier, stamp, position))
     return reports
