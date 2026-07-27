@@ -145,11 +145,55 @@ fn character_definition_scanner_owns_target_optional_equals_and_integer() {
     );
 
     let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .scan_character_definition(false)
+        .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("character definition scans");
 
     assert_eq!(definition.target, target);
     assert_eq!(definition.value, 65);
+    assert_eq!(definition.scanned, 65);
+    assert!(!definition.recovered);
+}
+
+/// TeX82 §1224 spells `\chardef`'s value scan as §434's `scan_char_num` and
+/// `\mathchardef`'s as §436's `scan_fifteen_bit_int`, so an out-of-range
+/// operand is already `cur_val=0` when the assignment reads it.
+#[test]
+fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
+    for (class, digits, scanned) in [
+        (RestrictedIntegerClass::CharacterCode, "256", 256),
+        (RestrictedIntegerClass::FifteenBit, "32768", 32_768),
+    ] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let target = universe.intern("definedbadchar").symbol();
+        let mut tokens = vec![
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(target),
+            Token::Char {
+                ch: '=',
+                cat: Catcode::Other,
+            },
+        ];
+        tokens.extend(digits.chars().map(|ch| Token::Char {
+            ch,
+            cat: Catcode::Other,
+        }));
+        push(&mut command, tokens);
+
+        let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .scan_character_definition(class, false)
+            .expect("character definition scans");
+
+        assert_eq!(definition.target, target);
+        assert_eq!(definition.value, 0);
+        assert_eq!(definition.scanned, scanned);
+        assert!(definition.recovered);
+    }
 }
 
 #[test]

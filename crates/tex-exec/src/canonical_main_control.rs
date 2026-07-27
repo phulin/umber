@@ -15,10 +15,11 @@ use tex_command::{
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
-    PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedDiscretionary, ScannedDisplayDiagnostic,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent, ScannedBoxConstruction,
+    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionary,
+    ScannedDisplayDiagnostic, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit, SourceRegistration,
+    SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -2337,7 +2338,14 @@ enum ScannedStep {
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
+        /// The restricted class §1224 selects for `primitive`.
+        class: RestrictedIntegerClass,
+        /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
+        /// The unrecovered `scan_int` result, which `int_error` reports.
+        scanned: i32,
+        /// Whether the scan performed §434/§436's recovery.
+        recovered: bool,
         global: bool,
     },
     /// TeX82 §1252's `hyph_data` command: `\patterns` (`chr_code=1`) installs
@@ -4059,13 +4067,25 @@ fn scan_command(
             // provisional scope while it owns raw operand delivery.
             let provisional_global =
                 effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
+            // §1224's case: `char_def_code` scans §434's `scan_char_num` and
+            // `math_char_def_code` scans §436's `scan_fifteen_bit_int`.
+            let class = match primitive {
+                UnexpandablePrimitive::CharDef => RestrictedIntegerClass::CharacterCode,
+                UnexpandablePrimitive::MathCharDef => RestrictedIntegerClass::FifteenBit,
+                _ => {
+                    unreachable!("outer match restricts primitive to §1224's character shorthands")
+                }
+            };
             let definition = processor
-                .scan_character_definition(provisional_global)
+                .scan_character_definition(class, provisional_global)
                 .map_err(command_error)?;
             Ok(ScannedStep::CharacterDefinition {
                 primitive,
                 target: definition.target,
+                class: definition.class,
                 value: definition.value,
+                scanned: definition.scanned,
+                recovered: definition.recovered,
                 global,
             })
         }
@@ -6298,7 +6318,10 @@ fn applied_mutation_observation(
             target,
             value,
             global,
+            ..
         } => {
+            // §1224 defines the meaning from `cur_val` *after* §434/§436's
+            // recovery, so the observed mutation carries the recovered value.
             let value = match primitive {
                 UnexpandablePrimitive::CharDef => format!("character:{value}"),
                 UnexpandablePrimitive::MathCharDef => format!("integer:{value}"),
@@ -7940,32 +7963,24 @@ fn apply_scanned_step(
         ScannedStep::CharacterDefinition {
             primitive,
             target,
+            class,
             value,
+            scanned,
+            recovered,
             global,
         } => {
+            // §434/§436 already recovered `cur_val`; only `print_err`'s
+            // terminal report is left, and it needs `int_error`'s original
+            // value rather than the recovered zero.
+            if recovered {
+                report_restricted_integer_recovery(stores, class, scanned);
+            }
             let meaning = match primitive {
-                UnexpandablePrimitive::CharDef => {
-                    let value = recover_character_definition_value(
-                        stores,
-                        value,
-                        255,
-                        "Bad character code",
-                        "A character number must be between 0 and 255.",
-                    );
-                    Meaning::CharGiven(
-                        char::from_u32(value as u32)
-                            .expect("TeX82 character definitions are eight-bit values"),
-                    )
-                }
-                UnexpandablePrimitive::MathCharDef => {
-                    Meaning::MathCharGiven(recover_character_definition_value(
-                        stores,
-                        value,
-                        32_767,
-                        "Bad mathchar",
-                        "A mathchar number must be between 0 and 32767.",
-                    ) as u16)
-                }
+                UnexpandablePrimitive::CharDef => Meaning::CharGiven(
+                    char::from_u32(value as u32)
+                        .expect("§434 recovers a character code to a character"),
+                ),
+                UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
             if assignment_global(global, stores) {
@@ -9732,23 +9747,24 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
     command.push_everymath(stores.finish_traced_token_list(&traced), display);
 }
 
-/// TeX82's `scan_char_num` and `scan_fifteen_bit_int` recover an out-of-range
-/// result only after command processing completes the integer scan.
-fn recover_character_definition_value(
+/// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.
+///
+/// The recovery itself belongs to the restricted scan (`tex_command`'s
+/// `RestrictedIntegerClass`); only the terminal report is a stomach-side
+/// effect, because the command core owns no `World` text sink.
+fn report_restricted_integer_recovery(
     stores: &mut Universe,
-    value: i32,
-    maximum: i32,
-    message: &str,
-    help: &str,
-) -> i32 {
-    if (0..=maximum).contains(&value) {
-        return value;
-    }
+    class: RestrictedIntegerClass,
+    scanned: i32,
+) {
     stores.world_mut().write_text(
         PrintSink::TerminalAndLog,
-        &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
+        &format!(
+            "\n! {} ({scanned}).\n{}\nI changed this one to zero.\n",
+            class.message(),
+            class.help(),
+        ),
     );
-    0
 }
 
 /// Converts a command-core failure into its `ExecError` counterpart,

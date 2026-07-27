@@ -2190,7 +2190,31 @@ then publish the nested integer, internal-value, and outer integer results in
 canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
 
-`scan_something_internal` applies TeX82's `scan_eight_bit_int` bound to every
+TeX82 §433-§437 declare five "restricted classes of integers" --
+`scan_eight_bit_int`, `scan_char_num`, `scan_four_bit_int`,
+`scan_fifteen_bit_int`, and `scan_twenty_seven_bit_int` -- and all five have
+one shape: run `scan_int`, then, if the result is negative or above the
+class's maximum, report `print_err`/`help2`/`int_error` and set `cur_val:=0`.
+The command core carries that enumeration exactly once, as a
+`RestrictedIntegerClass` and a single `scan_restricted_integer`; every
+restricted scan selects a class rather than open-coding a range test. Only
+§434's maximum is profile-dependent: TeX82's character domain is `0..=255`,
+which the Unicode profile widens to the Unicode scalar values (§6.1).
+
+The bound is part of the *scan*, never of the command that consumes it. TeX82
+recovers `cur_val` before `shorthand_def` (§1224), `def_code` (§1232),
+`def_family` (§1234), a math noad (§1151/§1154), or `\ifeof` (§501) ever reads
+it, so the value the assignment commits -- and therefore every observation
+derived from that assignment -- is already the recovered zero. Splitting the
+two, so that a scanner returns the raw `scan_int` result and the assignment
+clamps it afterwards, leaves the observation reporting a value the engine
+never stored: `\chardef\x=256` recorded `character:256` against the reference
+engine's `character:0` while the meaning itself was correctly `char_given 0`
+(`umber2-johp.166`). The unrecovered value survives only where TeX82 prints
+it: `int_error`'s parenthesized operand, and the `scan_int` observation that
+precedes the bound and legitimately reports its own unclamped result.
+
+`scan_something_internal` applies §433's `scan_eight_bit_int` bound to every
 primitive register family (`\count`, `\dimen`, `\skip`, `\muskip`, and
 `\toks`): the
 index is scanned through ordinary expanded command delivery, and a negative

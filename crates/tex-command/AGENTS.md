@@ -51,6 +51,10 @@ Private state-machine modules must not be widened for compatibility with
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
   classification loops rather than `scan_toks` collections and so must never
   enter the `absorbing` scanner status or track a brace depth.
+  `restricted.rs` owns TeX82 §433-§437's five restricted integer classes as a
+  single mechanism: every bounded scan in the crate selects a
+  `RestrictedIntegerClass` instead of open-coding a range test, and the
+  recover-to-zero belongs to the scan, never to the command consuming it.
 - `src/primitives/`: private static TeX82, e-TeX, and pdfTeX dispatch families.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, invocation/argument activation ownership, and focused tests.
