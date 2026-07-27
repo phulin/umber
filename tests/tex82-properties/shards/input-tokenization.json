@@ -5,6 +5,58 @@
   "module_dispositions": [
     {
       "modules": {
+        "first": 207,
+        "last": 209
+      },
+      "disposition": "property",
+      "owner": "tex-command::delivery",
+      "property_ids": [
+        "tex82.input.command-code-boundaries"
+      ],
+      "gap_bead": null,
+      "rationale": "Defines character, ordinary, internal, assignment, and main-control command-code partitions consumed by raw and expanded delivery; §210 remains conditionals-owned."
+    },
+    {
+      "modules": {
+        "first": 211,
+        "last": 215
+      },
+      "disposition": "property",
+      "owner": "tex-exec::mode-nest",
+      "property_ids": [
+        "tex82.modes.semantic-nest-model"
+      ],
+      "gap_bead": null,
+      "rationale": "Defines six signed modes, semantic-list fields, auxiliary interpretations, append invariant, and initial outer vertical state."
+    },
+    {
+      "modules": {
+        "first": 216,
+        "last": 217
+      },
+      "disposition": "property",
+      "owner": "tex-exec::mode-nest",
+      "property_ids": [
+        "tex82.modes.semantic-nest-lifecycle"
+      ],
+      "gap_bead": null,
+      "rationale": "Executable push_nest and pop_nest state transitions."
+    },
+    {
+      "modules": {
+        "first": 218,
+        "last": 219
+      },
+      "disposition": "property",
+      "owner": "tex-exec::mode-nest",
+      "property_ids": [
+        "tex82.modes.activity-diagnostics"
+      ],
+      "gap_bead": null,
+      "rationale": "Observable show_activities walk and mode-specific auxiliary rendering."
+    },
+    {
+      "modules": {
         "first": 256,
         "last": 258
       },
@@ -226,9 +278,124 @@
       ],
       "gap_bead": null,
       "rationale": "Read-stream token-list construction."
+    },
+    {
+      "modules": {
+        "first": 537,
+        "last": 538
+      },
+      "disposition": "property",
+      "owner": "tex-command::expansion",
+      "property_ids": [
+        "tex82.input.start-input-and-first-line"
+      ],
+      "gap_bead": null,
+      "rationale": "Canonical input filename retry/open lifecycle, job-name initialization, source-level registration, and first-line normalization."
     }
   ],
   "properties": [
+    {
+      "id": "tex82.input.command-code-boundaries",
+      "sections": [207, 208, 209],
+      "claim": "Command codes preserve TeX82's numeric partitions: catcode-derived characters precede ordinary commands, min_internal through max_internal delimit the quantities accepted by the, and max_command separates main-control delivery from expandable/internal-only meanings.",
+      "preconditions": ["The TeX82 primitive registry and exact command-code vocabulary are installed."],
+      "stimulus": [
+        "Phase 2 unit `command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges` exercises every boundary and alias; minifixture `command-code-boundaries.tex` observes representative raw and expanded identities on each side."
+      ],
+      "expected_observations": [
+        "Aliases share their required numeric code, internal quantities occupy the inclusive canonical interval, and commands above max_command never reach main control unexpanded."
+      ],
+      "postconditions": [
+        "Delivery and scanner classification use the canonical partition without renumbering by Rust enum order."
+      ],
+      "equivalence_cases": [
+        "Character catcodes and their same-number non-character aliases remain distinguishable by input origin; every internal family uses the same inclusive boundary test."
+      ],
+      "recovery_cases": [
+        "Undefined and dont_expand meanings remain above max_command and are handled by expansion rather than ordinary execution."
+      ],
+      "semantic_owner": "tex-command::delivery",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
+    },
+    {
+      "id": "tex82.modes.semantic-nest-model",
+      "sections": [211, 212, 213, 214, 215],
+      "claim": "The semantic nest represents outer/internal vertical, paragraph/restricted horizontal, and display/inline math as signed modes with one current list record whose head, tail, prev_graf, auxiliary value, and entry line retain their mode-specific meanings.",
+      "preconditions": ["Execution begins before any nested box, paragraph, math list, or output routine is entered."],
+      "stimulus": [
+        "Phase 2 unit `semantic_nest_six_modes_and_fields_initialize_canonically` constructs every signed mode, empty/nonempty list, auxiliary interpretation, and initial contribution state."
+      ],
+      "expected_observations": [
+        "Outer vertical mode begins on contrib_head with ignored prev_depth; head/tail agree exactly for an empty list; mode arithmetic selects one of three families while sign selects outer versus internal form."
+      ],
+      "postconditions": [
+        "Appending one node advances tail and preserves the list head; mode_line and auxiliary storage remain attached to the active record."
+      ],
+      "equivalence_cases": [
+        "Positive and negative modes in one family share field layout but not semantic scope; empty lists in all six modes share head-equals-tail."
+      ],
+      "recovery_cases": [
+        "An invalid mode or incompatible auxiliary interpretation is rejected at the typed boundary rather than silently projected as another mode."
+      ],
+      "semantic_owner": "tex-exec::mode-nest",
+      "test_level": "planned-rust-unit",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
+    },
+    {
+      "id": "tex82.modes.semantic-nest-lifecycle",
+      "sections": [216, 217],
+      "claim": "push_nest saves the complete current list record and starts one empty nested list with zero prev_graf and the current input line; pop_nest frees that nested head and restores the immediately enclosing record.",
+      "preconditions": [
+        "A valid current list exists; pop is requested only above the bottom level after nested material ownership is resolved."
+      ],
+      "stimulus": [
+        "Phase 2 unit `semantic_nest_push_and_pop_preserve_fields_and_start_empty_list` nests all mode families, mutates each inner field, and unwinds to exact saved records."
+      ],
+      "expected_observations": [
+        "Push preserves old mode and auxiliary values in the saved record but gives the child a fresh empty head/tail, zero prev_graf, and current line; pop restores every saved field."
+      ],
+      "postconditions": ["Nest depth changes by exactly one and the abandoned child head is released exactly once."],
+      "equivalence_cases": [
+        "Repeated push/pop pairs preserve equivalent records across all six modes; nested empty and nonempty children restore the same parent state."
+      ],
+      "recovery_cases": [
+        "Bottom-level pop and capacity overflow fail explicitly without fabricating or partially restoring a record."
+      ],
+      "semantic_owner": "tex-exec::mode-nest",
+      "test_level": "planned-rust-unit",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
+    },
+    {
+      "id": "tex82.modes.activity-diagnostics",
+      "sections": [218, 219],
+      "claim": "show_activities visits semantic levels from current to outermost and renders each signed mode, absolute entry line, output-routine marker, list contents, and mode-specific auxiliary fields in canonical order.",
+      "preconditions": ["The semantic nest contains valid records and diagnostic list rendering is available."],
+      "stimulus": [
+        "Phase 2 unit `show_activities_reports_each_mode_auxiliary_and_entry_line` plus minifixture `mode-activities.tex` cover vertical prevdepth/prevgraf, horizontal spacefactor/language, math incomplete fraction, output routine, page status, and contributions."
+      ],
+      "expected_observations": [
+        "Levels print innermost first; negative mode_line marks output; only the auxiliary fields meaningful for that mode are rendered."
+      ],
+      "postconditions": ["Diagnostic traversal does not change semantic nest or list ownership."],
+      "equivalence_cases": [
+        "Empty and populated lists preserve level ordering; ignored and finite prevdepth use their distinct canonical spellings."
+      ],
+      "recovery_cases": [
+        "Absent optional language, incomplete fraction, page, or contribution data suppresses only its own diagnostic clause."
+      ],
+      "semantic_owner": "tex-exec::mode-nest",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
+    },
     {
       "id": "tex82.input.control-sequence-lookup",
       "sections": [
@@ -249,10 +416,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Repeated equal spellings and distinct spellings with the same initial hash probe exercise reuse versus collision traversal; source control words and csname-created names converge only after both permit creation."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "A guarded miss returns undefined_control_sequence without interning; an exhausted hash reports capacity overflow rather than aliasing or replacing an existing identity."
       ],
       "semantic_owner": "tex-command::control-sequences",
       "test_level": "planned-rust-unit+semantic-minifixture",
@@ -279,10 +446,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Single-character primitives use direct identities while multiletter primitives use the hash, but both install the same level/command/operand triple and later raw resolution contract."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Reinstalling an initialization spelling reuses its identity; hash-capacity failure is fatal before a partially installed primitive becomes visible."
       ],
       "semantic_owner": "tex-command::control-sequences",
       "test_level": "planned-rust-unit",
@@ -302,7 +469,7 @@
         "The exact TeX82 profile and explicit canonical command state are active."
       ],
       "stimulus": [
-        "Construct every stored form and activate its macro."
+        "Existing vocabulary tests cover canonical names and compact parameter forms; Phase 2 units `stored_token_encoding_partitions_characters_controls_and_macro_forms` and `stored_token_reference_lifetime_survives_redefinition_and_replay`, plus minifixture `stored-token-replay.tex`, cover numeric partitions, brace/match limits, reference ownership, and replay after redefinition."
       ],
       "expected_observations": [
         "Token kind, parameter role, and one-based selector remain distinct."
@@ -311,13 +478,13 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Character and control-sequence tokens that resolve to the same current command retain distinct stored encodings; match, end-match, literal mac_param, and out_param remain distinct even when character operands coincide."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Definition scanning rejects excess or invalid output-parameter selectors before publication; malformed stored forms are never reinterpreted as ordinary character tokens."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "rust-unit",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/observation/canonical_names/tests.rs",
@@ -328,8 +495,8 @@
           "test": "replacement_parameter_forms_remain_compact_and_distinct"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
     },
     {
       "id": "tex82.input.level-lifecycle",
@@ -359,25 +526,25 @@
       ],
       "claim": "Source and stored-token levels form one LIFO stack; exhaustion retires one level, macro bodies own argument ranges, and backup precedes underlying input.",
       "preconditions": [
-        "The exact TeX82 profile and explicit canonical command state are active."
+        "At least one retained source or stored-token level is active, with scanner status and parameter stack explicitly initialized."
       ],
       "stimulus": [
-        "Push nested source, body, argument, inserted, and backup levels through exhaustion."
+        "Existing stack tests exercise stored replay ownership; Phase 2 units `source_level_begin_end_restore_line_and_terminal_state`, `token_list_kind_reference_and_parameter_stack_lifecycle_matrix`, and `backup_inserted_and_macro_levels_retire_in_canonical_order`, plus minifixture `input-level-lifecycle.tex`, cover the remaining source and token-list assertions."
       ],
       "expected_observations": [
-        "Newest input delivers first; replay selects the nearest live parameter owner."
+        "Newest input delivers first; every token-list kind applies its canonical reference/parameter action; source close restores line, terminal/file state, and enclosing cursor; replay selects the nearest live parameter owner."
       ],
       "postconditions": [
-        "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
+        "Each exhausted level retires exactly once and resumes the enclosing level at its unchanged next position."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "File and terminal source levels share stack ordering but retain distinct close/context state; backed-up and inserted singleton lists share delivery order but not diagnostic kind; macro body, argument, and parameter replay retain distinct ownership actions."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Input-stack and parameter-stack overflow are bounded capacity failures; stale retirement is rejected without popping another level; back_error reports before replaying the offending token."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "rust-unit",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
@@ -400,8 +567,8 @@
           "test": "macro_body_retirement_rejects_activation_mismatch_transactionally"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
     },
     {
       "id": "tex82.input.raw-delivery",
@@ -427,10 +594,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Equal source and stored tokens resolve to the same current command, but only source tokens carry freshly scanned spelling; braces at nested alignment depth deliver normally while top-level tab/car_ret delimiters enter template delivery."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Outer controls and source EOF delegate to check_outer_validity before another raw token is requested; inactive alignment delimiters remain ordinary commands rather than being consumed structurally."
       ],
       "semantic_owner": "tex-command::delivery",
       "test_level": "planned-rust-unit+semantic-minifixture",
@@ -461,10 +628,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Skipping, defining, matching, aligning, and absorbing share the outer-validity entry point but insert distinct recovery tokens; token-list and eligible source outer controls are backed up while read-stream controls are not."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "EOF has no token to back up; matching inserts par, alignment inserts frozen_cr plus right brace, skipping inserts frozen_fi, and every branch restores deletions_allowed after one diagnostic."
       ],
       "semantic_owner": "tex-command::delivery",
       "test_level": "planned-rust-unit+semantic-minifixture",
@@ -501,25 +668,25 @@
       ],
       "claim": "Raw input implements TeX82's M/N/S tokenizer, control-name scanning, superscript reduction, refill, stored replay, output-parameter substitution, and guarded lookup.",
       "preconditions": [
-        "The exact TeX82 profile and explicit canonical command state are active."
+        "An exact-byte source line or stored-token level is current; live catcodes, endlinechar, scanner status, and control-sequence creation policy are fixed for the next delivery boundary."
       ],
       "stimulus": [
-        "Deliver lines and stored levels with spaces, comments, endlines, control names, active bytes, superscript forms, and parameters."
+        "Existing tokenizer tests cover physical M/N/S and superscript behavior; Phase 2 units `stored_get_next_substitutes_parameters_and_resolves_meanings`, `force_eof_and_refill_retire_only_at_line_boundary`, `pausing_replaces_the_firmed_line_before_tokenization`, and `no_new_control_sequence_guard_covers_source_and_csname_paths`, plus minifixture `input-tokenization-lifecycle.tex`, cover the remaining claims."
       ],
       "expected_observations": [
-        "M/N/S emission, exact ranges, reduction, and cursor advance match canonical input."
+        "Physical M/N/S emission and exact ranges match canonical input; stored tokens bypass tokenization, substitute output parameters, resolve current meanings, and update alignment state; refill, pausing, force_eof, and guarded lookup occur at their exact boundaries."
       ],
       "postconditions": [
-        "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
+        "The physical or stored cursor advances by exactly the consumed representation and leaves the next canonical token available."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "LF, CR, CRLF, and missing final terminator normalize to the same logical lines; control words, symbols, active bytes, and null names use their distinct lookup paths; source and stored equal tokens share resolved meaning but only source tokens undergo catcode and superscript conversion."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Ignored, invalid, comment, invalid superscript, inactive endlinechar, force_eof, and forbidden new-control-sequence cases each consume or retire exactly the canonical input and cannot loop unchanged."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "rust-unit",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/input/lines/tests.rs",
@@ -550,8 +717,8 @@
           "test": "all_canonical_dialects_share_the_exact_byte_state_machine"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
     },
     {
       "id": "tex82.expansion.delivery-and-primitives",
@@ -587,10 +754,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Recursive expand and iterative get_x_token reach the same unexpandable command; macro calls and nonmacro primitives share the loop but use distinct dispatch; source spelling and csname spelling converge on one identity after name construction."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Undefined expansion reports before frozen-relax substitution where permitted; missing endcsname stops name collection without swallowing enclosing input; backup preserves exact first/second-token order for expandafter."
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+semantic-minifixture",
@@ -636,10 +803,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Source and stored arguments match by token value; undelimited single tokens and balanced groups differ in outer-brace stripping; delimited overlap and nonoverlap converge on the same captured argument bytes."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Compulsory-prefix mismatch aborts without activation; non-long paragraph and extra-right-brace paths back up/insert canonically; a hash-left-brace delimiter cancels its duplicate alignment increment."
       ],
       "semantic_owner": "tex-command::macro-call",
       "test_level": "rust-unit",
@@ -703,10 +870,10 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Equal rendered scalar bytes produce equal spacer/other-character lists; token-register and font-identity results copy tokens rather than stringify; all six classic convert selectors share insertion but not operand scanning."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "Invalid numeric or font operands finish their owning scanner recovery before rendering; string and meaning temporarily normalize scanner status so an outer operand is consumed exactly once."
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+semantic-minifixture",
@@ -739,12 +906,40 @@
         "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
       ],
       "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
+        "Closed/out-of-range streams use terminal input while just-open and normal streams use distinct first/subsequent file reads; balanced single-line and balanced multiline input freeze the same token sequence when logical lines match."
       ],
       "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
+        "EOF contributes one final empty line; EOF with unmatched left braces reports and restores balance once; a right brace below the disabled alignment baseline consumes the rest of that line before returning."
       ],
       "semantic_owner": "tex-command::scan-toks",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.223"
+    },
+    {
+      "id": "tex82.input.start-input-and-first-line",
+      "sections": [537, 538],
+      "claim": "start_input scans and defaults the filename, opens one provisional source level per attempt, retries the default area before prompting, establishes job/log and source context on success, and loads an empty or nonempty first line without the ordinary subsequent-line read mode.",
+      "preconditions": [
+        "The expandable input command has host-provided deterministic file capabilities and no successful child source level has yet been committed."
+      ],
+      "stimulus": [
+        "Phase 2 units `start_input_retries_names_opens_one_level_and_normalizes_first_line`, `start_input_failed_attempt_retires_only_its_provisional_level`, and `start_input_initializes_job_name_once`, plus minifixture `input-start-file.tex`, cover direct/default-area success, retry, empty file, inactive endlinechar, and nested input."
+      ],
+      "expected_observations": [
+        "Each failed open removes its provisional level; success records the canonical name, opens the log only for the first job name, emits the opening context, enters new_line state, and exposes a normalized first line (a blank logical line for an empty file)."
+      ],
+      "postconditions": [
+        "Exactly one successful child source level remains above its caller with line one, loc=start, first=limit+1, and the canonical endlinechar policy applied."
+      ],
+      "equivalence_cases": [
+        "Explicit .tex and defaulted extension requests converge on the same opened identity; direct-area and TEX-area success share the committed source state; empty file and one blank physical line share first-line tokenization."
+      ],
+      "recovery_cases": [
+        "A failed direct and default-area lookup retires the attempted level before prompting; inactive endlinechar decreases the first-line limit; repeated nested input never replaces an established job name."
+      ],
+      "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
