@@ -416,7 +416,7 @@ impl CommandProcessor<'_> {
         output: &mut Vec<TracedTokenWord>,
     ) -> Result<bool, CommandError> {
         let target = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        let Some(value) = self.internal_value_from_command(&target)? else {
+        let Some(value) = self.scan_the_internal_value(&target)? else {
             self.back_input(target)?;
             return Ok(false);
         };

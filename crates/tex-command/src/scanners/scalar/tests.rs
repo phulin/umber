@@ -163,6 +163,52 @@ fn integer_scanner_accepts_mathchardef_values() {
     assert_eq!(scanner_kinds(&recorder), vec!["internal", "integer"]);
 }
 
+#[test]
+fn internal_scanner_commits_the_requested_level_not_the_quantitys_own() {
+    // TeX82 §413 runs §429's `while cur_val_level>level` cascade before its
+    // single exit, so the level it commits is the one the caller asked for.
+    // plain.tex's `\def\rm{\fam\z@\tenrm}` asks at `int_val` for the dimension
+    // register `\z@`: §429 lowers `dimen_val` to `int_val` keeping the scaled
+    // representation, and TeX commits an integer. Committing the register's
+    // own `dimen_val` instead reports a scaled dimension where TeX reports an
+    // integer (umber2-johp.163).
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let zero = universe.intern("z@").symbol();
+    universe.set_meaning(zero, Meaning::DimenRegister(0));
+    universe.set_dimen(0, tex_state::scaled::Scaled::from_raw(3 * Scaled::UNITY));
+    push(&mut command, vec![Token::Cs(zero)]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("a dimension register scans as an integer")
+                .value,
+            3 * Scaled::UNITY
+        );
+    }
+
+    assert_eq!(scanner_kinds(&recorder), vec!["internal", "integer"]);
+    assert_eq!(
+        scanner_values(&recorder),
+        vec![
+            (3 * Scaled::UNITY).to_string(),
+            (3 * Scaled::UNITY).to_string(),
+        ]
+    );
+}
+
 /// The committed scanner results a replay observed, in order.
 ///
 /// TeX82 §413's `scan_something_internal` commits its own result before the
@@ -174,6 +220,22 @@ fn scanner_kinds(recorder: &Recorder) -> Vec<&'static str> {
         .iter()
         .filter_map(|record| match record {
             CommandObservation::Scanner(scanner) => Some(scanner.kind),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The rendered payloads of those same scanner results, in order.
+///
+/// The rendering carries the committed level -- a bare integer for `int_val`,
+/// a `scaled:` prefix for `dimen_val` -- so it is what distinguishes §429's
+/// cascade having run from its not having run.
+fn scanner_values(recorder: &Recorder) -> Vec<String> {
+    recorder
+        .0
+        .iter()
+        .filter_map(|record| match record {
+            CommandObservation::Scanner(scanner) => Some(scanner.value.clone()),
             _ => None,
         })
         .collect()
@@ -930,7 +992,7 @@ fn dimension_scanner_negates_a_signed_internal_glue_width() {
 
 #[test]
 fn mu_dimension_scanner_accepts_a_bare_internal_mu_glue_quantity() {
-    // TeX82 §449/§450: with `mu` set, `scan_dimen` fetches at `mu_val` and
+    // TeX82 §449/§451: with `mu` set, `scan_dimen` fetches at `mu_val` and
     // "Coerce glue to a dimension" replaces the specification by its width
     // without changing `cur_val_level`, so `\mkern\thinmuskip` uses the
     // parameter's width directly.
