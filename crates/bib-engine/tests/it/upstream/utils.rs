@@ -68,14 +68,18 @@ xfail!(
 native_test!(
     assertion_002_file_location_2,
     assert_eq!(
-        VirtualPath::user("t/tdata/general.bcf").unwrap().as_str(),
+        VirtualPath::user("t/tdata/general.bcf")
+            .expect("valid virtual path")
+            .as_str(),
         "/job/t/tdata/general.bcf"
     )
 );
 native_test!(
     assertion_003_file_location_3,
     assert_eq!(
-        VirtualPath::user("t/tdata/examples.bib").unwrap().as_str(),
+        VirtualPath::user("t/tdata/examples.bib")
+            .expect("valid virtual path")
+            .as_str(),
         "/job/t/tdata/examples.bib"
     )
 );
@@ -87,7 +91,9 @@ xfail!(
 native_test!(
     assertion_005_file_location_5,
     assert_eq!(
-        VirtualPath::user("t/tdata/general.bcf").unwrap().as_str(),
+        VirtualPath::user("t/tdata/general.bcf")
+            .expect("valid virtual path")
+            .as_str(),
         "/job/t/tdata/general.bcf"
     )
 );

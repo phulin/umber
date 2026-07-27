@@ -35,7 +35,7 @@ fn process_fixture(control_name: &str, inline_bib: Option<&str>) -> FixtureResul
     provisioner
         .register_user(
             control.clone(),
-            std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+            crate::fixtures::read(fixture_dir.join(control_name)),
         )
         .expect("unique control file");
     let output_path = VirtualPath::user("native.bbl").expect("valid output path");
@@ -69,15 +69,15 @@ fn process_fixture(control_name: &str, inline_bib: Option<&str>) -> FixtureResul
                     let bytes = if request.key().name().ends_with(".bib") {
                         inline_bib
                             .map(|bib| bib.as_bytes().to_vec())
-                            .or_else(|| std::fs::read(&path).ok())
+                            .or_else(|| crate::fixtures::read_optional(&path))
                     } else {
-                        std::fs::read(&path).ok()
+                        crate::fixtures::read_optional(&path)
                     };
                     let Some(bytes) = bytes else { continue };
                     provisioner
                         .provision(ResolvedFile {
                             request: request.key().clone(),
-                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()),
                             bytes,
                             expected_digest: None,
                         })

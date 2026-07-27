@@ -20,21 +20,21 @@ const WARNINGS_ALIAS4: &[&str] = &[
 ];
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("bibtex-aliases.bcf").unwrap(),
+            VirtualPath::user("bibtex-aliases.bcf").expect("valid virtual path"),
             CONTROL.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
         .register_user(
-            VirtualPath::user("bibtex-aliases.bib").unwrap(),
+            VirtualPath::user("bibtex-aliases.bib").expect("valid virtual path"),
             DATA.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     BibCommand::parse(["--noconf", "--nolog", "bibtex-aliases.bcf"])
-        .unwrap()
+        .expect("valid command line")
         .execute(&files.snapshot())
 }
 
@@ -42,13 +42,16 @@ fn entry(id: &str) -> Entry {
     run()
         .result()
         .and_then(|result| result.document().sections().next())
-        .and_then(|section| section.entry(&EntryId::new(id).unwrap()))
+        .and_then(|section| section.entry(&EntryId::new(id).expect("valid entry key")))
         .cloned()
         .unwrap_or_else(|| panic!("missing entry {id}"))
 }
 
 fn string_field(entry_id: &str, field: &str) -> Option<String> {
-    match entry(entry_id).fields().get(&FieldId::new(field).unwrap()) {
+    match entry(entry_id)
+        .fields()
+        .get(&FieldId::new(field).expect("valid field name"))
+    {
         Some(FieldValue::Literal(value)) => Some(value.as_str().to_owned()),
         Some(FieldValue::Verbatim(value)) => Some(value.as_str().to_owned()),
         _ => None,
@@ -56,7 +59,10 @@ fn string_field(entry_id: &str, field: &str) -> Option<String> {
 }
 
 fn list_field(entry_id: &str, field: &str) -> Option<Vec<String>> {
-    match entry(entry_id).fields().get(&FieldId::new(field).unwrap()) {
+    match entry(entry_id)
+        .fields()
+        .get(&FieldId::new(field).expect("valid field name"))
+    {
         Some(FieldValue::LiteralList(values)) => Some(
             values
                 .iter()
@@ -68,7 +74,7 @@ fn list_field(entry_id: &str, field: &str) -> Option<Vec<String>> {
 }
 
 fn warnings(entry_id: &str) -> Vec<String> {
-    let id = EntryId::new(entry_id).unwrap();
+    let id = EntryId::new(entry_id).expect("valid entry key");
     run()
         .result()
         .map(|result| {
@@ -167,7 +173,10 @@ test_eq!(
 #[ignore = "xfail: native name alias mapping does not yet expose namea"]
 fn assertion_016_alias_16() {
     let entry = entry("alias4");
-    let given = match entry.fields().get(&FieldId::new("namea").unwrap()) {
+    let given = match entry
+        .fields()
+        .get(&FieldId::new("namea").expect("valid field name"))
+    {
         Some(FieldValue::NameList(names)) => names
             .iter()
             .next()

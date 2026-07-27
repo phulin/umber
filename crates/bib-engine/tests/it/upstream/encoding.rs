@@ -413,17 +413,20 @@ fn run(stem: &str, encoding: &str) -> Vec<u8> {
     } else {
         format!("{stem}.bib")
     };
-    let mut f = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut f = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     f.register_user(
-        VirtualPath::user(&control).unwrap(),
+        VirtualPath::user(&control).expect("valid virtual path"),
         fixture(&control).to_vec(),
     )
-    .unwrap();
-    f.register_user(VirtualPath::user(&data).unwrap(), fixture(&data).to_vec())
-        .unwrap();
+    .expect("unique registered file");
+    f.register_user(
+        VirtualPath::user(&data).expect("valid virtual path"),
+        fixture(&data).to_vec(),
+    )
+    .expect("unique registered file");
     let arg = format!("--output-encoding={encoding}");
     let o = BibCommand::parse([arg.as_str(), "--output-file=actual.bbl", control.as_str()])
-        .unwrap()
+        .expect("valid command line")
         .execute(&f.snapshot());
     o.result()
         .and_then(|r| r.files().next())
@@ -432,7 +435,7 @@ fn run(stem: &str, encoding: &str) -> Vec<u8> {
         .to_vec()
 }
 fn expected(text: &str, enc: LegacyEncoding) -> Vec<u8> {
-    encode_legacy(text, enc).unwrap()
+    encode_legacy(text, enc).expect("text encodes in the legacy encoding")
 }
 macro_rules! xeq {
     ($name:ident,$stem:literal,$label:literal,$text:ident,$enc:ident) => {

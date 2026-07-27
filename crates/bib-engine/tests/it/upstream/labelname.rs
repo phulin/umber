@@ -15,7 +15,7 @@ fn process_fixture(control_name: &str) -> bib_engine::ProcessedBibliography {
     provisioner
         .register_user(
             control.clone(),
-            std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+            crate::fixtures::read(fixture_dir.join(control_name)),
         )
         .expect("unique control file");
     let job = BibJob::new(control, BibOptionsBuilder::new().freeze());
@@ -37,8 +37,8 @@ fn process_fixture(control_name: &str) -> bib_engine::ProcessedBibliography {
                     provisioner
                         .provision(ResolvedFile {
                             request: request.key().clone(),
-                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
-                            bytes: std::fs::read(path).expect("committed requested fixture"),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()),
+                            bytes: crate::fixtures::read(path),
                             expected_digest: None,
                         })
                         .expect("requested fixture is valid");

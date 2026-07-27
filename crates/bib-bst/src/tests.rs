@@ -175,6 +175,9 @@ fn byte_weighted_cache_evicts_persistent_maximum_charge_styles() {
 
 #[test]
 #[ignore = "explicit classic BST performance tier"]
+// A performance budget is measured against the host clock by definition, so
+// this is one of the few places outside `tex-state::World` that may read one.
+#[allow(clippy::disallowed_methods)]
 fn classic_compilation_and_cache_performance_budgets() {
     const COLD_COMPILES: usize = 32;
     const CACHE_HITS: usize = 1_024;

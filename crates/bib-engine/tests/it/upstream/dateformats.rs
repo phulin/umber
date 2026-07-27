@@ -800,7 +800,7 @@ const EXPECTED_UNSPEC2: &str = r#"    \entry{unspec2}{article}{}{}
 fn field_string(result: &bib_engine::BibResult, key: &str, field: &str) -> Option<String> {
     let value = entry(result, 0, key)?
         .fields()
-        .get(&FieldId::new(field).unwrap())?;
+        .get(&FieldId::new(field).expect("valid field name"))?;
     match value {
         FieldValue::Literal(value) => Some(value.as_str().to_owned()),
         FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
@@ -1131,7 +1131,7 @@ fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly
             .and_then(|result| entry(result, 0, "L16"))
             .is_some_and(|entry| entry
                 .fields()
-                .get(&FieldId::new("eventyear").unwrap())
+                .get(&FieldId::new("eventyear").expect("valid field name"))
                 .is_some())
     );
 }
@@ -1158,7 +1158,10 @@ fn assertion_025_date_values_test_17_labelyear_year() {
             .as_ref()
             .ok()
             .and_then(|result| entry(result, 0, "L17"))
-            .is_some_and(|entry| entry.fields().get(&FieldId::new("year").unwrap()).is_some())
+            .is_some_and(|entry| entry
+                .fields()
+                .get(&FieldId::new("year").expect("valid field name"))
+                .is_some())
     );
 }
 
@@ -1187,7 +1190,7 @@ fn assertion_027_date_values_test_17b_labelyear_origyear() {
             .and_then(|result| entry(result, 0, "L17"))
             .is_some_and(|entry| entry
                 .fields()
-                .get(&FieldId::new("origyear").unwrap())
+                .get(&FieldId::new("origyear").expect("valid field name"))
                 .is_some())
     );
 }
@@ -1217,7 +1220,7 @@ fn assertion_029_date_values_test_17d_labelyear_eventyear() {
             .and_then(|result| entry(result, 0, "L17"))
             .is_some_and(|entry| entry
                 .fields()
-                .get(&FieldId::new("eventyear").unwrap())
+                .get(&FieldId::new("eventyear").expect("valid field name"))
                 .is_some())
     );
 }

@@ -63,20 +63,20 @@ const DL1: &str = r########"    \entry{SchillerCND2010}{article}{}{}
 "########;
 
 fn run() -> (String, Vec<u8>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("remote-files.bcf").unwrap(),
+            VirtualPath::user("remote-files.bcf").expect("valid virtual path"),
             CONTROL.to_vec(),
         )
-        .unwrap();
-    let output_path = VirtualPath::user("remote-files.bbl").unwrap();
+        .expect("unique registered file");
+    let output_path = VirtualPath::user("remote-files.bbl").expect("valid virtual path");
     let mut options = BibOptionsBuilder::new();
     options
         .output(OutputRequest::new(output_path, OutputFormat::Bbl))
-        .unwrap();
+        .expect("unique output path");
     let job = BibJob::new(
-        VirtualPath::user("remote-files.bcf").unwrap(),
+        VirtualPath::user("remote-files.bcf").expect("valid virtual path"),
         options.freeze(),
     );
     match BibSession::default().process(&job, &files.snapshot()) {

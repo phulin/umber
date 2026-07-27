@@ -61,10 +61,9 @@ fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> Fix
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/corpus/bib/upstream-2.22/tdata");
     let control = VirtualPath::user(control_name).expect("valid control path");
-    let mut control_bytes = String::from_utf8(
-        std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
-    )
-    .expect("BCF is UTF-8");
+    let mut control_bytes =
+        String::from_utf8(crate::fixtures::read(fixture_dir.join(control_name)))
+            .expect("BCF is UTF-8");
     for &(key, value) in option_overrides {
         override_scalar_option(&mut control_bytes, key, value);
     }
@@ -106,8 +105,8 @@ fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> Fix
                     provisioner
                         .provision(ResolvedFile {
                             request: request.key().clone(),
-                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
-                            bytes: std::fs::read(path).expect("committed requested fixture"),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()),
+                            bytes: crate::fixtures::read(path),
                             expected_digest: None,
                         })
                         .expect("requested fixture is valid");

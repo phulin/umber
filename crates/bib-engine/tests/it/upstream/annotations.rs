@@ -106,16 +106,19 @@ const EXPECTED_ANN2: &str = concat!(
 "###
 );
 fn output() -> Vec<u8> {
-    let mut f = FileProvisioner::new(VfsLimits::default()).unwrap();
+    let mut f = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     f.register_user(
-        VirtualPath::user("annotations.bcf").unwrap(),
+        VirtualPath::user("annotations.bcf").expect("valid virtual path"),
         CONTROL.to_vec(),
     )
-    .unwrap();
-    f.register_user(VirtualPath::user("annotations.bib").unwrap(), DATA.to_vec())
-        .unwrap();
+    .expect("unique registered file");
+    f.register_user(
+        VirtualPath::user("annotations.bib").expect("valid virtual path"),
+        DATA.to_vec(),
+    )
+    .expect("unique registered file");
     let o = BibCommand::parse(["--noconf", "--nolog", "annotations.bcf"])
-        .unwrap()
+        .expect("valid command line")
         .execute(&f.snapshot());
     o.result()
         .and_then(|r| r.files().next())

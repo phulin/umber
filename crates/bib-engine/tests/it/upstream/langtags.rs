@@ -32,11 +32,14 @@ macro_rules! parses_as {
 
 parses_as!(assertion_001_bcp47_1, "de", tag("de", None, None, &[]));
 
-parses_as!(assertion_002_bcp47_2, "i-enochian", {
-    let mut expected = LanguageTag::default();
-    expected.grandfathered = Some("i-enochian".into());
-    expected
-});
+parses_as!(
+    assertion_002_bcp47_2,
+    "i-enochian",
+    LanguageTag {
+        grandfathered: Some("i-enochian".into()),
+        ..LanguageTag::default()
+    }
+);
 
 parses_as!(
     assertion_003_bcp47_3,

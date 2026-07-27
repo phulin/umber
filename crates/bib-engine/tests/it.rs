@@ -1,3 +1,5 @@
+#[path = "it/fixtures.rs"]
+mod fixtures;
 #[path = "it/foundation.rs"]
 mod foundation;
 #[path = "it/performance.rs"]

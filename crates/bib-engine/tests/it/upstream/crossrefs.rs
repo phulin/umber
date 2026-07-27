@@ -895,12 +895,11 @@ fn assertion_006_crossref_test_6() {
 #[test]
 fn assertion_007_crossref_test_7() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "crn")),
-        false
+            .is_some_and(|result| has_citekey(result, 0, "crn"))
     );
 }
 
@@ -1034,12 +1033,11 @@ fn assertion_016_xref_test_6() {
 #[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_017_xref_test_7() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
+    assert!(
         result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "xrn")),
-        true
+            .is_some_and(|result| has_citekey(result, 0, "xrn"))
     );
 }
 
@@ -1074,12 +1072,11 @@ fn assertion_019_missing_crossef_test() {
 #[test]
 fn assertion_020_mincrossrefs_reset_between_sections() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 1, "crn")),
-        false
+            .is_some_and(|result| has_citekey(result, 1, "crn"))
     );
 }
 
@@ -1126,12 +1123,11 @@ fn assertion_023_cyclic_crossref_error_check() {
 #[test]
 fn assertion_024_recursive_crossref_test_1() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
+    assert!(
         result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "r1")),
-        true
+            .is_some_and(|result| has_citekey(result, 0, "r1"))
     );
 }
 
@@ -1150,12 +1146,11 @@ fn assertion_025_recursive_crossref_test_2() {
 #[test]
 fn assertion_026_recursive_crossref_test_3() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "r2")),
-        false
+            .is_some_and(|result| has_citekey(result, 0, "r2"))
     );
 }
 
@@ -1175,12 +1170,11 @@ fn assertion_027_recursive_crossref_test_4() {
 #[test]
 fn assertion_028_recursive_crossref_test_5() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "r3")),
-        false
+            .is_some_and(|result| has_citekey(result, 0, "r3"))
     );
 }
 
@@ -1200,12 +1194,11 @@ fn assertion_029_recursive_crossref_test_6() {
 #[test]
 fn assertion_030_recursive_crossref_test_7() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "r4")),
-        false
+            .is_some_and(|result| has_citekey(result, 0, "r4"))
     );
 }
 
@@ -1295,11 +1288,10 @@ fn assertion_036_suppressing_singletitle_tracking_2() {
 #[test]
 fn assertion_037_mincrossref_via_alias() {
     let result = try_run_fixture("crossrefs");
-    assert_eq!(
-        result
+    assert!(
+        !result
             .as_ref()
             .ok()
-            .is_some_and(|result| has_citekey(result, 0, "al2")),
-        false
+            .is_some_and(|result| has_citekey(result, 0, "al2"))
     );
 }

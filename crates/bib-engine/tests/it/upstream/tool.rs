@@ -141,23 +141,26 @@ fn run() -> (Vec<u8>, Vec<String>) {
         "--output-file=actual.bib",
         "tool.bib",
     ])
-    .unwrap();
-    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
-    files
-        .register_user(VirtualPath::user("tool.bib").unwrap(), DATA.to_vec())
-        .unwrap();
+    .expect("valid command line");
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
-            VirtualPath::user("tool-testsort.conf").unwrap(),
+            VirtualPath::user("tool.bib").expect("valid virtual path"),
+            DATA.to_vec(),
+        )
+        .expect("unique registered file");
+    files
+        .register_user(
+            VirtualPath::user("tool-testsort.conf").expect("valid virtual path"),
             CONFIG.to_vec(),
         )
-        .unwrap();
+        .expect("unique registered file");
     files
         .register_user(
-            VirtualPath::user(".umber/tool.bcf").unwrap(),
-            command.tool_control().unwrap(),
+            VirtualPath::user(".umber/tool.bcf").expect("valid virtual path"),
+            command.tool_control().expect("tool mode control"),
         )
-        .unwrap();
+        .expect("unique registered file");
     let output = command.execute(&files.snapshot());
     let order = output
         .result()
@@ -240,7 +243,8 @@ xcontains!(assertion_012_tool_mode_11, M1);
 xcontains!(assertion_013_tool_mode_12, GXD2);
 #[test]
 fn assertion_014_validation_of_tool_testsort_conf() {
-    bib_input::validate_config_bytes(CONFIG, bib_input::XmlLimits::default()).unwrap();
+    bib_input::validate_config_bytes(CONFIG, bib_input::XmlLimits::default())
+        .expect("committed configuration validates");
 }
 #[test]
 fn assertion_015_bad_name_1() {

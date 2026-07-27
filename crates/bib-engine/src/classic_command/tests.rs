@@ -169,7 +169,9 @@ fn fixture_files(stem: &str) -> FileProvisioner {
     files
         .register_user(
             VirtualPath::user(&format!("{stem}.aux")).expect("AUX path"),
-            format!("\\citation{{one}}\n\\bibdata{{refs}}\n\\bibstyle{{plain}}\n").into_bytes(),
+            "\\citation{one}\n\\bibdata{refs}\n\\bibstyle{plain}\n"
+                .as_bytes()
+                .to_vec(),
         )
         .expect("AUX");
     files

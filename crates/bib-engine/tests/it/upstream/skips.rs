@@ -232,8 +232,11 @@ const EXPECTED_SK4: &str = r#"    \entry{skip4}{article}{skipbib=true,skipbiblis
 #[ignore = "xfail: per-entry Biber skip options are not represented by bib-engine"]
 fn assertion_001_passing_skipbib_through() {
     let result = run_fixture("skips");
-    let value = entry(&result, 0, "skip1")
-        .and_then(|entry| entry.fields().get(&FieldId::new("options").unwrap()));
+    let value = entry(&result, 0, "skip1").and_then(|entry| {
+        entry
+            .fields()
+            .get(&FieldId::new("options").expect("valid field name"))
+    });
     assert!(
         matches!(value, Some(FieldValue::LiteralList(values)) if values.iter().map(|value| value.as_str()).eq(["skipbib"]))
     );
@@ -252,8 +255,11 @@ fn assertion_002_normal_labelalpha() {
 #[test]
 fn assertion_003_normal_labelyear() {
     let result = run_fixture("skips");
-    let value = entry(&result, 0, "skip2")
-        .and_then(|entry| entry.fields().get(&FieldId::new("year").unwrap()));
+    let value = entry(&result, 0, "skip2").and_then(|entry| {
+        entry
+            .fields()
+            .get(&FieldId::new("year").expect("valid field name"))
+    });
     assert!(matches!(value, Some(FieldValue::Integer(1995))));
 }
 

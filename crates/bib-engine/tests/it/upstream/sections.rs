@@ -219,11 +219,7 @@ fn assertion_013_checking_output_sections_3() {
 #[ignore = "xfail: Biber safe-character preamble output is not implemented by bib-engine"]
 fn assertion_014_preamble_output_check_with_output_safechars() {
     let result = try_run_fixture("sections");
-    let output = result
-        .as_ref()
-        .ok()
-        .map(|result| output_text(result))
-        .unwrap_or_default();
+    let output = result.as_ref().ok().map(output_text).unwrap_or_default();
     let head = output.split("\refsection").next().unwrap_or(output);
     assert_eq!(head, EXPECTED_HEAD);
 }

@@ -820,7 +820,10 @@ fn field_string(entry: &Entry, field: &str) -> Option<String> {
     if field == "entrytype" {
         return Some(entry.entry_type().as_str().to_owned());
     }
-    match entry.fields().get(&FieldId::new(field).unwrap())? {
+    match entry
+        .fields()
+        .get(&FieldId::new(field).expect("valid field name"))?
+    {
         FieldValue::Literal(value) => Some(value.as_str().to_owned()),
         FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
         FieldValue::Integer(value) => Some(value.to_string()),
@@ -830,7 +833,10 @@ fn field_string(entry: &Entry, field: &str) -> Option<String> {
     }
 }
 fn list_values<'a>(entry: &'a Entry, field: &str) -> Vec<&'a str> {
-    match entry.fields().get(&FieldId::new(field).unwrap()) {
+    match entry
+        .fields()
+        .get(&FieldId::new(field).expect("valid field name"))
+    {
         Some(FieldValue::LiteralList(values)) => {
             values.iter().map(|value| value.as_str()).collect()
         }
@@ -881,7 +887,10 @@ fn ranges(entry: &Entry) -> Vec<(String, Option<String>)> {
             RangeEndpoint::Open => None,
         }
     }
-    match entry.fields().get(&FieldId::new("pages").unwrap()) {
+    match entry
+        .fields()
+        .get(&FieldId::new("pages").expect("valid field name"))
+    {
         Some(FieldValue::RangeList(values)) => values
             .iter()
             .map(|value| {
