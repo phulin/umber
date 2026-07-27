@@ -2228,6 +2228,30 @@ Shared helpers implement spaces, optional signs, keywords, filler, register
 indexes, relations, and internal values. Helpers never open input sources,
 dispatch arbitrary expandable commands, or mutate input levels directly.
 
+### 23.1 `scan_keyword` restores two levels, not one
+
+TeX82 §407's failed keyword match is not a single undo. It runs §325's
+`back_input` on the offending token and then §323's `back_list` on the prefix
+that had already matched, so the prefix is pushed _above_ the offender and is
+reread first. The two are different operations: `back_input` undoes one
+delivery -- stack conservation, that delivery's literal-brace `align_state`
+correction, and a recovery record naming the token -- while `back_list` is a
+plain `begin_token_list(p,backed_up)` of a list the scanner assembled, with
+none of those. Both pushes are observable and only the first carries a
+recovery record, so collapsing them into one backed-up level (or pushing the
+combined list without observing it) loses transitions the pinned oracle
+records for every partially matched keyword, such as `scan_keyword("em")`
+rejecting the `x` of `\lower.5ex`.
+
+Two further §407 rules are properties of the same loop rather than special
+cases. A spacer read while nothing has matched yet satisfies neither branch:
+it is consumed, discarded permanently, and the keyword index does not advance,
+so leading spaces are skipped and never restored, while a spacer after a
+partial match is an ordinary mismatch. And `cur_cs=0` restricts a match to a
+character token, so a control sequence `\let` to a keyword letter -- same
+`cur_cmd`, same `cur_chr` -- still cannot spell one. The comparison itself is
+on `cur_chr` alone, so a keyword letter matches under any category code.
+
 Integer, dimension, glue, muglue, and expression arithmetic use shared exact
 types from `tex-arith` and `tex-state`. The integer scanner owns decimal,
 octal (`'`), and hexadecimal (`"`) digit delivery: radix introducers and every
