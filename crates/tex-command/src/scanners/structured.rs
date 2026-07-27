@@ -1880,19 +1880,7 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),
         );
-        #[cfg(any(test, feature = "instrumentation"))]
-        {
-            // §53 names this artificial replay as a write input lifetime.
-            // Keep that observer classification at the scanner/control seam;
-            // the raw delivery loop must not inspect the level's trace.
-            self.observe_immediate_write_retirement(write_level);
-            self.observe(crate::CommandObservation::Input(crate::InputRecord {
-                transition: crate::InputTransition::Push,
-                reason: crate::InputReason::Write,
-                level: write_level.0,
-                position: 0,
-            }));
-        }
+        self.observe_write_list_push(write_level);
         self.push_write_recovery(vec![left_brace], left_brace);
 
         let expanded = self.scan_balanced_text(true)?.tokens;
@@ -1928,21 +1916,7 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(any(test, feature = "instrumentation"))]
-        {
-            self.observe(crate::CommandObservation::Input(crate::InputRecord {
-                transition: crate::InputTransition::Recovery,
-                reason: crate::InputReason::Recovery,
-                level: level.0,
-                position: 0,
-            }));
-            self.observe(crate::CommandObservation::Recovery(crate::RecoveryRecord {
-                kind: crate::RecoveryKind::InsertedToken,
-                tokens: vec![
-                    self.observed_token(TracedTokenWord::pack(observed, OriginId::UNKNOWN)),
-                ],
-            }));
-        }
+        self.observe_inserted_token_recovery(level, observed);
     }
 
     /// Scans the register number and optional equals sign of `\setbox`.
@@ -2394,22 +2368,7 @@ impl CommandProcessor<'_> {
         // TeX82 §37 assigns the `align_peek` sentinel before its first
         // expanded lookahead.  Keep that transition command-owned and emit
         // it before an exhausted backup is retired by `get_x_token`.
-        #[cfg(any(test, feature = "instrumentation"))]
-        if changed || after_noalign {
-            self.observe(crate::CommandObservation::Alignment(
-                crate::AlignmentRecord {
-                    transition: "state_change",
-                    alignment: self
-                        .command
-                        .alignment
-                        .active_alignment
-                        .map(|alignment| alignment.raw()),
-                    align_state: self.command.alignment.align_state,
-                    delimiter: None,
-                    previous_align_state: None,
-                },
-            ));
-        }
+        self.observe_alignment_peek_sentinel(changed || after_noalign);
         Ok(())
     }
 

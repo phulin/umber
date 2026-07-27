@@ -3,6 +3,7 @@
 mod alignment;
 pub(crate) mod expand;
 mod next;
+mod observe;
 pub(crate) mod status;
 
 use tex_state::CommandContext;

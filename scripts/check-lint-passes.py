@@ -76,15 +76,7 @@ PASSES = (
             "tex-state": ["default"],
             "umber": ["default"],
         },
-        "quarantine": {
-            # umber2-johp.200: nine bindings in `tex-command` are read only from
-            # `cfg(any(test, feature = "instrumentation"))` observation blocks,
-            # so they are unused in exactly this resolution.  The count is also
-            # this pass's witness that it really resolves `instrumentation` off:
-            # if the resolution flipped, these would stop firing and the gate
-            # would fail.
-            ("tex-command", "unused_variables"): (9, "umber2-johp.200"),
-        },
+        "quarantine": {},
     },
 )
 
