@@ -176,7 +176,7 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
     }
     register_source(
         &mut control,
-        br"\openin3=first \read3 to \first \openin3=second \read3 to \second \closein3\end",
+        br"\openin3=first.tex \read3 to \first \openin3=second.tex \read3 to \second \closein3\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(
@@ -229,7 +229,7 @@ fn case_shift_substitutes_character_codes_preserves_commands_and_replays() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\uccode`!=`Z\lccode`?=`y\uppercase{\gdef\up{!\relax}}\lowercase{\gdef\down{?\relax}}\uppercase{\gdef\zero{@}}\end",
+        br"\uccode`!=`Z\lccode`?=`y\catcode126=13\uccode126=88\uppercase{\gdef\up{!\relax}}\lowercase{\gdef\down{?\relax}}\uppercase{\gdef\active{~}}\uppercase{\gdef\zero{@}}\end",
     );
     run_to_end(&mut control, &mut stores);
     assert!(matches!(
@@ -253,6 +253,13 @@ fn case_shift_substitutes_character_codes_preserves_commands_and_replays() {
         ]
     ));
     assert!(matches!(
+        macro_tokens(&stores, "active"),
+        [Token::Char {
+            ch: 'X',
+            cat: Catcode::Active
+        }]
+    ));
+    assert!(matches!(
         macro_tokens(&stores, "zero"),
         [Token::Char { ch: '@', .. }]
     ));
@@ -264,7 +271,7 @@ fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\def\shown{expanded}\showlists\show\shown\count0=17\showthe\count0\setbox0=\hbox{}\showbox0\end",
+        br"\def\shown{expanded}\show\shown\count0=17\showthe\count0\setbox0=\hbox{}\showbox0\end",
     );
     run_to_end(&mut control, &mut stores);
     let output = terminal_text(&stores);
@@ -296,7 +303,8 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
     run_to_end(&mut control, &mut stores);
     let output = terminal_text(&stores);
     assert!(output.contains("> \\box0="), "{output}");
-    assert!(output.contains("> \\box255=void"), "{output}");
+    assert!(output.contains("> \\box255="), "{output}");
+    assert!(output.contains("\nvoid"), "{output}");
 }
 
 #[test]

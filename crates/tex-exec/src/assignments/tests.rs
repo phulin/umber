@@ -709,9 +709,12 @@ fn parshape_assignment_scans_pair_count_and_restores_local_shape() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\parshape=2 1pt 10pt 2pt 20pt{\parshape=0}\globaldefs=1{\parshape=1 3pt 30pt}\globaldefs=-1{\global\parshape=1 4pt 40pt}\end",
+        br"\parshape=2 1pt 10pt 2pt 20pt\xdef\multiple{\the\parshape}{\parshape=0\xdef\zeroShape{\the\parshape}}{\parshape=-1\xdef\negativeShape{\the\parshape}}\globaldefs=1{\parshape=1 3pt 30pt}\globaldefs=-1{\global\parshape=1 4pt 40pt}\end",
     );
     run_to_end(&mut control, &mut stores);
+    assert_eq!(macro_text(&stores, "multiple"), "2");
+    assert_eq!(macro_text(&stores, "zeroShape"), "0");
+    assert_eq!(macro_text(&stores, "negativeShape"), "0");
     assert_eq!(stores.paragraph_shape_len(), 1);
     assert_eq!(
         stores.paragraph_shape_dimension(1, false),
