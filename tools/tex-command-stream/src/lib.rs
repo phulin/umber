@@ -40,6 +40,11 @@ pub use compare::{
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
+/// Characters of already-agreeing context shown before the first differing
+/// character, and of divergent text shown after it, by
+/// [`hidden_difference_excerpt`].
+const DIFFERENCE_LEAD_CHARS: usize = 120;
+const DIFFERENCE_TRAIL_CHARS: usize = 360;
 const MAX_DELIVERIES_OVERHEAD: usize = 64;
 const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
 const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
@@ -1427,6 +1432,53 @@ fn bounded_debug(value: &impl fmt::Debug) -> String {
             .collect::<String>();
         format!("{prefix}…")
     }
+}
+
+/// Renders the point where two same-kind events first differ, for the case
+/// [`bounded_debug`] cannot show: a long payload -- a token list, a macro
+/// body, a mutation value -- whose divergence sits past the truncation point,
+/// so both printed sides are byte-identical and say nothing.
+///
+/// Deliberately text-level rather than schema-aware: it works for every event
+/// kind and every payload field without enumerating them, and a new schema
+/// variant needs no change here. Returns `None` when the renderings are equal
+/// (the divergence is not in the payload text at all) or when they already
+/// differ inside the part `bounded_debug` prints.
+fn hidden_difference_excerpt(expected: &dyn fmt::Debug, actual: &dyn fmt::Debug) -> Option<String> {
+    let expected = format!("{expected:?}");
+    let actual = format!("{actual:?}");
+    let common = expected
+        .chars()
+        .zip(actual.chars())
+        .take_while(|(expected, actual)| expected == actual)
+        .count();
+    if common == expected.chars().count() && common == actual.chars().count() {
+        return None;
+    }
+    if common < MAX_DIAGNOSTIC_CHARS {
+        return None;
+    }
+    let start = common.saturating_sub(DIFFERENCE_LEAD_CHARS);
+    let excerpt = |rendered: &str| {
+        let text: String = rendered
+            .chars()
+            .skip(start)
+            .take(DIFFERENCE_LEAD_CHARS + DIFFERENCE_TRAIL_CHARS)
+            .collect();
+        let tail = if rendered.chars().count() > start + text.chars().count() {
+            "…"
+        } else {
+            ""
+        };
+        format!("…{text}{tail}")
+    };
+    Some(format!(
+        "\n  first difference at character {common}, past the truncation above:\
+         \n    expected: {}\
+         \n    actual:   {}",
+        excerpt(&expected),
+        excerpt(&actual)
+    ))
 }
 
 #[cfg(test)]
