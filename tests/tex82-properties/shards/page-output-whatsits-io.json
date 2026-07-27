@@ -585,16 +585,7 @@
       "stimulus": [
         "Exercise buffer boundaries, signed values, removable/nonremovable pop, and first/reused fonts in the structured Phase 2 units below and byte fixture `shipout-dvi-byte-stream.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "dvi_buffer_half_boundaries_preserve_exact_byte_order"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "The preamble appears once; buffering does not alter bytes; four-byte values and font definitions match §§592–603."
       ],
@@ -608,7 +599,7 @@
         "A huge page is rejected by §641 before §617 opens or writes the DVI stream; an empty final buffer flush writes no extra byte."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -617,10 +608,18 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_buffer_half_boundaries_preserve_exact_byte_order"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.shipout.dvi-movements",
@@ -651,10 +650,6 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "dvi_movement_signed_width_boundaries_choose_shortest_opcode"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82"
         }
       ],
       "expected_observations": [
@@ -683,6 +678,10 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "page_offsets_initialize_tex82_shipout_coordinates"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82"
         }
       ],
       "status": "gap",
@@ -710,16 +709,7 @@
       "stimulus": [
         "Traverse mixed characters, ligatures, shifted empty/nonempty boxes, rules, kern/math nodes, adjusted glue, and all leader kinds in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "hlist_out_node_positioning_and_coordinate_restoration_match_tex82"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Bytes and positions match §§618–628; child recursion restores the caller baseline and DVI positions."
       ],
@@ -733,7 +723,7 @@
         "Nonpositive rules emit no rule but still advance width; nonpositive leader boxes or extents emit no copies."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -742,10 +732,18 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "hlist_box_leaders_repeat_payloads_for_all_subtypes"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "hlist_out_node_positioning_and_coordinate_restoration_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.shipout.vlist-traversal",
@@ -767,16 +765,7 @@
       "stimulus": [
         "Traverse shifted empty/nonempty boxes, rules, kerns, adjusted glue, all leader kinds, and nested hlists/vlists in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "vlist_out_node_positioning_and_coordinate_restoration_match_tex82"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Bytes and positions match §§629–637 and nested output returns to the caller left edge."
       ],
@@ -790,7 +779,7 @@
         "Nonpositive rules emit no rule but still advance vertically; nonpositive leader boxes or extents emit no copies."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -799,10 +788,18 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "vlist_box_leaders_repeat_payloads_downward"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "vlist_out_node_positioning_and_coordinate_restoration_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.shipout.page-output",
@@ -822,10 +819,6 @@
       "planned_coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "ship_out_frames_counts_offsets_page_accounting_and_box_retirement"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "ship_out_rejects_each_huge_page_dimension_boundary"
         }
       ],
@@ -842,7 +835,7 @@
         "Each huge-page predicate takes the §641 deletion path and, when tracing_output is nonpositive, displays the deleted box."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -851,6 +844,10 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "chains_bop_pointers_across_pages"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "ship_out_frames_counts_offsets_page_accounting_and_box_retirement"
         }
       ],
       "status": "gap",
@@ -869,16 +866,7 @@
       "stimulus": [
         "Finalize zero-page, one-page, multipage, used/unused-font, and unfinished-nesting states in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "dvi_finalization_writes_postamble_fonts_stack_pages_and_padding"
-        },
-        {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Every postamble field and padding byte follows §§642–643; zero pages never opened the DVI file."
       ],
@@ -897,10 +885,18 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "streaming_writer_flushes_preamble_each_page_and_postamble"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_finalization_writes_postamble_fonts_stack_pages_and_padding"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.page.state-and-freeze",
@@ -1343,10 +1339,6 @@
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "output_stream_table_initializes_numbered_and_fallback_selectors_closed"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "output_stream_final_cleanup_closes_only_live_numbered_files"
         }
       ],
@@ -1363,8 +1355,13 @@
         "Out-of-range fallback selectors are never passed to file close; repeated closed entries remain untouched."
       ],
       "semantic_owner": "tex-exec::effects",
-      "test_level": "planned-rust-unit",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "output_stream_table_initializes_numbered_and_fallback_selectors_closed"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1433,20 +1430,7 @@
       "stimulus": [
         "Construct, display, copy, free, and pack every subtype with stream boundaries and scan-time macro changes in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "base_whatsit_scanners_construct_each_canonical_subtype"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Fields, scan timing, rendered form, allocation size, token ownership, and zero width follow §§1349–1361."
       ],
@@ -1460,8 +1444,21 @@
         "Out-of-range write streams clamp to 16/17; malformed text scanning completes its scanner recovery before a complete node is exposed."
       ],
       "semantic_owner": "tex-exec::whatsits",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "base_whatsit_scanners_construct_each_canonical_subtype"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1482,16 +1479,7 @@
       "stimulus": [
         "Visit every subtype through line breaking, pre-hyphenation, page building, vert_break, hlist_out, and vlist_out in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "whatsit_consumers_each_apply_only_their_primary_visit_action"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "contentless_whatsits_preserve_page_and_vertical_break_boundaries"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Each consumer performs only its §§1362–1367 action; no passive visit scans, expands, opens, writes, closes, or emits a special itself."
       ],
@@ -1505,8 +1493,17 @@
         "A contentless whatsit on an otherwise empty page does not freeze page specs or become a legal breakpoint."
       ],
       "semantic_owner": "tex-exec::whatsits",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "whatsit_consumers_each_apply_only_their_primary_visit_action"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "contentless_whatsits_preserve_page_and_vertical_break_boundaries"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1522,16 +1519,7 @@
       "stimulus": [
         "Emit lengths 0, 255, 256, and multibyte TeX character payloads at shifted positions in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "special_out_synchronizes_position_and_preserves_stored_payload_bytes"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "special_out_xxx1_xxx4_length_boundary_matches_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Opcode, length field, payload, and anchor position match §1368."
       ],
@@ -1545,15 +1533,23 @@
         "A scan-time truncated diagnostic representation is not used; special_out requires the complete stored list produced by §1354."
       ],
       "semantic_owner": "tex-exec::effects",
-      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "special_out_synchronizes_position_and_preserves_stored_payload_bytes"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "special_out_xxx1_xxx4_length_boundary_matches_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.deferred-write-expansion",
@@ -1573,14 +1569,6 @@
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_expands_at_shipout_time_and_retires_stopper_input"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_stream_selector_and_newline_boundaries_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
         }
       ],
@@ -1597,8 +1585,17 @@
         "An unbalanced write reports the canonical error and consumes through endwrite without absorbing following source input."
       ],
       "semantic_owner": "tex-exec::effects",
-      "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_expands_at_shipout_time_and_retires_stopper_input"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_stream_selector_and_newline_boundaries_match_tex82"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1616,20 +1613,7 @@
       "stimulus": [
         "Exercise open/reopen/write/close, extension default, unavailable-open retry, leaders, recognized immediate operations, and unrecognized immediate lookahead in the structured Phase 2 units below and fixture `open-write-close-effects.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_open_write_close_updates_numbered_stream_state_canonically"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "immediate_recognized_default_extension_and_unrecognized_backup_paths_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_leader_suppression_and_open_retry_recovery_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "File state, line output, leader suppression, temporary-node retirement, and lookahead backup match §§1373–1375."
       ],
@@ -1643,8 +1627,21 @@
         "Leader traversal performs no open/write/close; failed open prompts for another name; unrecognized immediate input is backed up unchanged."
       ],
       "semantic_owner": "tex-exec::effects",
-      "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "out_what_open_write_close_updates_numbered_stream_state_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "immediate_recognized_default_extension_and_unrecognized_backup_paths_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "out_what_leader_suppression_and_open_retry_recovery_match_tex82"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1662,10 +1659,6 @@
         "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in the structured Phase 2 units below."
       ],
       "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "fix_language_and_setlanguage_append_with_captured_hyphen_minima"
-        },
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
@@ -1688,8 +1681,13 @@
         "Outside horizontal mode setlanguage reports illegal case without scanning or appending."
       ],
       "semantic_owner": "tex-exec::whatsits",
-      "test_level": "planned-rust-unit",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "fix_language_and_setlanguage_append_with_captured_hyphen_minima"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     }

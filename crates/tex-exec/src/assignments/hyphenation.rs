@@ -176,6 +176,17 @@ pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec
     hyphenated
 }
 
+#[cfg(test)]
+pub(crate) fn test_language_context(nodes: &[Node]) -> (u8, usize, usize) {
+    let mut language = 0;
+    let mut left = 1;
+    let mut right = 1;
+    for node in nodes {
+        update_hyphenation_context(node, &mut language, &mut left, &mut right);
+    }
+    (language, left, right)
+}
+
 fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, right: &mut usize) {
     if let Node::Whatsit(tex_state::node::Whatsit::Language {
         language: new_language,

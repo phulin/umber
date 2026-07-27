@@ -49,6 +49,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/diagnostics.rs`: diagnostic primitives such as `\show`, `\showthe`, `\showbox`, and message writing.
 - `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
 - `src/error.rs`: execution error enum, conversions, and display text.
+- `src/effects/tests.rs`: canonical-replay tests for stream lifecycle, immediate and deferred effects, and shipout-time special/write/open/close behavior.
 - `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
@@ -79,6 +80,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `tests/ui/engine_checkpoint_forgery_forbidden.rs`: compile-fail fixture proving callers cannot forge named engine checkpoints.
 - `tests/ui/execution_transaction_private.rs`: compile-fail fixture proving live-stack transactions cannot escape as public capabilities.
 - `src/vertical.rs`: vertical-list appends, baseline skip insertion, prevdepth, and list contribution helpers.
+- `src/whatsits/tests.rs`: canonical-replay and white-box tests for whatsit construction, ownership, passive list visitation, and language-state boundaries.
 
 ## Validation
 

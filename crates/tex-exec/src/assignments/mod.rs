@@ -44,6 +44,12 @@ mod pdf_fonts;
 mod primitives;
 mod scanning;
 mod shipout;
+#[cfg(test)]
+pub(crate) use hmode::test_fix_hyphen_language;
+#[cfg(test)]
+pub(crate) use hyphenation::test_language_context;
+#[cfg(test)]
+pub(crate) use shipout::test_stage_shipout_artifact;
 mod tokens;
 mod variables;
 

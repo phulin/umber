@@ -1,5 +1,5 @@
 use super::opcodes::{
-    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUSH,
+    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POP, POST, POST_POST, PRE, PUSH,
     PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1, XXX4,
 };
 use super::{DviError, DviPagePlan, DviPagePlanBuilder, DviStreamWriter, write_dvi};
@@ -651,6 +651,216 @@ fn specials_emit_xxx1_and_xxx4_at_anchor_positions() {
     assert_eq!(&body[short..short + 5], &[XXX1, 3, b'a', b'b', b'c']);
     assert_eq!(be_i32(body, long + 1), 256);
     assert_eq!(&body[long + 5..long + 9], b"xxxx");
+}
+
+#[test]
+fn dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82() {
+    let mut page = glyph_page(-7);
+    page.testing_mut().root = hlist(
+        300,
+        100,
+        30,
+        vec![PageNode::HList(box_node(
+            50,
+            20,
+            0,
+            vec![char_node(3, b'A' as u32, 50)],
+        ))],
+    );
+    let dvi = write_dvi(&[page]).expect("signed framing page writes");
+    let body = page_body(&dvi, 16);
+    assert_eq!(be_i32(&dvi, 17), -7);
+    assert!(body.contains(&PUSH));
+    assert!(body.contains(&POP));
+    assert!(find_font_def(body, b"cmr10", 0).is_some());
+}
+
+#[test]
+fn dvi_buffer_half_boundaries_preserve_exact_byte_order() {
+    let pages = (0..9).map(glyph_page).collect::<Vec<_>>();
+    let expected = write_dvi(&pages).expect("owned DVI writes");
+    let mut writer = DviStreamWriter::new(ChunkSink::default());
+    for page in &pages {
+        writer.write_page(page).expect("streamed page writes");
+    }
+    let sink = writer.finish().expect("streamed DVI finishes");
+    assert_eq!(sink.chunks.len(), pages.len() + 2);
+    assert_eq!(sink.chunks.concat(), expected);
+}
+
+#[test]
+fn dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82() {
+    let mut stack = super::movement::MovementStack::default();
+    let mut bytes = Vec::new();
+    stack.movement(&mut bytes, sp(10), RIGHT1);
+    stack.movement(&mut bytes, sp(10), RIGHT1);
+    assert_eq!(bytes, [W1, 10, W0]);
+    stack.prune_movements(2);
+    stack.movement(&mut bytes, sp(10), RIGHT1);
+    assert_eq!(bytes.last(), Some(&W0));
+
+    let mut writer = super::DviWriter::new(Vec::new());
+    writer
+        .right_stack
+        .movement(&mut writer.bytes, sp(11), RIGHT1);
+    writer.reset_page_state();
+    writer
+        .right_stack
+        .movement(&mut writer.bytes, sp(11), RIGHT1);
+    assert_eq!(&writer.bytes[2..], &[RIGHT1, 11]);
+}
+
+#[test]
+fn hlist_out_node_positioning_and_coordinate_restoration_match_tex82() {
+    let mut page = empty_page(0);
+    let mut shifted = box_node(4, 3, 0, vec![rule_node(4, 3, 0)]);
+    shifted.shift = sp(5);
+    page.testing_mut().root = hlist(
+        17,
+        10,
+        0,
+        vec![rule_node(3, 2, 0), kern_node(10), PageNode::HList(shifted)],
+    );
+    let dvi = write_dvi(&[page]).expect("hlist traversal writes");
+    let body = page_body(&dvi, 16);
+    assert!(body.contains(&PUSH));
+    assert!(body.contains(&POP));
+    assert!(body.windows(2).any(|window| window == [RIGHT1, 10]));
+    assert!(body.windows(2).any(|window| window == [DOWN1, 5]));
+}
+
+#[test]
+fn hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82() {
+    let mut page = empty_page(0);
+    let leader = LeaderPayload::HList(box_node(10, 2, 0, vec![rule_node(10, 2, 0)]));
+    page.testing_mut().root = hlist(
+        30,
+        2,
+        0,
+        vec![
+            rule_node(-5, 2, 0),
+            leader_glue(GlueKind::Leaders, 30, leader),
+            rule_node(0, 2, 0),
+        ],
+    );
+    let dvi = write_dvi(&[page]).expect("hlist leader page writes");
+    let body = page_body(&dvi, 16);
+    assert_eq!(count_op(body, SET_RULE), 3);
+}
+
+#[test]
+fn vlist_out_node_positioning_and_coordinate_restoration_match_tex82() {
+    let mut page = empty_page(0);
+    let mut shifted = box_node(4, 3, 0, vec![rule_node(4, 3, 0)]);
+    shifted.shift = sp(6);
+    page.testing_mut().root = vlist(
+        20,
+        20,
+        0,
+        vec![PageNode::HList(shifted), kern_node(7), rule_node(20, 3, 0)],
+    );
+    let dvi = write_dvi(&[page]).expect("vlist traversal writes");
+    let body = page_body(&dvi, 16);
+    assert!(body.contains(&PUSH));
+    assert!(body.contains(&POP));
+    assert!(body.windows(2).any(|window| window == [RIGHT1, 6]));
+    assert!(body.contains(&DOWN1));
+}
+
+#[test]
+fn vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82() {
+    let mut page = empty_page(0);
+    let leader = LeaderPayload::HList(box_node(3, 10, 0, vec![rule_node(3, 10, 0)]));
+    page.testing_mut().root = vlist(
+        3,
+        30,
+        0,
+        vec![
+            rule_node(3, -4, 0),
+            leader_glue(GlueKind::Xleaders, 30, leader),
+            rule_node(3, 0, 0),
+        ],
+    );
+    let dvi = write_dvi(&[page]).expect("vlist leader page writes");
+    let body = page_body(&dvi, 16);
+    assert_eq!(count_op(body, SET_RULE), 4);
+}
+
+#[test]
+fn ship_out_frames_counts_offsets_page_accounting_and_box_retirement() {
+    let mut first = empty_page(11);
+    first.testing_mut().counts = [11, -2, 3, 4, 5, 6, 7, 8, 9, 10];
+    first.testing_mut().job.h_offset = sp(7);
+    first.testing_mut().job.v_offset = sp(9);
+    first.testing_mut().root = hlist(20, 10, 2, vec![rule_node(20, 10, 2)]);
+    let second = empty_page(12);
+    let dvi = write_dvi(&[first, second]).expect("framed pages write");
+    let first_bop = 16;
+    let second_bop = page_eop(&dvi, first_bop) + 1;
+    assert_eq!(be_i32(&dvi, first_bop + 1), 11);
+    assert_eq!(be_i32(&dvi, first_bop + 5), -2);
+    assert_eq!(be_i32(&dvi, second_bop + 41), first_bop as i32);
+    let post = page_eop(&dvi, second_bop) + 1;
+    assert_eq!(be_u16(&dvi, post + 27), 2);
+    assert_eq!(be_i32(&dvi, post + 17), 21);
+    assert_eq!(be_i32(&dvi, post + 21), 27);
+}
+
+#[test]
+fn dvi_finalization_writes_postamble_fonts_stack_pages_and_padding() {
+    let mut first = glyph_page(1);
+    first.testing_mut().root = hlist(
+        50,
+        20,
+        0,
+        vec![PageNode::HList(box_node(
+            50,
+            20,
+            0,
+            vec![char_node(3, b'A' as u32, 50)],
+        ))],
+    );
+    let second = glyph_page(2);
+    let dvi = write_dvi(&[first, second]).expect("final DVI writes");
+    let post = dvi
+        .iter()
+        .rposition(|byte| *byte == POST)
+        .expect("postamble");
+    assert_eq!(be_u16(&dvi, post + 27), 2);
+    assert!(be_u16(&dvi, post + 25) >= 1);
+    assert!(find_font_def(&dvi, b"cmr10", post).is_some());
+    let post_post = dvi
+        .iter()
+        .rposition(|byte| *byte == POST_POST)
+        .expect("post_post");
+    assert_eq!(be_i32(&dvi, post_post + 1), post as i32);
+    assert!(dvi[post_post + 6..].len() >= 4);
+    assert!(dvi[post_post + 6..].iter().all(|byte| *byte == 223));
+    assert_eq!(dvi.len() % 4, 0);
+}
+
+#[test]
+fn dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82() {
+    assert!(matches!(
+        DviStreamWriter::new(Vec::<u8>::new()).finish(),
+        Err(DviError::NoPages)
+    ));
+    let mut page = empty_page(0);
+    page.testing_mut().root = hlist(
+        4,
+        4,
+        0,
+        vec![PageNode::HList(box_node(
+            4,
+            4,
+            0,
+            vec![PageNode::HList(box_node(4, 4, 0, vec![rule_node(4, 4, 0)]))],
+        ))],
+    );
+    let dvi = write_dvi(&[page]).expect("nested page finalizes");
+    let body = page_body(&dvi, 16);
+    assert_eq!(count_op(body, PUSH), count_op(body, POP));
+    assert_eq!(dvi[page_eop(&dvi, 16)], EOP);
 }
 
 fn glyph_page(count0: i32) -> PageArtifact {

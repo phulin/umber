@@ -10920,3 +10920,11 @@ mod tests;
 #[cfg(test)]
 #[path = "canonical_main_control/tests.rs"]
 mod direct_tests;
+
+#[cfg(test)]
+#[path = "effects/tests.rs"]
+mod effects_tests;
+
+#[cfg(test)]
+#[path = "whatsits/tests.rs"]
+mod whatsits_tests;

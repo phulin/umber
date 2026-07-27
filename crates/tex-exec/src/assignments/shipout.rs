@@ -175,6 +175,22 @@ pub(super) fn stage_pdf_form(
     direct::stage_form(form, stores, expansion)
 }
 
+#[cfg(test)]
+pub(crate) fn test_stage_shipout_artifact(
+    node: Node,
+    stores: &mut Universe,
+) -> Result<tex_out::PageArtifact, ExecError> {
+    let mut execution = crate::ExecutionContext::new("texput");
+    let staged = direct::stage_shipout(
+        node,
+        tex_state::InputSummary::default(),
+        stores,
+        &mut execution,
+    )?;
+    tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
+        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
+}
+
 fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
     let current_output = stores.int_param(IntParam::PDF_OUTPUT);
     if let Some(fixed) = stores.fixed_pdf_output_parameters() {

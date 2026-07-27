@@ -612,6 +612,11 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
     report_missing_character(stores, font, ch);
 }
 
+#[cfg(test)]
+pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
+    fix_hyphen_language(nest, stores, mode);
+}
+
 fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     if mode != Mode::Horizontal {
         return;
