@@ -60,10 +60,10 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
-    FontLoadRequest, ImmediateExtension, InputStreamRequest, InternalValue, MathChoiceEpisodes,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathEpisodeRecovery, MathFamilySize,
-    MathFieldEpisode, MathFractionKind, MathGroupEpisode, MathLimitKind, MathScriptAttachment,
-    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
+    FontLoadRequest, HyphenationDataKind, ImmediateExtension, InputStreamRequest, InternalValue,
+    MathChoiceEpisodes, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathEpisodeRecovery,
+    MathFamilySize, MathFieldEpisode, MathFractionKind, MathGroupEpisode, MathLimitKind,
+    MathScriptAttachment, MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
     PdfColorStackActionRequest, PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest,
     PdfGraphicsRequest, PdfImagePageBox, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
     PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput,
@@ -71,11 +71,12 @@ pub use scanners::{
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedBoxShift,
     ScannedBoxShiftPayload, ScannedCharacterDefinition, ScannedDiscretionary,
     ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
-    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
+    ScannedGlueParameterAssignment, ScannedHyphenationData, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter,
+    ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
+    ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
+    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit,
+    StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{
