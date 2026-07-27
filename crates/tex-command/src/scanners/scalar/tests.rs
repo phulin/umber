@@ -57,6 +57,19 @@ fn catcode(ch: char) -> Catcode {
     }
 }
 
+fn scanner_tokens(source: &str) -> Vec<Token> {
+    source
+        .chars()
+        .map(|ch| {
+            if ch == ' ' {
+                space_token()
+            } else {
+                char_token(ch)
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn scalar_forms_recovery_and_snapshot_use_only_command_input() {
     let mut command = CommandState::default();
@@ -2090,4 +2103,1253 @@ fn a_control_sequence_let_to_a_keyword_letter_does_not_match() {
         CommandHostContext::new(&mut capabilities),
     );
     assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
+}
+
+fn scan_internal_with(
+    universe: &mut Universe,
+    tokens: Vec<Token>,
+    configure_host: impl FnOnce(&mut CommandHostCapabilities),
+) -> InternalValue {
+    let mut command = CommandState::default();
+    push(&mut command, tokens);
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    configure_host(&mut capabilities);
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    let target = processor
+        .get_x_token()
+        .expect("internal target delivers")
+        .expect("internal target exists");
+    processor
+        .scan_the_internal_value(&target)
+        .expect("internal target scans")
+        .expect("target is internal")
+}
+
+fn internal_primitive(
+    universe: &mut Universe,
+    name: &str,
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> Token {
+    let symbol = universe.intern(name).symbol();
+    universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    Token::Cs(symbol)
+}
+
+fn scanner_test_box(
+    universe: &mut Universe,
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+) -> tex_state::ids::NodeListId {
+    use tex_state::glue::Order;
+    use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+    use tex_state::scaled::GlueSetRatio;
+
+    let children = universe.freeze_node_list(&[]);
+    let node = BoxNode::new(BoxNodeFields {
+        width,
+        height,
+        depth,
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    });
+    universe.freeze_node_list(&[Node::HList(node)])
+}
+
+#[test]
+fn internal_equality_table_sources_scan_each_code_family_and_character_boundary() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for character in ['\0', 'A', 'ÿ'] {
+        let mut universe = Universe::new();
+        universe.set_catcode(character, Catcode::Letter);
+        universe.set_lccode(character, 17);
+        universe.set_uccode(character, 23);
+        universe.set_sfcode(character, 999);
+        universe.set_mathcode(character, 321);
+        universe.set_delcode(character, 654);
+        for (name, primitive, expected) in [
+            ("catcode", P::CatCode, i32::from(Catcode::Letter as u8)),
+            ("lccode", P::LcCode, 17),
+            ("uccode", P::UcCode, 23),
+            ("sfcode", P::SfCode, 999),
+            ("mathcode", P::MathCode, 321),
+            ("delcode", P::DelCode, 654),
+        ] {
+            let token = internal_primitive(&mut universe, name, primitive);
+            let value = scan_with(
+                &mut universe,
+                vec![
+                    token,
+                    char_token('`'),
+                    Token::Char {
+                        ch: character,
+                        cat: Catcode::Other,
+                    },
+                ],
+                |processor| processor.scan_integer().expect("code table scans").value,
+            );
+            assert_eq!(value, expected, "{name} at U+{:04X}", u32::from(character));
+        }
+    }
+}
+
+#[test]
+fn internal_token_sources_preserve_empty_nonempty_and_identifier_values() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::ids::TokenListId;
+
+    let mut universe = Universe::new();
+    let nonempty = universe.intern_token_list(&[char_token('x'), space_token()]);
+    universe.set_toks(7, nonempty);
+    let toks = universe.intern("saved").symbol();
+    universe.set_meaning(toks, Meaning::ToksRegister(7));
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(toks)], |_| {}),
+        InternalValue::Tokens { tokens: nonempty }
+    );
+
+    let empty = universe.intern("empty").symbol();
+    universe.set_meaning(empty, Meaning::ToksRegister(0));
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(empty)], |_| {}),
+        InternalValue::Tokens {
+            tokens: TokenListId::EMPTY
+        }
+    );
+
+    let identifier = universe.intern("namedfont").symbol();
+    let font = universe
+        .try_copy_font_with_identifier(NULL_FONT, identifier)
+        .expect("font identity copies");
+    universe.set_meaning(identifier, Meaning::Font(font));
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(identifier)], |_| {}),
+        InternalValue::Font(identifier)
+    );
+}
+
+#[test]
+fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let saved = universe.intern("saved").symbol();
+    universe.set_meaning(saved, Meaning::ToksRegister(4));
+    let scanned = scan_with(&mut universe, vec![Token::Cs(saved)], |processor| {
+        processor
+            .scan_integer()
+            .expect("token below tok_val recovers")
+    });
+    assert_eq!(scanned.value, 0);
+    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+
+    let zero = universe.intern_token_list(&[char_token('z')]);
+    universe.set_toks(0, zero);
+    for selector in ["-1", "256"] {
+        let toks = internal_primitive(&mut universe, "toks", P::Toks);
+        let tokens = std::iter::once(toks)
+            .chain(selector.chars().map(char_token))
+            .collect();
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens, |_| {}),
+            InternalValue::Tokens { tokens: zero }
+        );
+    }
+}
+
+#[test]
+fn internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for (primitive, expected, configure) in [
+        (P::SpaceFactor, InternalValue::Integer(1200), 0_u8),
+        (
+            P::PrevDepth,
+            InternalValue::Dimension(Scaled::from_raw(77)),
+            1,
+        ),
+        (P::PrevGraf, InternalValue::Integer(9), 2),
+    ] {
+        let mut universe = Universe::new();
+        let token = internal_primitive(&mut universe, "aux", primitive);
+        let value = scan_internal_with(&mut universe, vec![token], |host| match configure {
+            0 => host.set_space_factor(Some(1200)),
+            1 => host.set_prev_depth(Some(Scaled::from_raw(77))),
+            _ => host.set_prev_graf(Some(9)),
+        });
+        assert_eq!(value, expected);
+    }
+
+    let mut universe = Universe::new();
+    let prev_depth = internal_primitive(&mut universe, "prevdepth", P::PrevDepth);
+    assert_eq!(
+        scan_with(&mut universe, vec![prev_depth], |processor| processor
+            .scan_dimension()
+            .expect("wrong-mode prevdepth recovers")),
+        ScannedScalar {
+            value: Scaled::from_raw(0),
+            recovery: ScalarRecovery::InsertedZero,
+            provenance: ScalarProvenance {
+                primary: OriginId::UNKNOWN
+            },
+        }
+    );
+}
+
+#[test]
+fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+    use tex_state::page::{PageDimension, PageInteger};
+
+    let mut universe = Universe::new();
+    universe.set_page_integer(PageInteger::DeadCycles, 6);
+    universe.set_page_dimension(PageDimension::Goal, Scaled::from_raw(123));
+    let page_int = universe.intern("deadcycles").symbol();
+    universe.set_meaning(page_int, Meaning::PageInteger(PageInteger::DeadCycles));
+    let page_dim = universe.intern("pagegoal").symbol();
+    universe.set_meaning(page_dim, Meaning::PageDimension(PageDimension::Goal));
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(page_int)], |_| {}),
+        InternalValue::Integer(6)
+    );
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(page_dim)], |_| {}),
+        InternalValue::Dimension(Scaled::MAX_DIMEN),
+        "an empty page exposes TeX82's max_dimen page-goal sentinel"
+    );
+    universe.set_page_contents(tex_state::page::PageContents::BoxThere);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(page_dim)], |_| {}),
+        InternalValue::Dimension(Scaled::from_raw(123))
+    );
+
+    let shape = internal_primitive(&mut universe, "parshape", P::ParShape);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![shape], |_| {}),
+        InternalValue::Integer(0)
+    );
+    universe.set_paragraph_shape(
+        &[tex_state::ParagraphShapeLine {
+            indent: Scaled::from_raw(1),
+            width: Scaled::from_raw(2),
+        }],
+        false,
+    );
+    let shape = internal_primitive(&mut universe, "parshape", P::ParShape);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![shape], |_| {}),
+        InternalValue::Integer(1)
+    );
+
+    let box_node = scanner_test_box(
+        &mut universe,
+        Scaled::from_raw(11),
+        Scaled::from_raw(22),
+        Scaled::from_raw(33),
+    );
+    universe.set_box_reg(255, box_node);
+    for (primitive, expected) in [(P::Wd, 11), (P::Ht, 22), (P::Dp, 33)] {
+        let token = internal_primitive(&mut universe, "boxdim", primitive);
+        let mut tokens = vec![token];
+        tokens.extend("255".chars().map(char_token));
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens, |_| {}),
+            InternalValue::Dimension(Scaled::from_raw(expected))
+        );
+    }
+    let width = internal_primitive(&mut universe, "wd", P::Wd);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![width, char_token('0')], |_| {}),
+        InternalValue::Dimension(Scaled::from_raw(0))
+    );
+}
+
+#[test]
+fn internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let cases = [
+        (
+            P::LastPenalty,
+            Some(crate::LastNodeItem::Penalty(-50)),
+            InternalValue::Integer(-50),
+        ),
+        (
+            P::LastKern,
+            Some(crate::LastNodeItem::Kern(Scaled::from_raw(17))),
+            InternalValue::Dimension(Scaled::from_raw(17)),
+        ),
+        (
+            P::LastSkip,
+            Some(crate::LastNodeItem::Glue(glue(1, 2, 3))),
+            InternalValue::Glue(glue(1, 2, 3)),
+        ),
+        (
+            P::LastSkip,
+            Some(crate::LastNodeItem::MuGlue(glue(4, 5, 6))),
+            InternalValue::MuGlue(glue(4, 5, 6)),
+        ),
+        (P::LastPenalty, None, InternalValue::Integer(0)),
+        (
+            P::LastKern,
+            None,
+            InternalValue::Dimension(Scaled::from_raw(0)),
+        ),
+        (P::LastSkip, None, InternalValue::Glue(GlueSpec::ZERO)),
+    ];
+    for (primitive, item, expected) in cases {
+        let mut universe = Universe::new();
+        let token = internal_primitive(&mut universe, "last", primitive);
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![token], |host| host.set_last_node(item)),
+            expected
+        );
+    }
+}
+
+#[test]
+fn internal_font_dimensions_cover_first_last_missing_and_named_font_selection() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let named_symbol = universe.intern("named").symbol();
+    let named = universe
+        .try_copy_font_with_identifier(NULL_FONT, named_symbol)
+        .expect("font copies");
+    universe.set_meaning(named_symbol, Meaning::Font(named));
+    universe
+        .set_font_dimen(named, 1, Scaled::from_raw(11))
+        .expect("first parameter");
+    universe
+        .set_font_dimen(named, 7, Scaled::from_raw(77))
+        .expect("later parameter");
+    let fontdimen = internal_primitive(&mut universe, "fontdimen", P::FontDimen);
+    for (number, expected) in [(1, 11), (7, 77), (8, 0)] {
+        let mut tokens = vec![fontdimen];
+        tokens.extend(number.to_string().chars().map(char_token));
+        tokens.push(Token::Cs(named_symbol));
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens, |_| {}),
+            InternalValue::Dimension(Scaled::from_raw(expected))
+        );
+    }
+}
+
+#[test]
+fn internal_font_integers_cover_current_named_hyphen_and_skew_boundaries() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let font_token = internal_primitive(&mut universe, "font", P::Font);
+    universe.set_font_hyphen_char(NULL_FONT, -1);
+    universe.set_font_skew_char(NULL_FONT, 255);
+    for (primitive, expected) in [(P::HyphenChar, -1), (P::SkewChar, 255)] {
+        let query = internal_primitive(&mut universe, "fontint", primitive);
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![query, font_token], |_| {}),
+            InternalValue::Integer(expected)
+        );
+    }
+
+    let named_symbol = universe.intern("namedfont").symbol();
+    let named = universe
+        .try_copy_font_with_identifier(NULL_FONT, named_symbol)
+        .expect("font copies");
+    universe.set_meaning(named_symbol, Meaning::Font(named));
+    universe.set_font_skew_char(named, 96);
+    let query = internal_primitive(&mut universe, "skewchar", P::SkewChar);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![query, Token::Cs(named_symbol)], |_| {}),
+        InternalValue::Integer(96)
+    );
+}
+
+#[test]
+fn internal_register_sources_cover_all_families_indexes_and_selector_forms() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    for index in [0_u16, 17, 65, 255] {
+        universe.set_count(index, 1000 + i32::from(index));
+        universe.set_dimen(index, Scaled::from_raw(2000 + i32::from(index)));
+        let ordinary = universe.intern_glue(glue(3000 + i32::from(index), 1, 2));
+        let mu = universe.intern_glue(glue(4000 + i32::from(index), 3, 4));
+        universe.set_skip(index, ordinary);
+        universe.set_muskip(index, mu);
+    }
+
+    for (selector, index) in [
+        ("0", 0_u16),
+        ("17", 17),
+        ("'101", 65),
+        ("`A", 65),
+        ("255", 255),
+    ] {
+        let count = internal_primitive(&mut universe, "count", P::Count);
+        let dimen = internal_primitive(&mut universe, "dimen", P::Dimen);
+        let skip = internal_primitive(&mut universe, "skip", P::Skip);
+        let muskip = internal_primitive(&mut universe, "muskip", P::Muskip);
+        let suffix: Vec<_> = selector.chars().map(char_token).collect();
+        let tokens = |head| {
+            std::iter::once(head)
+                .chain(suffix.iter().copied())
+                .collect()
+        };
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens(count), |_| {}),
+            InternalValue::Integer(1000 + i32::from(index))
+        );
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens(dimen), |_| {}),
+            InternalValue::Dimension(Scaled::from_raw(2000 + i32::from(index)))
+        );
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens(skip), |_| {}),
+            InternalValue::Glue(glue(3000 + i32::from(index), 1, 2))
+        );
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens(muskip), |_| {}),
+            InternalValue::MuGlue(glue(4000 + i32::from(index), 3, 4))
+        );
+    }
+
+    let selector = universe.intern("selector").symbol();
+    universe.set_meaning(selector, Meaning::CountRegister(9));
+    universe.set_count(9, 17);
+    let count = internal_primitive(&mut universe, "count", P::Count);
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![count, Token::Cs(selector)], |_| {}),
+        InternalValue::Integer(1017)
+    );
+}
+
+#[test]
+fn internal_register_sources_recover_missing_negative_and_above_eight_bit_indexes() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    universe.set_count(0, 73);
+    for selector in ["", "-1", "256"] {
+        let count = internal_primitive(&mut universe, "count", P::Count);
+        let tokens = std::iter::once(count)
+            .chain(selector.chars().map(char_token))
+            .collect();
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens, |_| {}),
+            InternalValue::Integer(73),
+            "selector {selector:?} recovers to register zero"
+        );
+    }
+    let count = internal_primitive(&mut universe, "count", P::Count);
+    let mut tokens = vec![count];
+    tokens.extend("256 42".chars().map(char_token));
+    let (value, following) = scan_with(&mut universe, tokens, |processor| {
+        let target = processor
+            .get_x_token()
+            .expect("target")
+            .expect("target exists");
+        let value = processor
+            .scan_the_internal_value(&target)
+            .expect("scan")
+            .expect("internal");
+        let following = processor.scan_integer().expect("following integer").value;
+        (value, following)
+    });
+    assert_eq!(value, InternalValue::Integer(73));
+    assert_eq!(following, 42);
+}
+
+#[test]
+fn internal_coercion_lowers_each_source_level_and_commits_requested_level() {
+    let mut universe = Universe::new();
+    let id = universe.intern_glue(glue(7 * Scaled::UNITY, 2, 3));
+    universe.set_skip(3, id);
+    let skip = universe.intern("skipthree").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(3));
+
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(skip)], |processor| processor
+            .scan_integer()
+            .expect("glue lowers to int")
+            .value),
+        7 * Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(skip)], |processor| processor
+            .scan_dimension()
+            .expect("glue lowers to dimen")
+            .value
+            .raw()),
+        7 * Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(skip)], |processor| processor
+            .scan_glue(false)
+            .expect("glue remains glue")
+            .value),
+        glue(7 * Scaled::UNITY, 2, 3)
+    );
+    assert_eq!(
+        scan_internal_with(&mut universe, vec![Token::Cs(skip)], |_| {}),
+        InternalValue::Glue(glue(7 * Scaled::UNITY, 2, 3))
+    );
+
+    let mu_id = universe.intern_glue(glue(5 * Scaled::UNITY, 4, 6));
+    universe.set_muskip(2, mu_id);
+    let muskip = universe.intern("muskiptwo").symbol();
+    universe.set_meaning(muskip, Meaning::MuskipRegister(2));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(muskip)], |processor| {
+            processor
+                .scan_glue(false)
+                .expect("muglue lowers to glue")
+                .value
+        }),
+        glue(5 * Scaled::UNITY, 4, 6)
+    );
+}
+
+#[test]
+fn internal_coercion_balances_glue_references_for_return_lowering_and_error() {
+    let mut universe = Universe::new();
+    let id = universe.intern_glue(glue(9, 8, 7));
+    universe.set_skip(8, id);
+    let skip = universe.intern("skip8").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(8));
+
+    for _ in 0..3 {
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![Token::Cs(skip)], |_| {}),
+            InternalValue::Glue(glue(9, 8, 7))
+        );
+        assert_eq!(
+            scan_with(&mut universe, vec![Token::Cs(skip)], |processor| processor
+                .scan_dimension()
+                .expect("lowered glue")
+                .value
+                .raw()),
+            9
+        );
+    }
+    assert_eq!(
+        universe.glue(id),
+        glue(9, 8, 7),
+        "immutable glue storage survives return and lowering"
+    );
+}
+
+#[test]
+fn internal_coercion_negates_scalar_glue_and_muglue_components() {
+    let mut universe = Universe::new();
+    universe.set_count(1, 12);
+    universe.set_dimen(1, Scaled::from_raw(34));
+    let ordinary = universe.intern_glue(glue(1, 2, 3));
+    let mu = universe.intern_glue(glue(4, 5, 6));
+    universe.set_skip(1, ordinary);
+    universe.set_muskip(1, mu);
+    let count = universe.intern("countone").symbol();
+    let dimen = universe.intern("dimenone").symbol();
+    let skip = universe.intern("skipone").symbol();
+    let muskip = universe.intern("muskipone").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(1));
+    universe.set_meaning(dimen, Meaning::DimenRegister(1));
+    universe.set_meaning(skip, Meaning::SkipRegister(1));
+    universe.set_meaning(muskip, Meaning::MuskipRegister(1));
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![char_token('-'), Token::Cs(count)],
+            |p| p.scan_integer().expect("negative integer").value
+        ),
+        -12
+    );
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![char_token('-'), Token::Cs(dimen)],
+            |p| p.scan_dimension().expect("negative dimension").value.raw()
+        ),
+        -34
+    );
+    let negative = scan_with(&mut universe, vec![char_token('-'), Token::Cs(skip)], |p| {
+        p.scan_glue(false).expect("negative glue").value
+    });
+    assert_eq!(
+        (
+            negative.width.raw(),
+            negative.stretch.raw(),
+            negative.shrink.raw()
+        ),
+        (-1, -2, -3)
+    );
+    let negative_mu = scan_with(
+        &mut universe,
+        vec![char_token('-'), Token::Cs(muskip)],
+        |p| p.scan_glue(true).expect("negative muglue").value,
+    );
+    assert_eq!(
+        (
+            negative_mu.width.raw(),
+            negative_mu.stretch.raw(),
+            negative_mu.shrink.raw()
+        ),
+        (-4, -5, -6)
+    );
+}
+
+#[test]
+fn internal_coercion_recovers_noninternal_and_token_values_below_tok_level() {
+    let mut universe = Universe::new();
+    let token_list = universe.intern_token_list(&[char_token('x')]);
+    universe.set_toks(4, token_list);
+    let toks = universe.intern("saved").symbol();
+    universe.set_meaning(toks, Meaning::ToksRegister(4));
+    let scanned = scan_with(&mut universe, vec![Token::Cs(toks)], |processor| {
+        processor.scan_integer().expect("token below tok_val")
+    });
+    assert_eq!(
+        (scanned.value, scanned.recovery),
+        (0, ScalarRecovery::InsertedZero)
+    );
+
+    let scanned = scan_with(&mut universe, vec![char_token('x')], |processor| {
+        processor
+            .scan_integer()
+            .expect("noninternal missing number")
+    });
+    assert_eq!(
+        (scanned.value, scanned.recovery),
+        (0, ScalarRecovery::InsertedZero)
+    );
+}
+
+#[test]
+fn dimension_prefixes_cover_sign_shortcut_internal_decimal_radix_and_character_forms() {
+    let cases = [
+        ("--3pt", 3 * Scaled::UNITY),
+        ("-3pt", -3 * Scaled::UNITY),
+        ("'10pt", 8 * Scaled::UNITY),
+        ("\"10pt", 16 * Scaled::UNITY),
+        ("`Apt", 65 * Scaled::UNITY),
+    ];
+    for (source, expected) in cases {
+        let mut universe = Universe::new();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                source.chars().map(char_token).collect(),
+                |processor| {
+                    processor
+                        .scan_dimension()
+                        .expect("dimension prefix scans")
+                        .value
+                        .raw()
+                }
+            ),
+            expected,
+            "prefix {source:?}"
+        );
+    }
+
+    let mut universe = Universe::new();
+    let count = universe.intern("count-prefix").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(2));
+    universe.set_count(2, -4);
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![Token::Cs(count), char_token('p'), char_token('t')],
+            |processor| processor
+                .scan_dimension()
+                .expect("internal prefix scans")
+                .value
+                .raw(),
+        ),
+        -4 * Scaled::UNITY
+    );
+
+    let complete = universe.intern("complete-dimension").symbol();
+    universe.set_meaning(complete, Meaning::DimenRegister(9));
+    universe.set_dimen(9, Scaled::from_raw(123_456));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(complete)], |processor| {
+            processor
+                .scan_dimension()
+                .expect("complete internal dimension scans")
+                .value
+                .raw()
+        }),
+        123_456
+    );
+
+    let mut universe = Universe::new();
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "pt".chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension_shortcut(7, false)
+                    .expect("prepared integer shortcut scans")
+                    .raw()
+            }
+        ),
+        7 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn dimension_fractions_cover_point_catcodes_zero_seventeen_and_excess_digits() {
+    let mut universe = Universe::new();
+    let values = scan_with(
+        &mut universe,
+        scanner_tokens(
+            ".pt .0pt .5pt ,5pt .12345678901234567pt .123456789012345679999pt .00000762939453125pt",
+        ),
+        |processor| {
+            (0..7)
+                .map(|_| {
+                    processor
+                        .scan_dimension()
+                        .expect("fraction scans")
+                        .value
+                        .raw()
+                })
+                .collect::<Vec<_>>()
+        },
+    );
+    assert_eq!(values[0], 0);
+    assert_eq!(values[1], 0);
+    assert_eq!(values[2], Scaled::UNITY / 2);
+    assert_eq!(values[3], Scaled::UNITY / 2);
+    assert_eq!(
+        values[4], values[5],
+        "digits after TeX82's 17-digit buffer are consumed but ignored"
+    );
+    assert_eq!(values[6], 1, "the half-sp decimal boundary rounds upward");
+
+    let mut universe = Universe::new();
+    let letter_point = Token::Char {
+        ch: '.',
+        cat: Catcode::Letter,
+    };
+    let (value, following) = scan_with(
+        &mut universe,
+        [
+            vec![char_token('1')],
+            vec![letter_point],
+            "5pt".chars().map(char_token).collect(),
+        ]
+        .concat(),
+        |processor| {
+            let value = processor
+                .scan_dimension()
+                .expect("non-other point recovers")
+                .value
+                .raw();
+            let following = processor
+                .get_x_token()
+                .expect("point delivers")
+                .expect("point remains")
+                .meaning();
+            (value, following)
+        },
+    );
+    assert_eq!(value, Scaled::UNITY);
+    assert!(
+        matches!(
+            following,
+            Meaning::CharToken {
+                ch: '.',
+                cat: Catcode::Letter
+            }
+        ),
+        "only an other-category point starts the fraction"
+    );
+}
+
+#[test]
+fn dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order() {
+    let mut command = CommandState::default();
+    push(&mut command, scanner_tokens(".5pt  9"));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("dimension scans")
+            .value
+            .raw(),
+        Scaled::UNITY / 2
+    );
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("second space delivers")
+            .expect("second space remains")
+            .meaning(),
+        Meaning::CharToken {
+            cat: Catcode::Space,
+            ..
+        }
+    ));
+    assert_eq!(
+        processor
+            .scan_integer()
+            .expect("following integer scans")
+            .value,
+        9
+    );
+    assert_eq!(scanner_kinds(&recorder), vec!["dimension", "integer"]);
+}
+
+#[test]
+fn dimension_infinite_units_cover_orders_case_spaces_disabled_mode_and_excess_suffixes() {
+    use tex_state::glue::Order;
+
+    for (unit, expected) in [
+        ("fil", Order::Fil),
+        ("fill", Order::Fill),
+        ("filll", Order::Filll),
+        ("FIL", Order::Fil),
+    ] {
+        let mut universe = Universe::new();
+        let source = format!("0pt plus 1 {unit} 7");
+        let (spec, following) = scan_with(&mut universe, scanner_tokens(&source), |processor| {
+            let spec = processor
+                .scan_glue(false)
+                .expect("infinite glue scans")
+                .value;
+            let following = processor
+                .scan_integer()
+                .expect("terminator remains usable")
+                .value;
+            (spec, following)
+        });
+        assert_eq!(
+            (spec.stretch.raw(), spec.stretch_order, following),
+            (Scaled::UNITY, expected, 7)
+        );
+    }
+
+    let mut universe = Universe::new();
+    let (value, suffix) = scan_with(
+        &mut universe,
+        "1fil".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_dimension()
+                .expect("infinite units are disabled for dimensions")
+                .value
+                .raw();
+            let suffix = processor.scan_keyword("fil").expect("suffix probe").value;
+            (value, suffix)
+        },
+    );
+    assert_eq!(value, Scaled::UNITY);
+    assert!(suffix);
+
+    let mut universe = Universe::new();
+    let (spec, following) = scan_with(
+        &mut universe,
+        scanner_tokens("0pt plus 1fillllll 8"),
+        |processor| {
+            let spec = processor
+                .scan_glue(false)
+                .expect("excess suffix recovers")
+                .value;
+            (
+                spec,
+                processor
+                    .scan_integer()
+                    .expect("following integer scans")
+                    .value,
+            )
+        },
+    );
+    assert_eq!(spec.stretch_order, Order::Filll);
+    assert_eq!(following, 8);
+}
+
+#[test]
+fn dimension_internal_units_scale_whole_fraction_glue_width_and_muglue_compatibility() {
+    let mut universe = Universe::new();
+    universe.set_dimen(4, Scaled::from_raw(2 * Scaled::UNITY));
+    let dimen = universe.intern("dimen-unit").symbol();
+    universe.set_meaning(dimen, Meaning::DimenRegister(4));
+    let ordinary_id = universe.intern_glue(glue(3 * Scaled::UNITY, 7, 8));
+    universe.set_skip(5, ordinary_id);
+    let ordinary = universe.intern("glue-unit").symbol();
+    universe.set_meaning(ordinary, Meaning::SkipRegister(5));
+    let mu_id = universe.intern_glue(glue(4 * Scaled::UNITY, 9, 10));
+    universe.set_muskip(6, mu_id);
+    let mu = universe.intern("mu-unit").symbol();
+    universe.set_meaning(mu, Meaning::MuskipRegister(6));
+
+    for (tokens, expected, is_mu) in [
+        (
+            vec![char_token('2'), Token::Cs(dimen)],
+            4 * Scaled::UNITY,
+            false,
+        ),
+        (
+            vec![
+                char_token('2'),
+                char_token('.'),
+                char_token('5'),
+                Token::Cs(dimen),
+            ],
+            5 * Scaled::UNITY,
+            false,
+        ),
+        (
+            vec![char_token('2'), Token::Cs(ordinary)],
+            6 * Scaled::UNITY,
+            false,
+        ),
+        (
+            vec![char_token('2'), Token::Cs(mu)],
+            8 * Scaled::UNITY,
+            true,
+        ),
+    ] {
+        let actual = scan_with(&mut universe, tokens, |processor| {
+            if is_mu {
+                processor
+                    .scan_mu_dimension()
+                    .expect("internal mu unit scans")
+                    .value
+                    .raw()
+            } else {
+                processor
+                    .scan_dimension()
+                    .expect("internal unit scans")
+                    .value
+                    .raw()
+            }
+        });
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundaries() {
+    use tex_state::font::NULL_FONT;
+
+    let mut universe = Universe::new();
+    universe
+        .set_font_dimen(NULL_FONT, 6, Scaled::from_raw(10 * Scaled::UNITY))
+        .expect("quad sets");
+    universe
+        .set_font_dimen(NULL_FONT, 5, Scaled::from_raw(4 * Scaled::UNITY))
+        .expect("x-height sets");
+    let (em, ex, following) =
+        scan_with(&mut universe, scanner_tokens("1.5em 2ex  7"), |processor| {
+            let em = processor
+                .scan_dimension()
+                .expect("fractional em scans")
+                .value
+                .raw();
+            let ex = processor.scan_dimension().expect("ex scans").value.raw();
+            let token = processor
+                .get_x_token()
+                .expect("second space delivers")
+                .expect("second space remains");
+            assert!(matches!(
+                token.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ));
+            let following = processor
+                .scan_integer()
+                .expect("following integer scans")
+                .value;
+            (em, ex, following)
+        });
+    assert_eq!(
+        (em, ex, following),
+        (15 * Scaled::UNITY, 8 * Scaled::UNITY, 7)
+    );
+
+    universe
+        .set_font_dimen(NULL_FONT, 5, Scaled::from_raw(0))
+        .expect("zero x-height sets");
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "9ex".chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension()
+                    .expect("zero metric scans")
+                    .value
+                    .raw()
+            }
+        ),
+        0
+    );
+}
+
+#[test]
+fn dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery() {
+    let mut universe = Universe::new();
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "2mu".chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_mu_dimension()
+                    .expect("mu unit scans")
+                    .value
+                    .raw()
+            }
+        ),
+        2 * Scaled::UNITY
+    );
+
+    let mut universe = Universe::new();
+    let (value, suffix) = scan_with(
+        &mut universe,
+        "2pt".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_mu_dimension()
+                .expect("non-mu unit recovers")
+                .value
+                .raw();
+            (
+                value,
+                processor.scan_keyword("pt").expect("suffix probe").value,
+            )
+        },
+    );
+    assert_eq!(value, 2 * Scaled::UNITY);
+    assert!(suffix);
+
+    let mut universe = Universe::new();
+    let (value, suffix) = scan_with(
+        &mut universe,
+        "2mu".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_dimension()
+                .expect("mu in ordinary mode recovers")
+                .value
+                .raw();
+            (
+                value,
+                processor.scan_keyword("mu").expect("suffix probe").value,
+            )
+        },
+    );
+    assert_eq!(value, 2 * Scaled::UNITY);
+    assert!(suffix);
+
+    let mut universe = Universe::new();
+    let ordinary_id = universe.intern_glue(glue(3 * Scaled::UNITY, 0, 0));
+    universe.set_skip(1, ordinary_id);
+    let ordinary = universe.intern("ordinary-unit").symbol();
+    universe.set_meaning(ordinary, Meaning::SkipRegister(1));
+    let (value, following) = scan_with(
+        &mut universe,
+        vec![char_token('2'), Token::Cs(ordinary)],
+        |processor| {
+            let value = processor
+                .scan_mu_dimension()
+                .expect("mixed internal unit recovers")
+                .value
+                .raw();
+            let following = processor
+                .get_x_token()
+                .expect("rejected internal delivers")
+                .expect("rejected internal remains")
+                .meaning();
+            (value, following)
+        },
+    );
+    assert_eq!(value, 2 * Scaled::UNITY);
+    assert_eq!(following, Meaning::SkipRegister(1));
+}
+
+#[test]
+fn dimension_physical_units_cover_all_factors_rounding_case_and_sp_shortcut() {
+    for (actual, canonical) in [
+        ("1pc", "12pt"),
+        ("100in", "7227pt"),
+        ("254cm", "7227pt"),
+        ("2540mm", "7227pt"),
+        ("7200bp", "7227pt"),
+        ("1157dd", "1238pt"),
+        ("1157cc", "14856pt"),
+        ("65536sp", "1pt"),
+        ("1PT", "1pt"),
+    ] {
+        let mut universe = Universe::new();
+        let scanned = scan_with(
+            &mut universe,
+            actual.chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension()
+                    .expect("physical unit scans")
+                    .value
+                    .raw()
+            },
+        );
+        let mut universe = Universe::new();
+        let expected = scan_with(
+            &mut universe,
+            canonical.chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension()
+                    .expect("canonical unit scans")
+                    .value
+                    .raw()
+            },
+        );
+        assert_eq!(scanned, expected, "{actual} equals {canonical}");
+    }
+
+    let mut universe = Universe::new();
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "1.5sp".chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension()
+                    .expect("fractional sp truncates")
+                    .value
+                    .raw()
+            }
+        ),
+        1
+    );
+
+    let mut universe = Universe::new();
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "1.25in".chars().map(char_token).collect(),
+            |processor| {
+                processor
+                    .scan_dimension()
+                    .expect("fractional physical unit rounds")
+                    .value
+                    .raw()
+            }
+        ),
+        5_920_358
+    );
+}
+
+#[test]
+fn dimension_true_units_cover_mag_1000_low_high_and_fraction_remainders() {
+    for (mag, source, expected) in [
+        (1000, "1truept", Scaled::UNITY),
+        (500, "1truept", 2 * Scaled::UNITY),
+        (2000, "1truept", Scaled::UNITY / 2),
+        (1440, "1.5truein", 75 * Scaled::UNITY + 18_383),
+    ] {
+        let mut universe = Universe::new();
+        universe.set_mag_global(mag);
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                source.chars().map(char_token).collect(),
+                |processor| {
+                    processor
+                        .scan_dimension()
+                        .expect("true unit scans")
+                        .value
+                        .raw()
+                }
+            ),
+            expected,
+            "mag={mag}, source={source}"
+        );
+    }
+}
+
+#[test]
+fn dimension_unknown_units_preserve_keyword_backup_and_assume_points() {
+    for source in ["3xy", "3XY", "3truX"] {
+        let mut universe = Universe::new();
+        let suffix = &source[1..];
+        let (value, preserved) = scan_with(
+            &mut universe,
+            source.chars().map(char_token).collect(),
+            |processor| {
+                let value = processor
+                    .scan_dimension()
+                    .expect("unknown unit recovers")
+                    .value
+                    .raw();
+                let preserved = processor
+                    .scan_keyword(suffix)
+                    .expect("preserved suffix scans")
+                    .value;
+                (value, preserved)
+            },
+        );
+        assert_eq!(value, 3 * Scaled::UNITY);
+        assert!(preserved, "failed keyword probes preserve {suffix:?}");
+    }
+}
+
+#[test]
+fn dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow() {
+    let mut universe = Universe::new();
+    let values = scan_with(
+        &mut universe,
+        scanner_tokens("1073741823sp 20000pt 1pt -20000pt 2pt 1073741824sp 3pt"),
+        |processor| {
+            (0..7)
+                .map(|_| {
+                    processor
+                        .scan_dimension()
+                        .expect("range recovery continues")
+                        .value
+                })
+                .collect::<Vec<_>>()
+        },
+    );
+    assert_eq!(values[0], Scaled::MAX_DIMEN);
+    assert_eq!(values[1], Scaled::MAX_DIMEN);
+    assert_eq!(values[2].raw(), Scaled::UNITY);
+    assert_eq!(values[3], Scaled::from_raw(-Scaled::MAX_DIMEN.raw()));
+    assert_eq!(values[4].raw(), 2 * Scaled::UNITY);
+    assert_eq!(values[5], Scaled::MAX_DIMEN);
+    assert_eq!(
+        values[6].raw(),
+        3 * Scaled::UNITY,
+        "arith_error is cleared after recovery"
+    );
 }

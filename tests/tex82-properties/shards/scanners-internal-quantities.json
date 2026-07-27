@@ -313,23 +313,21 @@
       ],
       "semantic_owner": "tex-command::scanners",
       "test_level": "rust-unit",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_equality_table_sources_scan_each_code_family_and_character_boundary"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_token_sources_preserve_empty_nonempty_and_identifier_values"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_token_sources_recover_illegal_requested_levels_and_indexes"
+        }
+      ],
       "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_equality_table_sources_scan_each_code_family_and_character_boundary",
-          "cases": ["catcode", "mathcode", "lccode", "uccode", "sfcode", "delcode", "0 and 255 selectors"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_token_sources_preserve_empty_nonempty_and_identifier_values",
-          "cases": ["empty toks register", "nonempty toks parameter", "font identifier", "family identifier"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_token_sources_recover_illegal_requested_levels_and_indexes",
-          "cases": ["below tok_val", "negative selector", "selector 256", "missing selector"]
-        },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_token_list_internal_results",
@@ -382,27 +380,23 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "prev_depth_outside_vertical_mode_reads_zero"
-        }
-      ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery",
-          "cases": ["horizontal spacefactor", "vertical prevdepth", "wrong modes", "inner mode"]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_page_shape_box_sources_cover_empty_active_and_register_boundaries",
-          "cases": ["inactive and active page", "parshape zero and populated", "void and set box", "box 0 and 255"]
+          "test": "internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels",
-          "cases": ["penalty", "kern", "glue", "muglue", "empty list", "mode-specific tail"]
+          "test": "internal_page_shape_box_sources_cover_empty_active_and_register_boundaries"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.internal-font-sources",
@@ -441,22 +435,19 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "font_integers_read_the_named_font_rather_than_the_current_one"
-        }
-      ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_font_dimensions_cover_first_last_missing_and_named_font_selection",
-          "cases": ["first parameter", "last existing parameter", "missing parameter", "current and named font"]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_font_integers_cover_current_named_hyphen_and_skew_boundaries",
-          "cases": ["hyphenchar", "skewchar", "negative character", "255", "current and named font"]
+          "test": "internal_font_dimensions_cover_first_last_missing_and_named_font_selection"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_font_integers_cover_current_named_hyphen_and_skew_boundaries"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.internal-register-sources",
@@ -495,31 +486,19 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "internal_dimension_register_scans_and_bounds_its_index_through_command_input"
-        }
-      ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_register_sources_cover_all_families_indexes_and_selector_forms",
-          "cases": [
-            "count",
-            "dimen",
-            "skip",
-            "muskip",
-            "0",
-            "middle",
-            "255",
-            "decimal/radix/character/internal selector"
-          ]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_register_sources_recover_missing_negative_and_above_eight_bit_indexes",
-          "cases": ["missing selector", "-1", "256", "recovered register zero", "terminator preservation"]
+          "test": "internal_register_sources_cover_all_families_indexes_and_selector_forms"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_register_sources_recover_missing_negative_and_above_eight_bit_indexes"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.internal-coercion-ownership",
@@ -558,32 +537,27 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "glue_scanner_negates_all_three_components_of_a_signed_internal_glue"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_coercion_lowers_each_source_level_and_commits_requested_level"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_coercion_balances_glue_references_for_return_lowering_and_error"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_coercion_negates_scalar_glue_and_muglue_components"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_coercion_recovers_noninternal_and_token_values_below_tok_level"
         }
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_coercion_lowers_each_source_level_and_commits_requested_level",
-          "cases": ["mu to glue", "glue to dimen", "dimen to int", "no-op level", "observed requested level"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_coercion_balances_glue_references_for_return_lowering_and_error",
-          "cases": ["returned glue", "lowered glue", "invalid target", "token below tok_val"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_coercion_negates_scalar_glue_and_muglue_components",
-          "cases": ["integer", "dimension", "glue width/stretch/shrink", "muglue orders unchanged"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_coercion_recovers_noninternal_and_token_values_below_tok_level",
-          "cases": ["noninternal command", "token list", "font identifier", "zero insertion and backup ordering"]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.restricted-integers",
@@ -785,49 +759,23 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "dimension_scanner_uses_an_internal_integer_as_its_numeric_prefix"
-        }
-      ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_prefixes_cover_sign_shortcut_internal_decimal_radix_and_character_forms",
-          "cases": [
-            "sign",
-            "shortcut",
-            "internal integer",
-            "complete internal dimension",
-            "decimal",
-            "octal",
-            "hexadecimal",
-            "character constant"
-          ]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_fractions_cover_point_catcodes_zero_seventeen_and_excess_digits",
-          "cases": [
-            "point",
-            "comma",
-            "category-other only",
-            "zero digits",
-            "17 digits",
-            "excess digits",
-            "rounding tie"
-          ]
+          "test": "dimension_prefixes_cover_sign_shortcut_internal_decimal_radix_and_character_forms"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order",
-          "cases": [
-            "leading point raw replay",
-            "scan_int result ordering",
-            "internal retained command",
-            "first unit token"
-          ]
+          "test": "dimension_fractions_cover_point_catcodes_zero_seventeen_and_excess_digits"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.dimension-internal-relative-infinite-units",
@@ -873,38 +821,33 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_infinite_units_cover_orders_case_spaces_disabled_mode_and_excess_suffixes"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_internal_units_scale_whole_fraction_glue_width_and_muglue_compatibility"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundaries"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery"
         }
       ],
       "planned_coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_infinite_units_cover_orders_case_spaces_disabled_mode_and_excess_suffixes",
-          "cases": ["fil", "fill", "filll", "case", "spaces", "inf false", "excess l"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_internal_units_scale_whole_fraction_glue_width_and_muglue_compatibility",
-          "cases": ["internal dimension", "glue width", "muglue width", "whole", "fraction", "mixed kinds"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundaries",
-          "cases": ["em", "ex", "whole", "fraction", "zero metric", "one optional space"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery",
-          "cases": [
-            "mu success",
-            "ordinary unit in mu scan",
-            "mu in ordinary scan",
-            "internal muglue",
-            "diagnostic ordering"
-          ]
+          "test": "dimension_infinite_units_accept_mixed_case_repeated_suffixes",
+          "cases": ["FiL", "FiLl", "FiLlL", "mixed-case excess l consumption"]
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "gap_bead": "umber2-johp.248"
     },
     {
       "id": "tex82.scanner.dimension-physical-conversion-recovery",
@@ -947,29 +890,25 @@
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "oversized_dimension_clamps_to_max_dimen"
         },
-        { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "physical_unit_table_matches_tex_web" }
+        { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "physical_unit_table_matches_tex_web" },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_physical_units_cover_all_factors_rounding_case_and_sp_shortcut"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_true_units_cover_mag_1000_low_high_and_fraction_remainders"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_unknown_units_preserve_keyword_backup_and_assume_points"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow"
+        }
       ],
       "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_physical_units_cover_all_factors_rounding_case_and_sp_shortcut",
-          "cases": ["pt", "in", "pc", "cm", "mm", "bp", "dd", "cc", "sp", "case", "rounding edges"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_true_units_cover_mag_1000_low_high_and_fraction_remainders",
-          "cases": ["mag 1000", "low mag", "high mag", "whole", "fraction", "remainder carry"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_unknown_units_preserve_keyword_backup_and_assume_points",
-          "cases": ["unknown first letter", "partial internal/em/ex/physical keyword", "offender replay", "assumed pt"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow",
-          "cases": ["max_dimen", "max plus one", "negative overflow", "xn_over_d overflow", "arith_error clearing"]
-        },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_fractional_physical_and_true_units",
