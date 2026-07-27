@@ -3353,3 +3353,523 @@ fn dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow() {
         "arith_error is cleared after recovery"
     );
 }
+
+#[test]
+fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
+    use tex_state::macro_store::MacroMeaning;
+    use tex_state::meaning::MeaningFlags;
+
+    let mut universe = Universe::new();
+    let macro_symbol = universe.intern("brace").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let opening = Token::Char {
+        ch: '{',
+        cat: Catcode::BeginGroup,
+    };
+    let replacement = universe.intern_token_list(&[opening]);
+    universe.set_macro_meaning(
+        macro_symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement),
+    );
+    let scanned = scan_with(
+        &mut universe,
+        vec![space_token(), space_token(), Token::Cs(macro_symbol)],
+        |processor| {
+            processor
+                .scan_left_brace(true)
+                .expect("expanded brace scans")
+                .meaning()
+        },
+    );
+    assert!(matches!(
+        scanned,
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ));
+
+    let mut universe = Universe::new();
+    let (recovered, following) = scan_with(&mut universe, vec![char_token('x')], |processor| {
+        let recovered = processor.scan_left_brace(true).is_err();
+        let following = processor
+            .get_x_token()
+            .expect("rejected token delivers")
+            .expect("rejected token remains")
+            .meaning();
+        (recovered, following)
+    });
+    assert!(
+        recovered,
+        "the caller receives the mandatory-brace recovery boundary"
+    );
+    assert!(matches!(following, Meaning::CharToken { ch: 'x', .. }));
+
+    // TeX82's intervening `\relax` case remains owned by umber2-johp.209;
+    // do not make the current rejection into conformance evidence here.
+}
+
+#[test]
+fn scanner_syntax_optional_equals_catcode_and_relax_boundaries() {
+    let mut universe = Universe::new();
+    assert!(scan_with(
+        &mut universe,
+        vec![space_token(), space_token(), char_token('=')],
+        |processor| processor
+            .scan_optional_equals()
+            .expect("equals scans")
+            .value,
+    ));
+
+    // Non-other equals rejection remains owned by umber2-johp.250; do not
+    // encode the current over-acceptance as canonical evidence.
+
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let (accepted, following) = scan_with(&mut universe, vec![Token::Cs(relax)], |processor| {
+        let accepted = processor
+            .scan_optional_equals()
+            .expect("relax probe scans")
+            .value;
+        let following = processor
+            .get_x_token()
+            .expect("relax delivers")
+            .expect("relax remains")
+            .meaning();
+        (accepted, following)
+    });
+    assert!(!accepted);
+    assert_eq!(following, Meaning::Relax);
+}
+
+#[test]
+fn scanner_syntax_keyword_character_catcode_matrix_and_mu_error() {
+    for cat in [
+        Catcode::Letter,
+        Catcode::Other,
+        Catcode::Space,
+        Catcode::BeginGroup,
+    ] {
+        let mut universe = Universe::new();
+        let tokens = ['p', 'T']
+            .into_iter()
+            .map(|ch| Token::Char { ch, cat })
+            .collect();
+        assert!(
+            scan_with(&mut universe, tokens, |processor| processor
+                .scan_keyword("pt")
+                .expect("keyword scans")
+                .value),
+            "character catcode {cat:?}"
+        );
+    }
+
+    let mut universe = Universe::new();
+    let alias = universe.intern("p-alias").symbol();
+    universe.set_meaning(alias, Meaning::CharGiven('p'));
+    let (accepted, following) = scan_with(
+        &mut universe,
+        vec![Token::Cs(alias), char_token('t')],
+        |processor| {
+            let accepted = processor
+                .scan_keyword("pt")
+                .expect("alias probe scans")
+                .value;
+            let following = processor
+                .get_x_token()
+                .expect("alias delivers")
+                .expect("alias remains")
+                .control_sequence();
+            (accepted, following)
+        },
+    );
+    assert!(!accepted);
+    assert_eq!(following, Some(alias));
+
+    let mut universe = Universe::new();
+    let (mu_value, ordinary_suffix) = scan_with(
+        &mut universe,
+        "2pt".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_mu_dimension()
+                .expect("non-mu unit recovers")
+                .value
+                .raw();
+            let suffix = processor.scan_keyword("pt").expect("suffix scans").value;
+            (value, suffix)
+        },
+    );
+    assert_eq!(mu_value, 2 * Scaled::UNITY);
+    assert!(ordinary_suffix);
+}
+
+#[test]
+fn restricted_integer_all_five_classes_min_max_and_recovery_matrix() {
+    use crate::scanners::RestrictedIntegerClass as Class;
+
+    for (class, maximum) in [
+        (Class::EightBit, 255),
+        (Class::CharacterCode, 255),
+        (Class::FourBit, 15),
+        (Class::FifteenBit, 32_767),
+        (Class::TwentySevenBit, 134_217_727),
+    ] {
+        for (source, value, recovered) in [
+            ("0".to_owned(), 0, false),
+            (maximum.to_string(), maximum, false),
+            ("-1".to_owned(), 0, true),
+            ((maximum + 1).to_string(), 0, true),
+        ] {
+            let mut universe = Universe::new();
+            let scanned = scan_with(
+                &mut universe,
+                source.chars().map(char_token).collect(),
+                |processor| {
+                    processor
+                        .scan_restricted_integer(class)
+                        .expect("restricted scan")
+                },
+            );
+            assert_eq!(
+                (scanned.value, scanned.recovered),
+                (value, recovered),
+                "{class:?} with {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn integer_optional_space_sign_and_terminator_matrix() {
+    let mut universe = Universe::new();
+    let values = scan_with(
+        &mut universe,
+        scanner_tokens("12   - + - 34  +--5 "),
+        |processor| {
+            (0..3)
+                .map(|_| {
+                    processor
+                        .scan_integer()
+                        .expect("signed integer scans")
+                        .value
+                })
+                .collect::<Vec<_>>()
+        },
+    );
+    assert_eq!(values, vec![12, 34, 5]);
+
+    let mut universe = Universe::new();
+    let (value, terminator) = scan_with(
+        &mut universe,
+        "77x".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor.scan_integer().expect("integer scans").value;
+            let terminator = processor
+                .get_x_token()
+                .expect("terminator delivers")
+                .expect("terminator remains")
+                .meaning();
+            (value, terminator)
+        },
+    );
+    assert_eq!(value, 77);
+    assert!(matches!(terminator, Meaning::CharToken { ch: 'x', .. }));
+}
+
+#[test]
+fn integer_character_constant_raw_token_and_optional_space_matrix() {
+    for (token, expected) in [
+        (char_token('A'), 65),
+        (
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            },
+            126,
+        ),
+    ] {
+        let mut universe = Universe::new();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                vec![char_token('`'), token, space_token(), char_token('7')],
+                |processor| {
+                    let value = processor
+                        .scan_integer()
+                        .expect("character constant scans")
+                        .value;
+                    let following = processor
+                        .scan_integer()
+                        .expect("optional space consumed")
+                        .value;
+                    (value, following)
+                },
+            ),
+            (expected, 7)
+        );
+    }
+
+    for (name, expected) in [("!", 33), ("A", 65)] {
+        let mut universe = Universe::new();
+        let symbol = universe.intern(name).symbol();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                vec![char_token('`'), Token::Cs(symbol)],
+                |processor| processor
+                    .scan_integer()
+                    .expect("control symbol constant scans")
+                    .value,
+            ),
+            expected
+        );
+    }
+
+    let mut universe = Universe::new();
+    let word = universe.intern("word").symbol();
+    let (value, recovery, following) = scan_with(
+        &mut universe,
+        vec![char_token('`'), Token::Cs(word)],
+        |processor| {
+            let scanned = processor
+                .scan_integer()
+                .expect("improper control word recovers");
+            let following = processor
+                .get_x_token()
+                .expect("control word delivers")
+                .expect("control word remains")
+                .control_sequence();
+            (scanned.value, scanned.recovery, following)
+        },
+    );
+    assert_eq!(
+        (value, recovery, following),
+        (0, ScalarRecovery::None, Some(word))
+    );
+
+    // Exact-profile character constants above 255 remain owned by
+    // umber2-johp.251; do not encode Unicode leakage as canonical evidence.
+}
+
+#[test]
+fn integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries() {
+    for (source, expected) in [
+        ("42", 42),
+        ("'52", 42),
+        ("\"2A", 42),
+        ("\"2a", 42),
+        ("2147483647", i32::MAX),
+        ("999999999999999999999", i32::MAX),
+        ("-999999999999999999999", -i32::MAX),
+    ] {
+        let mut universe = Universe::new();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                source.chars().map(char_token).collect(),
+                |processor| {
+                    processor
+                        .scan_integer()
+                        .expect("radix or boundary integer scans")
+                        .value
+                }
+            ),
+            expected,
+            "source {source}"
+        );
+    }
+
+    let mut universe = Universe::new();
+    let (value, following) = scan_with(
+        &mut universe,
+        "'8".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_integer()
+                .expect("invalid octal digit terminates")
+                .value;
+            let following = processor
+                .get_x_token()
+                .expect("invalid digit delivers")
+                .expect("invalid digit remains")
+                .meaning();
+            (value, following)
+        },
+    );
+    assert_eq!(value, 0);
+    assert!(matches!(following, Meaning::CharToken { ch: '8', .. }));
+
+    let mut universe = Universe::new();
+    let (value, recovery, following) =
+        scan_with(&mut universe, vec![char_token('x')], |processor| {
+            let scanned = processor.scan_integer().expect("missing number recovers");
+            let following = processor
+                .get_x_token()
+                .expect("offender delivers")
+                .expect("offender remains")
+                .meaning();
+            (scanned.value, scanned.recovery, following)
+        });
+    assert_eq!((value, recovery), (0, ScalarRecovery::InsertedZero));
+    assert!(matches!(following, Meaning::CharToken { ch: 'x', .. }));
+}
+
+#[test]
+fn glue_numeric_internal_width_plus_minus_order_and_keyword_matrix() {
+    use tex_state::glue::Order;
+
+    let mut universe = Universe::new();
+    let numeric = scan_with(
+        &mut universe,
+        scanner_tokens("1pt plus 2fill minus 3fil"),
+        |processor| {
+            processor
+                .scan_glue(false)
+                .expect("numeric glue scans")
+                .value
+        },
+    );
+    assert_eq!(numeric.width.raw(), Scaled::UNITY);
+    assert_eq!(
+        (numeric.stretch.raw(), numeric.stretch_order),
+        (2 * Scaled::UNITY, Order::Fill)
+    );
+    assert_eq!(
+        (numeric.shrink.raw(), numeric.shrink_order),
+        (3 * Scaled::UNITY, Order::Fil)
+    );
+
+    let mut universe = Universe::new();
+    universe.set_count(1, 2);
+    universe.set_dimen(1, Scaled::from_raw(3 * Scaled::UNITY));
+    let count = universe.intern("count-width").symbol();
+    let dimen = universe.intern("dimen-width").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(1));
+    universe.set_meaning(dimen, Meaning::DimenRegister(1));
+    let count_glue = scan_with(
+        &mut universe,
+        [vec![Token::Cs(count)], scanner_tokens("pt plus 1pt")].concat(),
+        |processor| {
+            processor
+                .scan_glue(false)
+                .expect("internal integer width scans")
+                .value
+        },
+    );
+    assert_eq!(
+        (count_glue.width.raw(), count_glue.stretch.raw()),
+        (2 * Scaled::UNITY, Scaled::UNITY)
+    );
+    let dimen_glue = scan_with(
+        &mut universe,
+        [
+            vec![Token::Cs(dimen)],
+            scanner_tokens(" plus 1pt minus 2pt"),
+        ]
+        .concat(),
+        |processor| {
+            processor
+                .scan_glue(false)
+                .expect("internal dimension width scans")
+                .value
+        },
+    );
+    assert_eq!(
+        (
+            dimen_glue.width.raw(),
+            dimen_glue.stretch.raw(),
+            dimen_glue.shrink.raw()
+        ),
+        (3 * Scaled::UNITY, Scaled::UNITY, 2 * Scaled::UNITY)
+    );
+
+    let stored = universe.intern_glue(glue(7, 8, 9));
+    universe.set_skip(4, stored);
+    let skip = universe.intern("complete-glue").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(4));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(skip)], |processor| {
+            processor
+                .scan_glue(false)
+                .expect("complete glue scans")
+                .value
+        }),
+        glue(7, 8, 9)
+    );
+
+    let mut universe = Universe::new();
+    let (value, replayed) = scan_with(&mut universe, scanner_tokens("0pt plux"), |processor| {
+        let value = processor
+            .scan_glue(false)
+            .expect("failed optional keyword scans")
+            .value;
+        let replayed = processor
+            .scan_keyword("plux")
+            .expect("keyword replay scans")
+            .value;
+        (value, replayed)
+    });
+    assert_eq!(value, GlueSpec::ZERO);
+    assert!(replayed);
+}
+
+#[test]
+fn muglue_complete_internal_and_mixed_unit_recovery_matrix() {
+    use tex_state::glue::Order;
+
+    let mut universe = Universe::new();
+    let numeric = scan_with(
+        &mut universe,
+        scanner_tokens("2mu plus 1filll minus 3mu"),
+        |processor| {
+            processor
+                .scan_glue(true)
+                .expect("numeric muglue scans")
+                .value
+        },
+    );
+    assert_eq!(numeric.width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(
+        (numeric.stretch.raw(), numeric.stretch_order),
+        (Scaled::UNITY, Order::Filll)
+    );
+    assert_eq!(numeric.shrink.raw(), 3 * Scaled::UNITY);
+
+    let mu_id = universe.intern_glue(glue(4, 5, 6));
+    universe.set_muskip(2, mu_id);
+    let mu = universe.intern("complete-muglue").symbol();
+    universe.set_meaning(mu, Meaning::MuskipRegister(2));
+    let negative = scan_with(
+        &mut universe,
+        vec![char_token('-'), Token::Cs(mu)],
+        |processor| {
+            processor
+                .scan_glue(true)
+                .expect("signed muglue scans")
+                .value
+        },
+    );
+    assert_eq!(
+        (
+            negative.width.raw(),
+            negative.stretch.raw(),
+            negative.shrink.raw()
+        ),
+        (-4, -5, -6)
+    );
+
+    let ordinary_id = universe.intern_glue(glue(7, 8, 9));
+    universe.set_skip(3, ordinary_id);
+    let ordinary = universe.intern("ordinary-glue").symbol();
+    universe.set_meaning(ordinary, Meaning::SkipRegister(3));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(ordinary)], |processor| {
+            processor
+                .scan_glue(true)
+                .expect("mixed glue kind recovers")
+                .value
+        }),
+        glue(7, 8, 9)
+    );
+}

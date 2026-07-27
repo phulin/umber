@@ -262,23 +262,30 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "character_definition_scanner_owns_target_optional_equals_and_integer"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "scanner_syntax_optional_equals_catcode_and_relax_boundaries"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "scanner_syntax_keyword_character_catcode_matrix_and_mu_error"
         }
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery",
-          "cases": ["spaces", "relax", "expanded brace", "missing-brace backup and insertion"]
+          "path": "crates/tex-command/src/scan_toks.rs",
+          "test": "scanner_syntax_mandatory_brace_skips_relax",
+          "cases": ["expanded relax", "unexpanded relax", "brace after relax", "umber2-johp.209"]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_optional_equals_catcode_and_relax_boundaries",
-          "cases": ["leading spaces", "category-other equals", "non-other equals", "relax terminator"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_keyword_character_catcode_matrix_and_mu_error",
-          "cases": ["ASCII case", "character catcodes", "control-sequence alias rejection", "mu/non-mu recovery"]
+          "test": "scanner_syntax_optional_equals_rejects_nonother_catcodes",
+          "cases": ["letter equals", "active equals", "backup preservation", "umber2-johp.250"]
         }
       ],
       "status": "gap",
@@ -592,39 +599,25 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "character_definition_scanner_recovers_out_of_range_operands_to_zero"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "restricted_integer_all_five_classes_min_max_and_recovery_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "restricted_integer_consumers_observe_recovered_zero_before_commit"
         }
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "restricted_integer_all_five_classes_min_max_and_recovery_matrix",
-          "cases": [
-            "eight-bit",
-            "character",
-            "four-bit",
-            "fifteen-bit",
-            "twenty-seven-bit",
-            "-1",
-            "0",
-            "max",
-            "max plus one"
-          ]
-        },
-        {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "restricted_integer_consumers_observe_recovered_zero_before_commit",
-          "cases": [
-            "register definition",
-            "code assignment",
-            "math family",
-            "delimiter",
-            "stream",
-            "raw integer diagnostic precedes recovered value"
-          ]
+          "test": "restricted_input_stream_consumers_recover_out_of_range_to_zero",
+          "cases": ["openin", "closein", "read", "readline", "four-bit bound", "umber2-johp.255"]
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "gap_bead": "umber2-johp.255"
     },
     {
       "id": "tex82.scanner.integer",
@@ -667,45 +660,25 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "character_code_scanning_accepts_an_active_character_before_optional_equals"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_optional_space_sign_and_terminator_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_character_constant_raw_token_and_optional_space_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries"
         }
       ],
       "planned_coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "integer_optional_space_sign_and_terminator_matrix",
-          "cases": [
-            "no sign",
-            "repeated plus/minus",
-            "interleaved spaces",
-            "trailing space",
-            "nonspace terminator backup"
-          ]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "integer_character_constant_raw_token_and_optional_space_matrix",
-          "cases": [
-            "ordinary character",
-            "active character",
-            "control word",
-            "control symbol",
-            "optional space",
-            "improper alphabetic constant"
-          ]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries",
-          "cases": [
-            "decimal",
-            "octal",
-            "hexadecimal",
-            "A-F and a-f",
-            "invalid digit",
-            "missing number",
-            "infinity",
-            "overflow"
-          ]
+          "test": "integer_character_constants_recover_values_above_255_in_exact_profile",
+          "cases": ["direct Unicode character", "one-character control sequence", "exact profile", "umber2-johp.251"]
         },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
@@ -961,33 +934,17 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "glue_scan_accepts_internal_box_height_without_backing_up_the_primitive"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "glue_numeric_internal_width_plus_minus_order_and_keyword_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "muglue_complete_internal_and_mixed_unit_recovery_matrix"
         }
       ],
       "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "glue_numeric_internal_width_plus_minus_order_and_keyword_matrix",
-          "cases": [
-            "numeric width",
-            "internal integer/dimension/glue",
-            "plus",
-            "minus",
-            "finite",
-            "fil/fill/filll",
-            "keyword replay"
-          ]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "muglue_complete_internal_and_mixed_unit_recovery_matrix",
-          "cases": [
-            "numeric mu width",
-            "complete internal muglue",
-            "sign",
-            "mixed glue type",
-            "finite and infinite components"
-          ]
-        },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_glue_and_muglue_results",
@@ -1044,32 +1001,21 @@
         {
           "path": "crates/tex-command/src/scan_toks.rs",
           "test": "expanded_collection_expands_a_macro_one_step_at_a_time"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks.rs",
+          "test": "scan_toks_all_parameter_number_success_and_diagnostic_boundaries"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks.rs",
+          "test": "scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks.rs",
+          "test": "scan_toks_all_scanner_status_outer_and_eof_recovery"
         }
       ],
       "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scan_toks.rs",
-          "test": "scan_toks_all_parameter_number_success_and_diagnostic_boundaries",
-          "cases": ["parameterless", "1 through 9", "nonconsecutive", "tenth parameter", "hash-brace"]
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks.rs",
-          "test": "scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix",
-          "cases": [
-            "raw",
-            "expanded",
-            "nested braces",
-            "doubled hash",
-            "illegal hash",
-            "missing left brace",
-            "direct the splice"
-          ]
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks.rs",
-          "test": "scan_toks_all_scanner_status_outer_and_eof_recovery",
-          "cases": ["defining", "absorbing", "outer command", "EOF", "inserted right brace", "sequential completion"]
-        },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks",
@@ -1124,24 +1070,15 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix",
-          "cases": [
-            "direct delimiter",
-            "numeric zero",
-            "twenty-seven-bit maximum",
-            "overflow recovery",
-            "invalid radical consume",
-            "invalid non-radical backup"
-          ]
+          "test": "delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     }
   ]
 }

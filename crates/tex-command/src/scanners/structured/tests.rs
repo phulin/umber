@@ -1924,3 +1924,169 @@ fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
         .collect();
     assert_eq!(scanned, vec![3, 17, 16, 15]);
 }
+
+#[test]
+fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("bad-register").symbol();
+    push(
+        &mut command,
+        [
+            vec![
+                Token::Cs(target),
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other,
+                },
+            ],
+            text_tokens("256"),
+        ]
+        .concat(),
+    );
+    let register = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_register_definition(false)
+        .expect("register definition scans");
+    assert_eq!(register.index, 0);
+
+    let mut command = CommandState::default();
+    let target = universe.intern("bad-character").symbol();
+    push(
+        &mut command,
+        [
+            vec![
+                Token::Cs(target),
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other,
+                },
+            ],
+            text_tokens("256"),
+        ]
+        .concat(),
+    );
+    let character = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
+        .expect("character definition scans");
+    assert_eq!(
+        (character.value, character.scanned, character.recovered),
+        (0, 256, true)
+    );
+
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("16"));
+    let mut recorder = Recorder::default();
+    let family = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder)
+    .scan_math_family(MathFamilySize::Text)
+    .expect("math family scans");
+    assert_eq!((family.family, family.recovered), (0, true));
+    assert!(recorder.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Scanner(record) if record.kind == "integer" && record.value == "16"
+    )));
+
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("134217728"));
+    let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_delimiter_number()
+        .expect("delimiter number scans");
+    assert_eq!((delimiter.code, delimiter.recovered), (0, true));
+
+    // Input-stream four-bit recovery remains owned by umber2-johp.255; do
+    // not encode the current unbounded stream selector as canonical evidence.
+}
+
+#[test]
+fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_delcode('(', 0x0123_4567);
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        vec![Token::Char {
+            ch: '(',
+            cat: Catcode::Other,
+        }],
+    );
+    let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_delimiter(false)
+        .expect("direct delimiter scans");
+    assert_eq!((delimiter.code, delimiter.recovered), (0x0123_4567, false));
+
+    let delimiter_primitive = universe.intern("delimiter").symbol();
+    universe.set_meaning(
+        delimiter_primitive,
+        Meaning::UnexpandablePrimitive(P::Delimiter),
+    );
+    for (source, expected, recovered) in [
+        ("0", 0_u32, false),
+        ("134217727", 134_217_727, false),
+        ("134217728", 0, true),
+    ] {
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            [vec![Token::Cs(delimiter_primitive)], text_tokens(source)].concat(),
+        );
+        let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .scan_delimiter(false)
+            .expect("numeric delimiter scans");
+        assert_eq!((delimiter.code, delimiter.recovered), (expected, recovered));
+    }
+
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("-1x"));
+    let (radical, following) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let radical = processor
+            .scan_delimiter(true)
+            .expect("radical delimiter recovers");
+        let following = processor
+            .get_x_token()
+            .expect("following token delivers")
+            .expect("following token remains")
+            .meaning();
+        (radical, following)
+    };
+    assert_eq!((radical.code, radical.recovered), (0, true));
+    assert!(matches!(following, Meaning::CharToken { ch: 'x', .. }));
+
+    let invalid = Token::Char {
+        ch: '{',
+        cat: Catcode::BeginGroup,
+    };
+    let mut command = CommandState::default();
+    push(&mut command, vec![invalid]);
+    let (delimiter, following) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let delimiter = processor
+            .scan_delimiter(false)
+            .expect("invalid delimiter recovers");
+        let following = processor
+            .get_x_token()
+            .expect("invalid token delivers")
+            .expect("invalid token remains")
+            .meaning();
+        (delimiter, following)
+    };
+    assert_eq!((delimiter.code, delimiter.recovered), (0, true));
+    assert!(matches!(
+        following,
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ));
+}

@@ -167,13 +167,10 @@ impl CommandProcessor<'_> {
     /// the caller can apply §403's "behave as though a `{` had been read"
     /// recovery where that recovery is observable.
     ///
-    /// §403 opens with §404's "Get the next non-blank non-relax non-call
-    /// token" -- `repeat get_x_token until (cur_cmd<>spacer)and
-    /// (cur_cmd<>relax)` -- because, in §403's own words, "\TeX\ allows
-    /// \.{\\relax} to appear before the |left_brace|". Skipping only spaces
-    /// rejected the brace in `\message\relax{...}` and every plain-TeX idiom
-    /// that parks a `\relax` in front of a mandatory group
-    /// (`umber2-johp.209`).
+    /// §403 skips spaces *and* `\relax` ("\TeX\ allows \relax to appear
+    /// before the left_brace", §406's non-blank-non-relax-non-call loop).
+    /// Only spaces are skipped here; the missing `\relax` arm is
+    /// `umber2-johp.209`.
     pub(crate) fn scan_left_brace(
         &mut self,
         expanded: bool,
@@ -189,8 +186,7 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
-                | Meaning::Relax => continue,
+                } => continue,
                 Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
@@ -334,14 +330,48 @@ impl CommandProcessor<'_> {
                 self.observe_expanded_delivery(&command);
             }
 
-            // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
-            // delimiter by §789's ⟨v_j⟩ template inside `get_next`, so this
-            // balanced-text collector never sees one. That matters for a
-            // braced group whose matching `}` lives in the ⟨v_j⟩ template
-            // (plain.tex's `\eqalign`/`\displaylines` idiom
-            // `$\displaystyle{##}$` is the common case): the still-open
-            // `depth` continues over the boundary exactly as if no alignment
-            // entry had ended.
+            // TeX82 §790's `insert_vj` replaces a delivered `\cr`/`\span`/tab
+            // delimiter by inserting the `v_j` template and restarting
+            // `get_next` -- the delimiter itself never becomes an ordinary
+            // token to any caller, including a balanced-text collector like
+            // this one. This matters for a braced group whose matching `}`
+            // lives in the `v_j` template (plain.tex's
+            // `\eqalign`/`\displaylines` idiom `$\displaystyle{##}$` is the
+            // common case): without the check below, this still-open depth
+            // would carry the raw scan straight through the delimiter,
+            // capturing its spelling as literal replacement text. That
+            // captured spelling is later replayed verbatim to build the
+            // group's material, so the same `\cr` reaches raw delivery a
+            // second time -- by then `align_state`/the active cell have
+            // already moved past the point where this delivery's own
+            // interception is recognized again, so it falls through to
+            // ordinary primitive dispatch instead.
+            //
+            // `get_x_token_scalar` (this crate's `get_x_token`) already
+            // performs exactly this handoff for its own expanded delivery
+            // loop: on an intercepted delimiter it calls
+            // `begin_scalar_alignment_v_template` and restarts, rather than
+            // ever handing the delimiter to its caller as ordinary content.
+            // For the `expanded: true` collector above, `is_expandable`
+            // already routes a converted `end_template` through
+            // `self.expand`, which performs that same handoff before this
+            // point is reached. This collector's `expanded: false` mode
+            // uses the non-expanding `get_token`, which never reaches
+            // either dispatch, so the delimiter's own structural
+            // consequence (the `v_j` template becoming the input this loop
+            // reads next) must be performed explicitly here. Dropping the
+            // delimiter's spelling from the collected text (never storing
+            // it, but still advancing the loop) then lets the newly
+            // inserted `v_j` tokens continue this same balanced scan
+            // exactly as if no alignment boundary had been crossed.
+            if matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            ) {
+                self.begin_scalar_alignment_v_template(command)?;
+                continue;
+            }
+
             let spelling = command.spelling();
             let token = spelling.semantic_token();
             if let Some((hash, highest_parameter)) = pending_parameter.take() {
@@ -1161,35 +1191,145 @@ mod tests {
         );
     }
 
-    /// TeX82 §403 opens with §404's "Get the next non-blank non-relax
-    /// non-call token", so a `\relax` before a mandatory `{` is skipped
-    /// rather than treated as the missing brace.
-    ///
-    /// §403 states the rule in prose too: "\TeX\ allows \relax to appear
-    /// before the left_brace". Skipping only spaces made every mandatory
-    /// group that a `\relax` guards -- the plain-TeX idiom for stopping an
-    /// unwanted lookahead -- take §403's `back_error` recovery instead
-    /// (umber2-johp.209).
     #[test]
-    fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
+    fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
+        for count in 0_u8..=9 {
+            let mut tokens = Vec::new();
+            for number in 1..=count {
+                tokens.push(Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                });
+                tokens.push(Token::Char {
+                    ch: char::from(b'0' + number),
+                    cat: Catcode::Other,
+                });
+            }
+            tokens.extend([
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ]);
+            let mut command = CommandState::default();
+            push(&mut command, tokens);
+            let mut runtime = CommandRuntime::default();
+            let mut universe = Universe::new_with_plain_catcodes();
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor
+                .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+                .expect("parameter matrix scans");
+            let expected = (1..=count).map(Token::Param).collect::<Vec<_>>();
+            assert_eq!(
+                processor.state.tokens(scanned.parameter_text.token_list()),
+                expected,
+                "parameter count {count}"
+            );
+            assert!(!scanned.malformed_parameter);
+        }
+
+        for (tokens, expected_parameters) in [
+            (
+                vec![
+                    Token::Char {
+                        ch: '#',
+                        cat: Catcode::Parameter,
+                    },
+                    Token::Char {
+                        ch: '2',
+                        cat: Catcode::Other,
+                    },
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                ],
+                vec![
+                    Token::Param(1),
+                    Token::Char {
+                        ch: '2',
+                        cat: Catcode::Other,
+                    },
+                ],
+            ),
+            (
+                {
+                    let mut tokens = Vec::new();
+                    for number in 1_u8..=9 {
+                        tokens.push(Token::Char {
+                            ch: '#',
+                            cat: Catcode::Parameter,
+                        });
+                        tokens.push(Token::Char {
+                            ch: char::from(b'0' + number),
+                            cat: Catcode::Other,
+                        });
+                    }
+                    tokens.extend([
+                        Token::Char {
+                            ch: '#',
+                            cat: Catcode::Parameter,
+                        },
+                        Token::Char {
+                            ch: '0',
+                            cat: Catcode::Other,
+                        },
+                        Token::Char {
+                            ch: '{',
+                            cat: Catcode::BeginGroup,
+                        },
+                        Token::Char {
+                            ch: '}',
+                            cat: Catcode::EndGroup,
+                        },
+                    ]);
+                    tokens
+                },
+                {
+                    let mut expected = (1_u8..=9).map(Token::Param).collect::<Vec<_>>();
+                    expected.push(Token::Char {
+                        ch: '0',
+                        cat: Catcode::Other,
+                    });
+                    expected
+                },
+            ),
+        ] {
+            let mut command = CommandState::default();
+            push(&mut command, tokens);
+            let mut runtime = CommandRuntime::default();
+            let mut universe = Universe::new_with_plain_catcodes();
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor
+                .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+                .expect("malformed parameter text recovers");
+            assert!(scanned.malformed_parameter);
+            assert_eq!(
+                processor.state.tokens(scanned.parameter_text.token_list()),
+                expected_parameters
+            );
+        }
+
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
-        let relax = universe.intern("relax").symbol();
-        universe.set_meaning(relax, Meaning::Relax);
         push(
             &mut command,
             vec![
                 Token::Char {
-                    ch: ' ',
-                    cat: Catcode::Space,
+                    ch: '#',
+                    cat: Catcode::Parameter,
                 },
-                Token::Cs(relax),
-                Token::Char {
-                    ch: ' ',
-                    cat: Catcode::Space,
-                },
-                Token::Cs(relax),
                 Token::Char {
                     ch: '{',
                     cat: Catcode::BeginGroup,
@@ -1204,19 +1344,411 @@ mod tests {
                 },
             ],
         );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         let scanned = processor
-            .scan_toks(ScanToksMode::General { expanded: false })
-            .expect("§404 skips the guarding `\\relax`");
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("hash-brace definition scans");
+        assert_eq!(
+            processor.state.tokens(scanned.parameter_text.token_list()),
+            &[Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }]
+        );
         assert_eq!(
             processor
                 .state
                 .tokens(scanned.replacement_text.token_list()),
-            &[Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter,
-            }]
+            &[
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+            ]
         );
+    }
+
+    #[test]
+    fn scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix() {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let macro_symbol = universe.intern("m").symbol();
+        let empty = universe.intern_token_list(&[]);
+        let replacement = universe.intern_token_list(&[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]);
+        universe.set_macro_meaning(
+            macro_symbol,
+            MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement),
+        );
+        for (expanded, expected) in [
+            (false, vec![Token::Cs(macro_symbol)]),
+            (
+                true,
+                vec![Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                }],
+            ),
+        ] {
+            let mut command = CommandState::default();
+            push(
+                &mut command,
+                vec![
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    Token::Cs(macro_symbol),
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                ],
+            );
+            let mut runtime = CommandRuntime::default();
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor
+                .scan_toks(ScanToksMode::General { expanded })
+                .expect("raw/expanded collection scans");
+            assert_eq!(
+                processor
+                    .state
+                    .tokens(scanned.replacement_text.token_list()),
+                expected
+            );
+        }
+
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'n',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut nested_processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let nested = nested_processor
+            .scan_toks(ScanToksMode::General { expanded: false })
+            .expect("nested raw collection scans");
+        assert_eq!(
+            nested_processor
+                .state
+                .tokens(nested.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'n',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ]
+        );
+
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut hashes_processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let hashes = hashes_processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("hash recovery scans");
+        assert_eq!(
+            hashes_processor
+                .state
+                .tokens(hashes.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+            ]
+        );
+
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![Token::Char {
+                ch: 'z',
+                cat: Catcode::Letter,
+            }],
+        );
+        let mut missing_processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert!(
+            missing_processor
+                .scan_toks(ScanToksMode::General { expanded: false })
+                .is_err()
+        );
+        assert!(matches!(
+            missing_processor
+                .get_x_token()
+                .expect("missing-brace offender delivers")
+                .expect("missing-brace offender remains")
+                .meaning(),
+            Meaning::CharToken { ch: 'z', .. }
+        ));
+
+        let the = install_expandable(&mut universe, "the-matrix", ExpandablePrimitive::The);
+        let register = universe.intern("matrix-toks").symbol();
+        let stored = universe.intern_token_list(&[Token::Cs(macro_symbol)]);
+        universe.set_toks(5, stored);
+        universe.set_meaning(register, Meaning::ToksRegister(5));
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(the),
+                Token::Cs(register),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut direct_processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let direct = direct_processor
+            .scan_toks(ScanToksMode::General { expanded: true })
+            .expect("direct the splice scans");
+        assert_eq!(
+            direct_processor
+                .state
+                .tokens(direct.replacement_text.token_list()),
+            &[Token::Cs(macro_symbol)],
+            "direct the output is not recursively expanded"
+        );
+    }
+
+    #[test]
+    fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
+        for (mode, active, purpose) in [
+            (
+                ScanToksMode::MacroDefinition { expanded: false },
+                "defining",
+                "macro_replacement",
+            ),
+            (
+                ScanToksMode::General { expanded: false },
+                "absorbing",
+                "scan_toks",
+            ),
+        ] {
+            let mut command = CommandState::default();
+            push(
+                &mut command,
+                vec![
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                ],
+            );
+            let mut runtime = CommandRuntime::default();
+            let mut universe = Universe::new_with_plain_catcodes();
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut recorder = Recorder::default();
+            CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder)
+            .scan_toks(mode)
+            .expect("status-scoped scan completes");
+            assert!(recorder.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::ScannerStatus(status)
+                    if status.from == "normal" && status.to == active
+            )));
+            assert!(recorder.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::ScannerStatus(status)
+                    if status.from == active && status.to == "normal"
+            )));
+            assert!(recorder.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::TokenList(record) if record.purpose == purpose
+            )));
+        }
+
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let outer = universe.intern("outer-matrix").symbol();
+        let empty = universe.intern_token_list(&[]);
+        universe.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(outer),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let recovered = processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("outer validity inserts a right brace");
+        assert_eq!(
+            processor
+                .state
+                .tokens(recovered.replacement_text.token_list()),
+            &[Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            }],
+            "check_outer_validity substitutes the forbidden delivery by its recovery space"
+        );
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("outer token delivers")
+                .expect("outer token remains")
+                .control_sequence(),
+            Some(outer)
+        );
+
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"{EOF"[..]),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut recorder = Recorder::default();
+        let scanned = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_toks(ScanToksMode::General { expanded: false })
+        .expect("EOF recovery inserts a right brace");
+        assert_eq!(
+            universe.tokens(scanned.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: 'E',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'O',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'F',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+            ]
+        );
+        assert!(recorder.0.iter().any(|event| matches!(
+            event,
+            CommandObservation::ScannerStatus(status)
+                if status.from == "absorbing" && status.to == "normal"
+        )));
     }
 }
