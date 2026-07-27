@@ -1655,7 +1655,8 @@
         "Horizontal paragraph language and hyphen-minimum parameters are live."
       ],
       "stimulus": [
-        "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in the structured Phase 2 units below."
+        "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in the structured Phase 2 units below.",
+        "The committed command-semantic setlanguage-replay case observes the canonical-main-control gap as a strict xfail linked to umber2-r9nt."
       ],
       "planned_coverage": [
         {
@@ -1665,6 +1666,15 @@
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "setlanguage-replay strict xfail",
+            "linked to umber2-r9nt",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ],
       "expected_observations": [
@@ -1677,10 +1687,11 @@
         "Negative, zero, and above-255 operands all select language zero."
       ],
       "recovery_cases": [
-        "Outside horizontal mode setlanguage reports illegal case without scanning or appending."
+        "Outside horizontal mode setlanguage reports illegal case without scanning or appending.",
+        "The strict xfail pins the first canonical-versus-current execution mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::whatsits",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
@@ -1688,7 +1699,7 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "gap_bead": "umber2-r9nt"
     }
   ]
 }

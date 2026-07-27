@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "setlanguage-replay",
+      "property_id": "tex82.whatsits.language-state",
+      "source": "setlanguage-replay.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1376, 1377]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": ["extension"],
+        "box_registers": [0],
+        "node_depth": 1
+      },
+      "expected": ["command:extension:5", "box:0/0:whatsit"],
+      "expectation": {
+        "kind": "xfail",
+        "bug": "umber2-r9nt",
+        "mismatch": {
+          "index": 0,
+          "kind": "execution",
+          "expected": "command:extension:5",
+          "actual": "main-control step: UnimplementedPrimitive { primitive: SetLanguage, mode: RestrictedHorizontal, origin: OriginId(..) }"
+        }
+      }
+    }
+  ]
+}
