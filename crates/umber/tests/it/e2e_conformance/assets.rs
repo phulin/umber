@@ -20,7 +20,6 @@
 //! handle rather than through `eprintln!`, so libtest's capture cannot hide it.
 
 use std::collections::BTreeSet;
-use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -244,6 +243,29 @@ pub fn with_gate(name: &str, body: impl FnOnce(&GateAssets)) {
     });
 }
 
+/// Repository `.gitignore`, bound at compile time.
+///
+/// The two meta-tests below check the registry against files that live outside
+/// this module, but they are not permitted to read the host filesystem: engine
+/// and test code alike route real I/O through `tex-state::World`
+/// (`docs/core_state.md` §8, §10.5), and `clippy.toml` denies the `std::fs`
+/// entry points. `include_str!` needs neither an exception nor a working
+/// directory. It is also strictly stronger than a runtime read: Cargo records
+/// the included file in the test target's dep-info, so editing `.gitignore` or
+/// the call-site source rebuilds and reruns these tests instead of leaving a
+/// stale binary asserting against text that no longer exists.
+const GITIGNORE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore"));
+
+/// Repository-relative path of [`GATE_CALL_SITES`], for failure messages.
+const GATE_CALL_SITES_PATH: &str = "crates/umber/tests/it/e2e_conformance.rs";
+
+/// Source text of the module holding every `#[test]` that drives a gate, bound
+/// at compile time for the same reasons as [`GITIGNORE`].
+const GATE_CALL_SITES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/it/e2e_conformance.rs"
+));
+
 /// Holds [`GATES`] in exact correspondence with the gitignored oracle entries
 /// in `.gitignore`.
 ///
@@ -252,11 +274,8 @@ pub fn with_gate(name: &str, body: impl FnOnce(&GateAssets)) {
 /// it through [`with_gate`] rather than a private presence check of its own.
 #[test]
 fn conformance_gate_registry_matches_gitignore() {
-    let root = repo_root();
-    let path = root.join(".gitignore");
-    let text = fs::read_to_string(&path).expect("read .gitignore");
     let prefix = format!("/{ORACLE_DIR}/");
-    let ignored: BTreeSet<&str> = text
+    let ignored: BTreeSet<&str> = GITIGNORE
         .lines()
         .map(str::trim)
         .filter_map(|line| line.strip_prefix(&prefix))
@@ -282,16 +301,14 @@ fn conformance_gate_registry_matches_gitignore() {
 /// keeps its own presence check.
 #[test]
 fn conformance_gate_registry_is_reachable() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/e2e_conformance.rs");
-    let text = fs::read_to_string(&source).expect("read e2e_conformance.rs");
     for gate in GATES {
         let call = format!("with_gate(\"{}\"", gate.name);
         assert!(
-            text.contains(&call),
+            GATE_CALL_SITES.contains(&call),
             "registered conformance gate `{}` has no `assets::{call})` call site in {}; \
              every gate must reach its assets through the shared choke point",
             gate.name,
-            source.display()
+            GATE_CALL_SITES_PATH
         );
     }
 }
