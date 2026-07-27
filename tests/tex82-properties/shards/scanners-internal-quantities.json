@@ -44,12 +44,44 @@
       "rationale": "Reviewed internal-value forward declarations, level representation, register primitive declarations, and diagnostic spelling."
     },
     {
-      "modules": { "first": 413, "last": 431 },
+      "modules": { "first": 413, "last": 415 },
       "disposition": "property",
       "owner": "tex-command::scanners",
-      "property_ids": ["tex82.scanner.internal-quantity"],
+      "property_ids": ["tex82.scanner.internal-eqtb-token-sources"],
       "gap_bead": null,
-      "rationale": "Reviewed all canonical internal-quantity fetch, coercion, reference, negation, and recovery branches."
+      "rationale": "Reviewed internal dispatcher plus code-table, token-list, and identifier source families."
+    },
+    {
+      "modules": { "first": 416, "last": 424 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.internal-mode-page-list-sources"],
+      "gap_bead": null,
+      "rationale": "Reviewed mode, nest, page, shape, box, and last-item internal source families and their unavailable-state results."
+    },
+    {
+      "modules": { "first": 425, "last": 426 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.internal-font-sources"],
+      "gap_bead": null,
+      "rationale": "Reviewed font-dimension and font-integer internal sources."
+    },
+    {
+      "modules": { "first": 427, "last": 427 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.internal-register-sources"],
+      "gap_bead": null,
+      "rationale": "Reviewed typed register source selection and eight-bit register-index scanning."
+    },
+    {
+      "modules": { "first": 428, "last": 431 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.internal-coercion-ownership"],
+      "gap_bead": null,
+      "rationale": "Reviewed invalid-source recovery, level lowering, glue reference ownership, and complete-value negation."
     },
     {
       "modules": { "first": 432, "last": 432 },
@@ -84,12 +116,28 @@
       "rationale": "Reviewed introduction and result contract for dimension scanning."
     },
     {
-      "modules": { "first": 448, "last": 460 },
+      "modules": { "first": 448, "last": 453 },
       "disposition": "property",
       "owner": "tex-command::scanners",
-      "property_ids": ["tex82.scanner.dimension"],
+      "property_ids": ["tex82.scanner.dimension-prefix-fraction"],
       "gap_bead": null,
-      "rationale": "Reviewed numeric/internal prefixes, decimal fractions, physical/internal/infinite units, conversions, optional space, and range recovery."
+      "rationale": "Reviewed sign, shortcut/internal and numeric prefixes, point normalization, decimal fractions, and fixed-point attachment."
+    },
+    {
+      "modules": { "first": 454, "last": 456 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.dimension-internal-relative-infinite-units"],
+      "gap_bead": null,
+      "rationale": "Reviewed infinite-order suffixes plus internal, em, ex, and mu unit selection."
+    },
+    {
+      "modules": { "first": 457, "last": 460 },
+      "disposition": "property",
+      "owner": "tex-command::scanners",
+      "property_ids": ["tex82.scanner.dimension-physical-conversion-recovery"],
+      "gap_bead": null,
+      "rationale": "Reviewed true magnification, exact physical-unit conversions, unknown-unit recovery, and max-dimen recovery."
     },
     {
       "modules": { "first": 461, "last": 462 },
@@ -225,34 +273,215 @@
       "gap_bead": "umber2-johp.224"
     },
     {
-      "id": "tex82.scanner.internal-quantity",
-      "sections": [413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429, 430, 431],
-      "claim": "scan_something_internal fetches every TeX82 internal family at the caller's requested level, bounds register selectors, lowers richer values canonically, owns references, negates complete values, and recovers unavailable quantities to the specified zero.",
+      "id": "tex82.scanner.internal-eqtb-token-sources",
+      "sections": [413, 414, 415],
+      "claim": "scan_something_internal dispatches code-table, token-list, token-parameter, and font-identifier commands to typed values without replaying the retained internal command.",
       "preconditions": [
-        "The current expanded command is classified in min_internal through max_internal.",
-        "The caller supplies the maximum accepted value level and whether the result is negative.",
-        "Mode, nest, page, font, register, box, and list state are fixed at the fetch boundary."
+        "The current expanded command is a def_code, toks_register, assign_toks, def_family, set_font, or def_font internal command.",
+        "The caller supplies int_val or tok_val as its accepted result level."
       ],
       "stimulus": [
-        "Fetch code tables, token lists and identifiers, integer/dimension/glue parameters and registers, auxiliary and page values, shapes, box and font values, and last-item quantities in every legal and illegal mode/level combination."
+        "Fetch every code-table family and empty/nonempty token or identifier source at its legal level, then request each token/identifier source at int_val."
       ],
       "expected_observations": [
-        "Nested register-index scans precede the typed internal result and use the eight-bit restricted class.",
-        "The observed result level is the requested level after glue-width and dimension-to-integer lowering.",
-        "Token lists and glue references are copied or retained exactly once; negation covers width, stretch, and shrink."
+        "Code-table lookup scans one bounded character selector and returns its integer entry.",
+        "Token and identifier sources return typed immutable values only at tok_val, with the nested selector observation preceding the result."
       ],
       "postconditions": [
-        "The caller receives a typed integer, scaled value, glue/muglue, font identifier, or frozen token list with canonical ownership.",
-        "No internal command is backed up and redelivered merely because its primitive family differs."
+        "The original internal command is delivered once and the selected value preserves its source identity.",
+        "Token-list copying or formatting remains owned by the expansion consumer, not this fetch."
       ],
       "equivalence_cases": [
-        "Named parameters, register aliases, chardef/mathchardef constants, and box/font/page enquiries share the min_internal retained-token branch.",
-        "A glue lowered to dimension and then integer preserves its width's scaled representation at each requested level."
+        "Direct code-table primitives and aliases with the same meaning select the same table entry.",
+        "Empty token registers and empty token parameters both return an empty typed list without fabricated tokens."
       ],
       "recovery_cases": [
-        "A token-list or font quantity requested below tok_val reports Missing number, backs up the offending token, and yields zero at dimen_val before lowering.",
-        "Unavailable mode-dependent quantities return their canonical zero or sentinel without reading unrelated input.",
-        "An out-of-range register selector diagnoses the original integer and recovers to register zero."
+        "A token or identifier requested below tok_val reports Missing number, backs up the internal command, and supplies zero for subsequent lowering.",
+        "An out-of-range code-table or token-register selector recovers through its restricted integer class before lookup."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [],
+      "planned_coverage": [
+        "internal_equality_table_sources_scan_each_code_family_and_character_boundary",
+        "internal_token_sources_preserve_empty_nonempty_and_identifier_values",
+        "internal_token_sources_recover_illegal_requested_levels_and_indexes",
+        "scanner-conditionals.tex: typed token-list internal result and transcript spelling"
+      ],
+      "cross_references": [
+        {
+          "property_id": "tex82.expansion.converted-token-lists",
+          "relationship": "Non-owning consumer reference: §§464–472 copy or render the typed tok_val result produced here."
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.internal-mode-page-list-sources",
+      "sections": [416, 417, 418, 419, 420, 421, 422, 423, 424],
+      "claim": "Mode, nest, page, shape, box, and last-item enquiries return the exact state-dependent TeX82 integer, dimension, or glue value without consuming operand text beyond any documented box selector.",
+      "preconditions": [
+        "Mode nest, page totals, box registers, paragraph shape, and current-list tail are explicitly prepared.",
+        "The current internal command selects one enquiry family."
+      ],
+      "stimulus": [
+        "Fetch spacefactor/prevdepth, deadcycles/insertpenalties, box dimensions, page totals, prevgraf, parshape size, and lastpenalty/lastkern/lastskip in every applicable and inapplicable state."
+      ],
+      "expected_observations": [
+        "Each applicable enquiry returns the typed live state named by its command.",
+        "Box dimensions scan exactly one bounded register number; last-item glue retains one canonical reference."
+      ],
+      "postconditions": [
+        "Read-only enquiries do not mutate the mode nest, page builder, box, shape, or current list.",
+        "The result level matches the source family before any caller-requested lowering."
+      ],
+      "equivalence_cases": [
+        "Equivalent empty current lists in horizontal and vertical contexts use the documented zero last-item values.",
+        "Unset and void boxes expose zero width, height, and depth through the same box-dimension path."
+      ],
+      "recovery_cases": [
+        "spacefactor outside horizontal mode and prevdepth outside vertical mode diagnose Improper and return zero.",
+        "Inactive page totals and unavailable last-item values return their canonical zero or sentinel without reading another token."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "prev_depth_and_prev_graf_read_through_the_host_capability"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "prev_depth_outside_vertical_mode_reads_zero"
+        }
+      ],
+      "planned_coverage": [
+        "internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery",
+        "internal_page_shape_box_sources_cover_empty_active_and_register_boundaries",
+        "internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.internal-font-sources",
+      "sections": [425, 426],
+      "claim": "Font-dimension and font-integer enquiries scan the specified font and parameter selectors and return the selected metric or hyphen/skew value at its canonical level.",
+      "preconditions": [
+        "Current and named fonts have explicit metric tables and integer parameters.",
+        "The current internal command selects fontdimen, hyphenchar, or skewchar."
+      ],
+      "stimulus": [
+        "Read first, last, absent, and extensible font dimensions plus current and explicitly named font integer values."
+      ],
+      "expected_observations": [
+        "Font identity and parameter index scans precede the typed internal result.",
+        "Existing dimensions return their exact scaled metric and integers return their assigned character code."
+      ],
+      "postconditions": [
+        "A pure enquiry leaves font selection and metrics unchanged.",
+        "The result is dimen_val for fontdimen and int_val for hyphen/skew characters."
+      ],
+      "equivalence_cases": [
+        "Selecting the current font explicitly or through the current-font command returns identical values.",
+        "Two fonts with equal metric entries return equal values while preserving distinct font identities during selection."
+      ],
+      "recovery_cases": [
+        "A nonexistent font dimension reports the canonical error and returns zero without extending the table during a read.",
+        "An invalid font identifier recovers through the shared font-ident scanner before parameter lookup."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "font_integers_fetch_hyphen_and_skew_characters_of_the_current_font"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "font_integers_read_the_named_font_rather_than_the_current_one"
+        }
+      ],
+      "planned_coverage": [
+        "internal_font_dimensions_cover_first_last_missing_and_named_font_selection",
+        "internal_font_integers_cover_current_named_hyphen_and_skew_boundaries"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.internal-register-sources",
+      "sections": [427],
+      "claim": "Each count, dimen, skip, and muskip internal register source scans one eight-bit index and returns the stored value at the register family's exact type level.",
+      "preconditions": [
+        "Register zero, a middle register, and register 255 contain distinct typed values.",
+        "The current internal command identifies one register family."
+      ],
+      "stimulus": [
+        "Fetch every register family at indexes -1, 0, a middle value, 255, and 256 using direct and expanded integer forms."
+      ],
+      "expected_observations": [
+        "The nested integer and restricted-index results precede the internal result.",
+        "Legal indexes return integer, dimension, glue, or muglue without losing glue ownership."
+      ],
+      "postconditions": [
+        "Register storage is unchanged and the result retains the selected family's type.",
+        "Exactly the selector and its canonical terminator are consumed."
+      ],
+      "equivalence_cases": [
+        "Decimal, radix, character, and internal selectors denoting the same index select the same register.",
+        "All four register families share the same eight-bit selector boundary."
+      ],
+      "recovery_cases": [
+        "Negative and 256 selectors diagnose their original integer and recover to register zero before fetch.",
+        "A missing selector inserts zero while preserving the rejected operand token."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_internal_register_scans_its_index_through_command_input"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "internal_dimension_register_scans_and_bounds_its_index_through_command_input"
+        }
+      ],
+      "planned_coverage": [
+        "internal_register_sources_cover_all_families_indexes_and_selector_forms",
+        "internal_register_sources_recover_missing_negative_and_above_eight_bit_indexes"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.internal-coercion-ownership",
+      "sections": [428, 429, 430, 431],
+      "claim": "Internal results lower only as far as the caller requests, repair glue references exactly once, negate the complete typed value when requested, and recover an invalid internal command to zero.",
+      "preconditions": [
+        "A fetched source value is available at int, dimen, glue, mu, identifier, or token-list level.",
+        "The caller supplies a requested maximum level and sign."
+      ],
+      "stimulus": [
+        "Request every legal lowering step and sign combination for integer, dimension, glue, and muglue values, plus a non-internal command and token/identifier below tok_val."
+      ],
+      "expected_observations": [
+        "Glue lowers to its width and dimension lowers to the identical scaled integer representation until the requested level is reached.",
+        "Owned glue results retain one reference; discarded glue levels release it; negative glue negates width, stretch, and shrink without changing orders."
+      ],
+      "postconditions": [
+        "The observed committed level equals the caller's requested level, not the source's original level.",
+        "No glue or token reference is leaked, duplicated, or freed while returned."
+      ],
+      "equivalence_cases": [
+        "A dimension and a glue with the same width produce the same integer after complete lowering.",
+        "Negating before or after legal scalar lowering yields the same integer or dimension result."
+      ],
+      "recovery_cases": [
+        "A non-internal command reports You can't use this after the and supplies zero without consuming a successor.",
+        "A token or identifier below tok_val follows Missing number recovery before the same lowering and ownership exit."
       ],
       "semantic_owner": "tex-command::scanners",
       "test_level": "rust-unit",
@@ -263,32 +492,14 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "integer_internal_register_scans_its_index_through_command_input"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "internal_dimension_register_scans_and_bounds_its_index_through_command_input"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "prev_depth_and_prev_graf_read_through_the_host_capability"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "font_integers_read_the_named_font_rather_than_the_current_one"
+          "test": "glue_scanner_negates_all_three_components_of_a_signed_internal_glue"
         }
       ],
       "planned_coverage": [
-        "internal_quantity_all_command_families_and_requested_levels",
-        "internal_quantity_mode_page_box_last_item_and_zero_recovery",
-        "internal_quantity_token_list_identifier_reference_and_negation_ownership",
-        "scanner-conditionals.tex: internal family typed results and transcript spellings"
-      ],
-      "cross_references": [
-        {
-          "property_id": "tex82.expansion.converted-token-lists",
-          "relationship": "Non-owning consumer reference: the expansion property owns §§464–472, where tok_val results are copied or rendered into converted token lists."
-        }
+        "internal_coercion_lowers_each_source_level_and_commits_requested_level",
+        "internal_coercion_balances_glue_references_for_return_lowering_and_error",
+        "internal_coercion_negates_scalar_glue_and_muglue_components",
+        "internal_coercion_recovers_noninternal_and_token_values_below_tok_level"
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.224"
@@ -389,36 +600,33 @@
       "gap_bead": "umber2-johp.224"
     },
     {
-      "id": "tex82.scanner.dimension",
-      "sections": [448, 449, 450, 451, 452, 453, 454, 455, 456, 457, 458, 459, 460],
-      "claim": "scan_dimen combines signed integer/internal prefixes and correctly rounded decimal fractions with internal, font-relative, true, physical, sp, mu, or infinite units, preserving keyword retry order and clamping only at max_dimen.",
+      "id": "tex82.scanner.dimension-prefix-fraction",
+      "sections": [448, 449, 450, 451, 452, 453],
+      "claim": "scan_dimen distinguishes retained internal dimensions, shortcut integers, leading points, and ordinary integer prefixes, then attaches at most seventeen decimal digits with TeX82 rounding before sign application.",
       "preconditions": [
-        "The caller selects ordinary versus mu units, whether infinite orders are allowed, and whether an integer prefix is already supplied.",
-        "Magnification, current-font metrics, internal quantities, and exact arithmetic are committed."
+        "The caller specifies ordinary or mu mode and whether an integer shortcut is already available.",
+        "Expanded delivery, scan_int, internal-value classification, and round_decimals are available."
       ],
       "stimulus": [
-        "Scan leading point/comma fractions, decimal and radix prefixes, alphabetic constants, internal numeric prefixes and units, em/ex, true units, every physical unit, sp, mu, fil through excess l suffixes, optional spaces, unknown units, and positive/negative range edges."
+        "Scan signed whole, leading-point/comma, decimal, radix, alphabetic, internal integer, and complete internal dimension prefixes with zero, seventeen, and excess fraction digits."
       ],
       "expected_observations": [
-        "A leading category-other point bypasses scan_int and is raw-redelivered once for fraction collection.",
-        "Only radix ten accepts a fractional suffix; at most seventeen fraction digits affect round_decimals.",
-        "Internal units scale both integral and fractional parts with canonical arithmetic.",
-        "Physical conversions, true magnification adjustment, glue order, and final scaled observation match the cited algorithms."
+        "A leading category-other point or comma bypasses scan_int and is redelivered raw exactly once.",
+        "Only radix-ten numeric prefixes attach a fraction; internal dimensions bypass numeric replay; fraction rounding feeds the exact scaled prefix."
       ],
       "postconditions": [
-        "The result is a signed scaled value and cur_order is normal or the accepted infinite order.",
-        "The scanner consumes its one specified optional trailing space and preserves every later token."
+        "The prefix yields an integral/fraction pair or a complete signed internal dimension for unit processing.",
+        "The first nonfraction token remains current for the unit scanner."
       ],
       "equivalence_cases": [
-        "Decimal point and continental comma are equivalent only as category-other tokens.",
-        "Equivalent physical-unit spellings under ASCII case and exact rational conversions yield identical scaled values.",
-        "An internal dimension used as a complete operand and as a unit follows the distinct retained-token paths specified by TeX82."
+        "Category-other point and comma with identical digits produce equal fractions; other catcodes are ordinary terminators.",
+        "Leading .5 and decimal 0.5 produce the same prefix without sharing the scan_int event sequence.",
+        "Equivalent decimal, radix, alphabetic, and internal integer whole prefixes agree before unit attachment."
       ],
       "recovery_cases": [
-        "Unknown ordinary units diagnose and assume pt without consuming the rejected unit token beyond failed keyword probes.",
-        "A non-mu unit in a mu scan diagnoses and assumes mu; mixed internal glue kinds diagnose and continue canonically.",
-        "Excess l suffixes diagnose once, are consumed, and clamp order at filll.",
-        "Magnitude or arithmetic overflow diagnoses Dimension too large and returns signed max_dimen."
+        "A missing numeric prefix follows scan_int's inserted-zero recovery while preserving the rejected token for unit handling.",
+        "Fraction digits beyond seventeen are consumed but do not alter round_decimals input.",
+        "Prefix arithmetic overflow is retained for final dimension-range recovery rather than wrapping."
       ],
       "semantic_owner": "tex-command::scanners",
       "test_level": "rust-unit",
@@ -429,15 +637,112 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "radix_prefixed_dimension_constants_scan_and_admit_no_fraction"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_scanner_uses_an_internal_integer_as_its_numeric_prefix"
+        }
+      ],
+      "planned_coverage": [
+        "dimension_prefixes_cover_sign_shortcut_internal_decimal_radix_and_character_forms",
+        "dimension_fractions_cover_point_catcodes_zero_seventeen_and_excess_digits",
+        "dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.dimension-internal-relative-infinite-units",
+      "sections": [454, 455, 456],
+      "claim": "Dimension unit scanning recognizes canonical fil orders, internal dimension units, current-font em/ex units, and mu units with their distinct scaling, optional-space, and compatibility rules.",
+      "preconditions": [
+        "A numeric integral/fraction prefix is available and the caller selects ordinary or mu units plus whether infinite units are allowed.",
+        "Current-font metrics and internal dimension or muglue quantities are explicit."
+      ],
+      "stimulus": [
+        "Attach fil through excess l suffixes, internal dimensions, internal muglue, em, ex, and mu to whole and fractional prefixes with case and space variants."
+      ],
+      "expected_observations": [
+        "fil suffix count selects fil, fill, or filll and consumes excess l tokens after one error.",
+        "Internal, em, and ex units scale both integral and fractional components; mu is accepted only for mu dimensions.",
+        "Each accepted unit consumes exactly its documented optional following space."
+      ],
+      "postconditions": [
+        "The result carries a scaled value and the normal or accepted infinite order.",
+        "Failed keyword probes retire and replay their prefixes before the next unit candidate."
+      ],
+      "equivalence_cases": [
+        "Upper/lowercase keyword characters with any character catcode select the same unit.",
+        "Equivalent internal dimension, em, and ex magnitudes scale a given prefix to the same result.",
+        "Contiguous and space-separated excess l suffixes share filll recovery after documented consumption."
+      ],
+      "recovery_cases": [
+        "Infinite units when inf is false fall through to ordinary-unit recovery rather than setting an order.",
+        "Excess l suffixes report one error, consume all l candidates, and clamp order to filll.",
+        "A non-mu unit in a mu scan assumes mu; mixed internal unit kinds report Incompatible glue units."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "dimension_scanner_accepts_an_internal_dimension_as_its_unit"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_scanner_scales_true_units_by_the_prepared_magnification"
+          "test": "dimension_scanner_recognizes_current_font_em_and_ex_units"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "radix_prefixed_dimension_constants_scan_and_admit_no_fraction"
+          "test": "excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input"
+        }
+      ],
+      "planned_coverage": [
+        "dimension_infinite_units_cover_orders_case_spaces_disabled_mode_and_excess_suffixes",
+        "dimension_internal_units_scale_whole_fraction_glue_width_and_muglue_compatibility",
+        "dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundaries",
+        "dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery"
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.224"
+    },
+    {
+      "id": "tex82.scanner.dimension-physical-conversion-recovery",
+      "sections": [457, 458, 459, 460],
+      "claim": "True and physical units use TeX82's exact rational conversions and magnification adjustment, while unknown units and out-of-range magnitudes recover to assumed points and signed max_dimen.",
+      "preconditions": [
+        "A finite numeric integral/fraction prefix is available in ordinary dimension mode.",
+        "Prepared magnification and exact xn_over_d arithmetic are available."
+      ],
+      "stimulus": [
+        "Attach true pt and each physical unit at rounding and max-dimen edges, then use partial/unknown keywords and positive/negative overflow."
+      ],
+      "expected_observations": [
+        "true divides the prefix by prepared magnification before the selected unit conversion.",
+        "Each unit uses its cited rational factor and remainder; sp skips ordinary scaling.",
+        "The final signed scaled observation follows unit parsing and optional-space consumption."
+      ],
+      "postconditions": [
+        "A legal unit returns the exact platform-independent scaled value with normal order.",
+        "All failed keyword backups retire before the final result is committed."
+      ],
+      "equivalence_cases": [
+        "Exact rationally equivalent values across physical units produce identical scaled results.",
+        "A true dimension at mag 1000 equals its non-true spelling; other magnifications use the documented ratio.",
+        "Upper/lowercase unit characters are equivalent while control-sequence aliases are not keywords."
+      ],
+      "recovery_cases": [
+        "An unknown unit reports Illegal unit of measure, assumes pt, and replays the offender canonically.",
+        "Arithmetic or magnitude overflow reports Dimension too large, clears arithmetic error, and returns signed max_dimen.",
+        "Invalid magnification is recovered by prepare_mag before true-unit conversion."
+      ],
+      "semantic_owner": "tex-command::scanners",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_scanner_scales_true_units_by_the_prepared_magnification"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -446,10 +751,11 @@
         { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "physical_unit_table_matches_tex_web" }
       ],
       "planned_coverage": [
-        "dimension_prefix_fraction_point_catcode_and_seventeen_digit_matrix",
-        "dimension_all_units_case_spaces_internal_and_true_conversion_matrix",
-        "dimension_infinite_order_unknown_unit_mu_mismatch_and_signed_overflow_matrix",
-        "scanner-conditionals.tex: fractional physical and internal dimension observations"
+        "dimension_physical_units_cover_all_factors_rounding_case_and_sp_shortcut",
+        "dimension_true_units_cover_mag_1000_low_high_and_fraction_remainders",
+        "dimension_unknown_units_preserve_keyword_backup_and_assume_points",
+        "dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow",
+        "scanner-conditionals.tex: fractional physical and true-unit scanner observations"
       ],
       "status": "gap",
       "gap_bead": "umber2-johp.224"
