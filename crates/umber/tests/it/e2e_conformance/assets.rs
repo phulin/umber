@@ -120,9 +120,11 @@ pub fn repo_root() -> PathBuf {
 /// `std::io::stderr()` writes to file descriptor 2 directly, so a gate's
 /// "ran" confirmation and its opt-out notice are visible in every run.
 fn note(message: &str) {
+    // One `write_all` for the line and its terminator: gates run on parallel
+    // libtest threads, and two writes could interleave into a joined line.
+    let line = format!("{message}\n");
     let mut stderr = std::io::stderr();
-    let _ = stderr.write_all(message.as_bytes());
-    let _ = stderr.write_all(b"\n");
+    let _ = stderr.write_all(line.as_bytes());
     let _ = stderr.flush();
 }
 
