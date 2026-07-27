@@ -928,7 +928,7 @@ impl CanonicalMainControl {
         let episode = self.command.push_discretionary_episode(tokens);
         self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
-            let _ = self.step_once(stores)?;
+            let _ = self.nested_step_once(stores)?;
         }
         self.main_loop_active = false;
         crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
@@ -1075,6 +1075,21 @@ impl CanonicalMainControl {
         Ok(result)
     }
 
+    /// Executes one command inside an aggregate host-owned episode.
+    ///
+    /// TeX82 §1211's `prefixed_command` remains the assignment dispatcher
+    /// when §1228's numeric assignments occur inside a replayed math or
+    /// discretionary field. If the enclosing operation is observed, route
+    /// the nested command through the same executor-observation seam so its
+    /// committed `word_define` is not reduced to command/scanner records.
+    fn nested_step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+        #[cfg(any(test, feature = "instrumentation"))]
+        if self.operation_observations.is_some() {
+            return self.step_with_observer_once(stores);
+        }
+        self.step_once(stores)
+    }
+
     /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
     /// and packing stay here with the mode nest; `CommandProcessor` alone
     /// installs the selected output token-list replay.
@@ -1156,7 +1171,7 @@ impl CanonicalMainControl {
         // already-established pattern in `execute_discretionary_part`.
         self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
-            match self.step_once(stores)? {
+            match self.nested_step_once(stores)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math replay episode",
@@ -1191,7 +1206,7 @@ impl CanonicalMainControl {
         self.modes.push(Mode::Math);
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
-            match self.step_once(stores)? {
+            match self.nested_step_once(stores)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math group closing brace",

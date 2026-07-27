@@ -2006,6 +2006,48 @@ fn canonical_initex_replay_scans_and_applies_integer_parameters() {
 }
 
 #[test]
+fn nested_math_replay_observes_dimension_parameter_assignments() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\dimendef\z=0$\mathchoice{\nulldelimiterspace\z \mathsurround\z}{}{}{}$\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    while control.current_mode() != Mode::Math {
+        assert_eq!(
+            control.step(&mut universe).expect("fixture setup"),
+            ReplayStep::Continue
+        );
+    }
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("math-choice replay"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        universe.dimen_param(DimenParam::NULL_DELIMITER_SPACE),
+        Scaled::from_raw(0)
+    );
+    assert!(
+        ["dimension_parameter:11", "dimension_parameter:1"]
+            .into_iter()
+            .all(|key| observations.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::Mutation(mutation)
+                    if mutation.target == "parameter"
+                        && mutation.key.as_deref() == Some(key)
+                        && mutation.value == "scaled:0"
+                        && !mutation.global
+            ))),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
