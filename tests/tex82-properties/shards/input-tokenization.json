@@ -216,19 +216,6 @@
     },
     {
       "modules": {
-        "first": 473,
-        "last": 479
-      },
-      "disposition": "property",
-      "owner": "tex-command::scan-toks",
-      "property_ids": [
-        "tex82.expansion.stored-token-list-construction"
-      ],
-      "gap_bead": null,
-      "rationale": "Balanced and expanding token-list construction."
-    },
-    {
-      "modules": {
         "first": 480,
         "last": 486
       },
@@ -702,7 +689,7 @@
         471,
         472
       ],
-      "claim": "String/internal conversions create canonical spacer/other-character lists; the_toks copies stored tokens directly; conversion output re-enters input.",
+      "claim": "String/internal conversions create canonical spacer/other-character lists; the_toks copies stored tokens directly; conversion output re-enters input, while balanced stored-list collection delegates to `tex82.scanner.scan-toks`.",
       "preconditions": [
         "The exact TeX82 profile and explicit canonical command state are active."
       ],
@@ -726,55 +713,6 @@
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.223"
-    },
-    {
-      "id": "tex82.expansion.stored-token-list-construction",
-      "sections": [
-        473,
-        474,
-        475,
-        476,
-        477,
-        478,
-        479
-      ],
-      "claim": "scan_toks collects balanced lists, encodes consecutive parameters, expands only when requested, and directly splices token-valued the output.",
-      "preconditions": [
-        "The exact TeX82 profile and explicit canonical command state are active."
-      ],
-      "stimulus": [
-        "Collect balanced text and definitions with nine parameters, doubled/generated parameters, nested groups, and the-toks output."
-      ],
-      "expected_observations": [
-        "Outer braces are omitted, references are bounded, and direct splice is not re-expanded."
-      ],
-      "postconditions": [
-        "Consumed input, scanner status, and replay ownership end at the cited canonical boundary."
-      ],
-      "equivalence_cases": [
-        "Equal canonical tokens behave identically from source and stored replay unless the cited procedure distinguishes their level kind."
-      ],
-      "recovery_cases": [
-        "Malformed or exhausted input follows the cited finite TeX82 recovery without consulting retired Umber behavior."
-      ],
-      "semantic_owner": "tex-command::scan-toks",
-      "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "balanced_text_and_macro_definition_freeze_typed_lists_with_provenance"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "expanded_macro_definition_splices_the_spacefactor_from_the_host"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "expanded_balanced_text_uses_canonical_macro_argument_matching"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
     },
     {
       "id": "tex82.input.read-token-list",
