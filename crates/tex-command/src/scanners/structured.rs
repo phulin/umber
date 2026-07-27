@@ -2258,9 +2258,7 @@ impl CommandProcessor<'_> {
     /// The two input backups an oracle trace shows here are §407
     /// `scan_keyword`'s own, one per failed keyword, and they are produced by
     /// running the real keyword scans rather than by replaying the brace.
-    pub fn scan_alignment_preamble_opening(
-        &mut self,
-    ) -> Result<ScannedPackingSpec, CommandError> {
+    pub fn scan_alignment_preamble_opening(&mut self) -> Result<ScannedPackingSpec, CommandError> {
         let packing = self.scan_spec_packing()?;
         let _ = self.scan_left_brace(true)?;
         Ok(packing)
