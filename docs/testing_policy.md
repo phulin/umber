@@ -29,7 +29,7 @@ Test placement should optimize for three things:
 The correctness tier is fixture-only and hermetic:
 
 ```bash
-cargo test --tests
+scripts/run-native-tests.py
 scripts/check-and-test.sh
 ```
 
@@ -48,11 +48,25 @@ End-to-End Conformance Gate Contract in
 Move expensive scaling and live-reference checks into explicit performance or
 regeneration tiers instead of weakening coverage in the default tier.
 
-The root workspace's default members cover the engine, native adapters, and
-fixture-only correctness support. Browser bindings run through
-`scripts/check-wasm.sh`; host-side regeneration, profiling, and triage targets
-run through `scripts/check-tools.sh`. Use `--workspace` only for an explicitly
-requested exhaustive Cargo operation, not for the routine native gate.
+The correctness tier selects every workspace member whose tests can run on the
+host, not the workspace's default members. `cargo test --tests` selects the
+default members, which silently left the nine `bib-*` crates,
+`umber-interrupt`, `refexec`, and `profile-analyzer` executed by no routine
+command at all (`umber2-johp.211`). `scripts/run-native-tests.py` selects
+`--workspace` minus a declared exclusion list instead, so a member added to
+`Cargo.toml` is covered by construction rather than by remembering, and it
+ends in a `VERDICT:` line stating how many packages, test binaries, and tests
+actually ran. Prefer it over a hand-written `cargo test` for any run whose
+result will be reported as coverage; `cargo test -q --tests -p <crate>` remains
+the right command while iterating on one crate.
+
+`umber-wasm` is the one declared exclusion. Its tests are
+`#[wasm_bindgen_test]`, which registers no test on a host target, so selecting
+it would build a cdylib and run exactly zero tests; `scripts/check-wasm.sh`
+runs them for real under `wasm-pack test --headless --firefox`. Host-side
+regeneration, profiling, and triage entry points run through
+`scripts/check-tools.sh`, which also covers `parity-harness` in its
+`reference-tools` resolution.
 
 Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, the
 blessed live-reference rewrite path.
