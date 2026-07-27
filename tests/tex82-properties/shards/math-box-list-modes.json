@@ -358,13 +358,13 @@
         "The box owns nonmigrating nodes once and preserves their order."
       ],
       "equivalence_cases": [
-        "Positive/boundary: natural versus equal resolved targets, exact fit, empty list, all glue orders, shifted children; Phase 2 adds packing::tests::tex82_hpack_node_measurement_orders_and_adjustment_migration."
+        "Positive/boundary: natural versus equal resolved targets, exact fit, empty list, all glue orders, shifted children"
       ],
       "recovery_cases": [
         "Normal over-shrink clamps and diagnoses; arithmetic overflow fails loudly."
       ],
       "semantic_owner": "tex-typeset::packing",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
@@ -376,7 +376,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "tex82_hpack_node_measurement_orders_and_adjustment_migration"
+        }
+      ]
     },
     {
       "id": "tex82.boxes.vpack-and-vlist-append",
@@ -408,13 +414,13 @@
         "The packed list is owned once and prev_depth equals the appended box/rule depth."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: exact fit, empty list, max_depth equality, leading glue, nested shifted boxes; Phase 2 adds packing::tests::tex82_vpack_depth_and_append_to_vlist_baseline_matrix."
+        "Positive/boundary/nesting: exact fit, empty list, max_depth equality, leading glue, nested shifted boxes"
       ],
       "recovery_cases": [
         "Infinite shrink and overfull/underfull states diagnose without reordering nodes."
       ],
       "semantic_owner": "tex-typeset::packing",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
@@ -426,7 +432,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/packing/tests.rs",
+          "test": "tex82_vpack_depth_and_append_to_vlist_baseline_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.noad-model",
@@ -465,13 +477,13 @@
         "No field aliases mutable ownership and recursive release is complete."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: empty fields, all atom classes, null choices and deeply nested mlists; Phase 2 adds math::model::tests::tex82_noad_field_layout_initialization_and_release_matrix."
+        "Positive/boundary/nesting: empty fields, all atom classes, null choices and deeply nested mlists"
       ],
       "recovery_cases": [
         "Malformed internal variants are rejected structurally rather than interpreted as another noad."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit",
+      "test_level": "planned-rust-unit",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -479,7 +491,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/model/tests.rs",
+          "test": "tex82_noad_field_layout_initialization_and_release_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.clean-box-delimiters-mu",
@@ -519,13 +537,13 @@
         "Returned boxes are normalized and source fields are consumed once."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: null/small/large/extensible delimiters, empty fields, exact target extent and nested boxes; Phase 2 adds math::tests::tex82_clean_box_delimiter_and_mu_helper_matrix."
+        "Positive/boundary/nesting: null/small/large/extensible delimiters, empty fields, exact target extent and nested boxes"
       ],
       "recovery_cases": [
         "Missing variants fall through both families to null delimiter space; missing characters do not corrupt adjacent material."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -537,7 +555,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "tex82_clean_box_delimiter_and_mu_helper_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.mlist-first-pass",
@@ -572,13 +596,13 @@
         "No unresolved choice remains and each surviving noad has its final first-pass class."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: leading/trailing/consecutive bin atoms, cramped choices, deep choice nesting; Phase 2 adds math::convert::tests::tex82_first_pass_choice_bin_and_nonscript_matrix."
+        "Positive/boundary/nesting: leading/trailing/consecutive bin atoms, cramped choices, deep choice nesting"
       ],
       "recovery_cases": [
         "Undefined family characters diagnose locally while pass ordering and neighboring classes remain intact."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -590,7 +614,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/convert/tests.rs",
+          "test": "tex82_first_pass_choice_bin_and_nonscript_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.noad-construction",
@@ -637,13 +667,13 @@
         "Each noad becomes one deterministic hlist fragment with no lost scripts or boxes."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: ruled/ruleless fractions, limits modes, sub-only/sup-only/pairs, empty nuclei and nested accents; Phase 2 adds math::operators::tests::tex82_noad_constructor_clearance_and_italic_matrix."
+        "Positive/boundary/nesting: ruled/ruleless fractions, limits modes, sub-only/sup-only/pairs, empty nuclei and nested accents"
       ],
       "recovery_cases": [
         "Missing glyphs/families omit only the unavailable glyph and preserve constructed siblings."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -663,7 +693,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/operators/tests.rs",
+          "test": "tex82_noad_constructor_clearance_and_italic_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.mlist-second-pass",
@@ -690,13 +726,13 @@
         "The output hlist contains no noad/style wrapper and preserves source order."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: all class pairs, null delimiters, cramped scripts and nested left/right; Phase 2 adds math::convert::tests::tex82_second_pass_spacing_delimiter_penalty_matrix."
+        "Positive/boundary/nesting: all class pairs, null delimiters, cramped scripts and nested left/right"
       ],
       "recovery_cases": [
         "Unavailable delimiters use null delimiter space without suppressing adjacent spacing."
       ],
       "semantic_owner": "tex-typeset::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
@@ -708,7 +744,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/math/convert/tests.rs",
+          "test": "tex82_second_pass_spacing_delimiter_penalty_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.vertical.prune-page-top",
@@ -731,16 +773,22 @@
         "Preserved prefix order and remaining list ownership are unchanged."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: empty/all-discardable lists, marks before first box, equal/oversized height; Phase 2 adds vertical_break::tests::tex82_prune_page_top_prefix_and_split_skip_matrix."
+        "Positive/boundary/nesting: empty/all-discardable lists, marks before first box, equal/oversized height"
       ],
       "recovery_cases": [
         "An impossible vertical-list node kind fails loudly instead of being discarded."
       ],
       "semantic_owner": "tex-typeset::vertical-break",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/vertical_break/tests.rs",
+          "test": "tex82_prune_page_top_prefix_and_split_skip_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.vertical.best-break",
@@ -767,13 +815,13 @@
         "Only infinite-shrink normalization mutates the list; all other measurement is observational."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: exact fit, equal costs, null forced end, negative max depth and nested boxes; Phase 2 adds vertical_break::tests::tex82_vert_break_cost_depth_and_tie_matrix."
+        "Positive/boundary/nesting: exact fit, equal costs, null forced end, negative max depth and nested boxes"
       ],
       "recovery_cases": [
         "Infinite shrink emits one diagnostic and becomes finite normal-order shrink before continuing."
       ],
       "semantic_owner": "tex-typeset::vertical-break",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-typeset/src/vertical_break.rs",
@@ -789,7 +837,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-typeset/src/vertical_break/tests.rs",
+          "test": "tex82_vert_break_cost_depth_and_tie_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.boxes.vsplit-kernel",
@@ -812,13 +866,13 @@
         "Every node belongs to exactly one of extracted/remainder lists and register scope is preserved."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: exact/oversized target, complete extraction, penalty-first break and nested vboxes; Phase 2 adds boxes::vsplit::tests::tex82_vsplit_marks_remainder_and_trivial_case_matrix."
+        "Positive/boundary/nesting: exact/oversized target, complete extraction, penalty-first break and nested vboxes"
       ],
       "recovery_cases": [
         "Void returns void; an hbox diagnoses and remains untouched."
       ],
       "semantic_owner": "tex-exec::boxes",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -826,7 +880,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/boxes/vsplit/tests.rs",
+          "test": "tex82_vsplit_marks_remainder_and_trivial_case_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.lists.text-material",
@@ -865,15 +925,14 @@
       "equivalence_cases": [
         "Positive: literal, char_given, and char_num characters share lig/kern and space-factor behavior.",
         "Boundary: nullfont/missing glyph, sfcode 0/1000/>1000/<1000, boundary hit/miss, and xspaceskip present/absent.",
-        "Mode/nesting: outer vertical starts unrestricted hmode; restricted hmode stays restricted; math-mode text-only commands use recovery or their math meaning.",
-        "Phase 2 adds command_replay::tests::canonical_text_material_space_factor_and_ligature_matrix."
+        "Mode/nesting: outer vertical starts unrestricted hmode; restricted hmode stays restricted; math-mode text-only commands use recovery or their math meaning."
       ],
       "recovery_cases": [
         "A missing character emits the canonical warning and appends no character node.",
         "A vertical-mode trigger survives paragraph-start backup with provenance and expansion order intact."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -889,7 +948,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_text_material_space_factor_and_ligature_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.lists.direct-material-and-groups",
@@ -923,15 +988,14 @@
       "equivalence_cases": [
         "Positive: named and explicit skip/kern forms with equal values append equivalent nodes.",
         "Boundary: zero/negative dimensions, fil orders, omitted rule dimensions, and repeated keyword overrides.",
-        "Nesting/mode: rules, glue, and kerns append to the current outer/internal vertical, horizontal, or math list selected by canonical dispatch.",
-        "Phase 2 adds command_replay::tests::canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix."
+        "Nesting/mode: rules, glue, and kerns append to the current outer/internal vertical, horizontal, or math list selected by canonical dispatch."
       ],
       "recovery_cases": [
         "A failed optional rule keyword backs up the first nonkeyword command for main control.",
         "Cross-mode illegal and off-save recovery are non-owning dependencies on the main-control and group properties (§§1045–1054 and §§1063–1069) and scan no direct-material operand here."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -939,7 +1003,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.boxes.requests-and-lifecycle",
@@ -981,15 +1051,14 @@
       "equivalence_cases": [
         "Positive: natural versus resolved-equal to/spread, brace aliases, nested hooks, and immediate/register box operands.",
         "Boundary: void registers, box255, empty vtop, leading glue vtop, exact split, oversized split, and zero shifts.",
-        "Mode/nesting: hbox restricted hmode versus vbox/vtop internal vmode, nested simple groups, and illegal complementary shift modes.",
-        "Phase 2 adds command_replay::tests::canonical_box_request_lifecycle_mode_and_recovery_matrix."
+        "Mode/nesting: hbox restricted hmode versus vbox/vtop internal vmode, nested simple groups, and illegal complementary shift modes."
       ],
       "recovery_cases": [
         "A missing opener backs up the rejected token as first body material; a missing box operand diagnoses and replays it.",
         "lastbox in forbidden outer vertical/page state and invalid vsplit targets recover without stealing unrelated material."
       ],
       "semantic_owner": "tex-exec::boxes",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1009,7 +1078,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_box_request_lifecycle_mode_and_recovery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.paragraphs.boundaries",
@@ -1043,15 +1118,14 @@
       "equivalence_cases": [
         "Positive: explicit indent/noindent and implicit character/unhbox/valign triggers.",
         "Boundary: empty paragraph, only discardables, one line, terminal discretionary, and paragraph ending at group boundary.",
-        "Nesting/mode: paragraph inside vbox/insertion/output versus outer page; display interruption resumes vertical contribution correctly.",
-        "Phase 2 adds assignments::paragraph::tests::canonical_paragraph_entry_exit_mode_and_recovery_matrix."
+        "Nesting/mode: paragraph inside vbox/insertion/output versus outer page; display interruption resumes vertical contribution correctly."
       ],
       "recovery_cases": [
         "head_for_vmode backs up the vertical command then a frozen par in unrestricted hmode; restricted hmode uses off_save.",
         "A recovered triggering token retains provenance and runs only after everypar."
       ],
       "semantic_owner": "tex-exec::paragraphs",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1067,7 +1141,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/paragraph/tests.rs",
+          "test": "canonical_paragraph_entry_exit_mode_and_recovery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.lists.structured-material",
@@ -1109,15 +1189,14 @@
       "equivalence_cases": [
         "Positive: mark/penalty in all modes, insert in outer/internal vertical and hmode, vadjust migration, unbox versus copy-unbox.",
         "Boundary: insert classes 0/254/255/out-of-range, void/wrong-kind boxes, empty tails, zero italic correction.",
-        "Nesting/mode: structured material inside hbox and paragraph migrates outward; internal-vbox material remains owned by the box where required.",
-        "Phase 2 adds command_replay::tests::canonical_structured_list_material_mode_and_recovery_matrix."
+        "Nesting/mode: structured material inside hbox and paragraph migrates outward; internal-vbox material remains owned by the box where required."
       ],
       "recovery_cases": [
         "insert255 and out-of-range classes diagnose/clamp as specified while vadjust's internal 255 sentinel remains legal.",
         "Forbidden vadjust/unbox/italic/delete-last paths scan no extra operand beyond their canonical scanner boundary and preserve following input."
       ],
       "semantic_owner": "tex-exec::lists",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1137,7 +1216,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_structured_list_material_mode_and_recovery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.lists.discretionary-and-accent",
@@ -1174,15 +1259,14 @@
       "equivalence_cases": [
         "Positive: discretionary shorthand and explicit empty groups; accent with ordinary and slanted fonts.",
         "Boundary: 0/1/127/128 replacement nodes, empty branches, missing hyphen/accent/base glyphs, and zero skew.",
-        "Nesting/mode: discretionaries inside boxes/paragraphs and nested groups retain aftergroup and restricted-hmode ownership.",
-        "Phase 2 adds command_replay::tests::canonical_discretionary_and_text_accent_boundary_matrix."
+        "Nesting/mode: discretionaries inside boxes/paragraphs and nested groups retain aftergroup and restricted-hmode ownership."
       ],
       "recovery_cases": [
         "Excess replacement nodes and forbidden node kinds are diagnosed and flushed according to §§1120–1121.",
         "A noncharacter accent base is replayed exactly once; a missing mandatory discretionary brace follows frozen group recovery."
       ],
       "semantic_owner": "tex-exec::hmode-material",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1198,7 +1282,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_discretionary_and_text_accent_boundary_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.entry-and-display-setup",
@@ -1232,13 +1322,13 @@
         "One active math mlist owns the new mode and parent lookahead is preserved."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: single/double shifts, empty paragraph, restricted hbox and display after nested boxes; Phase 2 adds math::tests::tex82_math_entry_display_probe_and_eqno_mode_matrix."
+        "Positive/boundary/nesting: single/double shifts, empty paragraph, restricted hbox and display after nested boxes"
       ],
       "recovery_cases": [
         "eqno outside display is illegal and consumes no field; failed display pairing preserves lookahead."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1250,7 +1340,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/tests.rs",
+          "test": "tex82_math_entry_display_probe_and_eqno_mode_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.fields-and-atoms",
@@ -1280,13 +1376,13 @@
         "Each field episode retires before parent delivery and attaches once."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: unbraced/braced equal fields, empty group, active outer character and nested subformula; Phase 2 adds math::scan::tests::tex82_math_field_and_atom_construction_matrix."
+        "Positive/boundary/nesting: unbraced/braced equal fields, empty group, active outer character and nested subformula"
       ],
       "recovery_cases": [
         "Missing brace backs up the rejected command and opens the field logically without fabricating delivery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1298,7 +1394,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "test": "tex82_math_field_and_atom_construction_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.radicals-accents-styles-limits",
@@ -1328,13 +1430,13 @@
         "Each request appends once without rereading operands."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: delimiter 0/max, all styles, limits before/after operators and nested accent fields; Phase 2 adds math::scan::tests::tex82_radical_accent_style_and_limits_request_matrix."
+        "Positive/boundary/nesting: delimiter 0/max, all styles, limits before/after operators and nested accent fields"
       ],
       "recovery_cases": [
         "A non-math accent command diagnoses the required mathaccent spelling; wrong-mode requests use main-control recovery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1342,7 +1444,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "test": "tex82_radical_accent_style_and_limits_request_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.choice-groups",
@@ -1365,13 +1473,13 @@
         "One choice node owns four distinct mlists and no arm consumes parent input."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: empty arms, deep choices and choice inside alignment/script; Phase 2 adds math::scan::tests::tex82_mathchoice_four_group_order_scope_and_retirement."
+        "Positive/boundary/nesting: empty arms, deep choices and choice inside alignment/script"
       ],
       "recovery_cases": [
         "Missing arm braces recover at that arm only; premature parent input is not folded into a completed arm."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1383,7 +1491,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "test": "tex82_mathchoice_four_group_order_scope_and_retirement"
+        }
+      ]
     },
     {
       "id": "tex82.math.script-attachment",
@@ -1406,13 +1520,13 @@
         "The first same-kind script remains attached once and later mlist order is intact."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: absent nucleus, empty fields, both orders and nested choice/fraction fields; Phase 2 adds math::scan::tests::tex82_script_attachment_dummy_noad_and_duplicate_matrix."
+        "Positive/boundary/nesting: absent nucleus, empty fields, both orders and nested choice/fraction fields"
       ],
       "recovery_cases": [
         "A duplicate marker diagnoses Double subscript/superscript and redirects the new field to a dummy noad."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1420,7 +1534,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "test": "tex82_script_attachment_dummy_noad_and_duplicate_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.fractions-and-left-right",
@@ -1460,15 +1580,14 @@
       "equivalence_cases": [
         "Positive: all six generalized-fraction forms and left-right with null/growing delimiters.",
         "Boundary: empty numerator/denominator, zero/default/negative thickness, delimiter 0/max, and duplicate fraction in one mlist.",
-        "Nesting/mode: fractions within scripts/choices/left-right and nested left-right groups preserve inner-first completion.",
-        "Phase 2 adds math::scan::tests::canonical_fraction_and_left_right_nesting_recovery_matrix."
+        "Nesting/mode: fractions within scripts/choices/left-right and nested left-right groups preserve inner-first completion."
       ],
       "recovery_cases": [
         "A second generalized fraction is diagnosed and ignored without replacing the first numerator/state.",
         "Missing right inserts frozen right-dot; extra/mismatched right takes off_save or mismatch recovery with the offending command replayed in order."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1488,7 +1607,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/scan/tests.rs",
+          "test": "canonical_fraction_and_left_right_nesting_recovery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.math.exit-and-display",
@@ -1526,15 +1651,14 @@
       "equivalence_cases": [
         "Positive: inline/display empty and populated formulas, eqno/leqno, fitting shared-line and forced separate-line equations.",
         "Boundary: absent symbol/extension font, zero display width, exact fit/shrink threshold, pre_display_size sentinel, and closing-shift lookahead.",
-        "Nesting/mode: inline math inside boxes/alignment cells, display after paragraph, and display alignment restore the proper enclosing list.",
-        "Phase 2 adds math::tests::canonical_math_exit_display_eqno_boundary_matrix."
+        "Nesting/mode: inline math inside boxes/alignment cells, display after paragraph, and display alignment restore the proper enclosing list."
       ],
       "recovery_cases": [
         "Missing/invalid math font dimensions diagnose before packaging and leave no half-lowered list.",
         "A single display-closing dollar inserts the required second dollar; an unexpected equation-number closer follows group-specific recovery."
       ],
       "semantic_owner": "tex-exec::math",
-      "test_level": "rust-unit+dvi-semantic-minifixture",
+      "test_level": "planned-rust-unit+dvi-semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
@@ -1550,7 +1674,13 @@
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.228"
+      "gap_bead": "umber2-johp.228",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/math/tests.rs",
+          "test": "canonical_math_exit_display_eqno_boundary_matrix"
+        }
+      ]
     }
   ]
 }
