@@ -2,11 +2,13 @@
 
 mod font;
 mod hyphenation;
+mod restricted;
 mod scalar;
 mod structured;
 mod token_list;
 
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
+pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,

@@ -13,6 +13,7 @@ use tex_state::token::{OriginId, Token};
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::canonical_names::glue_order_name;
+use crate::scanners::RestrictedIntegerClass;
 use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::{CommandObservation, ScannerRecord};
@@ -1748,37 +1749,26 @@ impl CommandProcessor<'_> {
         )
     }
 
-    /// Scans TeX82's `scan_eight_bit_int` register index.
+    /// Scans TeX82 §434's `scan_char_num` character selector.
+    ///
+    /// The bound and its recovery live in [`RestrictedIntegerClass`]; this
+    /// wrapper only converts the recovered code into Umber's character type.
+    pub(crate) fn scan_character_number(&mut self) -> Result<char, CommandError> {
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::CharacterCode)?;
+        Ok(u32::try_from(scanned.value)
+            .ok()
+            .and_then(char::from_u32)
+            .expect("a recovered character code is a character"))
+    }
+
+    /// Scans TeX82 §433's `scan_eight_bit_int` register index.
     ///
     /// `scan_something_internal` uses this bounded scan for `\count`,
     /// `\dimen`, `\skip`, and `\muskip`; an out-of-range value recovers as
     /// register zero rather than truncating or addressing an extended bank.
-    /// Scans one bounded classical register selector for an assignment.
-    ///
-    /// The recovery is part of TeX82's `scan_eight_bit_int`: values outside
-    /// the classical range select register zero after the integer scanner has
-    /// completed its normal command-owned delivery and backup lifecycle.
-    /// Scans TeX82's `scan_char_num` character selector.
-    ///
-    /// tex.web bounds the scanned integer to a character code and recovers
-    /// from anything outside that range by selecting character zero, exactly
-    /// as `scan_eight_bit_int` recovers to register zero. Umber's character
-    /// domain is the Unicode scalar range, so a non-scalar value takes the
-    /// same recovery.
-    pub(crate) fn scan_character_number(&mut self) -> Result<char, CommandError> {
-        let value = self.scan_integer()?.value;
-        Ok(u32::try_from(value)
-            .ok()
-            .and_then(char::from_u32)
-            .unwrap_or('\0'))
-    }
-
     pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
-        let value = self.scan_integer()?.value;
-        Ok(u16::try_from(value)
-            .ok()
-            .filter(|index| *index <= 255)
-            .unwrap_or(0))
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
+        Ok(scanned.value as u16)
     }
 
     fn replay_scalar_commands(

@@ -19,6 +19,7 @@ use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
+use crate::scanners::RestrictedIntegerClass;
 use crate::{
     AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, InternalValue,
     processor::{meaning_text, render_the_value, string_text},
@@ -73,13 +74,21 @@ pub struct ScannedLetAssignment {
 
 /// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.
 ///
-/// Command processing owns the raw target, optional equals sign, and integer
-/// scan. Main control receives no token or input capability: it only applies
-/// the assignment's effective scope and primitive-specific value bound.
+/// Command processing owns the raw target, optional equals sign, and the
+/// class-restricted integer scan (§434 or §436) including its recovery. Main
+/// control receives no token or input capability: it only applies the
+/// assignment's effective scope and reports the recovery diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedCharacterDefinition {
     pub target: Symbol,
+    /// The restricted class §1224 selects for this primitive.
+    pub class: RestrictedIntegerClass,
+    /// `cur_val` after §434/§436's recovery.
     pub value: i32,
+    /// The unrecovered `scan_int` result, which `int_error` reports.
+    pub scanned: i32,
+    /// Whether recovery replaced an out-of-range value with zero.
+    pub recovered: bool,
 }
 
 /// A completed TeX82 §1221 register-definition assignment.
@@ -740,9 +749,14 @@ impl CommandProcessor<'_> {
     ///
     /// The target remains a raw control-sequence delivery as required by
     /// `get_r_token`; the optional equals sign and numeric value use the
-    /// canonical command-owned scalar scanners.
+    /// canonical command-owned scalar scanners. §1224 spells the value scan
+    /// as `char_def_code: scan_char_num` and `math_char_def_code:
+    /// scan_fifteen_bit_int`, so the class-specific bound and its
+    /// recover-to-zero belong to this scan and not to the assignment that
+    /// consumes it.
     pub fn scan_character_definition(
         &mut self,
+        class: RestrictedIntegerClass,
         provisional_global: bool,
     ) -> Result<ScannedCharacterDefinition, CommandError> {
         let target = self
@@ -760,9 +774,13 @@ impl CommandProcessor<'_> {
             global: provisional_global,
         }));
         let _ = self.scan_optional_equals()?;
+        let scanned = self.scan_restricted_integer(class)?;
         Ok(ScannedCharacterDefinition {
             target,
-            value: self.scan_integer()?.value,
+            class,
+            value: scanned.value,
+            scanned: scanned.scanned,
+            recovered: scanned.recovered,
         })
     }
 
@@ -1301,45 +1319,42 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Scans and range-checks TeX82's 15-bit math-character number.
+    /// Scans TeX82 §436's `scan_fifteen_bit_int` math-character number.
     pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
-        let scanned = self.scan_integer()?;
-        let recovered = !(0..=0x7fff).contains(&scanned.value);
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FifteenBit)?;
         Ok(ScannedMathCharacter {
-            code: if recovered { 0 } else { scanned.value as u16 },
-            recovered,
+            code: scanned.value as u16,
+            recovered: scanned.recovered,
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
         })
     }
 
-    /// Scans and range-checks TeX82's 27-bit delimiter number.
+    /// Scans TeX82 §437's `scan_twenty_seven_bit_int` delimiter number.
     pub fn scan_math_delimiter(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
-        let scanned = self.scan_integer()?;
-        let recovered = !(0..=0x07ff_ffff).contains(&scanned.value);
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::TwentySevenBit)?;
         Ok(ScannedMathDelimiter {
-            code: if recovered { 0 } else { scanned.value as u32 },
-            recovered,
+            code: scanned.value as u32,
+            recovered: scanned.recovered,
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
         })
     }
 
-    /// Scans the family index prefix common to TeX82's three math-font
-    /// assignment primitives. Out-of-range families recover to family zero;
-    /// the later font-meaning scan is intentionally not part of this request.
+    /// Scans TeX82 §435's `scan_four_bit_int` family index, the prefix common
+    /// to the three math-font assignment primitives (§1234's `def_family`).
+    /// The later font-meaning scan is intentionally not part of this request.
     pub fn scan_math_family(
         &mut self,
         size: MathFamilySize,
     ) -> Result<ScannedMathFamily, CommandError> {
-        let scanned = self.scan_integer()?;
-        let family = u8::try_from(scanned.value).ok().filter(|value| *value < 16);
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
         Ok(ScannedMathFamily {
             size,
-            family: family.unwrap_or(0),
-            recovered: family.is_none(),
+            family: scanned.value as u8,
+            recovered: scanned.recovered,
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },

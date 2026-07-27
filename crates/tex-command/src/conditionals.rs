@@ -13,6 +13,7 @@ use crate::input::{
 };
 use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
+use crate::scanners::RestrictedIntegerClass;
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
@@ -580,19 +581,16 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// TeX.web §433's `scan_four_bit_int`: an ordinary integer scan whose
+    /// TeX.web §435's `scan_four_bit_int`: an ordinary integer scan whose
     /// result must name one of TeX's sixteen streams. Anything outside
     /// `0..=15` reports "Bad number" and recovers as stream zero rather than
     /// truncating; the scan itself has already completed normally.
     fn scan_four_bit_int(&mut self) -> Result<u8, CommandError> {
-        let value = self.scan_integer()?.value;
-        match u8::try_from(value) {
-            Ok(stream) if stream <= 15 => Ok(stream),
-            _ => {
-                self.record_bad_number();
-                Ok(0)
-            }
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
+        if scanned.recovered {
+            self.record_bad_number();
         }
+        Ok(scanned.value as u8)
     }
 
     fn record_bad_number(&mut self) {

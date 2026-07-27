@@ -147,6 +147,55 @@ fn canonical_character_definitions_scan_scope_and_recovery() {
     assert!(output.contains("Bad mathchar (32768)"));
 }
 
+/// TeX82 §1224 reads `cur_val` only after §434's `scan_char_num` or §436's
+/// `scan_fifteen_bit_int` has already recovered it, so the `define` it
+/// performs -- and therefore every observation of that definition -- carries
+/// the recovered zero and never the rejected operand. The `scan_int` that
+/// preceded the bound still reports its own unrecovered result.
+#[test]
+fn out_of_range_character_definitions_observe_the_recovered_value() {
+    for (source, scanner_value, mutation_value) in [
+        (
+            br"\chardef\badchar=256\end".as_slice(),
+            "256",
+            "character:0",
+        ),
+        (
+            br"\mathchardef\badmath=32768\end".as_slice(),
+            "32768",
+            "integer:0",
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("shorthand definition"),
+            ReplayStep::Continue
+        );
+
+        assert!(
+            matches!(
+                observations.0.as_slice(),
+                [..,
+                    CommandObservation::Scanner(scanner),
+                    CommandObservation::Mutation(mutation)]
+                    if scanner.kind == "integer"
+                        && scanner.value == scanner_value
+                        && mutation.target == "meaning"
+                        && mutation.value == mutation_value
+            ),
+            "unexpected observations for {}: {:?}",
+            String::from_utf8_lossy(source),
+            observations.0
+        );
+    }
+}
+
 /// TeX82 keeps `char_given` and `char_num` interchangeable everywhere they
 /// typeset: §1034's `main_loop` (`hmode+char_given`), §1090's
 /// `vmode+char_given`, §1154's `mmode+char_given`, and even §1038's ligature
