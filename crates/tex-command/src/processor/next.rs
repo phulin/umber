@@ -842,6 +842,33 @@ impl CommandProcessor<'_> {
         if self.last_delivery != Some(stamp) {
             return Err(CommandError::StaleDelivery);
         }
+        self.back_input_unchecked(command, treatment)
+    }
+
+    /// TeX82 §326's `@<Insert token |p| into \TeX's input@>`:
+    /// `t:=cur_tok; cur_tok:=p; back_input; cur_tok:=t`.
+    ///
+    /// This is a full §325 `back_input` -- stack-conservation loop, literal
+    /// brace `align_state` reversal, backup push, and recovery record -- run
+    /// against a raw delivery the caller saved earlier instead of against the
+    /// live one. §325 requires only that `cur_tok` hold the token to replace,
+    /// and §326 exists precisely so a caller may point `cur_tok` at a saved
+    /// token first, so the delivery stamp is not part of the mechanism.
+    ///
+    /// §1221's `\futurelet` is the canonical caller: `get_token; q:=cur_tok;
+    /// get_token; back_input; cur_tok:=q; back_input`. The second token is
+    /// restored by the ordinary `back_input` above and the saved first token
+    /// by this one, so the pair is reread in its original order from two
+    /// separate backup levels.
+    pub(crate) fn back_input_saved(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        self.back_input_unchecked(command, BackupTreatment::Ordinary)
+    }
+
+    fn back_input_unchecked(
+        &mut self,
+        command: CurrentCommand,
+        treatment: BackupTreatment,
+    ) -> Result<(), CommandError> {
         self.last_delivery = None;
         // §325 runs the stack-conservation loop before it touches
         // `align_state` and before it pushes the `backed_up` list, so every
