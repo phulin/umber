@@ -1,0 +1,8 @@
+\catcode`\{=1 \catcode`\}=2
+\count0=1
+{\count0=2 \global\count0=3}
+\ifnum\count0=3 \global\count1=1\fi
+\globaldefs=1 {\count2=4}
+\globaldefs=0
+\ifnum\count2=4 \global\count3=1\fi
+\end

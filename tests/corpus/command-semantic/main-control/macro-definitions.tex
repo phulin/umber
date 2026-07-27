@@ -1,0 +1,6 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\def\put#1{\global\count0=#1}
+\edef\run{\noexpand\put{\number12}}
+\run
+\gdef\step{\global\advance\count0 by3}\step
+\end

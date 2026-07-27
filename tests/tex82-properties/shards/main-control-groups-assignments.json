@@ -444,11 +444,15 @@
       "equivalence_cases": ["Named/numbered, ordinary/prefixed, local/global, nested, and source/replay selectors."],
       "recovery_cases": ["Invalid selectors recover without mutating neighboring regions."],
       "semantic_owner": "tex-exec::assignment-state",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "eqtb_regions_keep_parameter_register_kinds_and_shared_zero_glue_distinct"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -468,11 +472,15 @@
       "equivalence_cases": ["Ordinary, explicit, box, math, alignment-shaped, and replay-created groups."],
       "recovery_cases": ["Overflow reports before a partial boundary becomes current."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "nested_typed_groups_push_one_boundary_and_restore_outer_metadata"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -496,11 +504,15 @@
       ],
       "recovery_cases": ["Failed value scans create no save record or mutation."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "save_stack_local_global_redefinition_restores_once_per_level"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -520,11 +532,15 @@
       "equivalence_cases": ["Ordinary, prefixed, local/global, nested, and source/replay groups."],
       "recovery_cases": ["Mismatch recovery never replays tokens from a still-open level."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "save_stack_aftergroup_tokens_replay_fifo_after_unsave"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -546,11 +562,15 @@
       "equivalence_cases": ["Brace, explicit, box, math, and nested replay closures."],
       "recovery_cases": ["Mismatched closers do not unsave the wrong group."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "unsave_restores_local_entries_retains_globals_then_replays_tokens"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -598,11 +618,15 @@
       ],
       "recovery_cases": ["Wrong-mode commands diagnose or insert canonical recovery without silent success."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "main_control_dispatch_matrix_consumes_each_command_once"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -648,11 +672,15 @@
       "equivalence_cases": ["Simple/semi-simple/box/math/alignment-shaped and source/replay groups."],
       "recovery_cases": ["Bottom-level, wrong-type, and excess closers diagnose once and progress."],
       "semantic_owner": "tex-exec::save-stack",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -665,16 +693,20 @@
       "claim": "Expandable material between prefixes is expanded, legal bits accumulate idempotently, illegal prefixes diagnose, and globaldefs determines effective scope.",
       "preconditions": ["Main control delivered a prefix."],
       "stimulus": [
-        "Phase 2 white-box unit `prefix_collection_expands_repeats_validates_and_resolves_globaldefs` covers definitions, assignments, and nonprefixable commands."
+        "Phase 2 white-box unit `prefix_collection_expands_repeats_validates_and_resolves_globaldefs` covers definitions, assignments, and nonprefixable commands.",
+        "The committed command-semantic prefix-collection case observes the illegal-prefix gap as a strict xfail linked to umber2-o96f."
       ],
       "expected_observations": [
         "One normalized prefix set reaches the command; rejection retains the substantive command."
       ],
       "postconditions": ["Prefix state clears and demand resumes exactly."],
       "equivalence_cases": ["Repeated/expanded, local/global/globaldefs, nested, and replay cases."],
-      "recovery_cases": ["Illegal combinations report and execute or replay the retained command once."],
+      "recovery_cases": [
+        "Illegal combinations report and execute or replay the retained command once.",
+        "The strict xfail pins the first canonical-versus-current execution mismatch and rejects XPASS or changed failure."
+      ],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-o96f",
@@ -682,6 +714,15 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "prefix_collection_expands_repeats_validates_and_resolves_globaldefs"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "prefix-collection strict xfail",
+            "linked to umber2-o96f",
+            "pinned first mismatch rejects XPASS and changed failure"
+          ]
         }
       ]
     },
@@ -700,11 +741,15 @@
       "equivalence_cases": ["Direct/replayed targets with zero, one, or many spaces."],
       "recovery_cases": ["Character and frozen targets diagnose and restart without defining them."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "get_r_token_skips_spaces_and_recovers_non_control_sequence_targets"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -724,11 +769,15 @@
       "equivalence_cases": ["Ordinary/global/globaldefs and direct/replayed selection."],
       "recovery_cases": ["Unresolved font meanings are rejected before assignment."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "set_font_assignment_obeys_local_global_and_globaldefs_scope"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -750,11 +799,15 @@
       "equivalence_cases": ["Def/gdef/edef/xdef with long/outer and direct/replayed replacements."],
       "recovery_cases": ["Runaway or outer input follows scan_toks recovery without changing target identity."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "def_family_selects_expansion_flags_meaning_kind_and_effective_scope"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -776,11 +829,15 @@
       "equivalence_cases": ["Let with/without equals; futurelet over character, primitive, and macro tokens."],
       "recovery_cases": ["Invalid targets recover before source meaning is copied."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "let_and_futurelet_copy_meaning_and_preserve_lookahead_order"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -800,11 +857,15 @@
       "equivalence_cases": ["All kinds with optional equals, self-reference, local/global/globaldefs, and replay."],
       "recovery_cases": ["Out-of-range operands recover before final installation."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "shorthand_definitions_install_each_command_operand_and_bound_recovery"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1054,11 +1115,15 @@
       ],
       "recovery_cases": ["Failure or nonassignment does not fire or lose the token; retry fires once."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "afterassignment_slot_overwrites_and_fires_once_after_successful_assignment"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -1080,11 +1145,15 @@
       "equivalence_cases": ["Ordinary/prefixed, nested replay, and local/global continuations."],
       "recovery_cases": ["EOF or malformed expansion recovers finitely without fabricating a terminator."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "planned-rust-unit+semantic-minifixture",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "assignment_terminator_skips_space_and_relax_but_retains_first_command"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",

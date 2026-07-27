@@ -1,0 +1,8 @@
+\catcode`\{=1 \catcode`\}=2
+\def\one{\global\count0=1}
+\let\alias=\one \alias
+\def\inspect{\ifx\next\second \global\count1=1\fi}
+\def\first{\futurelet\next\inspect}
+\def\second{\global\advance\count0 by2}
+\first\second
+\end

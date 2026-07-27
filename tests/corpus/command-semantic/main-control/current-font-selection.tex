@@ -1,0 +1,6 @@
+\catcode`\{=1 \catcode`\}=2
+\def\expected{\nullfont}
+\let\selected=\nullfont
+{\selected\xdef\observed{\the\font}}
+\ifx\observed\expected \global\count0=1\fi
+\end

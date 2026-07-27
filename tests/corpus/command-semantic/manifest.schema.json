@@ -75,7 +75,8 @@
             "branch-selections",
             "predicate-outcomes",
             "observations",
-            "execution-boundaries"
+            "execution-boundaries",
+            "state"
           ]
         },
         "count_registers": {
@@ -137,7 +138,7 @@
           "required": ["kind", "bug", "mismatch"],
           "properties": {
             "kind": { "const": "xfail" },
-            "bug": { "type": "string", "pattern": "^umber2-johp\\.[0-9]+$" },
+            "bug": { "type": "string", "pattern": "^umber2-[a-z0-9]+(?:\\.[a-z0-9]+)*$" },
             "mismatch": { "$ref": "#/$defs/mismatch" }
           }
         }

@@ -1,0 +1,5 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\def\digit#1{\global\multiply\count0 by10 \global\advance\count0 by#1}
+\def\A{\digit1}\def\B{\digit2}
+{\aftergroup\A\aftergroup\B}
+\end

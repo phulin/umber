@@ -23,7 +23,7 @@ const SCHEMA: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 4 * 1024;
 const MAX_STEPS: usize = 512;
 const COUNT_SLOTS: usize = 256;
-const BUG_PREFIX: &str = "umber2-johp.";
+const BUG_PREFIX: &str = "umber2-";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +92,7 @@ enum ProjectionKind {
     PredicateOutcomes,
     Observations,
     ExecutionBoundaries,
+    State,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -226,18 +227,26 @@ fn valid_slug(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
+fn valid_bug_id(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix(BUG_PREFIX) else {
+        return false;
+    };
+    !suffix.is_empty()
+        && suffix.split('.').all(|component| {
+            !component.is_empty()
+                && component
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+}
+
 fn validate_expectation(expectation: &Expectation) -> Result<(), String> {
     let Expectation::Xfail { bug, mismatch } = expectation else {
         return Ok(());
     };
-    if !bug.starts_with(BUG_PREFIX)
-        || bug.len() == BUG_PREFIX.len()
-        || !bug[BUG_PREFIX.len()..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
-    {
+    if !valid_bug_id(bug) {
         return Err(format!(
-            "xfail bug must be a concrete {BUG_PREFIX}<number> id"
+            "xfail bug must be a concrete {BUG_PREFIX}<slug>[.<slug>] id"
         ));
     }
     if !matches!(
@@ -1032,6 +1041,7 @@ fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
         ProjectionKind::PredicateOutcomes => predicate_outcomes(run),
         ProjectionKind::Observations => observation_projection(run, projection),
         ProjectionKind::ExecutionBoundaries => execution_boundaries(run, projection),
+        ProjectionKind::State => Vec::new(),
     };
     if projection.include_count_mutations {
         output.extend(run.observations.iter().filter_map(|observation| {
@@ -1219,12 +1229,49 @@ fn xfail_manifest_validation_rejects_malformed_and_missing_bug_links() {
     )
     .expect("shape is parseable before semantic validation");
     assert!(validate_expectation(&malformed).is_err());
+
+    let opaque: Expectation = serde_json::from_slice(
+        br#"{
+        "kind":"xfail",
+        "bug":"umber2-o96f",
+        "mismatch":{"index":0,"kind":"observation","expected":"a","actual":"b"}
+    }"#,
+    )
+    .expect("opaque Beads id has the manifest shape");
+    assert!(validate_expectation(&opaque).is_ok());
+}
+
+#[test]
+fn state_projection_emits_only_requested_final_counts() {
+    let mut counts = [0; COUNT_SLOTS];
+    counts[2] = 7;
+    let run = SemanticRun {
+        observations: Vec::new(),
+        counts,
+        universe: Universe::new(),
+        mode_transitions: Vec::new(),
+        artifacts: Vec::new(),
+    };
+    let projection = Projection {
+        kind: ProjectionKind::State,
+        count_registers: vec![2],
+        include_count_mutations: false,
+        kinds: Vec::new(),
+        commands: Vec::new(),
+        command_names: Vec::new(),
+        box_registers: Vec::new(),
+        node_depth: None,
+        include_mode_transitions: false,
+        include_artifact_hashes: false,
+    };
+
+    assert_eq!(project(&run, &projection), ["count:2=7"]);
 }
 
 #[test]
 fn strict_xfail_accepts_only_the_pinned_failure_and_rejects_xpass() {
     let expectation = Expectation::Xfail {
-        bug: "umber2-johp.246".into(),
+        bug: "umber2-o96f".into(),
         mismatch: MismatchFingerprint {
             index: 0,
             kind: "observation".into(),
