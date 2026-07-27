@@ -10916,3 +10916,7 @@ fn command_error(error: CommandError) -> ExecError {
 #[cfg(test)]
 #[path = "command_replay/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "canonical_main_control/tests.rs"]
+mod direct_tests;

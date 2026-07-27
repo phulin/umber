@@ -47,6 +47,9 @@ mod shipout;
 mod tokens;
 mod variables;
 
+#[cfg(test)]
+mod tests;
+
 use admissibility::is_assignment_primitive;
 pub(crate) use admissibility::math_allows_mode_independent_primitive;
 use arithmetic::*;
