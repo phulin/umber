@@ -2271,11 +2271,6 @@ enum ScannedStep {
     IllegalItalicCorrection {
         token: Token,
     },
-    /// TeX82 §1045's `any_mode(ignore_spaces)` is scanned entirely in
-    /// `scan_command`: it repeats `get_x_token` until a non-space is found,
-    /// then backs that command up for ordinary redelivery (`goto reswitch`).
-    /// Nothing remains to apply.
-    ///
     /// TeX82 §1030's `hmode+no_boundary` (peek the next token and suppress
     /// its left boundary ligature/kern) is instead represented here as a
     /// plain per-list flag consulted when Umber's pending-character run is
@@ -3081,36 +3076,60 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
-    let mut global = false;
-    let mut flags = MeaningFlags::EMPTY;
+    // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
+    // a case that has already fetched its own replacement command dispatches
+    // that command in place. `goto reswitch` is therefore not `back_input`,
+    // and a case using it pushes no input level and delivers nothing twice.
+    // This loop is that label.
     loop {
-        match command.meaning() {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global) => global = true,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long) => {
-                flags = flags | MeaningFlags::LONG
+        let mut global = false;
+        let mut flags = MeaningFlags::EMPTY;
+        loop {
+            match command.meaning() {
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global) => global = true,
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long) => {
+                    flags = flags | MeaningFlags::LONG
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Outer) => {
+                    flags = flags | MeaningFlags::OUTER
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected) => {
+                    flags = flags | MeaningFlags::PROTECTED
+                }
+                _ => break,
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Outer) => {
-                flags = flags | MeaningFlags::OUTER
-            }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected) => {
-                flags = flags | MeaningFlags::PROTECTED
-            }
-            _ => break,
+            command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
         }
-        command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
+        // TeX82 §1045's `any_mode(ignore_spaces): begin <Get the next
+        // non-blank non-call token>; goto reswitch; end`. §406's helper is
+        // `repeat get_x_token until cur_cmd<>spacer` -- exactly
+        // `next_non_space` -- and the command it leaves in `cur_cmd` is then
+        // dispatched by the case itself. Backing it up instead would push a
+        // backup level, emit a recovery record, and deliver that command a
+        // second time, none of which TeX82 does (`umber2-johp.196`).
+        if matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces)
+        ) {
+            let Some(next) = next_non_space(processor)? else {
+                return Ok(ScannedStep::EndOfInput);
+            };
+            command = next;
+            continue;
+        }
+        return scan_command(
+            processor,
+            command,
+            global,
+            flags,
+            mode,
+            starts_paragraph,
+            boxes,
+            innermost_group,
+            job_is_all_over,
+            display_eq_no,
+        );
     }
-    scan_command(
-        processor,
-        command,
-        global,
-        flags,
-        mode,
-        starts_paragraph,
-        boxes,
-        innermost_group,
-        job_is_all_over,
-        display_eq_no,
-    )
 }
 
 fn leader_kind(primitive: UnexpandablePrimitive) -> GlueKind {
@@ -4595,30 +4614,6 @@ fn scan_command(
             } else {
                 Ok(ScannedStep::ItalicCorrection)
             }
-        }
-        // TeX82 §1045's `any_mode(ignore_spaces)`: `get_x_token` repeatedly
-        // until a non-space token is found, then `goto reswitch` reprocesses
-        // it in place. The canonical loop has no `reswitch` label to jump
-        // to, so it achieves the same effect by backing that first non-space
-        // command up for ordinary redelivery on the ensuing ordinary fetch.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces) => {
-            loop {
-                let Some(next) = processor.get_x_token().map_err(command_error)? else {
-                    break;
-                };
-                if matches!(
-                    next.meaning(),
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    }
-                ) {
-                    continue;
-                }
-                processor.back_input(next).map_err(command_error)?;
-                break;
-            }
-            Ok(ScannedStep::Continue)
         }
         // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
         // friends: back up the token and start the paragraph, then let the
