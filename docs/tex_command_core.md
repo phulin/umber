@@ -724,7 +724,10 @@ observable scanner and backup ordering.
 For `\hbox`, `\vbox`, and `\vtop`, command processing owns all of TeX82
 §645's `scan_spec` -- the optional `to`/`spread` packing clause and dimension,
 and then the mandatory opening brace, which §403's `scan_left_brace`
-_consumes_. That brace is never redelivered to main control: `scan_spec` runs
+_consumes_. §774's `init_align` calls the same `scan_spec`, so `\halign` and
+`\valign` run the identical clause through the identical routine; the value
+it scans is what §805 packages the preamble prototype box with
+(`hpack(preamble, saved(1), saved(0))`). That brace is never redelivered to main control: `scan_spec` runs
 `new_save_level(c)` before it, so the group it opens is exactly the one replay
 enters when it receives the construction. Replay enters the typed group and
 mode, schedules the matching immutable `\everyhbox`/`\everyvbox` command
