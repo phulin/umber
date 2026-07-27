@@ -92,6 +92,33 @@ fn replace_scaled_unit(value: &mut String, unit: &str) {
     }
 }
 
+/// Which of TeX82 §380's two expanded-fetch procedures is driving delivery.
+///
+/// `get_x_token` and `x_token` agree on every command but one. §380's
+/// `get_x_token` disposes of an `end_template` itself --
+/// `cur_cs:=frozen_endv; cur_cmd:=endv; goto done` -- rewriting the live
+/// command without touching the input stack. `x_token` has no such case: it
+/// calls §366 `expand` for everything above `max_command`, and §375's
+/// ``@<Insert a token containing |frozen_endv|@>`` is
+/// `cur_tok:=cs_token_flag+frozen_endv; back_input`, so a backup level is
+/// pushed and `x_token`'s own `get_next` rereads the token as a fresh raw
+/// `endv` delivery.
+///
+/// The difference is observable, not cosmetic: the `x_token` form emits a
+/// backup push, its recovery record, and a raw `endv` delivery that the
+/// `get_x_token` form never produces, and it leaves the backup level to be
+/// retired after `endv` has been acted on. Callers must therefore say which
+/// procedure they are, never inherit a default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ExpandedFetch {
+    /// §380's `get_x_token`, reached from §1030's `big_switch`.
+    GetXToken,
+    /// §380's `x_token`: §1038's `main_loop_lookahead` after its bare
+    /// `get_next`, and §1152's active-character treatment, both of which
+    /// enter expansion with a command already in hand.
+    XToken,
+}
+
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
@@ -99,7 +126,7 @@ impl CommandProcessor<'_> {
     /// canonical command state and restarts here; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
-        self.get_x_token_from(None)
+        self.get_x_token_from(None, ExpandedFetch::GetXToken)
     }
 
     /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
@@ -112,10 +139,11 @@ impl CommandProcessor<'_> {
     fn get_x_token_from(
         &mut self,
         mut pending: Option<CurrentCommand>,
+        fetch: ExpandedFetch,
     ) -> Result<Option<CurrentCommand>, CommandError> {
         self.command.transient.active_expansion_depth += 1;
         let result = loop {
-            match self.expanded_delivery(pending.take())? {
+            match self.expanded_delivery(pending.take(), fetch)? {
                 Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => break Ok(None),
@@ -163,7 +191,7 @@ impl CommandProcessor<'_> {
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         let command = CurrentCommand::resolve(spelling, stamp, None, false, &mut self.state);
-        let Some(settled) = self.get_x_token_from(Some(command))? else {
+        let Some(settled) = self.get_x_token_from(Some(command), ExpandedFetch::XToken)? else {
             return Ok(());
         };
         // §325 needs only `cur_tok`; the settled token is `x_token`'s result
@@ -249,18 +277,20 @@ impl CommandProcessor<'_> {
         if is_main_loop_character(command.meaning()) {
             return Ok(Some(CommandReplayDelivery::Command(command)));
         }
-        self.expanded_delivery(Some(command))
+        self.expanded_delivery(Some(command), ExpandedFetch::XToken)
     }
 
     fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
-        self.expanded_delivery(None)
+        self.expanded_delivery(None, ExpandedFetch::GetXToken)
     }
 
-    /// TeX.web §381's `x_token` loop, optionally entered with the raw command
-    /// §1038's lookahead has already fetched.
+    /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
+    /// `fetch` names, optionally entered with the raw command §1038's
+    /// lookahead has already fetched.
     fn expanded_delivery(
         &mut self,
         mut pending: Option<CurrentCommand>,
+        fetch: ExpandedFetch,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
             let mut command = match pending.take() {
@@ -288,6 +318,13 @@ impl CommandProcessor<'_> {
                     crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                 ) {
                     self.begin_scalar_alignment_v_template(command)?;
+                    continue;
+                }
+                if fetch == ExpandedFetch::XToken {
+                    // §366 `expand` has no `end_template` shortcut: it routes
+                    // straight to §375, which backs up a `frozen_endv` token
+                    // for this loop's own `get_next` to reread.
+                    self.insert_frozen_endv()?;
                     continue;
                 }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
@@ -333,6 +370,29 @@ impl CommandProcessor<'_> {
                 command.direct_source_provenance(),
             ),
         }));
+    }
+
+    /// TeX82 §375's ``@<Insert a token containing |frozen_endv|@>``:
+    ///
+    /// ```text
+    /// begin cur_tok:=cs_token_flag+frozen_endv; back_input;
+    /// end
+    /// ```
+    ///
+    /// This is §366 `expand`'s entire `end_template` case, and the reason
+    /// §780 installs *two* frozen `\endtemplate` control sequences: the one
+    /// stored in a template (`frozen_end_template`, command code
+    /// `end_template`) is `>outer_call`, so §336's `check_outer_validity`
+    /// still catches a template that ends inside an unfinished scan, and only
+    /// once it has been delivered is it replaced by `frozen_endv`, whose
+    /// command code is the ordinary unexpandable `endv`.
+    ///
+    /// §325's stack-conservation loop stops at a `v_template` level, so the
+    /// exhausted template stays on the stack underneath this backup and
+    /// retires only after `endv` has been acted on.
+    pub(crate) fn insert_frozen_endv(&mut self) -> Result<(), CommandError> {
+        let frozen_endv = self.state.frozen_endv_token();
+        self.back_input_token(TracedTokenWord::pack(frozen_endv, OriginId::UNKNOWN))
     }
 
     /// TeX.web's scalar `expand`: each case changes the active input/state

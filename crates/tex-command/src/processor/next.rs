@@ -1,7 +1,7 @@
 //! Canonical raw command delivery.
 //!
 //! This is the sole scalar path from input levels to `CurrentCommand`, after
-//! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
+//! TeX.web §341 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
 use tex_state::env::banks::{IntParam, TokParam};
@@ -23,6 +23,7 @@ use crate::{
 };
 
 use super::CommandProcessor;
+use super::expand::ExpandedFetch;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 use super::alignment::AlignmentDeliveryState;
@@ -121,10 +122,19 @@ impl CommandProcessor<'_> {
     /// alignment cell body is ordinary `main_control` material, so the same
     /// §1038 rule holds inside it: the first fetch is a bare `get_next`, and
     /// a `letter`/`other_char`/`char_given` never reaches `x_token`.
+    ///
+    /// It also selects which of §380's two expanded fetches this is, and the
+    /// two disagree about the `end_template` that closes a cell's ⟨v_j⟩
+    /// template -- see [`ExpandedFetch`].
     pub fn get_x_alignment_delivery(
         &mut self,
         main_loop_active: bool,
     ) -> Result<Option<AlignmentDelivery>, CommandError> {
+        let fetch = if main_loop_active {
+            ExpandedFetch::XToken
+        } else {
+            ExpandedFetch::GetXToken
+        };
         let mut first = true;
         loop {
             let Some(mut command) = (match self.get_next_with_replay_completion()? {
@@ -159,6 +169,13 @@ impl CommandProcessor<'_> {
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
             ) {
+                if fetch == ExpandedFetch::XToken {
+                    // §366 `expand` has no `end_template` shortcut: it routes
+                    // straight to §375, which backs up a `frozen_endv` token
+                    // for this loop's own `get_next` to reread.
+                    self.insert_frozen_endv()?;
+                    continue;
+                }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
@@ -1653,9 +1670,11 @@ impl CommandProcessor<'_> {
         {
             // TeX82 stores both inaccessible template sentinels in distinct
             // frozen control-sequence slots whose texts are `endtemplate`
-            // (TeX.web §765). `get_next` therefore exposes that control
-            // sequence identity at the raw boundary, while `get_x_token`
-            // changes only its effective command to `endv` (§343).
+            // (TeX.web §780). `get_next` therefore exposes that control
+            // sequence identity at the raw boundary, while §380's
+            // `get_x_token` changes only its effective command to `endv` --
+            // and §380's `x_token` does not even do that, reaching §375's
+            // separate `frozen_endv` token through §366 `expand` instead.
             crate::observation::ObservedToken::ControlSequence("endtemplate".into())
         } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
             && matches!(command.meaning(), Meaning::Relax)
@@ -3172,10 +3191,155 @@ mod tests {
                 if input.transition == InputTransition::Retire
                     && input.reason == InputReason::AlignmentVTemplate
         )));
+        // §380's `get_x_token` disposes of `end_template` itself, so nothing
+        // is backed up and there is no raw `endv` delivery at all.
+        assert!(!recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Backup
+        )));
+        assert!(!recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Command(delivery)
+                if delivery.boundary == CommandDeliveryBoundary::Raw
+                    && delivery.command == "endv"
+        )));
         command
             .rollback(snapshot.clone())
             .expect("template input rolls back exactly");
         assert_eq!(command.snapshot(), snapshot);
+    }
+
+    /// TeX82 §380's two expanded fetches disagree about `end_template`, and
+    /// §1038's `x_token` takes the longer road: §366 `expand` reaches §375,
+    /// which backs up a `frozen_endv` token for `x_token`'s own `get_next` to
+    /// reread. The sibling test above pins the `get_x_token` form, which
+    /// rewrites the live command instead and observes none of this.
+    #[test]
+    fn x_token_end_template_backs_up_frozen_endv_and_rereads_it() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(71);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Char {
+                    ch: '&',
+                    cat: Catcode::AlignmentTab,
+                },
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let u_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'u',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        let v_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'v',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: Some(u_template),
+                    v_template,
+                },
+            )
+            .expect("cell begins");
+        command
+            .install_alignment_cell_template(alignment)
+            .expect("u-template installs after the cell opener lifecycle");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor.get_next().expect("u-template delivers");
+            let delimiter = match processor
+                .get_x_alignment_delivery(false)
+                .expect("delimiter follows exhausted u-template")
+                .expect("intercepted delimiter")
+            {
+                crate::AlignmentDelivery::Event(
+                    event @ crate::AlignmentDeliveryEvent::EndTemplate(_),
+                ) => event,
+                _ => panic!("delimiter is delivered as an alignment event"),
+            };
+            processor
+                .begin_alignment_v_template(alignment, delimiter)
+                .expect("delimiter is saved for fin_col below v-template input");
+            processor.get_next().expect("v-template delivers");
+            // §1038 is parked in the character loop, so this is `x_token`.
+            let endv = match processor
+                .get_x_alignment_delivery(true)
+                .expect("exhausted v-template ends the cell")
+                .expect("end-v delivery")
+            {
+                crate::AlignmentDelivery::Command(command) => command,
+                _ => panic!("end-v is an ordinary command delivery"),
+            };
+            assert!(matches!(endv.meaning(), Meaning::EndV));
+            assert!(endv.spelling().semantic_token().is_frozen_endv());
+            let finished = processor
+                .command
+                .finish_alignment_cell(alignment)
+                .expect("do_endv retires the backup and the retained frame");
+            assert_eq!(finished.delimiter, crate::AlignmentCellDelimiter::Tab);
+        }
+        let shape: Vec<&str> = recorder
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Command(delivery)
+                    if delivery.command == "end_template"
+                        && delivery.boundary == CommandDeliveryBoundary::Raw =>
+                {
+                    Some("raw end_template")
+                }
+                CommandObservation::Command(delivery) if delivery.command == "endv" => {
+                    Some(match delivery.boundary {
+                        CommandDeliveryBoundary::Raw => "raw endv",
+                        CommandDeliveryBoundary::Expanded => "expanded endv",
+                    })
+                }
+                CommandObservation::Input(input) if input.transition == InputTransition::Backup => {
+                    Some("push backup")
+                }
+                CommandObservation::Recovery(recovery)
+                    if recovery.kind == crate::observation::RecoveryKind::Backup
+                        && recovery.tokens.len() == 1
+                        && matches!(
+                            recovery.tokens[0],
+                            crate::observation::ObservedToken::FrozenEndV
+                        ) =>
+                {
+                    Some("backup frozen_endv")
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                "raw end_template",
+                "push backup",
+                "backup frozen_endv",
+                "raw endv",
+                "expanded endv",
+            ]
+        );
     }
 
     #[test]
