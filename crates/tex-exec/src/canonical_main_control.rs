@@ -82,8 +82,12 @@ struct SetBoxTarget {
 struct ActiveReplayBox {
     target: Option<SetBoxTarget>,
     ships_out: bool,
-    opening_brace_replay: bool,
-    body_opener_pending: bool,
+    /// Nesting depth of still-open braces inside this box body, counting the
+    /// body's own mandatory opening brace. That brace is consumed by the
+    /// command core's `scan_left_brace` (TeX82 §403, reached from §645's
+    /// `scan_spec` or §1099's `begin_insert_or_adjust`) before this box is
+    /// ever pushed, so it is never redelivered here: the depth simply starts
+    /// at one and the matching `}` packages the box.
     depth: u32,
     kind: ReplayBoxKind,
     packing: PackSpec,
@@ -2392,7 +2396,7 @@ enum ScannedStep {
     },
     /// TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,
     /// `\moveright`): the already-signed shift amount (tex.web's
-    /// `box_context`) plus `scan_box`'s own `make_box` operand (§1076).
+    /// `box_context`) plus `scan_box`'s own `make_box` operand (§1084).
     /// `ScannedBoxShiftPayload::Construction` shares the `BeginBox`/
     /// `BoxBeginGroup`/`BoxEndGroup` brace-matching machinery; the other
     /// variants resolve to a node immediately, exactly like `\box<n>`,
@@ -2406,15 +2410,15 @@ enum ScannedStep {
     IllegalBoxShift {
         token: Token,
     },
-    /// TeX82 §968's `begin_insert_or_adjust` for `\insert` and `\vadjust`.
+    /// TeX82 §1099's `begin_insert_or_adjust` for `\insert` and `\vadjust`.
     /// The class-number bound check (0..=255) and the reserved-255 recovery
     /// both need `Universe` diagnostics, so replay receives only the raw
-    /// scanned class (fixed at 255 for `\vadjust`) and the validated
-    /// opening-brace backup state; it shares the same brace-matching
-    /// machinery as `BeginBox`/`BoxBeginGroup`/`BoxEndGroup`.
+    /// scanned class (fixed at 255 for `\vadjust`); the body's mandatory
+    /// opening brace was already consumed by `scan_left_brace`. It shares the
+    /// same brace-matching machinery as `BeginBox`/`BoxEndGroup`.
     BeginInsert(ScannedInsertConstruction),
     /// TeX82's "Forbidden cases" `vmode+vadjust`: `\vadjust` never reaches
-    /// `scan_box_group_opening` in vertical mode, matching
+    /// its mandatory `scan_left_brace` in vertical mode, matching
     /// `IllegalBoxShift`/`IllegalItalicCorrection`'s same-shaped recovery.
     IllegalInsertOrAdjust {
         token: Token,
@@ -2448,7 +2452,6 @@ enum ScannedStep {
     IllegalLastItem {
         token: Token,
     },
-    ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
         ships_out: bool,
@@ -3227,10 +3230,9 @@ fn scan_command(
     // the box body's depth counter -- which only this opening brace would
     // otherwise have touched -- correctly never sees either brace of the
     // pair, leaving its count unaffected, exactly as a fully balanced nested
-    // construct should. A box's own still-pending opening brace (the
-    // `ReplayBoxOpeningBrace` arm below) can never coincide with `mode` being
-    // math: that opener is always consumed before the box's body -- and
-    // hence any math it contains -- is reached.
+    // construct should. A box's own mandatory opening brace never reaches
+    // this dispatch at all: `scan_left_brace` (TeX82 §403) consumed it while
+    // the construction was still being scanned.
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -3242,26 +3244,7 @@ fn scan_command(
             MathTextFieldKind::Ord,
         )));
     }
-    if boxes
-        .active_boxes
-        .last()
-        .is_some_and(|box_state| box_state.opening_brace_replay)
-        && matches!(
-            command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::BeginGroup,
-                ..
-            }
-        )
-    {
-        processor.back_input(command).map_err(command_error)?;
-        return Ok(ScannedStep::ReplayBoxOpeningBrace);
-    }
-    if boxes
-        .active_boxes
-        .last()
-        .is_some_and(|box_state| !box_state.opening_brace_replay)
-    {
+    if !boxes.active_boxes.is_empty() {
         match command.meaning() {
             Meaning::CharToken {
                 cat: Catcode::BeginGroup,
@@ -4192,7 +4175,7 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Insert) => {
             Ok(ScannedStep::BeginInsert(
                 processor
-                    .scan_insert_construction()
+                    .scan_insert_construction(false)
                     .map_err(command_error)?,
             ))
         }
@@ -4210,13 +4193,11 @@ fn scan_command(
                     token: command.spelling().semantic_token(),
                 })
             } else {
-                Ok(ScannedStep::BeginInsert(ScannedInsertConstruction {
-                    class: 255,
-                    opening_brace_replay: processor
-                        .scan_box_group_opening()
+                Ok(ScannedStep::BeginInsert(
+                    processor
+                        .scan_insert_construction(true)
                         .map_err(command_error)?,
-                    is_vadjust: true,
-                }))
+                ))
             }
         }
         // TeX82 §1101's `make_mark` -- any_mode(mark). `p:=scan_toks(false,
@@ -6379,7 +6360,6 @@ fn applied_mutation_observation(
         | ScannedStep::IllegalInsertOrAdjust { .. }
         | ScannedStep::IllegalEqNo { .. }
         | ScannedStep::IllegalLastItem { .. }
-        | ScannedStep::ReplayBoxOpeningBrace
         | ScannedStep::BoxBeginGroup
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark(..)
@@ -8146,8 +8126,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 ships_out,
-                opening_brace_replay: construction.opening_brace_replay,
-                body_opener_pending: construction.opening_brace_replay,
                 depth: 1,
                 kind,
                 packing,
@@ -8190,8 +8168,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                opening_brace_replay: construction.opening_brace_replay,
-                body_opener_pending: construction.opening_brace_replay,
                 depth: 1,
                 kind: ReplayBoxKind::Insert(class),
                 packing: PackSpec::Natural,
@@ -8254,8 +8230,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                opening_brace_replay: construction.opening_brace_replay,
-                body_opener_pending: construction.opening_brace_replay,
                 depth: 1,
                 kind,
                 packing,
@@ -8406,16 +8380,6 @@ fn apply_scanned_step(
             boxes.recovery_simple_group_pending = opens_simple_group;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ReplayBoxOpeningBrace => {
-            let box_state = boxes
-                .active_boxes
-                .last_mut()
-                .ok_or(ExecError::MissingToken {
-                    context: "box opening brace",
-                })?;
-            box_state.opening_brace_replay = false;
-            Ok(ReplayStep::Continue)
-        }
         ScannedStep::BoxBeginGroup => {
             let box_state = boxes
                 .active_boxes
@@ -8423,13 +8387,7 @@ fn apply_scanned_step(
                 .ok_or(ExecError::MissingToken {
                     context: "box group",
                 })?;
-            if box_state.body_opener_pending {
-                // The first replayed brace is the box body's required opener;
-                // its scope is represented by the VBox group entered above.
-                box_state.body_opener_pending = false;
-            } else {
-                box_state.depth = box_state.depth.saturating_add(1);
-            }
+            box_state.depth = box_state.depth.saturating_add(1);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxEndGroup { ships_out } => {
@@ -9245,8 +9203,6 @@ fn apply_box_shift(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                opening_brace_replay: construction.opening_brace_replay,
-                body_opener_pending: construction.opening_brace_replay,
                 depth: 1,
                 kind,
                 packing,
