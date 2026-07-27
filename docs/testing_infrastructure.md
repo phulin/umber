@@ -756,11 +756,15 @@ an oracle, and what to do with the result, see the diagnosis order in
 ### Differential Tracer
 
 ```bash
-cargo run -q -p tex-command-stream -- --repository .
-cargo run -q -p tex-command-stream -- --repository . --max-divergences 50
+cargo run -q -p tex-command-stream -- --repository . --max-divergences 100000
 cargo run -q -p tex-command-stream -- --repository . --realign-window 128
 cargo run -q -p tex-command-stream -- --repository . --ungrouped
 ```
+
+The default budget (`DEFAULT_MAX_DIVERGENCES` = 20) saturates on `gentle`, so
+a run without `--max-divergences` returns `PARTIAL` (exit `2`) and totals that
+are floors. Pass a budget large enough to exhaust every fixture whenever the
+totals are going to be compared against anything.
 
 Run this from the repository root. It replays the committed
 `tests/corpus/command/tex82` fixture registry through the instrumented
@@ -923,8 +927,8 @@ Two bounds the report used to leave a reader to infer are now printed.
 
 - A fixture whose `--max-divergences` budget was reached while events remained
   prints `BOUNDED:` under its accounting line, naming the flag and saying that
-  comparison of that fixture stopped there. The budget still bounds
-  _divergences_, not root sites, so it is unchanged by grouping.
+  comparison of that fixture stopped there. See "What the budget counts"
+  below for the unit, which grouping does not change.
 - A document trace that is not generated on this checkout is listed as
   `not compared -- trace not generated on this checkout`, in addition to the
   stderr notice, so a fixture that never ran cannot read like a clean one.
@@ -942,6 +946,77 @@ VERDICT: PARTIAL (exit 2) -- this run did not compare everything it
   total, and a total of 0 would not mean convergence.
   never compared (3): plain, story, gentle
   generate the missing traces with scripts/build-tex82-document-traces.sh
+```
+
+A partial run also withdraws, in the header itself, the instruction the
+complete-run header gives. The header is where a reader takes a number from,
+so leaving `it is the one to compare against historical totals` printed over a
+floor would be this epic's recurring defect in miniature -- a number labeled
+as something it is not. A bounded or incomplete run prints instead:
+
+```text
+20 ordered divergence(s) in 7 root site(s):
+  LOWER BOUND: this run stopped short of comparing everything it registers
+    (the per-fixture accounting below and the VERDICT line at the end name
+    which fixtures and why). Every total above is a floor, not a total, and
+    none of them is comparable against a historical figure.
+  divergence(s): what the comparator found before it stopped short.
+    Grouping does not change this number; the bound above does.
+```
+
+An exhaustive run's report is byte-identical to what it was before that
+annotation existed, so no figure measured from an exhaustive run moved.
+
+#### What the budget counts
+
+`--max-divergences N` bounds **ordered divergences**, per fixture. It bounds
+neither root sites nor printed entries, and it never has. Since the worklist
+began printing one entry per root site the three are different quantities: a
+bounded run of `N` divergences prints at most `N` grouped entries and usually
+fewer, and prints exactly `N` under `--ungrouped`. Re-basing the budget onto
+root sites was considered and rejected (`umber2-johp.207`):
+
+- It would bound nothing. The budget exists so one long fixture cannot produce
+  an unbounded walk and an unbounded report, and the case it was introduced
+  for is a single structural defect recurring without end. That defect is
+  _one_ root site however many times it recurs, so a budget of 20 root sites
+  would walk the whole fixture and print a recurrence index list thousands
+  long -- the outcome the budget prevents today.
+- It would move the ambiguity, not remove it. Budget and printed entry count
+  agree exactly under `--ungrouped` today and would stop agreeing there. No
+  unit equals the printed entry count in both views, so that equality is not
+  an available invariant.
+- It would make the comparator depend on the presentation layer. Grouping is
+  documented as changing only how the worklist prints, never what is compared
+  or in what order; a root-site budget would let the grouping projection
+  decide where the comparison stops, so the two views would compare different
+  amounts of the stream.
+
+The invariant kept instead is that every number names its unit where it is
+printed. A bounded fixture's `BOUNDED:` notice says the budget counts ordered
+divergences and neither root sites nor printed entries, and names its
+divergence total and its root-site total as floors:
+
+```text
+tex82/document-gentle-v1  20 divergence(s) in 7 root site(s), first at oracle event 204839
+                          BOUNDED: --max-divergences 20 counts ordered divergences; it
+                          counts neither root sites nor printed entries. Comparison of this
+                          fixture stopped at 20 of them, so its 20 divergence(s) and
+                          7 root site(s) above are both floors: more of each exist
+                          beyond its last entry.
+```
+
+One divergence per fixture sits outside this budget: the contained replay
+failure (`engine panicked` / `replay failed`). It is at most one entry, names
+a concrete `ExecError` or panic site, and must not be crowded out by the
+twentieth consecutive mismatch of an already-reported structural defect. A
+bounded fixture's divergence total can therefore exceed the budget by one, and
+when it does the notice says so rather than leaving the arithmetic to look
+like an overrun:
+
+```text
+Its contained replay failure is reported outside the mismatch
+budget, which is why 21 is more than the budget of 20.
 ```
 
 #### Stream alignment
@@ -1095,7 +1170,7 @@ thousands of document events unoptimized takes minutes where the `test`
 profile takes seconds:
 
 ```bash
-cargo run-dev -p tex-command-stream -- --repository . --max-divergences 50
+cargo run-dev -p tex-command-stream -- --repository . --max-divergences 100000
 ```
 
 #### Generating the full-document traces

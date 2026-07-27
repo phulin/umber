@@ -57,7 +57,7 @@ away from.
    divergence against committed fixtures:
 
    ```bash
-   cargo run -q -p tex-command-stream -- --repository .
+   cargo run -q -p tex-command-stream -- --repository . --max-divergences 100000
    ```
 
    Run this from the repository root. It is hermetic (no corpus,
@@ -80,9 +80,12 @@ away from.
    - Exit `2` (`PARTIAL`): a registered fixture was never compared (its
      document trace is not generated on this checkout) or a fixture's
      comparison stopped at its `--max-divergences` budget. Every total is a
-     LOWER BOUND, and a total of `0` does not mean convergence. Never rank or
-     dispatch from a partial worklist: run
-     `scripts/build-tex82-document-traces.sh` and/or raise the budget first.
+     LOWER BOUND, and a total of `0` does not mean convergence. The header
+     says so in place of the "compare against historical totals" instruction
+     a complete run gives, and the bounded fixture's `BOUNDED:` notice names
+     both its totals as floors. Never rank or dispatch from a partial
+     worklist: run `scripts/build-tex82-document-traces.sh` and/or raise the
+     budget first.
    - Exit `3`: the run could not be performed at all -- a usage error, an
      unreadable suite, or a document registry inconsistent with its committed
      pin. Nothing was compared.
@@ -90,6 +93,20 @@ away from.
      message and `file:line` (rerun with `RUST_BACKTRACE=1` for a full
      backtrace) is itself the diagnosis and takes priority over a
      stream-mismatch report because it is reached first.
+
+   `--max-divergences N` bounds **ordered divergences** per fixture -- not
+   root sites and not printed entries, so a bounded grouped run prints fewer
+   than `N` entries. One divergence per fixture, the contained replay failure,
+   is reported outside the budget, so a bounded fixture's total can exceed `N`
+   by one. See "What the budget counts" in
+   [Testing Infrastructure](testing_infrastructure.md) for why the unit is
+   ordered divergences and not root sites.
+
+   The default budget (`20`) saturates on `gentle` and returns `PARTIAL`,
+   which is why the command above passes `--max-divergences 100000`: an
+   exhaustive run is the only one whose totals may be compared against a
+   figure recorded elsewhere. Raise the budget rather than dispatching from
+   the floor.
 
 2. **First-failure locator next**, for the live end-to-end front, only when
    the tracer's fixture registry doesn't cover the failing input (for
