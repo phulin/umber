@@ -2188,6 +2188,22 @@ internal result directly; a complete glue-valued register likewise bypasses
 the trailing `plus`/`minus` scan. The observer records the resulting typed
 internal integer, scaled, or glue value without leaking register storage.
 
+`scan_something_internal` takes the requested level, not just the token, and
+owns §429's `while cur_val_level>level` lowering cascade and §430's negation
+itself. §413 has exactly one exit, reached after both, so the level it commits
+-- and therefore the level the observer records -- is the level the caller
+asked for, never the level the quantity happens to be stored at: `\fam\z@`
+asks at `int_val`, and the `dimen_val` register `\z@` is lowered to an integer
+holding the identical scaled representation before anything observes it.
+Fetching in one function and coercing in each caller puts §429 on the far side
+of the observation boundary and reports a scaled dimension where TeX82 reports
+an integer (`umber2-johp.163`). A caller therefore names its level -- `int_val`
+for §440, `dimen_val`/`mu_val` for §448 and §455, `glue_val`/`mu_val` for §461,
+`tok_val` for §465's `the_toks` -- and never coerces afterwards. The three
+outcomes §413 distinguishes stay distinct in the return type: the command is
+not internal at all, §416's "Missing number" case (a font identifier or token
+list requested below `tok_val`), or a committed value.
+
 That bypass is not a register-family privilege. TeX82 §208/§209 make every
 command code in `min_internal..=max_internal` an internal quantity, and
 `scan_int` (§440), `scan_dimen` (§448), the internal-unit probe (§455), and
