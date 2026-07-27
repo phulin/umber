@@ -1,4 +1,7 @@
 use tex_state::Universe;
+#[cfg(test)]
+mod tests;
+
 use tex_state::node::{Node, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_typeset::measure_unset;
 

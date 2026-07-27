@@ -1,5 +1,8 @@
 //! Math-mode stomach front-end.
 
+#[cfg(test)]
+mod tests;
+
 use tex_expand::get_x_token_with_context;
 use tex_lex::InputStack;
 use tex_state::Universe;

@@ -1,4 +1,7 @@
 use tex_state::Universe;
+#[cfg(test)]
+mod tests;
+
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};

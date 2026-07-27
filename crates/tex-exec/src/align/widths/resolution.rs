@@ -1,4 +1,7 @@
 use tex_state::Universe;
+#[cfg(test)]
+mod tests;
+
 use tex_state::node::Node;
 use tex_typeset::alignment::{
     AlignmentPlanError, AlignmentWidthRequirement, plan_alignment_widths,

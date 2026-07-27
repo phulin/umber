@@ -2,6 +2,9 @@ mod debug;
 mod resolution;
 mod set;
 
+#[cfg(test)]
+mod tests;
+
 use tex_state::Universe;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};

@@ -288,3 +288,109 @@ fn cell_template_delivery_matrix() {
     assert!(omitted_cell.u_template_installed);
     assert!(omitted_cell.u_level.is_none());
 }
+
+#[test]
+fn alignment_misplaced_command_recovery_matrix() {
+    for (initial, expected) in [
+        (
+            -1,
+            Some(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+        ),
+        (
+            1,
+            Some(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+        ),
+        (-3, None),
+        (3, None),
+        (TOP_LEVEL_ALIGN_STATE, None),
+    ] {
+        let mut state = AlignmentDeliveryState {
+            align_state: initial,
+            ..AlignmentDeliveryState::default()
+        };
+        let recovery = state.correct_unbalanced_delimiter();
+        assert_eq!(recovery, expected, "initial align_state {initial}");
+        if let Some(brace) = recovery {
+            assert_eq!(state.align_state, 0);
+            state.correct_inserted_brace_backup(brace);
+            assert_eq!(state.align_state, initial);
+            let expected_adjustment = if initial < 0 {
+                AlignmentDeliveryAdjustment::BeginGroup
+            } else {
+                AlignmentDeliveryAdjustment::EndGroup
+            };
+            assert_eq!(
+                AlignmentDeliveryState::back_input_adjustment(brace),
+                expected_adjustment
+            );
+            let mut stores = Universe::new();
+            let mut replayed = resolve(&mut stores, brace);
+            assert_eq!(state.classify_delivery(&mut replayed), expected_adjustment);
+            assert_eq!(state.align_state, 0);
+        } else {
+            assert_eq!(state.align_state, initial);
+        }
+    }
+}
+
+#[test]
+fn alignment_close_inserts_frozen_cr_before_brace_replay() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let alignment = AlignmentIdentity::new(61);
+    let templates = AlignmentCellTemplates {
+        u_template: None,
+        v_template: TracedTokenList::synthetic(tex_state::ids::TokenListId::EMPTY),
+    };
+    let mut state = AlignmentDeliveryState::default();
+    state.begin_alignment(alignment);
+    state
+        .begin_cell(alignment, templates)
+        .expect("empty-template cell begins at brace depth zero");
+    state
+        .mark_u_template_installed(alignment)
+        .expect("cell template installs");
+    let mut closing = resolve(
+        &mut stores,
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+    );
+
+    let adjustment = state.classify_delivery(&mut closing);
+    assert_eq!(adjustment, AlignmentDeliveryAdjustment::EndGroup);
+    assert_eq!(state.align_state, -1);
+    assert!(state.needs_closing_brace_recovery(&closing));
+
+    state.undo_delivery(adjustment);
+    assert_eq!(
+        state.align_state, 0,
+        "backing up the brace restores cell depth"
+    );
+    let cr = stores.intern("cr").symbol();
+    stores.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    let mut frozen_cr = resolve(&mut stores, Token::Cs(cr));
+    assert_eq!(
+        state.classify_delivery(&mut frozen_cr),
+        AlignmentDeliveryAdjustment::Delimiter(AlignmentDelimiter::Cr),
+        "the inserted row terminator reaches template delivery before brace replay"
+    );
+    state.undo_delivery(AlignmentDeliveryAdjustment::Delimiter(
+        AlignmentDelimiter::Cr,
+    ));
+    assert_eq!(state.align_state, 0);
+    assert_eq!(
+        state.classify_delivery(&mut closing),
+        AlignmentDeliveryAdjustment::EndGroup,
+        "the original brace remains replayable after the inserted frozen cr"
+    );
+}

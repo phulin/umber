@@ -1,4 +1,7 @@
 use tex_expand::get_x_token_with_context;
+#[cfg(test)]
+mod tests;
+
 use tex_lex::InputStack;
 use tex_state::{ExpansionContext, PrintSink, Universe};
 

@@ -686,7 +686,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "init_span_sets_mode_aux_and_cur_span"
         }
       ]
@@ -760,20 +760,20 @@
         "Recovery: align_state below 500000 raises interwoven-preamble failure; extra tab/span without a periodic suffix becomes cr with the canonical diagnostic."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "fin_col_delimiter_matrix_and_periodic_extension"
         },
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "fin_col_extra_tab_recovers_to_cr"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.package-unset-cell",
@@ -801,16 +801,16 @@
         "Recovery: §796 specifies no diagnostic branch; packing diagnostics belong to the invoked hpack/vpackage contracts rather than a new alignment recovery."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/packaging/tests.rs",
           "test": "package_unset_cell_records_natural_extent_and_glue_orders"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.record-span-width",
@@ -845,7 +845,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
           "test": "span_width_list_orders_counts_and_keeps_maximum"
         }
       ]
@@ -882,7 +882,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "fin_row_packages_modes_adjustments_every_cr_and_peek"
         }
       ]
@@ -919,8 +919,16 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
+          "test": "align_peek_selects_noalign_finish_crcr_or_row"
+        },
+        {
+          "path": "crates/tex-exec/src/align/widths/tests.rs",
           "test": "fin_align_orders_groups_packing_pop_and_insertion"
+        },
+        {
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
+          "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
         }
       ]
     },
@@ -952,20 +960,20 @@
         "Recovery: §§801–803 specify no user-error branch; list ordering is a procedure precondition and no modern validation behavior is asserted."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
           "test": "resolve_alignment_widths_applies_tex82_recurrence"
         },
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
           "test": "resolve_alignment_widths_zeroes_null_column_tabskip"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.pack-preamble-prototype",
@@ -993,16 +1001,16 @@
         "Recovery: ordinary hpack/vpack diagnostics remain observable; §804 adds no alignment-specific recovery."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/tests.rs",
           "test": "pack_alignment_prototype_applies_spec_in_both_modes"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.set-list-and-running-rules",
@@ -1037,7 +1045,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/set/tests.rs",
           "test": "set_alignment_list_extends_running_rules_and_offsets_display_rules"
         }
       ]
@@ -1070,16 +1078,16 @@
         "Recovery: §§807–809 specify no user-error branch; prototype/list correspondence is a canonical precondition."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/set/tests.rs",
           "test": "materialize_spanned_cell_adds_tabskip_and_empty_boxes"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.convert-unset-cell",
@@ -1108,16 +1116,16 @@
         "Recovery: §§810–811 specify saturating glue behavior, not an error branch; no additional recovery is asserted."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/widths/set/tests.rs",
           "test": "convert_unset_cell_computes_tex82_glue_ratio_matrix"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.insert-finished-list",
@@ -1145,16 +1153,16 @@
         "Recovery: §812 defines no independent diagnostic; malformed display closure is owned by §§1206–1207."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
@@ -1185,16 +1193,24 @@
         "Recovery: missing left/right brace is inserted at ±1; otherwise tab/span/cr/noalign/omit produces its specific diagnostic and is ignored."
       ],
       "semantic_owner": "tex-command::alignment-recovery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "alignment_misplaced_command_recovery_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "misplaced_omit_in_nonstop_alignment_reports_and_continues"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "misplaced_noalign_in_cell_reports_and_continues_in_error_stop_mode"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.endv-validation-and-off-save",
@@ -1228,7 +1244,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "do_endv_validates_template_and_group_matrix"
         }
       ]
@@ -1259,16 +1275,20 @@
         "Recovery: missing cr emits the canonical diagnostic and immutable frozen cr; no execution group is closed by the first brace delivery."
       ],
       "semantic_owner": "tex-command::alignment-recovery",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "alignment_close_inserts_frozen_cr_before_brace_replay"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "align_group_closing_brace_recovery_backs_up_before_frozen_cr"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     },
     {
       "id": "tex82.align.noalign-group-close",
@@ -1302,7 +1322,7 @@
       "gap_bead": "umber2-johp.227",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/align/noalign/tests.rs",
           "test": "noalign_close_resumes_row_lookahead_in_both_modes"
         }
       ]
@@ -1334,16 +1354,16 @@
         "Recovery: missing or single closing math shift follows the canonical display-delimiter diagnostic and insertion path without duplicating the alignment list."
       ],
       "semantic_owner": "tex-exec::math-display",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "planned-rust-unit",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/align.rs",
+          "path": "crates/tex-exec/src/math/tests.rs",
           "test": "display_alignment_finish_assignments_delimiters_and_spacing"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": null
     }
   ]
 }
