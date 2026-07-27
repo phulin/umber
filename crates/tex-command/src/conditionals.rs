@@ -783,7 +783,7 @@ impl CommandProcessor<'_> {
             )])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = level;

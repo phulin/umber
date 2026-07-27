@@ -84,7 +84,7 @@ fn retirement_validates_exact_level_identity_before_mutating() {
         transient_payload(&[]),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Transient(TransientReplayReason::Inserted),
+        ReplayTrace::Inserted,
     );
     let second = state.push_token_level(
         transient_payload(&[]),
@@ -151,7 +151,7 @@ fn transient_payload_drops_with_its_last_input_owner() {
         TokenPayload::Transient(SharedTokenBuffer::new(Arc::clone(&allocation))),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Transient(TransientReplayReason::Inserted),
+        ReplayTrace::Inserted,
     );
     drop(allocation);
     assert!(weak.upgrade().is_some());
@@ -171,7 +171,7 @@ fn snapshot_ownership_keeps_transient_payload_live_past_stack_retirement() {
         TokenPayload::Transient(SharedTokenBuffer::new(Arc::clone(&allocation))),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Transient(TransientReplayReason::Inserted),
+        ReplayTrace::Inserted,
     );
     let snapshot = state.snapshot();
     drop(allocation);
@@ -301,7 +301,7 @@ fn activation_records_without_a_live_param_start_do_not_own_replay() {
         transient_payload(&[traced('#')]),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Transient(TransientReplayReason::Inserted),
+        ReplayTrace::Inserted,
     );
 
     assert_eq!(
@@ -348,7 +348,7 @@ fn source_input_is_a_param_start_ownership_boundary() {
         transient_payload(&[traced('#')]),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Transient(TransientReplayReason::Inserted),
+        ReplayTrace::Inserted,
     );
 
     assert_eq!(
@@ -439,7 +439,7 @@ fn replay_trace_cannot_select_retirement_or_parameter_ownership() {
 
     assert_eq!(
         retirement(ReplayTrace::Stored(StoredReplayReason::EveryPar)),
-        retirement(ReplayTrace::Transient(TransientReplayReason::Inserted))
+        retirement(ReplayTrace::Inserted)
     );
 
     fn parameter_range(trace: ReplayTrace) -> (usize, usize) {
@@ -487,7 +487,7 @@ fn replay_trace_cannot_select_retirement_or_parameter_ownership() {
     }
 
     assert_eq!(
-        parameter_range(ReplayTrace::Stored(StoredReplayReason::TokenRegister(4))),
-        parameter_range(ReplayTrace::Transient(TransientReplayReason::Inserted))
+        parameter_range(ReplayTrace::Stored(StoredReplayReason::Mark)),
+        parameter_range(ReplayTrace::Inserted)
     );
 }

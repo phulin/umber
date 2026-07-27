@@ -441,6 +441,14 @@ impl CommandProcessor<'_> {
         self.expand_the_value(opener.origin(), target.value)
     }
 
+    /// Installs one TeX82 §467 `ins_the_toks` result.
+    ///
+    /// §465's `the_toks` produces a token list for every `cur_val_level`: the
+    /// scalar levels through `@<Convert |cur_val| to a token list@>`, `ident_val`
+    /// as the font's own control-sequence token, and `tok_val` as a copy of the
+    /// register or parameter. §467 then hands _all_ of them to the same
+    /// `ins_list`, so none of the three may install a differently classified
+    /// input level.
     pub(crate) fn expand_the_value(
         &mut self,
         opener: OriginId,
@@ -450,11 +458,19 @@ impl CommandProcessor<'_> {
             self.push_rendered_text(&text, opener);
         } else {
             match value {
-                crate::InternalValue::Tokens {
-                    tokens,
-                    index,
-                    parameter,
-                } => self.push_the_tokens(tokens, index, parameter)?,
+                // §466 copies the register's list rather than sharing its
+                // reference, which Umber's immutable stored list already is:
+                // reassigning the register cannot mutate this payload.
+                crate::InternalValue::Tokens { tokens } => {
+                    let first = self.state.tokens(tokens).first().copied();
+                    self.insert_expansion_list(
+                        TokenPayload::Stored {
+                            tokens,
+                            origins: OriginListId::EMPTY,
+                        },
+                        first,
+                    );
+                }
                 crate::InternalValue::Font(symbol) => {
                     self.push_rendered_tokens(vec![Token::Cs(symbol)], opener);
                 }
@@ -493,25 +509,23 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        self.push_the_tokens(self.state.page_mark(page_mark(primitive)), 0, false)
+        self.push_mark_text(self.state.page_mark(page_mark(primitive)));
+        Ok(())
     }
 
     fn expand_mark_class(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
         let class = self.scan_integer()?.value;
         let class = u16::try_from(class).unwrap_or(0);
-        self.push_the_tokens(
-            self.state.page_mark_class(page_mark(primitive), class),
-            class,
-            false,
-        )
+        self.push_mark_text(self.state.page_mark_class(page_mark(primitive), class));
+        Ok(())
     }
 
-    fn push_the_tokens(
-        &mut self,
-        tokens: TokenListId,
-        index: u16,
-        parameter: bool,
-    ) -> Result<(), CommandError> {
+    /// Installs TeX82 §386's `mark_text` level for `\\topmark` and its kin.
+    ///
+    /// §386 is `begin_token_list(cur_mark[cur_chr], mark_text)`, a distinct
+    /// §307 token type from §467's `inserted`: a mark's text is the stored list
+    /// itself, never a copy handed back through `ins_list`.
+    fn push_mark_text(&mut self, tokens: TokenListId) {
         self.command.push_token_level(
             TokenPayload::Stored {
                 tokens,
@@ -519,22 +533,17 @@ impl CommandProcessor<'_> {
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
-            ReplayTrace::Stored(if parameter {
-                crate::input::StoredReplayReason::TokenParameter(index)
-            } else {
-                crate::input::StoredReplayReason::TokenRegister(index)
-            }),
+            ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
         );
-        Ok(())
     }
 
-    /// Installs TeX82 `conv_toks` output as an inserted recovery level.
+    /// Installs TeX82 §470 `conv_toks` output as an inserted recovery level.
     ///
-    /// Conversion output is not an ordinary token-list replay: TeX82 pushes
-    /// it through `back_list` with `token_type=inserted`.  Keeping that
-    /// identity on the live input frame makes both retirement and detached
-    /// observation follow the actual input transition, rather than asking a
-    /// trace adapter to recognize rendered text later.
+    /// Conversion output is not an ordinary token-list replay: §470 ends with
+    /// `ins_list(link(temp_head))`, so it carries §307's `inserted` token type.
+    /// Keeping that identity on the live input frame makes both retirement and
+    /// detached observation follow the actual input transition, rather than
+    /// asking a trace adapter to recognize rendered text later.
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
         self.push_rendered_tokens(
             text.chars()
@@ -555,23 +564,36 @@ impl CommandProcessor<'_> {
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
+        let first = tokens.first().copied();
         let tokens = tokens
             .into_iter()
             .map(|token| TracedTokenWord::pack(token, origin))
             .collect::<Vec<_>>();
-        // `conv_toks` enters the inserted list through `back_list`, whose
-        // trace seam reports its current token. The full rendered string is
-        // nevertheless retained by the actual input level below.
-        #[cfg(any(test, feature = "instrumentation"))]
-        let observed = tokens.first().copied();
-        let level = self.command.push_token_level(
+        self.insert_expansion_list(
             TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
+            first,
+        );
+    }
+
+    /// Performs TeX82 §323's `ins_list` for one expansion result.
+    ///
+    /// Every expansion that hands tokens back to the scanner -- §467's
+    /// `ins_the_toks` and §470's `conv_toks` -- reaches the input stack through
+    /// this one macro, so they share one installation here rather than each
+    /// choosing its own token type. `first` is the inserted list's leading
+    /// token: §323's trace seam reports the current token of the level it just
+    /// pushed, and an empty inserted list has none to report.
+    fn insert_expansion_list(&mut self, payload: TokenPayload, first: Option<Token>) {
+        let level = self.command.push_token_level(
+            payload,
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(not(any(test, feature = "instrumentation")))]
-        let _ = level;
+        {
+            let _ = (level, first);
+        }
         #[cfg(any(test, feature = "instrumentation"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
@@ -580,13 +602,13 @@ impl CommandProcessor<'_> {
                 level: level.0,
                 position: 0,
             }));
-            self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::InsertedToken,
-                tokens: observed
-                    .into_iter()
-                    .map(|token| self.observed_token(token))
-                    .collect(),
-            }));
+            if let Some(first) = first {
+                let observed = self.observed_token(TracedTokenWord::pack(first, OriginId::UNKNOWN));
+                self.observe(CommandObservation::Recovery(RecoveryRecord {
+                    kind: inserted_recovery_kind(&observed),
+                    tokens: vec![observed],
+                }));
+            }
         }
     }
 
@@ -664,6 +686,32 @@ pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
         crate::InternalValue::MuGlue(value) => Some(format_glue(value, "mu")),
         crate::InternalValue::Font(_) => None,
         crate::InternalValue::Tokens { .. } => None,
+    }
+}
+
+/// Classifies TeX82 §323's inserted-list trace seam by its leading token.
+///
+/// §289's `cs_token_flag` splits the token space in two, and §323 reports the
+/// inserted list's first token on whichever side of it that token falls:
+/// control sequences (including §353's active characters and tex.web's frozen
+/// sentinels) are one recovery operation, character and `out_param` tokens the
+/// other. Deriving the classification from the observed token keeps every
+/// caller of `ins_list` -- rendered conversion text, a copied token register, a
+/// font identifier -- on the same rule instead of asserting one per call site.
+#[cfg(any(test, feature = "instrumentation"))]
+fn inserted_recovery_kind(token: &crate::observation::ObservedToken) -> RecoveryKind {
+    use crate::observation::ObservedToken;
+    match token {
+        ObservedToken::Character { .. } | ObservedToken::Parameter(_) => {
+            RecoveryKind::InsertedToken
+        }
+        ObservedToken::ControlSequence(_)
+        | ObservedToken::MacroMatch
+        | ObservedToken::MacroEndMatch
+        | ObservedToken::FrozenEndTemplate
+        | ObservedToken::FrozenEndV
+        | ObservedToken::FrozenPrimitive(_)
+        | ObservedToken::FrozenOther => RecoveryKind::InsertedControlSequence,
     }
 }
 
@@ -1232,6 +1280,13 @@ mod tests {
             matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
             if matches!(cursor.payload, TokenPayload::Stored { tokens, .. } if tokens == stored))
         );
+        // TeX82 §467 hands §465's copy to `ins_list`, so the level carries
+        // §307's `inserted` token type and retires as a recovery, never as an
+        // ordinary stored token list.
+        assert!(
+            matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
+            if cursor.trace == ReplayTrace::Inserted && cursor.behavior == TokenBehavior::Recovery)
+        );
         assert_eq!(
             processor
                 .get_x_token()
@@ -1253,6 +1308,61 @@ mod tests {
                 .semantic_token(),
             trailing
         );
+    }
+
+    /// TeX82 §467's `ins_the_toks` is observed exactly like §470's `conv_toks`.
+    ///
+    /// Both reach the input stack through §323's `ins_list`, so `\the` of a
+    /// token parameter must publish the same inserted push and the same
+    /// first-token recovery record that a rendered conversion does -- and a
+    /// leading control sequence is §289's `info(p)>=cs_token_flag` case.
+    #[test]
+    fn the_toks_publishes_an_inserted_push_naming_its_leading_control_sequence() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+        // A token *parameter*, not a register: §466 copies both the same way,
+        // and the divergence this test pins was `\the\headline`.
+        let parameter = universe.intern("everypar").symbol();
+        universe.set_meaning(parameter, Meaning::TokParam(1));
+        let leading = universe.intern("hfil").symbol();
+        let stored = universe.intern_token_list(&[Token::Cs(leading)]);
+        universe.set_tok_param(tex_state::env::banks::TokParam::EVERY_PAR, stored);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(the)),
+                traced(Token::Cs(parameter)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let opener = processor.get_next().expect("raw the").expect("the command");
+            processor.expand(opener).expect("the inserts its copy");
+        }
+        let push = recorder
+            .0
+            .iter()
+            .position(|record| {
+                matches!(record, CommandObservation::Input(input)
+                    if input.transition == InputTransition::Recovery
+                        && input.reason == crate::observation::InputReason::Recovery)
+            })
+            .expect("the_toks installs an observed inserted level");
+        assert!(matches!(
+            &recorder.0[push + 1],
+            CommandObservation::Recovery(recovery)
+                if recovery.kind == RecoveryKind::InsertedControlSequence
+                    && recovery.tokens
+                        == vec![crate::observation::ObservedToken::ControlSequence("hfil".into())]
+        ));
     }
 
     #[test]
@@ -1668,7 +1778,7 @@ mod tests {
             ])),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         command.push_macro_activation(
             definition,

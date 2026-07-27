@@ -13,7 +13,7 @@ use tex_state::{SourceId, TracedTokenList};
 
 use crate::input::{
     BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason,
-    TokenBehavior, TokenPayload, TransientReplayReason,
+    TokenBehavior, TokenPayload,
 };
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
@@ -1855,7 +1855,7 @@ impl CommandProcessor<'_> {
             )),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
-            ReplayTrace::Transient(TransientReplayReason::Inserted),
+            ReplayTrace::Inserted,
         );
         #[cfg(any(test, feature = "instrumentation"))]
         {

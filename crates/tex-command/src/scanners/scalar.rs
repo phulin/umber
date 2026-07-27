@@ -51,10 +51,11 @@ pub enum InternalValue {
     MuGlue(GlueSpec),
     /// TeX82's `ident_val`: a font's stable control-sequence identity.
     Font(Symbol),
+    /// TeX82's `tok_val`. §466 copies the register's or parameter's list, so
+    /// which slot it came from is not part of the value: `\\the` installs the
+    /// copy through §467's `ins_list` either way.
     Tokens {
         tokens: TokenListId,
-        index: u16,
-        parameter: bool,
     },
 }
 
@@ -1533,8 +1534,6 @@ impl CommandProcessor<'_> {
                 let index = self.scan_eight_bit_register_index()?;
                 InternalValue::Tokens {
                     tokens: self.state.toks(index),
-                    index,
-                    parameter: false,
                 }
             }
             // TeX82 §424's `scan_something_internal` treats `\wd`, `\ht`,
@@ -1655,15 +1654,11 @@ impl CommandProcessor<'_> {
             }
             Meaning::ToksRegister(index) => InternalValue::Tokens {
                 tokens: self.state.toks(index),
-                index,
-                parameter: false,
             },
             Meaning::TokParam(index) => InternalValue::Tokens {
                 tokens: self
                     .state
                     .tok_param(tex_state::env::banks::TokParam::new(index)),
-                index,
-                parameter: true,
             },
             Meaning::InternalInteger(integer) => {
                 let Some(value) = self.state.internal_integer(integer) else {

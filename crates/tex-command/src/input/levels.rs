@@ -150,10 +150,22 @@ pub(crate) enum RetirementBehavior {
 /// parameter substitution, backup treatment, or retirement.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ReplayTrace {
+    /// TeX82 §307's `inserted` token type: the level TeX82 §323's `ins_list`
+    /// installs.
+    ///
+    /// This is a token _type_, not a storage strategy, so it is independent of
+    /// whether the payload is a fresh transient buffer (§470's `conv_toks`
+    /// renders one) or an immutable stored list (§467's `ins_the_toks` shares
+    /// §465's copy). Nesting it under [`ReplayTrace::Transient`] conflated the
+    /// two and let §467's inserted level be installed as an ordinary stored
+    /// token list.
+    Inserted,
     Stored(StoredReplayReason),
     Transient(TransientReplayReason),
     MacroReplacement,
-    MacroParameter { slot: u8 },
+    MacroParameter {
+        slot: u8,
+    },
     BackedUp,
     UTemplate,
     VTemplate,
@@ -163,8 +175,6 @@ pub(crate) enum ReplayTrace {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum StoredReplayReason {
     TokenList,
-    TokenRegister(u16),
-    TokenParameter(u16),
     EveryPar,
     EveryMath,
     /// A completed math field, replayed while the executor constructs its
@@ -187,10 +197,10 @@ pub(crate) enum StoredReplayReason {
     AfterAssignment,
 }
 
-/// Canonical explanations for a materialized transient insertion.
+/// Canonical explanations for a materialized transient insertion that is not
+/// TeX82 §307's `inserted` token type (which is [`ReplayTrace::Inserted`]).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TransientReplayReason {
-    Inserted,
     Scantokens,
     ExpandedTokenList,
 }

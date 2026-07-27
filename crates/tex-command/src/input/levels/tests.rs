@@ -83,7 +83,7 @@ fn the_dense_level_enum_has_only_source_and_token_variants() {
         payload: TokenPayload::Transient(SharedTokenBuffer::new(Vec::<TracedTokenWord>::new())),
         behavior: TokenBehavior::Ordinary,
         retirement: RetirementBehavior::Pop,
-        trace: ReplayTrace::Transient(super::TransientReplayReason::Inserted),
+        trace: ReplayTrace::Inserted,
         index: 0,
         identity: InputLevelId(0),
     });
