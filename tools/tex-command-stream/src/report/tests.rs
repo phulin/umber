@@ -60,6 +60,7 @@ fn report(grouped: bool) -> ComparisonReport {
             identity: IDENTITY.into(),
             state: FixtureState::Compared {
                 divergences: divergences.len(),
+                budgeted: divergences.len(),
                 first_index: Some(1),
                 budget_reached: false,
             },
@@ -138,13 +139,14 @@ fn a_reached_budget_is_announced_rather_than_left_to_be_inferred() {
     let mut report = report(true);
     report.fixtures[0].state = FixtureState::Compared {
         divergences: 5,
+        budgeted: 5,
         first_index: Some(1),
         budget_reached: true,
     };
     report.max_divergences = 5;
     let rendered = report.to_string();
     assert!(
-        rendered.contains("BOUNDED: --max-divergences 5 was reached"),
+        rendered.contains("BOUNDED: --max-divergences 5 counts ordered divergences"),
         "{rendered}"
     );
 }
@@ -171,6 +173,7 @@ fn a_clean_fixture_is_listed_with_zero_rather_than_omitted() {
         identity: "tex82/document-clean-v1 manifest=def".into(),
         state: FixtureState::Compared {
             divergences: 0,
+            budgeted: 0,
             first_index: None,
             budget_reached: false,
         },
@@ -191,6 +194,7 @@ fn an_uncompared_fixture_makes_the_run_partial_rather_than_clean() {
     clean.divergences.clear();
     clean.fixtures[0].state = FixtureState::Compared {
         divergences: 0,
+        budgeted: 0,
         first_index: None,
         budget_reached: false,
     };
@@ -226,6 +230,7 @@ fn a_reached_budget_makes_the_run_partial_too() {
 
     report.fixtures[0].state = FixtureState::Compared {
         divergences: 5,
+        budgeted: 5,
         first_index: Some(1),
         budget_reached: true,
     };
@@ -246,6 +251,7 @@ fn a_clean_run_still_prints_a_verdict_rather_than_nothing() {
             identity: IDENTITY.into(),
             state: FixtureState::Compared {
                 divergences: 0,
+                budgeted: 0,
                 first_index: None,
                 budget_reached: false,
             },
@@ -287,5 +293,133 @@ fn the_long_index_list_wraps_without_dropping_an_occurrence() {
     assert!(
         list.lines().all(|line| line.len() <= INDEX_LIST_WIDTH),
         "{list}"
+    );
+}
+
+/// The exact header a complete run prints. Pinned byte for byte because every
+/// concurrent measurement in this epic is taken from an exhaustive run, and
+/// the lower-bound annotation added for bounded runs (`umber2-johp.207`) must
+/// not reach this path.
+const COMPLETE_GROUPED_HEADER: &str = "\
+5 ordered divergence(s) in 2 root site(s):
+  divergence(s): what the comparator found. Grouping does not change this
+    number; it is the one to compare against historical totals.
+  root site(s): the entries below, one per group of divergences that are
+    identical after erasing source positions and nothing else. Every
+    divergence is in exactly one group; none is dropped, sampled, or
+    truncated. Pass --ungrouped for one entry per divergence.
+";
+
+/// Marks `report`'s single fixture as stopped by a budget of `budget`, with
+/// `divergences` total of which `budgeted` were counted against it.
+fn bounded_at(report: &mut ComparisonReport, budget: usize, budgeted: usize, divergences: usize) {
+    report.fixtures[0].state = FixtureState::Compared {
+        divergences,
+        budgeted,
+        first_index: Some(1),
+        budget_reached: true,
+    };
+    report.max_divergences = budget;
+}
+
+#[test]
+fn a_complete_run_header_carries_no_lower_bound_annotation() {
+    let rendered = report(true).to_string();
+    assert!(rendered.starts_with(COMPLETE_GROUPED_HEADER), "{rendered}");
+    assert!(!rendered.contains("LOWER BOUND"), "{rendered}");
+}
+
+/// The header is where a reader takes a number from, so a bounded run must
+/// withdraw the "compare this against historical totals" instruction there,
+/// not only in the verdict at the bottom.
+#[test]
+fn a_bounded_run_marks_both_headline_totals_as_floors_in_the_header() {
+    let mut report = report(true);
+    bounded_at(&mut report, 5, 5, 5);
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("LOWER BOUND: this run stopped short"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Every total above is a floor, not a total, and"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("it is the one to compare against historical totals"),
+        "a bounded total must not be advertised as comparable: {rendered}"
+    );
+}
+
+/// The same withdrawal applies to a run that never compared a fixture: the
+/// annotation tracks completeness, not which bound caused it.
+#[test]
+fn an_uncompared_fixture_marks_the_headline_totals_as_floors_too() {
+    let mut report = report(true);
+    report
+        .fixtures
+        .push(FixtureSummary::not_generated("tex82/document-absent-v1"));
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("LOWER BOUND: this run stopped short"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("it is the one to compare against historical totals"),
+        "{rendered}"
+    );
+}
+
+/// The defect `umber2-johp.207` was filed for: a budget of 20 next to a
+/// worklist of 13 entries, with nothing printed to say the two count
+/// different things.
+#[test]
+fn a_bounded_fixture_says_the_budget_counts_divergences_not_the_entries_it_prints() {
+    let mut report = report(true);
+    bounded_at(&mut report, 5, 5, 5);
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("BOUNDED: --max-divergences 5 counts ordered divergences; it"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("counts neither root sites nor printed entries."),
+        "{rendered}"
+    );
+    // The fixture printed two entries under a budget of five; the notice has
+    // to name both numbers so the smaller one does not read as slack.
+    assert!(
+        rendered.contains("stopped at 5 of them, so its 5 divergence(s) and"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("2 root site(s) above are both floors"),
+        "{rendered}"
+    );
+}
+
+/// A contained replay failure is reported outside the mismatch budget, so a
+/// bounded fixture's divergence total can exceed the budget by one. Printed
+/// without explanation that reads as the budget having been overrun.
+#[test]
+fn a_divergence_total_above_the_budget_names_the_unbudgeted_replay_failure() {
+    let mut report = report(true);
+    bounded_at(&mut report, 5, 5, 6);
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("Its contained replay failure is reported outside the mismatch"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("budget, which is why 6 is more than the budget of 5."),
+        "{rendered}"
+    );
+
+    // A fixture with no such failure must not carry the explanation.
+    let mut without = report;
+    bounded_at(&mut without, 5, 5, 5);
+    assert!(
+        !without.to_string().contains("contained replay failure"),
+        "{without}"
     );
 }

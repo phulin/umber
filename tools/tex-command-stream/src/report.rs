@@ -13,6 +13,20 @@
 //! misleads. [`RunOutcome`] is that answer: "complete and clean", "complete
 //! and diverged", and "partial" are three different statuses, so no consumer
 //! can read "did not run" as "ran and found nothing".
+//!
+//! # The invariant every number here is printed under
+//!
+//! Two numbers are printed with different units and a third -- the
+//! `--max-divergences` budget -- is stated on the command line, so each one
+//! names its own unit where it is printed, and any number a bound turned into
+//! a floor says so *at the point it is printed*, not only in the verdict at
+//! the bottom. The budget counts ordered divergences, never root sites and
+//! never printed entries; the grouped worklist prints one entry per root
+//! site, so under a bound the entry count is smaller than the budget, and
+//! under `--ungrouped` it equals it. No single unit can equal the printed
+//! entry count in both views, so equality of the two is not the property to
+//! preserve -- labeling is. See [`crate::DEFAULT_MAX_DIVERGENCES`] for why
+//! the budget's unit is ordered divergences.
 
 use std::fmt;
 
@@ -70,7 +84,15 @@ pub const EXIT_NOT_RUN: u8 = 3;
 pub enum FixtureState {
     /// The fixture was replayed and compared.
     Compared {
+        /// Every ordered divergence this fixture contributed.
         divergences: usize,
+        /// How many of `divergences` the `--max-divergences` budget counted:
+        /// the stream mismatches. A contained replay failure is reported
+        /// outside the budget, so `divergences` can exceed `budgeted` -- and
+        /// therefore exceed the budget -- by one. Recorded separately so the
+        /// bounded notice can explain that arithmetic instead of printing a
+        /// total that looks like the budget was overrun.
+        budgeted: usize,
         /// Oracle event index of this fixture's first divergence.
         first_index: Option<usize>,
         /// The `--max-divergences` budget stopped this fixture's comparison
@@ -270,21 +292,55 @@ impl ComparisonReport {
                 formatter,
                 "{divergences} ordered divergence(s) in {sites} root site(s):"
             )?;
+            self.write_totals_status(formatter)?;
             formatter.write_str(
-                "  divergence(s): what the comparator found. Grouping does not change this\n    \
-                 number; it is the one to compare against historical totals.\n  \
-                 root site(s): the entries below, one per group of divergences that are\n    \
+                "  root site(s): the entries below, one per group of divergences that are\n    \
                  identical after erasing source positions and nothing else. Every\n    \
                  divergence is in exactly one group; none is dropped, sampled, or\n    \
                  truncated. Pass --ungrouped for one entry per divergence.\n",
             )
         } else {
             writeln!(formatter, "{divergences} ordered divergence(s):")?;
+            self.write_totals_status(formatter)?;
             writeln!(
                 formatter,
                 "  ungrouped (--ungrouped): one entry per divergence. Collapsing exact\n    \
                  recurrences would report {sites} root site(s); the divergence total above\n    \
                  is the same either way."
+            )
+        }
+    }
+
+    /// What the headline totals are, immediately under the headline.
+    ///
+    /// A partial run's totals are already named as lower bounds by the verdict
+    /// at the bottom, but the header is where a reader takes a number from,
+    /// and the complete-run wording tells them to compare it against a
+    /// historical figure. Printing that instruction over a bounded total is
+    /// the mild form of this epic's recurring defect -- a number labeled as
+    /// something it is not -- so the instruction is withdrawn exactly when it
+    /// stops being true, in the same place it was given.
+    fn write_totals_status(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.is_complete() {
+            formatter.write_str(
+                "  LOWER BOUND: this run stopped short of comparing everything it registers\n    \
+                 (the per-fixture accounting below and the VERDICT line at the end name\n    \
+                 which fixtures and why). Every total above is a floor, not a total, and\n    \
+                 none of them is comparable against a historical figure.\n",
+            )?;
+        }
+        if !self.grouped {
+            return Ok(());
+        }
+        if self.is_complete() {
+            formatter.write_str(
+                "  divergence(s): what the comparator found. Grouping does not change this\n    \
+                 number; it is the one to compare against historical totals.\n",
+            )
+        } else {
+            formatter.write_str(
+                "  divergence(s): what the comparator found before it stopped short.\n    \
+                 Grouping does not change this number; the bound above does.\n",
             )
         }
     }
@@ -310,13 +366,12 @@ impl ComparisonReport {
                 FixtureState::NotGenerated => {
                     formatter.write_str("not compared -- trace not generated on this checkout\n")?
                 }
-                FixtureState::Compared {
-                    divergences: 0,
-                    first_index: _,
-                    budget_reached: _,
-                } => formatter.write_str("0 divergence(s)\n")?,
+                FixtureState::Compared { divergences: 0, .. } => {
+                    formatter.write_str("0 divergence(s)\n")?
+                }
                 FixtureState::Compared {
                     divergences,
+                    budgeted,
                     first_index,
                     budget_reached,
                 } => {
@@ -333,16 +388,59 @@ impl ComparisonReport {
                     }
                     formatter.write_str("\n")?;
                     if *budget_reached {
-                        writeln!(
+                        self.write_bounded_notice(
                             formatter,
-                            "  {:width$}  BOUNDED: --max-divergences {} was reached; comparison of\n  \
-                             {:width$}  this fixture stopped there and further divergences exist\n  \
-                             {:width$}  beyond its last entry.",
-                            "", self.max_divergences, "", "",
+                            width,
+                            *divergences,
+                            *budgeted,
+                            root_sites,
                         )?;
                     }
                 }
             }
+        }
+        Ok(())
+    }
+}
+
+impl ComparisonReport {
+    /// The notice under a fixture whose comparison the budget stopped.
+    ///
+    /// It has to reconcile up to three numbers a reader sees together on one
+    /// screen -- the budget on the command line, the fixture's divergence
+    /// total, and the root-site count next to it -- because two of the three
+    /// invite a wrong inference. The root-site count is smaller than the
+    /// budget, which reads as the budget not having been spent; and the
+    /// divergence total can exceed the budget by the one contained replay
+    /// failure that is deliberately reported outside it, which reads as the
+    /// budget having been overrun. Both are stated here rather than left to be
+    /// derived.
+    fn write_bounded_notice(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        width: usize,
+        divergences: usize,
+        budgeted: usize,
+        root_sites: usize,
+    ) -> fmt::Result {
+        let budget = self.max_divergences;
+        let mut lines = vec![
+            format!("BOUNDED: --max-divergences {budget} counts ordered divergences; it"),
+            "counts neither root sites nor printed entries. Comparison of this".to_string(),
+            format!(
+                "fixture stopped at {budgeted} of them, so its {divergences} divergence(s) and"
+            ),
+            format!("{root_sites} root site(s) above are both floors: more of each exist"),
+            "beyond its last entry.".to_string(),
+        ];
+        if divergences > budgeted {
+            lines.push("Its contained replay failure is reported outside the mismatch".to_string());
+            lines.push(format!(
+                "budget, which is why {divergences} is more than the budget of {budget}."
+            ));
+        }
+        for line in lines {
+            writeln!(formatter, "  {:width$}  {line}", "")?;
         }
         Ok(())
     }

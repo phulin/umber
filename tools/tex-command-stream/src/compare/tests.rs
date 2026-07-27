@@ -18,11 +18,18 @@ fn input(name: &str) -> Event {
 }
 
 fn command(line: u32) -> Event {
+    letter(line, 97)
+}
+
+/// A command whose alignment key is fixed by `line` and whose payload is
+/// fixed by `character`, so two streams can be made to mismatch on payload
+/// alone at a position the aligner still matches.
+fn letter(line: u32, character: i64) -> Event {
     Event::Command(CommandEvent {
         delivery: CommandDelivery::Raw,
         command: CanonicalCommand {
             command: "letter".into(),
-            operand: CanonicalValue::Integer(97),
+            operand: CanonicalValue::Integer(character),
             control_sequence: None,
             location: Some(SourceLocation {
                 source: "case.tex".into(),
@@ -523,4 +530,49 @@ fn the_divergence_budget_still_caps_one_fixture() {
     // The budget cut this comparison short, and the runner must be able to say
     // so rather than let a bounded worklist read like a complete one.
     assert!(comparison.budget_reached);
+}
+
+/// The `--max-divergences` budget's unit is ordered divergences, not the root
+/// sites the grouped worklist prints one entry per (`umber2-johp.207`).
+///
+/// This is the case a root-site budget could not bound: forty mismatches that
+/// differ only in source position are one root site, so a budget counting root
+/// sites would let the comparison run to exhaustion however small it was set.
+/// The budget counting divergences stops it where it says it will.
+#[test]
+fn the_budget_counts_divergences_not_the_root_sites_they_collapse_to() {
+    let expected: Vec<Event> = (0..40).map(|line| letter(line, 97)).collect();
+    let actual: Vec<Event> = (0..40).map(|line| letter(line, 98)).collect();
+
+    let unbounded = find_divergences(
+        "tex82/case",
+        &oracle(&expected),
+        &observed(&actual),
+        40,
+        AlignmentTuning::default(),
+    );
+    assert_eq!(unbounded.entries.len(), 40);
+    assert!(!unbounded.budget_reached);
+    let divergences: Vec<crate::Divergence> = unbounded
+        .entries
+        .iter()
+        .cloned()
+        .map(Box::new)
+        .map(crate::Divergence::Mismatch)
+        .collect();
+    assert_eq!(
+        crate::group::group(&divergences).len(),
+        1,
+        "all forty differ only in source position, so they are one root site"
+    );
+
+    let bounded = find_divergences(
+        "tex82/case",
+        &oracle(&expected),
+        &observed(&actual),
+        5,
+        AlignmentTuning::default(),
+    );
+    assert_eq!(bounded.entries.len(), 5, "five divergences, not five sites");
+    assert!(bounded.budget_reached);
 }

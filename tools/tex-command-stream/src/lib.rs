@@ -64,6 +64,36 @@ const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 /// typically a single structural defect producing a long unbroken run of
 /// consecutive-index mismatches -- cannot starve every fixture ordered after
 /// it, which would hide whole documents from the worklist.
+///
+/// # Why the unit is ordered divergences and not root sites
+///
+/// Since the worklist began printing one entry per root site
+/// (`crate::group`), the budget and the printed entry count are different
+/// quantities, and re-basing the budget onto root sites has been considered
+/// and rejected (`umber2-johp.207`). Three reasons, any one sufficient:
+///
+/// - A root-site budget bounds nothing. This cap exists to stop one long
+///   fixture from producing an unbounded walk and an unbounded report, and
+///   the case it was introduced for is a single structural defect recurring
+///   without end. Root sites are grouped by content, so that defect is *one*
+///   root site however many times it recurs: a budget of 20 root sites would
+///   walk the whole fixture and print a recurrence list thousands of indices
+///   long, which is exactly the outcome the cap prevents today.
+/// - It would move the ambiguity rather than remove it. Budget and printed
+///   entry count already agree exactly under `--ungrouped`, and would stop
+///   agreeing there. No unit equals the printed entry count in both views, so
+///   that equality is not an available invariant; each number naming its own
+///   unit where it is printed is (`crate::report`).
+/// - The comparator would acquire a dependency on the presentation layer.
+///   Grouping is documented as changing only how the worklist prints, never
+///   what is compared or in what order; a root-site budget would make the
+///   grouping projection decide where the comparison stops, so `--ungrouped`
+///   and the grouped view would compare different amounts of the stream.
+///
+/// A `--max-divergences N` run therefore reports at most `N` stream
+/// mismatches per fixture, collapsing to at most `N` printed entries, and the
+/// one contained replay failure a fixture may produce is reported outside
+/// this budget (see `crate::report::FixtureState::Compared`).
 pub const DEFAULT_MAX_DIVERGENCES: usize = 20;
 
 /// Everything one offline comparison run is allowed to vary.
@@ -189,6 +219,9 @@ fn collect_fixture_divergences(
         options.alignment,
     );
     let first = report.divergences.len();
+    // The budget counts these and only these; the contained failure below is
+    // outside it, so the two are recorded separately rather than summed.
+    let budgeted = comparison.entries.len();
     report.divergences.extend(
         comparison
             .entries
@@ -212,6 +245,7 @@ fn collect_fixture_divergences(
         identity,
         state: FixtureState::Compared {
             divergences: report.divergences.len() - first,
+            budgeted,
             first_index: report.divergences.get(first).map(Divergence::index),
             budget_reached: comparison.budget_reached,
         },
