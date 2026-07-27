@@ -332,13 +332,10 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "internal_token_sources_recover_illegal_requested_levels_and_indexes"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-command/tests/it/character_input.rs",
-          "test": "tex82_scanner_conditionals_observes_token_list_internal_results",
-          "cases": ["typed token-list result", "transcript spelling", "nested register-selector ordering"]
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "tex82_scanner_conditionals_observes_token_list_internal_results"
         }
       ],
       "cross_references": [
@@ -347,8 +344,7 @@
           "relationship": "Non-owning consumer reference: §§464–472 copy or render the typed tok_val result produced here."
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "status": "covered"
     },
     {
       "id": "tex82.scanner.internal-mode-page-list-sources",
@@ -879,17 +875,13 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-command/tests/it/character_input.rs",
-          "test": "tex82_scanner_conditionals_observes_fractional_physical_and_true_units",
-          "cases": ["fractional physical result", "true-unit result", "scanner ordering", "transcript spelling"]
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "tex82_scanner_conditionals_observes_fractional_physical_and_true_units"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "status": "covered"
     },
     {
       "id": "tex82.scanner.glue",
@@ -942,17 +934,21 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "muglue_complete_internal_and_mixed_unit_recovery_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "tex82_scanner_conditionals_observes_glue_and_muglue_results"
         }
       ],
       "planned_coverage": [
         {
-          "path": "crates/tex-command/tests/it/character_input.rs",
-          "test": "tex82_scanner_conditionals_observes_glue_and_muglue_results",
-          "cases": ["finite glue", "infinite glue order", "muglue", "typed result", "transcript spelling"]
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "glue_infinite_orders_accept_mixed_case_repeated_suffixes",
+          "cases": ["FiL", "FiLl", "FiLlL", "mixed-case excess l consumption"]
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "gap_bead": "umber2-johp.248"
     },
     {
       "id": "tex82.scanner.scan-toks",
@@ -1013,23 +1009,13 @@
         {
           "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scan_toks_all_scanner_status_outer_and_eof_recovery"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-command/tests/it/character_input.rs",
-          "test": "tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks",
-          "cases": [
-            "ordinary definition",
-            "expanded definition",
-            "direct the splice",
-            "status transitions",
-            "completed token list"
-          ]
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
+          "test": "tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.224"
+      "status": "covered"
     },
     {
       "id": "tex82.scanner.delimiter",

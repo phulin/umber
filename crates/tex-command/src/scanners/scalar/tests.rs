@@ -2269,6 +2269,72 @@ fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
 }
 
 #[test]
+fn tex82_scanner_conditionals_observes_token_list_internal_results() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let saved = universe.intern_token_list(&[char_token('x'), space_token()]);
+    universe.set_toks(7, saved);
+    let toks = internal_primitive(&mut universe, "observed-toks", P::Toks);
+    push(&mut command, vec![toks, char_token('7')]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let value = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        let target = processor
+            .get_x_token()
+            .expect("token-list primitive delivers")
+            .expect("token-list primitive exists");
+        processor
+            .scan_the_internal_value(&target)
+            .expect("token-list internal scans")
+            .expect("token-list primitive is internal")
+    };
+
+    assert_eq!(value, InternalValue::Tokens { tokens: saved });
+    assert_eq!(scanner_kinds(&recorder), vec!["integer", "internal"]);
+    let selector = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Scanner(scanner)
+                if scanner.kind == "integer" && scanner.value == "7")
+        })
+        .expect("register selector is observed");
+    let result = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Scanner(scanner)
+            if scanner.kind == "internal"
+                && scanner.value == "tokens"
+                && scanner.tokens.as_deref() == Some(&[
+                    ObservedToken::Character {
+                        character: 'x',
+                        catcode: Catcode::Letter,
+                    },
+                    ObservedToken::Character {
+                        character: ' ',
+                        catcode: Catcode::Space,
+                    },
+                ]))
+        })
+        .expect("typed token-list result is observed with its spelling");
+    assert!(
+        selector < result,
+        "selector commits before the token-list result"
+    );
+}
+
+#[test]
 fn internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
@@ -3355,6 +3421,82 @@ fn dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow() {
 }
 
 #[test]
+fn tex82_scanner_conditionals_observes_fractional_physical_and_true_units() {
+    let mut command = CommandState::default();
+    push(&mut command, scanner_tokens("1.25IN 1.5truein"));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe.set_mag_global(1440);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let values = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        [
+            processor
+                .scan_dimension()
+                .expect("fractional physical dimension scans")
+                .value,
+            processor
+                .scan_dimension()
+                .expect("true dimension scans")
+                .value,
+        ]
+    };
+
+    assert_eq!(values[0].raw(), 5_920_358);
+    assert_eq!(values[1].raw(), 75 * Scaled::UNITY + 18_383);
+    assert_eq!(
+        scanner_kinds(&recorder),
+        vec!["integer", "dimension", "integer", "dimension"]
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Scanner(scanner) if scanner.kind == "dimension" => {
+                    Some(scanner.value.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        values
+            .iter()
+            .map(|value| value.raw().to_string())
+            .collect::<Vec<_>>()
+    );
+    let uppercase_i = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Command(command)
+            if command.spelling == ObservedToken::Character {
+                character: 'I',
+                catcode: Catcode::Letter,
+            })
+        })
+        .expect("physical-unit source spelling is observed");
+    let first_result = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Scanner(scanner)
+                if scanner.kind == "dimension")
+        })
+        .expect("physical result is observed");
+    assert!(
+        uppercase_i < first_result,
+        "unit delivery precedes its result"
+    );
+}
+
+#[test]
 fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::MeaningFlags;
@@ -3872,4 +4014,101 @@ fn muglue_complete_internal_and_mixed_unit_recovery_matrix() {
         }),
         glue(7, 8, 9)
     );
+}
+
+#[test]
+fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
+    use tex_state::glue::Order;
+
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        scanner_tokens("1pt plus 2pt minus 3pt 4pt PLUS 5filll 2mu plus 1fil minus 3mu"),
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let values = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        [
+            processor.scan_glue(false).expect("finite glue scans").value,
+            processor
+                .scan_glue(false)
+                .expect("infinite glue scans")
+                .value,
+            processor.scan_glue(true).expect("muglue scans").value,
+        ]
+    };
+
+    assert_eq!(
+        (
+            values[0].width.raw(),
+            values[0].stretch.raw(),
+            values[0].stretch_order,
+            values[0].shrink.raw(),
+            values[0].shrink_order,
+        ),
+        (
+            Scaled::UNITY,
+            2 * Scaled::UNITY,
+            Order::Normal,
+            3 * Scaled::UNITY,
+            Order::Normal,
+        )
+    );
+    assert_eq!(
+        (
+            values[1].width.raw(),
+            values[1].stretch.raw(),
+            values[1].stretch_order
+        ),
+        (4 * Scaled::UNITY, 5 * Scaled::UNITY, Order::Filll)
+    );
+    assert_eq!(
+        (
+            values[2].width.raw(),
+            values[2].stretch.raw(),
+            values[2].stretch_order,
+            values[2].shrink.raw(),
+        ),
+        (
+            2 * Scaled::UNITY,
+            Scaled::UNITY,
+            Order::Fil,
+            3 * Scaled::UNITY,
+        )
+    );
+    let observed_glue = recorder
+        .0
+        .iter()
+        .filter_map(|record| match record {
+            CommandObservation::Scanner(scanner) if scanner.kind == "glue" => {
+                Some(scanner.value.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        observed_glue,
+        [
+            "width=65536;stretch=131072;stretch_order=normal;shrink=196608;shrink_order=normal",
+            "width=262144;stretch=327680;stretch_order=filll;shrink=0;shrink_order=normal",
+            "width=131072;stretch=65536;stretch_order=fil;shrink=196608;shrink_order=normal",
+        ]
+    );
+    assert!(recorder.0.iter().any(|record| matches!(
+        record,
+        CommandObservation::Command(command)
+            if command.spelling == ObservedToken::Character {
+                character: 'P',
+                catcode: Catcode::Letter,
+            }
+    )));
 }

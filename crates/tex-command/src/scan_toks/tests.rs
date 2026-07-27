@@ -1199,3 +1199,186 @@ fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
             if status.from == "absorbing" && status.to == "normal"
     )));
 }
+
+#[test]
+fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let macro_symbol = universe.intern("observed-macro").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    universe.set_macro_meaning(
+        macro_symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement),
+    );
+
+    let raw_events = {
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(macro_symbol),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let scanned = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+        .expect("ordinary definition scans");
+        assert_eq!(
+            universe.tokens(scanned.replacement_text.token_list()),
+            &[Token::Cs(macro_symbol)]
+        );
+        recorder.0
+    };
+    let raw_enter = raw_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::ScannerStatus(status)
+            if status.from == "normal" && status.to == "defining")
+        })
+        .expect("definition status begins");
+    let raw_restore = raw_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::ScannerStatus(status)
+            if status.from == "defining" && status.to == "normal")
+        })
+        .expect("definition status restores");
+    let raw_complete = raw_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::TokenList(record)
+            if record.transition == "complete"
+                && record.purpose == "macro_replacement"
+                && record.tokens == [ObservedToken::ControlSequence("observed-macro".into())])
+        })
+        .expect("ordinary definition result is observed");
+    assert!(raw_enter < raw_restore && raw_restore < raw_complete);
+
+    let expanded_events = {
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(macro_symbol),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("expanded definition scans");
+        recorder.0
+    };
+    assert!(expanded_events.iter().any(|event| matches!(
+        event,
+        CommandObservation::TokenList(record)
+            if record.transition == "complete"
+                && record.purpose == "expanded_scan_toks"
+                && record.tokens == [ObservedToken::Character {
+                    character: 'x',
+                    catcode: Catcode::Letter,
+                }]
+    )));
+
+    let direct_events = {
+        let mut command = CommandState::default();
+        let the = install_expandable(&mut universe, "the-observed", ExpandablePrimitive::The);
+        let register = universe.intern("observed-register").symbol();
+        let stored = universe.intern_token_list(&[Token::Cs(macro_symbol)]);
+        universe.set_toks(5, stored);
+        universe.set_meaning(register, Meaning::ToksRegister(5));
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(the),
+                Token::Cs(register),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let scanned = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("direct the splice scans");
+        assert_eq!(
+            universe.tokens(scanned.replacement_text.token_list()),
+            &[Token::Cs(macro_symbol)],
+            "the_toks output is copied without recursive expansion"
+        );
+        recorder.0
+    };
+    let splice = direct_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::TokenList(record)
+            if record.transition == "splice"
+                && record.purpose == "the_toks"
+                && record.tokens == [ObservedToken::ControlSequence("observed-macro".into())])
+        })
+        .expect("direct token-list splice is observed");
+    let restore = direct_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::ScannerStatus(status)
+            if status.from == "absorbing" && status.to == "normal")
+        })
+        .expect("absorbing status restores");
+    let complete = direct_events
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::TokenList(record)
+            if record.transition == "complete"
+                && record.purpose == "expanded_scan_toks"
+                && record.tokens == [ObservedToken::ControlSequence("observed-macro".into())])
+        })
+        .expect("completed direct-splice result is observed");
+    assert!(splice < restore && restore < complete);
+}
