@@ -336,6 +336,13 @@ pub(crate) enum AlignmentDelimiter {
 }
 
 impl AlignmentDelimiter {
+    /// The observer spelling of this delimiter.
+    ///
+    /// Its only caller is `get_next`'s alignment observation, which is itself
+    /// compiled only for crate tests and instrumentation builds, so the
+    /// spelling table carries the same `cfg` rather than being dead weight in
+    /// a production build.
+    #[cfg(any(test, feature = "instrumentation"))]
     pub(crate) const fn observation_name(self) -> &'static str {
         match self {
             Self::Tab => "tab",
