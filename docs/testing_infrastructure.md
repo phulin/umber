@@ -39,7 +39,14 @@ The warmed `cargo test --tests` target is under 10 seconds on the current
 macOS development workspace; investigate a sustained run above 15 seconds or
 any default test that invokes live TeX. `scripts/check.sh` checks dprint and
 rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
-two-minute local budget.
+two-minute local budget. Naming gates on its command line, as in
+`scripts/check.sh clippy`, runs exactly those gates with the same commands the
+full run uses; `scripts/check.sh node-width-budget` is the explicit form of the
+`CHECK_BENCH=1` opt-in. That argument form exists so no one retypes a gate's
+invocation by hand: a bare `cargo clippy` exits 0 on warn-level lints, and
+`cargo clippy -p <crate>` resolves a narrower feature union than the
+whole-workspace gate, so a hand-written clippy run can be green while the gate
+is red. Only `scripts/check.sh` output may be reported as a gate result.
 `scripts/check-and-test.sh` runs the default native correctness suite followed
 by that quality gate.
 

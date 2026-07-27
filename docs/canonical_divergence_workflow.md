@@ -120,10 +120,16 @@ them there; this document does not restate them.
 
 ## 5. Standing gates
 
-Run before closing any divergence issue: `cargo test -q --tests`,
-`cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`.
-`scripts/check.sh` runs the fmt+clippy gate without rerunning tests; use it
-once tests have already passed. `e2e_conformance_story_canonical` (see
+Run before closing any divergence issue: `cargo test -q --tests`, then
+`scripts/check.sh`, which runs the format and lint gates without rerunning
+tests. Report its final verdict line.
+
+Never substitute a hand-written `cargo clippy` for the clippy gate, and never
+report "clippy clean" from one. A bare `cargo clippy` leaves warn-level lints
+at warn and exits 0 on a real violation, and `-p <crate>` resolves a different
+feature union than the whole-workspace gate does, so both can be green while
+the gate is red. To run one gate on its own, name it: `scripts/check.sh clippy`
+runs the identical command the full run uses. `e2e_conformance_story_canonical` (see
 "Canonical Story Regression Gate" in
 [Testing Infrastructure](testing_infrastructure.md)) must stay byte-exact
 against real pdfTeX output — never weaken or skip that comparison. Its live
@@ -174,8 +180,7 @@ document and [Testing Infrastructure](testing_infrastructure.md):
   `tools/parity-harness`). See `docs/tex_command_core.md` §31 for how these
   are built and regenerated.
 - **gate**: a check that must pass before a divergence issue closes (§5):
-  `cargo test -q --tests`, `cargo fmt --all --check`,
-  `cargo clippy --all-targets -- -D warnings`, and the byte-exact
+  `cargo test -q --tests`, `scripts/check.sh`, and the byte-exact
   `e2e_conformance_story_canonical` test.
 - **divergence**: a point where Umber's canonical behavior differs from an
   oracle -- a semantic event mismatch reported by the differential tracer, or
