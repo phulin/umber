@@ -19,13 +19,15 @@ This document does not restate that process.
 The fixture-only, hermetic correctness tier is:
 
 ```bash
-cargo test --tests
+scripts/run-native-tests.py
 scripts/check-and-test.sh
 ```
 
-These commands use the root workspace's default native correctness members.
-Run `scripts/check-wasm.sh` for the browser adapter and `scripts/check-tools.sh`
-for opt-in regeneration, profiling, and triage tools.
+These commands run every workspace member whose tests can execute on the host;
+see [What The Native Test Gate Covers](#what-the-native-test-gate-covers) for
+how that set is established. Run `scripts/check-wasm.sh` for the browser
+adapter and `scripts/check-tools.sh` for opt-in regeneration, profiling, and
+triage tools.
 Generated-input stabilization uses the hermetic shared fixtures under
 `tests/corpus/stabilization`: native unit tests consume them directly, while
 the wasm-bindgen browser suite runs the same bytes and compares binary output,
@@ -35,9 +37,9 @@ The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.
 
-The warmed `cargo test --tests` target is under 10 seconds on the current
-macOS development workspace; investigate a sustained run above 15 seconds or
-any default test that invokes live TeX. `scripts/check.sh` checks dprint and
+The warmed `scripts/run-native-tests.py` target is under 10 seconds on the
+current macOS development workspace; investigate a sustained run above 15
+seconds or any default test that invokes live TeX. `scripts/check.sh` checks dprint and
 rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
 two-minute local budget. Naming gates on its command line, as in
 `scripts/check.sh clippy`, runs exactly those gates with the same commands the
@@ -47,8 +49,52 @@ invocation by hand: a bare `cargo clippy` exits 0 on warn-level lints, and
 `cargo clippy -p <crate>` resolves a different feature union than the gate, so
 a hand-written clippy run can be green while the gate is red. Only
 `scripts/check.sh` output may be reported as a gate result.
-`scripts/check-and-test.sh` runs the default native correctness suite followed
-by that quality gate.
+`scripts/check-and-test.sh` runs the native correctness suite concurrently with
+that quality gate.
+
+### What The Native Test Gate Covers
+
+`cargo test --tests` selects the workspace's _default_ members. Every other
+member -- the nine `bib-*` crates, `umber-wasm`, `umber-interrupt`, `refexec`,
+and `profile-analyzer` -- was therefore executed by no routine command, and
+`bib-engine`'s integration binary alone holds 1295 tests that nothing ran
+(`umber2-johp.211`). Nothing had rotted when the gap was measured: all thirteen
+members compiled and passed. That is the danger rather than the reassurance,
+because `tools/tex-command-stream` had rotted out of compiling under exactly
+the same gap (`umber2-johp.121`) and nobody found out from a test run.
+
+`scripts/run-native-tests.py` makes the covered set a property of the command
+instead of a property of whoever typed it:
+
+- the selection is `--workspace` minus `EXCLUDED_PACKAGES`, so a member added
+  to `Cargo.toml` is covered by construction;
+- each exclusion carries a reason and the exact command that does run it, and
+  an exclusion naming a package the workspace no longer has fails the run, so a
+  stale excuse cannot outlive the thing it excused;
+- the number of test binaries the selected manifests declare is read from
+  `cargo metadata` and compared against the number that actually reported, so a
+  run that executed fewer binaries than it built fails rather than passes;
+- the run ends in a `VERDICT:` line naming packages, binaries, and
+  passed/failed/ignored totals, under a four-status exit contract: `0` PASS,
+  `1` FAIL, `2` COVERAGE (the declaration no longer matches the workspace), `3`
+  SHORT (fewer binaries reported than declared).
+
+`scripts/test-run-native-tests.py` drives each of those guards with inputs it
+must reject, and the runner runs it before trusting its own verdict, for the
+same reason the clippy gate self-tests `scripts/check-lint-passes.py`.
+
+`umber-wasm` is the single declared exclusion. Its tests are
+`#[wasm_bindgen_test]`, which registers no test on a host target: selecting it
+builds a cdylib and reports three test binaries containing zero tests, for
+about six seconds of incremental link time and roughly 160 seconds on a cold
+tree. `scripts/check-wasm.sh` runs those tests for real with
+`wasm-pack test --headless --firefox crates/umber-wasm`.
+
+Roughly 940 of the tests the gate now runs report as ignored. They are
+`bib-engine`'s `#[ignore = "xfail: <specific production gap>"]` markers against
+the pinned upstream biber compatibility suite, audited by
+`tests/it/scaffold.rs`; the verdict line states the count rather than hiding it
+behind a total.
 
 ### What The Clippy Gate Covers
 
@@ -61,19 +107,18 @@ can lint the resolution a released `umber` is built in, so the gate runs a
 declared set of passes instead of one command. `scripts/check-lint-passes.py`
 holds the declaration and runs them all:
 
-- **union**: default members, all targets, dev-dependency feature union. This
-  is the historical gate command.
+- **union**: every workspace member, all targets, dev-dependency feature union.
+  It selects `--workspace` rather than the default members because a test
+  target only the exhaustive selection builds is still a target this repository
+  compiles, and one selected by no pass is one the lint policy does not
+  actually apply to (`umber2-johp.201`).
 - **shipping**: every workspace member's lib and bin targets, no
   dev-dependencies, `tex-command-stream` excluded. This is the resolution
   behind `cargo build -p umber`, `cargo run-dev -p umber`, and
-  `cargo test -p umber --test it`, and it is the only pass that lints the
-  `bib-*` crates, `umber-wasm`, `umber-interrupt`, `refexec`, and
-  `profile-analyzer`, which the union pass compiles but never lints.
+  `cargo test -p umber --test it`.
 
-Together the passes lint every workspace member, but not every target: the test
-targets of the non-default members are still linted by no pass, and do not
-currently pass the workspace lint policy, which is why the union pass has not
-simply widened to `--workspace --all-targets` (`umber2-johp.201`).
+Together the passes lint every target of every workspace member in at least one
+of the two resolutions.
 
 The declaration is verified rather than trusted. Each pass records the exact
 feature set it expects Cargo to resolve for every workspace package and checks

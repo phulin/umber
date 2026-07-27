@@ -15,6 +15,14 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
+- `run-native-tests.py`: the routine native correctness suite; selects
+  `--workspace` minus a declared, verified exclusion list so a new workspace
+  member is covered by construction, checks the number of test binaries that
+  reported against the number the selected manifests declare, and ends in a
+  `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
+- `test-run-native-tests.py`: synthetic-input proof that each guard in
+  `run-native-tests.py` fails when it should; the runner runs it before
+  trusting its own verdict.
 - `check-lint-passes.py`: the clippy gate's declared lint passes; verifies each
   pass's feature resolution against Cargo's own records, requires every
   workspace member to be linted and every declared feature's enabled state to

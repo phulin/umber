@@ -88,6 +88,12 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   is built in, so a hand-written run can look green while the gate is red.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
+- Run the whole native suite with `scripts/run-native-tests.py`, not a bare
+  `cargo test --tests`: that command selects the workspace's default members
+  and runs none of the `bib-*` crates, `umber-interrupt`, `refexec`, or
+  `profile-analyzer`. The script selects every host-testable member and ends
+  with a `VERDICT:` line stating how many packages, test binaries, and tests
+  ran; that line, not a quiet exit, is the result to report.
 - Direct `cargo build` output to a log file; it has verbose output.
 - Use `scripts/check-and-test.sh` when a single command should run the default
   native correctness suite concurrently with the format and clippy gate.
