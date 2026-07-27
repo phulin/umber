@@ -154,12 +154,12 @@
       "rationale": "Noalign group closure resumes alignment row lookahead."
     },
     {
-      "modules": { "first": 1206, "last": 1206 },
+      "modules": { "first": 1206, "last": 1207 },
       "disposition": "property",
       "owner": "tex-exec::math-display",
       "property_ids": ["tex82.align.display-finish"],
       "gap_bead": "umber2-johp.227",
-      "rationale": "Display alignment assignment scan, dollar recovery, list insertion, and display resumption."
+      "rationale": "Display alignment assignment scan, missing-double-math-shift diagnostic and backup recovery, list insertion, and display resumption."
     }
   ],
   "properties": [
@@ -563,14 +563,14 @@
     },
     {
       "id": "tex82.align.display-finish",
-      "sections": [1206],
-      "claim": "A completed display halign scans following assignments, requires and recovers the closing double math shift, restores the enclosing nest, inserts display penalties/glue around the alignment list, restores prev_depth, and resumes after display.",
+      "sections": [1206, 1207],
+      "claim": "A completed display halign scans following assignments, requires the closing double math shift, reports and backs up a non-math-shift command for canonical missing-double-dollar recovery, restores the enclosing nest, inserts display penalties/glue around the alignment list, restores prev_depth, and resumes after display.",
       "preconditions": ["fin_align completed a halign whose enclosing mode is display math."],
       "stimulus": [
         "Phase 2 unit `display_alignment_finish_assignments_delimiters_and_spacing` and semantic case `alignment-display-finish`."
       ],
       "expected_observations": [
-        "Assignments precede delimiter validation and the final vertical list orders pre-penalty, above glue, alignment, post-penalty, and below glue."
+        "Assignments precede delimiter validation; a non-math-shift command produces `Missing $$ inserted`, is backed up by back_error, and remains available after inserted recovery; the final vertical list orders pre-penalty, above glue, alignment, post-penalty, and below glue."
       ],
       "postconditions": ["Display mode is closed, prev_depth is restored, and normal post-display scanning resumes."],
       "equivalence_cases": [
