@@ -822,6 +822,59 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     );
 }
 
+/// TeX82 §1137's `hmode+math_shift: init_math` and §1193's
+/// `mmode+math_shift: if cur_group=math_shift_group then after_math` are
+/// applied by `CanonicalMainControl::apply_host_owned_step`, which every
+/// delivery entry point shares.
+///
+/// Observation is an instrumentation boundary, never an alternate execution
+/// mode. The observed entry point once carried its own copy of the
+/// host-applied step list and that copy omitted `ScannedStep::MathShift`, so
+/// an observed `$` fell through to `apply_scanned_step`'s `unreachable!()`
+/// and panicked while the byte-identical unobserved `$` executed
+/// (umber2-johp.118).
+#[test]
+fn canonical_math_shift_replays_identically_with_and_without_an_observer() {
+    let source = br"$a+b$";
+    let mut plain_universe = Universe::new_with_plain_catcodes();
+    let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
+    plain.modes.push(Mode::RestrictedHorizontal);
+    register_source(&mut plain, source);
+    run_to_end(&mut plain, &mut plain_universe);
+
+    let mut observed_universe = Universe::new_with_plain_catcodes();
+    let mut observed = CanonicalMainControl::tex82_initex(&mut observed_universe);
+    observed.modes.push(Mode::RestrictedHorizontal);
+    register_source(&mut observed, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match observed
+            .step_with_observer(&mut observed_universe, &mut observations)
+            .expect("observed canonical math shift executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(plain.current_mode(), crate::Mode::RestrictedHorizontal);
+    assert_eq!(observed.current_mode(), plain.current_mode());
+    assert_eq!(plain.modes.depth(), observed.modes.depth());
+    assert!(
+        !plain.modes.current_list().nodes().is_empty(),
+        "the inline math list must reach the enclosing horizontal list"
+    );
+    assert_eq!(
+        format!("{:#?}", plain.modes.current_list().nodes()),
+        format!("{:#?}", observed.modes.current_list().nodes()),
+        "observation must not change the material a math shift appends"
+    );
+    assert_eq!(
+        plain_universe.world().effect_records(),
+        observed_universe.world().effect_records()
+    );
+}
+
 #[test]
 fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
     let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d";
