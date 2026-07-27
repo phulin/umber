@@ -851,10 +851,6 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "chains_bop_pointers_across_pages"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "huge_shipout_is_diagnosed_without_committing_an_artifact"
         }
       ],
       "status": "gap",
@@ -956,10 +952,6 @@
         {
           "path": "crates/tex-exec/src/tests/core.rs",
           "test": "detached_page_episode_replays_before_output_fire_up"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "page_builder_moves_box_and_updates_page_scalars"
         }
       ],
       "status": "gap",
@@ -1057,16 +1049,7 @@
       ],
       "semantic_owner": "tex-exec::page-builder",
       "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "page_builder_discards_glue_before_first_box"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "page_builder_reports_and_normalizes_infinite_shrink_glue"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1151,20 +1134,7 @@
       ],
       "semantic_owner": "tex-exec::page-builder",
       "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "insertion_page_goal_uses_skip_once_and_count_scaling"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "split_insertion_penalty_is_mainline_then_heldover_count_in_output"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "insertion_skip_reports_infinite_shrink_correction"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1210,10 +1180,6 @@
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit+planned-semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "fire_up_updates_top_first_bot_marks_across_no_mark_page"
-        },
         {
           "path": "crates/tex-exec/src/output.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
@@ -1312,10 +1278,6 @@
         {
           "path": "crates/tex-exec/src/tests/core.rs",
           "test": "canonical_dead_cycle_escape_ships_the_selected_residual_page"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "output_routine_replays_in_implicit_group_and_consumes_box255"
         }
       ],
       "status": "gap",
@@ -1363,16 +1325,7 @@
       ],
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "output_routine_reports_nonvoid_box255_after_output"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "expandable_output_tail_cannot_consume_following_float_group"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1511,16 +1464,7 @@
       ],
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "openout_closeout_append_deferred_whatsits_before_shipout"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "copied_special_reuses_scan_time_expansion"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1609,10 +1553,6 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "source_special_preserves_tex_character_bytes"
         }
       ],
       "status": "gap",
@@ -1661,20 +1601,7 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "shipout_expands_write_against_barrier_state_and_stores_artifact"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "deferred_write_does_not_absorb_following_par"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "newlinechar_is_honored_by_deferred_shipout_write"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1720,20 +1647,7 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "immediate_openout_write_closeout_append_world_effect_records"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "shipout_commits_deferred_openout_closeout_whatsits"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
