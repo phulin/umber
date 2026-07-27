@@ -3328,6 +3328,35 @@ lists through `scan_left_brace`/`push_nest` and leaves them through
 `handle_right_brace`, never mid-character-run, so an episode's own last
 character must not park the enclosing context at the lookahead.
 
+### 33.5 Host-applied step routing
+
+Most `ScannedStep`s are applied by the free function `apply_scanned_step`,
+which owns no `CanonicalMainControl`. A few cannot be: TeX82 §1137's
+`init_math`, §1193's `after_math`, §1190's `math_left_right`, §1116's
+`append_discretionary`, the math-noad family, and the end of a replay episode
+all need the mode nest, the save stack, and the command processor's
+token-list scheduling at once, plus the ability to run nested episodes. Those
+steps are applied by `CanonicalMainControl` itself, and `apply_scanned_step`
+carries an `unreachable!()` arm for each.
+
+There are three step-delivery entry points -- unobserved, observed, and the
+alignment cell's. The host-applied set is named exactly once, in
+`CanonicalMainControl::apply_host_owned_step`, and all three route through
+it. It used to be an `if let` chain copied into each entry point, and the
+observed copy omitted `ScannedStep::MathShift`: an observed `$` fell through
+to `apply_scanned_step`'s `unreachable!()` and panicked while the identical
+unobserved `$` executed correctly (`umber2-johp.118`). Add a host-applied
+step in that one function, never at a call site.
+
+The rule that failure exposed is the general one, and it is not specific to
+math: **observation is an instrumentation boundary, not an alternate
+execution mode.** Any behavior that differs between an observed and an
+unobserved step is a defect on its own terms, before any trace is compared
+against the oracle -- the traced run is then not the run being shipped. Two
+independent copies of a routing decision are the mechanism that lets that
+happen, so the fix is always to derive both paths from one shared commit
+rather than to repair the copy that drifted.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:
