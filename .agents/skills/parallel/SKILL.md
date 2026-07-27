@@ -89,6 +89,34 @@ _plausible_ wrong measurement rather than an error, which is the hardest kind
 to notice — the file exists, it parses, and its numbers look like the ones you
 expected.
 
+### Every coordinator git call needs an explicit `-C`
+
+The shell's working directory persists between tool calls. After setting up a
+worktree the coordinator is _inside_ that worktree, and a later `git rebase` or
+`git checkout` meant for the main checkout runs there instead — checking another
+issue's branch out over a running agent's files.
+
+That happened: `git rebase <tip> umber-johp-230`, intended for the main
+checkout, ran inside `.worktrees/umber-johp-231` while its agent was working and
+switched that worktree to `umber-johp-230`.
+
+Write every coordinator git call as `git -C {REPO_ROOT} ...`, or
+`git -C {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} ...` when the worktree is the
+intended target. Never rely on the ambient directory.
+
+Two properties make this hard to notice, and both are worth internalizing:
+
+- A rebase refuses to run on a dirty tree, so it _succeeds_ precisely when the
+  agent has no uncommitted work — no error, no conflict, nothing to see.
+- `git -C <path> status --short | head -2 && echo CLEAN` prints `CLEAN` even
+  when the `git` call fails, because a pipeline exits with its **last**
+  command's status. A cleanliness check built this way confirms nothing.
+
+If it happens anyway: restore the worktree to its own branch, then tell the
+agent explicitly what was disturbed, which of its measurements are now void,
+and to stop rather than redo if committed work is missing. Its `git reflog`
+still holds anything lost.
+
 ### A missing artifact is never a repository gap
 
 Require every dispatch prompt to say this outright: a test that fails on a
