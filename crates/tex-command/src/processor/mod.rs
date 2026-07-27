@@ -21,6 +21,8 @@ use crate::observation::CommandObserver;
 pub use alignment::AlignmentCellFinishObservations;
 pub(crate) use alignment::CELL_ALIGN_STATE;
 #[cfg(test)]
+pub(crate) use alignment::TOP_LEVEL_ALIGN_STATE;
+#[cfg(test)]
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
 pub use alignment::{
     AlignmentCellCompletion, AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery,

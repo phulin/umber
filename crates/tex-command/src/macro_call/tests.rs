@@ -1127,7 +1127,12 @@ fn delimiter_opening_brace_does_not_leave_literal_brace_accounting() {
     )
     .expect("opening brace may be a parameter delimiter");
     assert_eq!(arguments.buffer.len(), 0);
-    assert_eq!(command.alignment.align_state, 0);
+    // The delimiter brace's `get_next` increment and `back_input`
+    // decrement cancel, leaving §331's running base untouched.
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
 }
 
 #[test]

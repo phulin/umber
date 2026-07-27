@@ -143,7 +143,12 @@ fn pass_text_uses_get_next_and_skips_nested_conditionals() {
         processor.command.scanner.status(),
         ScannerStatus::Normal
     ));
-    assert_eq!(processor.command.alignment.align_state, 1);
+    // §331 starts `align_state` at 1000000; the skipped text left one
+    // unmatched literal left brace above that running base.
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+    );
 }
 
 #[test]

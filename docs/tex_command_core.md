@@ -1148,6 +1148,17 @@ updated after recursive operand expansion pushes a newer condition.
 active cell delivery, and exact u/v-template identities. Execution modes do
 not keep a second brace-depth counter.
 
+`align_state` is a whole-run brace count, not a per-alignment counter: TeX82
+§331 starts it at `1000000`, and §772's `push_alignment`/`pop_alignment` save
+and restore it around _every_ alignment, nested or not. `begin_alignment`
+therefore pushes the running count onto the `align_stack` before §774 sets
+`-1000000`, and `finish_alignment` pops it back. Keeping the outer count is
+what lets §1127's `abs(align_state) > 2` still mean "no alignment entry is in
+progress" for material that follows a completed `\halign`; resetting the count
+to zero there would make the next stray `\cr` insert a brace instead of being
+reported and dropped. `suspend_alignment`/`resume_alignment` consequently save
+only the outer cell, never a second copy of `align_state`.
+
 ### 8.6 Expansion state
 
 `ExpansionState` owns only persistent expansion facts:
@@ -2169,7 +2180,9 @@ finish_alignment
 
 It cannot assign arbitrary `align_state`, classify commands, or inspect token
 cursor internals. Recovery APIs express canonical operations such as backing a
-delimiter and inserting the required group closer.
+delimiter and inserting the required group closer; §1127's `align_error` is
+one such API (`recover_align_error`), reached from main control's §1126 arms
+rather than from raw delivery.
 
 The authoritative semantic mapping in `docs/alignment_brace_semantics.md`
 remains applicable and should be updated to name the new owners when migration
@@ -2650,11 +2663,11 @@ reconstructs the key from a generic mutation category, so `\let` aliases of
 explicit grouping primitives remain comparable while command state stays the
 sole owner of delivery and operand scanning.
 
-For TeX82 `handle_right_brace` §1103, replay alone selects the structural
+For TeX82 `handle_right_brace` §1132, replay alone selects the structural
 `align_group` branch. The command processor then owns `back_input`, its
 literal-brace backup correction, and insertion of immutable frozen `\cr`;
 the executor neither manufactures nor replays those raw tokens. This preserves
-the §1102/§1103 recovery ordering before v-template delivery.
+the §1127/§1132 recovery ordering before v-template delivery.
 
 Expanded balanced general-text collection enters the command-owned absorbing
 scanner episode before it delivers its required opening brace. The brace is
@@ -2685,15 +2698,27 @@ up again. Filename scanning likewise replays its first non-space token through
 the sole input path before consuming the name. These transitions are
 snapshot-owned input state, never fixture-adapter reconstruction.
 
-The same ownership applies when a conditional consumes a literal brace in an
-alignment cell and a later tab, `\span`, or row terminator reaches main
-control with nonzero `align_state`. TeX82 §1102 (`align_error`) first backs up
-that exact delimiter, then uses `ins_error` to place the balancing brace above
-it. `tex-command` publishes raw and expanded delimiter delivery before this
-typed recovery, owns both backup corrections and the inserted recovery level,
-and replays the brace before it re-intercepts the original delimiter.
-`tex-exec` receives only the typed recovery event and cannot inspect or alter
-the underlying token/input ordering.
+The same ownership applies when a tab, `\span`, `\cr`, or `\crcr` reaches main
+control instead of a v-template. `get_next` (§342) only diverts a delimiter
+into a template when `align_state = 0`, so every other occurrence -- inside an
+alignment cell whose braces are unbalanced, and outside any alignment at all
+-- is §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`. Main
+control routes all four spellings, plus a category-4 or category-5 character
+token, through the single `CommandProcessor::recover_align_error` entry point,
+which implements §1127 in full: `abs(align_state) > 2` selects §1128's report
+and drop, and anything nearer base depth backs up that exact delimiter and
+uses `ins_error` to place the balancing brace above it. `\noalign` and `\omit`
+take §1126's other two lines, whose §1129 routines report and ignore.
+
+`tex-command` publishes raw and expanded delimiter delivery before this typed
+recovery, owns both backup corrections and the inserted recovery level, and
+replays the brace before it re-intercepts the original delimiter. `tex-exec`
+receives only whether the inserted brace opens a recovery simple group, and
+cannot inspect or alter the underlying token/input ordering. Raw delivery
+never intercepts an out-of-template delimiter on main control's behalf:
+tex.web reaches `align_error` from `main_control`, and a delivery-boundary
+interception would have to re-derive §1127's `align_state` test in a second
+place.
 
 ### 31.1 Instrumented engines
 

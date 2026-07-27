@@ -154,7 +154,7 @@ impl CommandState {
         if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
             return Err(CommandSummaryError::AlignmentTemplateActive);
         }
-        if !self.alignment.suspended.is_empty() {
+        if !self.alignment.suspended.is_empty() || !self.alignment.align_stack.is_empty() {
             return Err(CommandSummaryError::SuspendedAlignment);
         }
         if !self.transient.builders.is_empty() {
@@ -194,12 +194,7 @@ impl CommandState {
             conditions: summary.conditions,
             alignment: AlignmentDeliveryState {
                 align_state: summary.align_state,
-                active_alignment: None,
-                suspended: Vec::new(),
-                active_cell: None,
-                completed_preamble: None,
-                pending_fin_col_delimiter: None,
-                extra_tab_recovery: None,
+                ..AlignmentDeliveryState::default()
             },
             expansion: summary.expansion,
             replay_completions: Vec::new(),
