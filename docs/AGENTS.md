@@ -4,6 +4,10 @@ Read the repository-level `AGENTS.md` before editing here. Documentation should 
 
 When documenting tests or parity workflow, point fixture changes to `scripts/regen-fixtures.sh` modes rather than cargo-test environment variables or retired scripts.
 
+Documents here embed TeX syntax, and `dprint` rewrites markdown content rather
+than only its layout. Follow the "Writing Markdown" rules in the repository-level
+`AGENTS.md` before adding a code span, a fenced block, or a wrapped link.
+
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
 `profiling.md` documents the persistent in-process Gentle profiler, its

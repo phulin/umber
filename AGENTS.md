@@ -76,6 +76,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 - Implementation agents should run the relevant tests explicitly, then use
   `scripts/check.sh` for the format and clippy gate without rerunning tests.
+  It runs every gate even after one fails and ends with a verdict line naming
+  the failures; that line, not the absence of scrollback, is the result to
+  report.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
 - Direct `cargo build` output to a log file; it has verbose output.
@@ -92,6 +95,29 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   and content-addressed rather than snapshot-partitioned: stop concurrent Umber
   runs before purging its `objects`/`manifests` namespaces, then warm only from
   the explicit pinned distribution and verify offline reuse.
+
+### Writing Markdown
+
+`scripts/check.sh` runs `dprint`, which reformats every `.md` file in the
+repository. Its markdown plugin rewrites content, not just layout, so markdown
+that documents TeX must be written in the shape dprint already agrees with.
+`dprint check` passing is the proof that no file holds a construct dprint would
+rewrite; never silence it with an ignore directive or a plugin exclusion.
+
+- Never let an inline code span begin or end with a space: dprint deletes it,
+  and no backtick fencing escapes this. Write a literal space inside a code
+  span as `␣` (U+2423 OPEN BOX), so TeX's control space is `\␣` and e-TeX's
+  pseudo-file trace string is `(␣`. A bare `\` means the escape character.
+- Keep backticks balanced per paragraph. TeX opens its quoted error text with a
+  backtick, so a message such as ``You can't use `\eqno' in ... mode`` has to
+  sit inside a double-backtick span; a backtick left open makes dprint read the
+  prose as the code span and the code as prose, then eat the spaces between
+  words.
+- Do not indent fenced-code content past its own fence: dprint strips the
+  block's common leading indentation.
+- Keep a whole `[text](target)` link on one source line; dprint joins link text
+  that wraps, however long the resulting line is.
+- Use `_emphasis_`, not `*emphasis*`.
 
 ## Beads Issue Tracker
 
