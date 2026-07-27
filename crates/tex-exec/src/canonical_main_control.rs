@@ -108,13 +108,6 @@ struct SetBoxTarget {
 struct ActiveReplayBox {
     target: Option<SetBoxTarget>,
     ships_out: bool,
-    /// Nesting depth of still-open braces inside this box body, counting the
-    /// body's own mandatory opening brace. That brace is consumed by the
-    /// command core's `scan_left_brace` (TeX82 §403, reached from §645's
-    /// `scan_spec` or §1099's `begin_insert_or_adjust`) before this box is
-    /// ever pushed, so it is never redelivered here: the depth simply starts
-    /// at one and the matching `}` packages the box.
-    depth: u32,
     kind: ReplayBoxKind,
     packing: PackSpec,
     leader_kind: Option<GlueKind>,
@@ -137,9 +130,9 @@ enum ReplayBoxKind {
     /// TeX82 §1099/§1100's `\insert<class>{...}` or `\vadjust{...}` body --
     /// the latter shares the exact same construction with `class` fixed at
     /// 255 (`begin_insert_or_adjust`'s `if cur_cmd=vadjust then
-    /// cur_val:=255`). This reuses the box brace-matching machinery
-    /// (`active_boxes`, `BoxBeginGroup`, `BoxEndGroup`) purely for its
-    /// nested-brace bookkeeping; its group kind, closing action, and
+    /// cur_val:=255`). This reuses the box body-closing machinery
+    /// (`active_boxes`, `BoxEndGroup`) purely to recognize the body's own
+    /// closing brace; its group kind, closing action, and
     /// page-builder interaction are entirely different from an ordinary vbox
     /// and are handled by a dedicated branch in `BoxEndGroup`
     /// (`finish_insert_or_adjust_group`, which also picks `ins_node` vs.
@@ -2630,7 +2623,7 @@ enum ScannedStep {
     /// `\moveright`): the already-signed shift amount (tex.web's
     /// `box_context`) plus `scan_box`'s own `make_box` operand (§1084).
     /// `ScannedBoxShiftPayload::Construction` shares the `BeginBox`/
-    /// `BoxBeginGroup`/`BoxEndGroup` brace-matching machinery; the other
+    /// `BoxEndGroup` body-closing machinery; the other
     /// variants resolve to a node immediately, exactly like `\box<n>`,
     /// `\lastbox`, and `\vsplit` do outside a shift.
     BoxShift(ScannedBoxShift),
@@ -2684,7 +2677,6 @@ enum ScannedStep {
     IllegalLastItem {
         token: Token,
     },
-    BoxBeginGroup,
     BoxEndGroup {
         ships_out: bool,
     },
@@ -3463,12 +3455,10 @@ fn scan_command(
     // directly in math mode starts a subformula that becomes the nucleus of a
     // freshly appended noad -- `tail_append(new_noad); back_input;
     // scan_math(nucleus(tail))` -- rather than an ordinary `simple_group`
-    // scope or a box body's nested-brace-depth counter. This must be checked
-    // before the `active_boxes` depth-counting arms below: a math formula
-    // nested inside an active box body (for example plain.tex's
+    // scope. This must be checked before the general brace arms below: a math
+    // formula nested inside an active box body (for example plain.tex's
     // `\maketable` macro, which replays its whole `\halign` argument inside
-    // `\setbox1=\vbox{#2}`) otherwise had its bare `{`/`}` swallowed as an
-    // opaque `BoxBeginGroup`/`BoxEndGroup` depth increment/decrement with no
+    // `\setbox1=\vbox{#2}`) otherwise had its bare `{`/`}` swallowed with no
     // noad ever appended, so a following `^`/`_` incorrectly saw the
     // *enclosing* list's last node (an ordinary character, from *outside*
     // the formula) as its attachment target instead of a fresh empty
@@ -3478,10 +3468,9 @@ fn scan_command(
     // bottom out in one `scan_math_group_episode`/`fin_mlist` cycle, and an
     // Ord-classified noad is what an unornamented brace group produces. That
     // scan consumes the matching closing brace itself (via `scan_toks`), so
-    // the box body's depth counter -- which only this opening brace would
-    // otherwise have touched -- correctly never sees either brace of the
-    // pair, leaving its count unaffected, exactly as a fully balanced nested
-    // construct should. A box's own mandatory opening brace never reaches
+    // neither brace of the pair opens or closes a save-stack level here,
+    // exactly as a fully balanced nested construct should. A box's own
+    // mandatory opening brace never reaches
     // this dispatch at all: `scan_left_brace` (TeX82 §403) consumed it while
     // the construction was still being scanned.
     if matches!(mode, Mode::Math | Mode::DisplayMath)
@@ -3495,25 +3484,29 @@ fn scan_command(
             MathTextFieldKind::Ord,
         )));
     }
-    if !boxes.active_boxes.is_empty() {
-        match command.meaning() {
-            Meaning::CharToken {
-                cat: Catcode::BeginGroup,
-                ..
-            } => return Ok(ScannedStep::BoxBeginGroup),
+    // TeX82 §1068's `handle_right_brace` dispatches purely on `cur_group`, so
+    // a box body's own closing brace is exactly the one delivered while the
+    // innermost group is still the group `scan_spec`/`begin_insert_or_adjust`
+    // opened for that body. Braces nested inside the body opened ordinary
+    // `simple_group` levels of their own (§1063), and §1069's `simple_group:
+    // unsave` -- reached through the `EndOrdinaryGroup` arm above -- closes
+    // those. No separate brace-depth count is kept: the save stack already
+    // holds every open level, and counting braces instead silently skipped
+    // `unsave`, losing both the nested group's local restores and the
+    // `\aftergroup` tokens §282 backs up when it pops.
+    if let Some(box_state) = boxes.active_boxes.last()
+        && innermost_group == Some(box_state.kind.group_kind())
+        && matches!(
+            command.meaning(),
             Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            } => {
-                return Ok(ScannedStep::BoxEndGroup {
-                    ships_out: boxes
-                        .active_boxes
-                        .last()
-                        .is_some_and(|box_state| box_state.ships_out),
-                });
             }
-            _ => {}
-        }
+        )
+    {
+        return Ok(ScannedStep::BoxEndGroup {
+            ships_out: box_state.ships_out,
+        });
     }
     // TeX82 §1016 opens `output_group` before replaying the braced output
     // token list. A box body nested in that list owns its closing brace first;
@@ -6708,7 +6701,6 @@ fn applied_mutation_observation(
         | ScannedStep::IllegalInsertOrAdjust { .. }
         | ScannedStep::IllegalEqNo { .. }
         | ScannedStep::IllegalLastItem { .. }
-        | ScannedStep::BoxBeginGroup
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark(..)
         | ScannedStep::Paragraph
@@ -8482,7 +8474,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 ships_out,
-                depth: 1,
                 kind,
                 packing,
                 leader_kind: None,
@@ -8524,7 +8515,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                depth: 1,
                 kind: ReplayBoxKind::Insert(class),
                 packing: PackSpec::Natural,
                 leader_kind: None,
@@ -8586,7 +8576,6 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                depth: 1,
                 kind,
                 packing,
                 leader_kind: Some(leader_kind),
@@ -8735,28 +8724,10 @@ fn apply_scanned_step(
             boxes.recovery_simple_group_pending = opens_simple_group;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxBeginGroup => {
-            let box_state = boxes
-                .active_boxes
-                .last_mut()
-                .ok_or(ExecError::MissingToken {
-                    context: "box group",
-                })?;
-            box_state.depth = box_state.depth.saturating_add(1);
-            Ok(ReplayStep::Continue)
-        }
         ScannedStep::BoxEndGroup { ships_out } => {
-            let box_state = boxes
-                .active_boxes
-                .last_mut()
-                .ok_or(ExecError::MissingToken {
-                    context: "box group",
-                })?;
-            if box_state.depth > 1 {
-                box_state.depth -= 1;
-                return Ok(ReplayStep::Continue);
-            }
-            let box_state = boxes.active_boxes.pop().expect("active box was checked");
+            let box_state = boxes.active_boxes.pop().ok_or(ExecError::MissingToken {
+                context: "box group",
+            })?;
             if let ReplayBoxKind::Insert(class) = box_state.kind {
                 return finish_insert_or_adjust_group(class, modes, stores);
             }
@@ -9485,7 +9456,7 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
 /// through the `else` branch below like any other mode.
 /// Applies a scanned TeX82 §1073 box-shift prefix (`\raise`, `\lower`,
 /// `\moveleft`, `\moveright`). `ScannedBoxShiftPayload::Construction` opens
-/// the same `BoxBeginGroup`/`BoxEndGroup` brace-matching episode as an
+/// the same `BoxEndGroup` body-closing episode as an
 /// ordinary `\hbox`/`\vbox`/`\vtop` (`BeginBox`/`BeginLeaderBox`'s twin),
 /// deferring the shift until `BoxEndGroup` packages the body; every other
 /// payload resolves to a node immediately and is shifted and appended right
@@ -9562,7 +9533,6 @@ fn apply_box_shift(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                depth: 1,
                 kind,
                 packing,
                 leader_kind: None,
