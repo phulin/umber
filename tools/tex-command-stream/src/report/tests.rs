@@ -73,18 +73,24 @@ fn report(grouped: bool) -> ComparisonReport {
 #[test]
 fn the_grouped_header_labels_both_totals() {
     let rendered = report(true).to_string();
-    let headline = rendered.lines().next().unwrap();
+    let headline = rendered.lines().next().expect("headline");
     assert_eq!(headline, "5 ordered divergence(s) in 2 root site(s):");
-    assert!(rendered.contains("Grouping does not change this"), "{rendered}");
+    assert!(
+        rendered.contains("Grouping does not change this"),
+        "{rendered}"
+    );
     assert!(rendered.contains("--ungrouped"), "{rendered}");
 }
 
 #[test]
 fn the_ungrouped_header_keeps_the_historical_first_line_and_still_names_both_totals() {
     let rendered = report(false).to_string();
-    let headline = rendered.lines().next().unwrap();
+    let headline = rendered.lines().next().expect("headline");
     assert_eq!(headline, "5 ordered divergence(s):");
-    assert!(rendered.contains("would report 2 root site(s)"), "{rendered}");
+    assert!(
+        rendered.contains("would report 2 root site(s)"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -108,7 +114,7 @@ fn a_single_occurrence_entry_carries_no_recurrence_block() {
     report.divergences.truncate(1);
     let rendered = report.to_string();
     assert_eq!(
-        rendered.lines().next().unwrap(),
+        rendered.lines().next().expect("headline"),
         "1 ordered divergence(s) in 1 root site(s):"
     );
     assert!(rendered.contains("[0] x1 fixture tex82/case"), "{rendered}");

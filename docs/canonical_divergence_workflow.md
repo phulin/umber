@@ -50,9 +50,14 @@ away from.
    distribution, or live TeX tool required) and never invokes a reference
    engine.
    - Exit `0`: no divergence in the committed fixture registry.
-   - Exit `1`: prints the earliest ordered divergence -- `fixture <name>
-     diverged at event <index>` -- followed by the expected event, the actual
-     observed event, and source context.
+   - Exit `1`: prints the divergence total, the root-site total, a per-fixture
+     accounting, and then the ordered worklist -- `fixture <name> diverged at
+     event <index>` followed by the expected event, the actual observed event,
+     and source context. Exact recurrences of one root site are collapsed into
+     one entry; `--ungrouped` prints one entry per divergence. Compare a fix
+     against the divergence total, not the root-site total. See "Grouped
+     worklist and run accounting" in
+     [Testing Infrastructure](testing_infrastructure.md).
    - Exit `101`: a Rust panic reached before any semantic mismatch; the panic
      message and `file:line` (rerun with `RUST_BACKTRACE=1` for a full
      backtrace) is itself the diagnosis and takes priority over a

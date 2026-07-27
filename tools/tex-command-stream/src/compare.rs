@@ -611,8 +611,8 @@ impl<'a> Aligner<'a> {
                 // Every other exit from this loop is terminal and leaves
                 // through `break`, so reaching the budget here is the one case
                 // where unexamined events remain.
-                let remaining = expected_index < self.expected.len()
-                    || actual_index < self.actual.len();
+                let remaining =
+                    expected_index < self.expected.len() || actual_index < self.actual.len();
                 return (entries, remaining);
             }
             match (

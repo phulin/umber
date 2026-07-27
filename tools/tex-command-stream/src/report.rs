@@ -162,9 +162,9 @@ impl ComparisonReport {
         for fixture in &self.fixtures {
             write!(formatter, "  {:width$}  ", fixture.name)?;
             match &fixture.state {
-                FixtureState::NotGenerated => formatter.write_str(
-                    "not compared -- trace not generated on this checkout\n",
-                )?,
+                FixtureState::NotGenerated => {
+                    formatter.write_str("not compared -- trace not generated on this checkout\n")?
+                }
                 FixtureState::Compared {
                     divergences: 0,
                     first_index: _,
@@ -240,7 +240,11 @@ fn write_index_list(formatter: &mut fmt::Formatter<'_>, site: &RootSite<'_>) -> 
         let rendered = format!(
             "{}{}",
             divergence.index(),
-            if position + 1 == site.count() { "" } else { "," }
+            if position + 1 == site.count() {
+                ""
+            } else {
+                ","
+            }
         );
         if column + rendered.len() + 1 > INDEX_LIST_WIDTH {
             formatter.write_str("\n   ")?;
