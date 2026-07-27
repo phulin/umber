@@ -2035,6 +2035,490 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn expandafter_and_noexpand_preserve_canonical_raw_order() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let expandafter = install_expandable(
+            &mut universe,
+            "expandafter",
+            ExpandablePrimitive::ExpandAfter,
+        );
+        let noexpand = install_expandable(&mut universe, "noexpand", ExpandablePrimitive::NoExpand);
+        let macro_name = install_macro(
+            &mut universe,
+            "m",
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(expandafter)),
+                traced(Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                }),
+                traced(Token::Cs(macro_name)),
+                traced(Token::Cs(noexpand)),
+                traced(Token::Cs(macro_name)),
+                traced(Token::Cs(macro_name)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let delivered = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let mut delivered = Vec::new();
+            for _ in 0..4 {
+                let command = processor
+                    .get_x_token()
+                    .expect("expanded delivery succeeds")
+                    .expect("planned command is delivered");
+                delivered.push((command.spelling().semantic_token(), command.meaning()));
+            }
+            assert_eq!(processor.command.expansion.cumulative_expansions, 4);
+            delivered
+        };
+
+        assert_eq!(
+            delivered,
+            vec![
+                (
+                    Token::Char {
+                        ch: 'a',
+                        cat: Catcode::Letter,
+                    },
+                    Meaning::CharToken {
+                        ch: 'a',
+                        cat: Catcode::Letter,
+                    },
+                ),
+                (
+                    Token::Char {
+                        ch: 'x',
+                        cat: Catcode::Letter,
+                    },
+                    Meaning::CharToken {
+                        ch: 'x',
+                        cat: Catcode::Letter,
+                    },
+                ),
+                (Token::Cs(macro_name), Meaning::Relax),
+                (
+                    Token::Char {
+                        ch: 'x',
+                        cat: Catcode::Letter,
+                    },
+                    Meaning::CharToken {
+                        ch: 'x',
+                        cat: Catcode::Letter,
+                    },
+                ),
+            ]
+        );
+        let raw = recorder
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Command(delivery)
+                    if delivery.boundary == CommandDeliveryBoundary::Raw =>
+                {
+                    Some(delivery.spelling.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            raw,
+            vec![
+                crate::ObservedToken::ControlSequence("expandafter".into()),
+                crate::ObservedToken::Character {
+                    character: 'a',
+                    catcode: Catcode::Letter,
+                },
+                crate::ObservedToken::ControlSequence("m".into()),
+                crate::ObservedToken::Character {
+                    character: 'a',
+                    catcode: Catcode::Letter,
+                },
+                crate::ObservedToken::Character {
+                    character: 'x',
+                    catcode: Catcode::Letter,
+                },
+                crate::ObservedToken::ControlSequence("noexpand".into()),
+                crate::ObservedToken::ControlSequence("m".into()),
+                crate::ObservedToken::ControlSequence("m".into()),
+                crate::ObservedToken::ControlSequence("m".into()),
+                crate::ObservedToken::Character {
+                    character: 'x',
+                    catcode: Catcode::Letter,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn csname_expands_characters_interns_once_and_requires_endcsname() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
+        let endcsname =
+            install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+        let letter = install_macro(
+            &mut universe,
+            "letter",
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Other,
+            },
+        );
+        let relax = universe.intern("relax").symbol();
+        universe.set_meaning(relax, Meaning::Relax);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(csname)),
+                traced(Token::Cs(letter)),
+                traced(Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Letter,
+                }),
+                traced(Token::Cs(endcsname)),
+                traced(Token::Cs(csname)),
+                traced(Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Cs(endcsname)),
+                traced(Token::Cs(csname)),
+                traced(Token::Char {
+                    ch: 'q',
+                    cat: Catcode::Letter,
+                }),
+                traced(Token::Cs(relax)),
+                traced(Token::Cs(endcsname)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let first = processor
+            .get_x_token()
+            .expect("first csname expands")
+            .expect("first name is injected");
+        let second = processor
+            .get_x_token()
+            .expect("second csname expands")
+            .expect("second name is injected");
+        let (Token::Cs(first_symbol), Token::Cs(second_symbol)) = (
+            first.spelling().semantic_token(),
+            second.spelling().semantic_token(),
+        ) else {
+            panic!("csname must inject control-sequence tokens");
+        };
+        assert_eq!(first_symbol, second_symbol);
+        assert_eq!(
+            processor.state.known_control_sequence("ab"),
+            Some(first_symbol)
+        );
+        assert_eq!(first.meaning(), Meaning::Relax);
+        assert_eq!(second.meaning(), Meaning::Relax);
+
+        let partial = processor
+            .get_x_token()
+            .expect("missing endcsname recovers")
+            .expect("partial name is injected");
+        let backed = processor
+            .get_x_token()
+            .expect("rejected command is replayed")
+            .expect("backed relax is live");
+        let boundary = processor
+            .get_x_token()
+            .expect("original boundary remains")
+            .expect("endcsname is not swallowed");
+        let Token::Cs(partial_symbol) = partial.spelling().semantic_token() else {
+            panic!("partial csname must still create a control sequence");
+        };
+        assert_eq!(
+            processor.state.known_control_sequence("q"),
+            Some(partial_symbol)
+        );
+        assert_eq!(partial.meaning(), Meaning::Relax);
+        assert_eq!(backed.spelling().semantic_token(), Token::Cs(relax));
+        assert_eq!(
+            boundary.meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)
+        );
+        assert_eq!(
+            processor.command.expansion.pending_diagnostics,
+            vec![MISSING_ENDCSNAME_DIAGNOSTIC]
+        );
+    }
+
+    #[test]
+    fn backup_replays_the_exact_delivered_token_above_expansion() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\expandafter A\\m Z".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        install_expandable(
+            &mut universe,
+            "expandafter",
+            ExpandablePrimitive::ExpandAfter,
+        );
+        install_macro(
+            &mut universe,
+            "m",
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let first = processor
+            .get_x_token()
+            .expect("expandafter completes")
+            .expect("first token is replayed");
+        let spelling = first.spelling();
+        let source_range = first.source_range();
+        let source_location = first.source_location();
+        let first_stamp = first.delivery_stamp();
+        processor
+            .back_input(first)
+            .expect("exact delivery backs up");
+
+        let replayed = processor
+            .get_x_token()
+            .expect("backup replays")
+            .expect("backed token is live");
+        assert_eq!(replayed.spelling(), spelling);
+        assert_eq!(replayed.source_range(), source_range);
+        assert_eq!(replayed.source_location(), source_location);
+        assert_ne!(replayed.delivery_stamp(), first_stamp);
+        assert!(replayed.direct_source_provenance().is_none());
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("expanded second token remains below backup")
+                .expect("macro output is live")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("source resumes")
+                .expect("following source token is live")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'Z',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+
+    #[test]
+    fn converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let number = install_expandable(&mut universe, "number", ExpandablePrimitive::Number);
+        let roman = install_expandable(
+            &mut universe,
+            "romannumeral",
+            ExpandablePrimitive::RomanNumeral,
+        );
+        let string = install_expandable(&mut universe, "string", ExpandablePrimitive::String);
+        let meaning = install_expandable(&mut universe, "meaning", ExpandablePrimitive::Meaning);
+        let fontname = install_expandable(&mut universe, "fontname", ExpandablePrimitive::FontName);
+        let jobname = install_expandable(&mut universe, "jobname", ExpandablePrimitive::JobName);
+        let string_target = universe.intern("target").symbol();
+        let empty = universe.intern_token_list(&[]);
+        let long_definition =
+            universe.intern_macro(MacroMeaning::new(MeaningFlags::LONG, empty, empty));
+        let long_macro = universe.intern("longmacro").symbol();
+        universe.set_meaning(
+            long_macro,
+            Meaning::Macro {
+                flags: MeaningFlags::LONG,
+                definition: long_definition,
+            },
+        );
+        let font = universe.intern("nullfont-id").symbol();
+        let identified_font = universe
+            .try_copy_font_with_identifier(tex_state::font::NULL_FONT, font)
+            .expect("font identity copies");
+        universe.set_meaning(font, Meaning::Font(identified_font));
+        let null_font_name = universe.font_name(identified_font).to_owned();
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(number)),
+                traced(Token::Char {
+                    ch: '-',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Cs(roman)),
+                traced(Token::Char {
+                    ch: '9',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Cs(string)),
+                traced(Token::Cs(string_target)),
+                traced(Token::Cs(meaning)),
+                traced(Token::Cs(long_macro)),
+                traced(Token::Cs(fontname)),
+                traced(Token::Cs(font)),
+                traced(Token::Cs(jobname)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.set_job_name("paper");
+        let rendered_tokens = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut rendered_tokens = Vec::new();
+            while let Some(delivery) = processor.get_x_token().expect("conversion expands") {
+                rendered_tokens.push(delivery.spelling().semantic_token());
+            }
+            assert_eq!(processor.command.expansion.cumulative_expansions, 6);
+            rendered_tokens
+        };
+        let rendered = rendered_tokens
+            .iter()
+            .map(|token| match token {
+                Token::Char { ch, .. } => *ch,
+                _ => panic!("classic conversion output must be characters"),
+            })
+            .collect::<String>();
+        assert_eq!(
+            rendered,
+            format!("-12ix\\target\\long macro:->{null_font_name}paper")
+        );
+        assert!(rendered_tokens.iter().any(|token| matches!(
+            token,
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            }
+        )));
+        assert!(rendered_tokens.iter().all(|token| matches!(
+            token,
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            } | Token::Char {
+                ch: '!'..='~',
+                cat: Catcode::Other,
+            }
+        )));
+        let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+        let copied_macro = install_macro(
+            &mut universe,
+            "copiedmacro",
+            Token::Char {
+                ch: 'Q',
+                cat: Catcode::Letter,
+            },
+        );
+        let register = universe.intern("stored").symbol();
+        universe.set_meaning(register, Meaning::ToksRegister(4));
+        let stored = universe.intern_token_list(&[
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(copied_macro),
+            Token::Char {
+                ch: 'L',
+                cat: Catcode::Letter,
+            },
+        ]);
+        universe.set_toks(4, stored);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(the)),
+                traced(Token::Cs(font)),
+                traced(Token::Cs(the)),
+                traced(Token::Cs(register)),
+                traced(Token::Char {
+                    ch: 'Z',
+                    cat: Catcode::Letter,
+                }),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut copied = Vec::new();
+        while let Some(delivery) = processor.get_x_token().expect("copied list expands") {
+            copied.push(delivery.spelling().semantic_token());
+        }
+        assert_eq!(
+            copied,
+            vec![
+                Token::Cs(font),
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Char {
+                    ch: 'Q',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'L',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'Z',
+                    cat: Catcode::Letter,
+                },
+            ]
+        );
+    }
 }
 
 /// Future-relevant expansion facts.

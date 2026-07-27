@@ -950,20 +950,7 @@
       "stimulus": [
         "Phase 2 units `expandafter_and_noexpand_preserve_canonical_raw_order`, `csname_expands_characters_interns_once_and_requires_endcsname`, `backup_replays_the_exact_delivered_token_above_expansion`, plus minifixture `expansion-delivery.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "expandafter_and_noexpand_preserve_canonical_raw_order"
-        },
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "csname_expands_characters_interns_once_and_requires_endcsname"
-        },
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "backup_replays_the_exact_delivered_token_above_expansion"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Raw expandable events precede effects and only the final unexpandable command receives expanded delivery."
       ],
@@ -978,9 +965,34 @@
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "expandafter_and_noexpand_preserve_canonical_raw_order"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "csname_expands_characters_interns_once_and_requires_endcsname"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "backup_replays_the_exact_delivered_token_above_expansion"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "ordinary_loop_expands_macro_body_on_the_canonical_raw_path"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "input_uses_only_capability_registered_backing_and_returns_to_parent"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.252"
     },
     {
       "id": "tex82.expansion.macro-arguments-and-substitution",
@@ -1080,12 +1092,7 @@
       "stimulus": [
         "Phase 2 unit `converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion` plus minifixture `expansion-conversions.tex` cover all six conversions and token-valued the."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/processor/tests.rs",
-          "test": "converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion"
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Rendered bytes classify canonically, token values copy without stringification, and inserted output resumes expansion."
       ],
@@ -1100,9 +1107,30 @@
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "conversion_rendering_publishes_recovery_input_before_its_first_token"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "the_toks_pushes_immutable_stored_input_without_reading_beyond_target"
+        },
+        {
+          "path": "crates/tex-command/src/processor/expand.rs",
+          "test": "string_reads_its_target_with_normal_scanner_status_then_restores_definition"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks.rs",
+          "test": "direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector"
+        }
+      ],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.254"
     },
     {
       "id": "tex82.input.read-token-list",
@@ -1144,7 +1172,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.223"
+      "gap_bead": "umber2-johp.253"
     },
     {
       "id": "tex82.input.start-input-and-first-line",
