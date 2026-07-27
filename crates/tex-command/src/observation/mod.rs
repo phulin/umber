@@ -541,6 +541,16 @@ pub trait CommandObserver {
     fn committed(&mut self, observation: CommandObservation);
 }
 
+/// TeX82's spelling for the dummy `undefined_control_sequence` location.
+///
+/// §222 places it immediately after the hash array; web2c's `tex.ch` sizes
+/// `hash` through that slot and clears it with `hash[hash_base]`, whose
+/// `text` §257 sets to 0. §48 makes the first 256 strings the printable forms
+/// of the characters, and character 0 is unprintable, so string 0 is the
+/// three characters below. (§262's `print_cs` guards the slot and prints
+/// `\IMPOSSIBLE.`; §263's `sprint_cs`, which the trace mirrors, does not.)
+const UNDEFINED_CONTROL_SEQUENCE_TEXT: &str = "^^@";
+
 pub(crate) fn observed_token(
     token: TracedTokenWord,
     resolve: impl FnOnce(tex_state::interner::Symbol) -> String,
@@ -565,6 +575,13 @@ pub(crate) fn observed_token(
         },
         Token::Cs(symbol) => ObservedToken::ControlSequence(resolve(symbol)),
         Token::Param(slot) => ObservedToken::Parameter(slot),
+        // §222's dummy `undefined_control_sequence` sits one slot past the
+        // hash array, whose `text` web2c initializes to `hash[hash_base]`'s
+        // zero. §263's `sprint_cs` therefore spells it with string number 0,
+        // and §48 builds string 0 as the printable form of character 0.
+        Token::Frozen(_) if semantic.is_undefined_control_sequence() => {
+            ObservedToken::ControlSequence(UNDEFINED_CONTROL_SEQUENCE_TEXT.to_owned())
+        }
         Token::Frozen(_) if semantic.is_frozen_end_template() => ObservedToken::FrozenEndTemplate,
         Token::Frozen(_) if semantic.is_frozen_endv() => ObservedToken::FrozenEndV,
         // A frozen primitive is one of tex.web's frozen control sequences, so
