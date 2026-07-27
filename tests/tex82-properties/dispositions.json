@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "source_sha256": "c62ab513ef167e93f71a23bd34f311e243210afd7c7a0f9b779614b71e398324",
+  "merge_contract": "Every module defaults to deferred_review; one domain shard may override it.",
   "dispositions": [
     {
       "module": 1,
@@ -2740,233 +2741,187 @@
     },
     {
       "module": 343,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 344,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 345,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 346,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 347,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 348,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 349,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 350,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 351,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 352,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 353,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 354,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 355,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 356,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 357,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 358,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 359,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 360,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 361,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 362,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 363,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 364,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 365,
-      "disposition": "property",
-      "owner": "tex-command",
-      "property_ids": [
-        "tex82.input.tokenization"
-      ],
-      "gap_bead": null,
-      "rationale": "Reviewed input and tokenization domain shard."
+      "disposition": "deferred_review",
+      "owner": null,
+      "property_ids": [],
+      "gap_bead": "umber2-johp.218",
+      "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred."
     },
     {
       "module": 366,

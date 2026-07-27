@@ -3,86 +3,97 @@
 Status: implemented catalogue contract
 
 The TeX82 property catalogue turns the pinned `tex.web` into reviewable,
-executable conformance work for `tex-command` and `tex-exec`. It does not use
-retired Umber behavior as evidence. Canonical claims come only from the
-numbered modules of the source pinned by `tests/tex82-oracle-manifest.txt`;
-coverage claims resolve to committed Rust tests.
+executable conformance work for `tex-command` and `tex-exec`. Canonical claims
+come only from the numbered modules of the source pinned by
+`tests/tex82-oracle-manifest.txt`; retired Umber behavior is never evidence.
 
-## Files
+## Files And Generation
 
 - `tests/tex82-properties/modules.json` is the generated inventory of all
   1,380 WEB modules.
-- `tests/tex82-properties/dispositions.json` gives every module exactly one
-  disposition.
-- `tests/tex82-properties/shards/*.json` contains reviewed executable
-  properties grouped by semantic domain.
-- `scripts/generate-tex82-property-inventory.py` regenerates the inventory and
-  initial dispositions from the pinned source.
+- `tests/tex82-properties/dispositions.json` gives every module the generated
+  default `deferred_review` disposition linked to `umber2-johp.218`.
+- `tests/tex82-properties/shards/*.json` contains one domain's reviewed module
+  overrides and executable properties.
+- `scripts/generate-tex82-property-inventory.py` regenerates only the inventory
+  and default dispositions from the pinned source.
 - `crates/test-support/tests/tex82_catalogue.rs` is the hermetic completeness
   gate in the routine native test tier.
 
-The generator verifies the pinned SHA-256 before reading the source. A WEB
-module begins at each source line whose first two characters are `@*` or
-`@␣`. Modules are numbered in source order. The generated record retains its
-part, heading, inclusive source-line bounds, and SHA-256. The source contains
-exactly 1,380 such boundaries.
-
-Regenerate only after intentionally changing the source pin:
+The generator verifies the pinned SHA-256. A WEB module begins at each source
+line whose first two characters are `@*` or `@␣`; modules are numbered in
+source order. The generated record retains its part, heading, inclusive
+source-line bounds, and SHA-256. The source has exactly 1,380 boundaries.
 
 ```bash
 python3 scripts/generate-tex82-property-inventory.py
 ```
 
-This command reads the local verified source. It does not build, run, patch,
-or rewrite the shared reference oracle.
+This reads the local verified source. It never builds, runs, patches, or
+rewrites the shared reference oracle.
+
+## Parallel Domain Authoring
+
+A domain auditor edits only one new or existing file under
+`tests/tex82-properties/shards/`. The shard owns:
+
+- `domain`, a unique descriptive domain name;
+- `module_dispositions`, each containing an inclusive module range, reviewed
+  disposition, semantic owner, property IDs, gap bead, and rationale;
+- `properties`, the executable claims owned by that domain.
+
+The representative `input-tokenization.json` shard demonstrates claiming and
+reclassifying §§343–365 without changing the generated base. Independent
+domain branches therefore do not edit the 1,380-entry file or each other's
+shards.
+
+The validator sorts shard paths before merging them. The base first classifies
+all modules as deferred; exactly one shard may replace that default for a
+module. A second shard claim is an error rather than last-writer-wins.
+Similarly, each canonical section may belong to only one property, each
+property ID to one domain, and the property's semantic owner must equal the
+owner of every claimed module. This makes merge results deterministic and
+ownership conflicts explicit.
 
 ## Dispositions
 
-Every module has one of these explicit dispositions:
+Reviewed overrides use:
 
-- `property`: reviewed canonical behavior represented by linked property IDs;
+- `property`: executable behavior represented by linked property IDs;
 - `definition_only`: a declaration with no independently executable claim;
 - `context_only`: explanatory material needed to interpret other properties;
 - `out_of_scope`: reviewed behavior outside `tex-command` and `tex-exec`;
-- `deferred_review`: not yet classified, with a required gap bead.
+- `deferred_review`: deliberately postponed review with a required gap bead.
 
-`deferred_review` is deliberately different from `out_of_scope`: it makes the
-remaining audit visible without asserting that an unread module is irrelevant.
-The first reviewed shard covers §§343–365. The rest are explicitly deferred
-to `umber2-johp.218`.
+`deferred_review` is not `out_of_scope`: it avoids asserting that an unread
+module is irrelevant. Non-property reviewed dispositions still name the
+semantic owner responsible for the classification.
 
 ## Property Schema
 
-Each property contains:
+Each property contains a globally unique ID; exact numeric sections; a
+paraphrased claim; non-empty preconditions, stimulus, observations,
+postconditions, equivalence cases, and recovery cases; semantic owner and test
+level; exact coverage links; and covered/gap status with a bead for gaps.
 
-- globally unique `id` and exact numeric `sections`;
-- a paraphrased canonical `claim`;
-- non-empty `preconditions`, `stimulus`, `expected_observations`, and
-  `postconditions`;
-- non-empty `equivalence_cases` and `recovery_cases`;
-- one `semantic_owner` and `test_level`;
-- exact `coverage` records containing repository-relative Rust source paths
-  and test function names;
-- `status`, either `covered` or `gap`, with `gap_bead` required for a gap.
-
-A covered link is evidence only when the path exists, the named function
-exists exactly, and its immediately preceding attribute is `#[test]`.
-Properties may later use pinned semantic minifixtures as an additional test
-level, but live reference execution never belongs in this gate.
+A covered Rust link is evidence only when its repository-relative path exists,
+the named function exists exactly, and its immediately preceding attribute is
+`#[test]`. Pinned semantic minifixtures may later provide another test level;
+live reference execution never belongs in this gate.
 
 ## Completeness Gate
 
 The native test rejects:
 
-- an inventory other than modules 1 through 1,380 in exact order;
-- source-pin drift, missing or duplicate dispositions, and unknown
-  dispositions;
-- invalid section citations, duplicate property IDs, missing semantic owners,
-  or missing required property fields;
-- property dispositions whose linked property does not cite that module;
-- covered properties without resolvable exact test links;
+- inventory count/order/source-pin drift or an unclassified base module;
+- a non-deferred generated base record;
+- overlapping shard disposition claims or property section claims;
+- duplicate property IDs or conflicting module/property semantic owners;
+- invalid citations, missing fields, or inconsistent property links;
+- covered properties without exact resolvable test links;
 - gap or deferred records without a linked bead.
 
-The gate proves structural completeness and honest coverage bookkeeping. A
-reviewed shard remains a human source audit: the validator cannot determine
-whether a paraphrase faithfully describes Knuth's prose.
+Focused negative tests exercise overlapping disposition ownership, overlapping
+section claims, conflicting property ownership, and an unclassified module.
+The gate proves structural completeness and honest bookkeeping; humans remain
+responsible for reviewing each canonical paraphrase.

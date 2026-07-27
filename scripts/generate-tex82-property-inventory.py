@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the pinned TeX82 module inventory and initial dispositions."""
+"""Generate the pinned TeX82 module inventory and default dispositions."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import hashlib
 import json
 import pathlib
 import re
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "third_party/texlive-source/src/texk/web2c/tex.web"
@@ -58,21 +57,14 @@ def main() -> None:
                 "sha256": hashlib.sha256(module_bytes).hexdigest(),
             }
         )
-        reviewed = 343 <= number <= 365
         dispositions.append(
             {
                 "module": number,
-                "disposition": "property" if reviewed else "deferred_review",
-                "owner": "tex-command" if reviewed else None,
-                "property_ids": (
-                    ["tex82.input.tokenization"] if reviewed else []
-                ),
-                "gap_bead": None if reviewed else "umber2-johp.218",
-                "rationale": (
-                    "Reviewed input and tokenization domain shard."
-                    if reviewed
-                    else "Explicitly deferred to the full catalogue audit; scope is not inferred."
-                ),
+                "disposition": "deferred_review",
+                "owner": None,
+                "property_ids": [],
+                "gap_bead": "umber2-johp.218",
+                "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred.",
             }
         )
 
@@ -90,7 +82,12 @@ def main() -> None:
     )
     write_json(
         OUT / "dispositions.json",
-        {"schema": 1, "source_sha256": digest, "dispositions": dispositions},
+        {
+            "schema": 1,
+            "source_sha256": digest,
+            "merge_contract": "Every module defaults to deferred_review; one domain shard may override it.",
+            "dispositions": dispositions,
+        },
     )
 
 

@@ -3,7 +3,7 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
-`tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory, explicit per-module dispositions, and reviewed executable-property shards. The routine `test-support` catalogue gate validates completeness, citations, ownership, status, and exact Rust test links.
+`tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory, generated default deferrals and domain-local reviewed disposition/property shards. The routine `test-support` catalogue gate validates completeness, citations, ownership, status, and exact Rust test links.
 
 `tests/tex82-oracle-manifest.txt` pins the canonical TeX82 WEB source, ordered
 Web2C portability changes, translator inputs, and repository-owned oracle

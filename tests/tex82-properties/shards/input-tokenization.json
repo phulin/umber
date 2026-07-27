@@ -2,6 +2,21 @@
   "schema": 1,
   "domain": "input-tokenization",
   "reviewed": true,
+  "module_dispositions": [
+    {
+      "modules": {
+        "first": 343,
+        "last": 365
+      },
+      "disposition": "property",
+      "owner": "tex-command::input",
+      "property_ids": [
+        "tex82.input.tokenization"
+      ],
+      "gap_bead": null,
+      "rationale": "Reviewed input and tokenization domain shard."
+    }
+  ],
   "properties": [
     {
       "id": "tex82.input.tokenization",
