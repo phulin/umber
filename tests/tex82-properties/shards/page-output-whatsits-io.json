@@ -924,16 +924,7 @@
       "stimulus": [
         "Start with marks/whatsits, insertion-only, and box pages; change vsize/maxdepth around the freeze boundary; call during output_active in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_state_freezes_specs_and_tracks_sorted_insertion_records"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_builder_output_active_boundary_preserves_pending_contributions"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "page_contents, page_goal, page_max_depth, totals, insertion ordering, and diagnostic display match §§980–990."
       ],
@@ -947,11 +938,19 @@
         "An output-active build_page call returns without moving a contribution; page display marks heldover state without mutating it."
       ],
       "semantic_owner": "tex-exec::page-builder",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/tests/core.rs",
           "test": "detached_page_episode_replays_before_output_fire_up"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_state_freezes_specs_and_tracks_sorted_insertion_records"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_builder_output_active_boundary_preserves_pending_contributions"
         }
       ],
       "status": "gap",
@@ -971,16 +970,7 @@
       "stimulus": [
         "Reset populated page state and validate void/vbox/hbox registers in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "new_current_page_resets_nodes_totals_depth_and_last_item_state"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "box_error_and_ensure_vbox_recover_only_invalid_live_boxes"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Fresh state and diagnostics/deletion match §§991–993."
       ],
@@ -994,10 +984,19 @@
         "Nonvoid box 255 and hbox insertion registers take box_error and become void after displaying their contents."
       ],
       "semantic_owner": "tex-exec::page-builder",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "new_current_page_resets_nodes_totals_depth_and_last_item_state"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "box_error_and_ensure_vbox_recover_only_invalid_live_boxes"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.page.contribution-accounting",
@@ -1021,20 +1020,7 @@
       "stimulus": [
         "Contribute every vertical node kind at empty/nonempty boundaries, terminal kerns, topskip edges, and each glue order in the structured Phase 2 units below and fixture `page-contribution-accounting.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "outer_vertical_contribution_routes_every_node_kind_canonically"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_infinite_shrink_recovery_normalizes_only_the_offending_glue"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Every node is discarded, delayed, or moved once; totals and last-item enquiries match §§994–1004."
       ],
@@ -1048,8 +1034,21 @@
         "Infinite-order shrink emits the canonical diagnostic and replaces that glue with finite normal shrink; arithmetic overflow stops before linking the current node."
       ],
       "semantic_owner": "tex-exec::page-builder",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "outer_vertical_contribution_routes_every_node_kind_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_infinite_shrink_recovery_normalizes_only_the_offending_glue"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1067,16 +1066,7 @@
       "stimulus": [
         "Exercise exact fit, finite/infinite stretch, shrink equality/overflow, penalty thresholds, insertion penalty 10000, equal champions, and eject penalty in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_break_badness_cost_and_equal_champion_boundaries_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_break_eject_and_awful_cost_paths_fire_the_selected_champion"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Badness, cost, latest champion, best size, best insertion pointers, and fire decision match §§1005–1007."
       ],
@@ -1090,10 +1080,19 @@
         "Overfull beyond shrink and insertion penalties at least 10000 force awful_bad; eject penalties fire regardless of badness."
       ],
       "semantic_owner": "tex-exec::page-builder",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_break_badness_cost_and_equal_champion_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_break_eject_and_awful_cost_paths_fire_the_selected_champion"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.page.insertion-accounting",
@@ -1110,16 +1109,7 @@
       "stimulus": [
         "Exercise repeated/interleaved classes, count boundaries, capacity boundaries, finite/infinite correction shrink, and null/penalty splits in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_insertion_class_order_scaling_skip_and_fit_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Class record, page goal, height, split pointers, and penalties match §§1008–1011."
       ],
@@ -1133,8 +1123,17 @@
         "An hbox class register takes ensure_vbox recovery; infinite correction shrink reports the insertion-specific error; a null split adds eject_penalty."
       ],
       "semantic_owner": "tex-exec::page-builder",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_insertion_class_order_scaling_skip_and_fit_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1155,16 +1154,7 @@
       "stimulus": [
         "Fire penalty/nonpenalty and trigger-equal/earlier breaks with zero/one/multiple marks in the structured Phase 2 units below and fixture `output-fire-up-packaging.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_records_penalty_marks_boundary_and_packages_box255"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_nonvoid_box255_recovery_discards_before_packaging"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "output_penalty, rewritten node, marks, selected prefix, box 255 dimensions, suffix order, and reset match §§1012–1017."
       ],
@@ -1178,15 +1168,23 @@
         "A preexisting box 255 is diagnosed and deleted before packaging through §1015 box_error."
       ],
       "semantic_owner": "tex-exec::output",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/output.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_records_penalty_marks_boundary_and_packages_box255"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_nonvoid_box255_recovery_discards_before_packaging"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.229"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.output.insertion-distribution",
@@ -1205,16 +1203,7 @@
       "stimulus": [
         "Exercise accepted, unselected, floating, null-split, nonempty-remainder, multiple-same-class, multiple-class, and holding_inserts cases in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_distributes_selected_insertions_into_class_boxes"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_split_remainder_heldover_and_holding_inserts_boundaries_match_tex82"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Class boxes, remainders, heldover order/count, split-top pruning, and record retirement match §§1018–1023."
       ],
@@ -1228,8 +1217,17 @@
         "An hbox class register takes ensure_vbox recovery before queue append; an empty split remainder deletes the insertion instead of holding it."
       ],
       "semantic_owner": "tex-exec::output",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_distributes_selected_insertions_into_class_boxes"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_split_remainder_heldover_and_holding_inserts_boundaries_match_tex82"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
@@ -1246,20 +1244,7 @@
       "stimulus": [
         "Exercise null output, dead-cycle below/at maximum, heldovers, and a balanced user routine in the structured Phase 2 units below and fixture `output-selection-default.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_selection_enters_one_user_output_group_below_deadcycle_limit"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_default_path_prepends_heldovers_ships_and_voids_box255"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_deadcycle_limit_reports_and_uses_default_path"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Selected path, diagnostic, mode/group/token-list entry, heldover placement, shipout, and box 255 state match §§1024–1025."
       ],
@@ -1273,11 +1258,23 @@
         "At max_deadcycles the selected page is shipped by default after the canonical error instead of entering another output group."
       ],
       "semantic_owner": "tex-exec::output",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/tests/core.rs",
           "test": "canonical_dead_cycle_escape_ships_the_selected_residual_page"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_selection_enters_one_user_output_group_below_deadcycle_limit"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_default_path_prepends_heldovers_ships_and_voids_box255"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_deadcycle_limit_reports_and_uses_default_path"
         }
       ],
       "status": "gap",
@@ -1297,20 +1294,7 @@
       "stimulus": [
         "Complete balanced, unbalanced, leftover-box, output-material, heldover, and pending-contribution routines in the structured Phase 2 units below and fixture `output-resume-recovery.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_tears_down_group_mode_and_page_state_canonically"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_orders_output_material_heldovers_and_contributions"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_recovers_unbalanced_tokens_and_nonvoid_box255"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Diagnostics, token draining, group/mode teardown, list order, restored nest, and resumed page activity match §§1026–1028."
       ],
@@ -1324,8 +1308,21 @@
         "Unbalanced output consumes through its own list end; leftover box 255 is displayed, flushed, and voided before resume."
       ],
       "semantic_owner": "tex-exec::output",
-      "test_level": "rust-unit+planned-semantic-minifixture",
-      "coverage": [],
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_tears_down_group_mode_and_page_state_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_orders_output_material_heldovers_and_contributions"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_recovers_unbalanced_tokens_and_nonvoid_box255"
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-johp.229"
     },
