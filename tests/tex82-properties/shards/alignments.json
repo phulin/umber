@@ -412,7 +412,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/processor/alignment/tests.rs",
+          "test": "alignment_stack_globals_initialize_to_null"
+        }
+      ]
     },
     {
       "id": "tex82.align.nested-state-stack",
@@ -443,7 +449,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/processor/alignment/tests.rs",
+          "test": "push_pop_alignment_restores_all_tex82_fields"
+        }
+      ]
     },
     {
       "id": "tex82.align.initialize-spec-and-mode",
@@ -476,7 +488,17 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "alignment_scan_spec_consumes_brace_after_keyword_backups"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "alignment_initial_mode_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.align.preamble-tabskip-and-delimiters",
@@ -512,7 +534,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "preamble_tabskip_span_expansion_and_delimiter_identity"
+        }
+      ]
     },
     {
       "id": "tex82.align.u-v-template-scan",
@@ -544,7 +572,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "scan_u_v_templates_empty_nested_and_malformed"
+        }
+      ]
     },
     {
       "id": "tex82.align.row-lookahead-noalign-finish",
@@ -575,7 +609,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "align_peek_selects_noalign_finish_crcr_or_row"
+        }
+      ]
     },
     {
       "id": "tex82.align.row-start-mode",
@@ -606,7 +646,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "init_row_switches_mode_and_copies_leading_tabskip"
+        }
+      ]
     },
     {
       "id": "tex82.align.span-start",
@@ -637,7 +683,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "init_span_sets_mode_aux_and_cur_span"
+        }
+      ]
     },
     {
       "id": "tex82.align.cell-u-v-omit-delivery",
@@ -670,7 +722,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/processor/alignment/tests.rs",
+          "test": "cell_template_delivery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.align.finish-column-and-repeat-preamble",
@@ -705,7 +763,17 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "fin_col_delimiter_matrix_and_periodic_extension"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "fin_col_extra_tab_recovers_to_cr"
+        }
+      ]
     },
     {
       "id": "tex82.align.package-unset-cell",
@@ -736,7 +804,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "package_unset_cell_records_natural_extent_and_glue_orders"
+        }
+      ]
     },
     {
       "id": "tex82.align.record-span-width",
@@ -768,7 +842,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "span_width_list_orders_counts_and_keeps_maximum"
+        }
+      ]
     },
     {
       "id": "tex82.align.package-unset-row",
@@ -799,7 +879,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "fin_row_packages_modes_adjustments_every_cr_and_peek"
+        }
+      ]
     },
     {
       "id": "tex82.align.finish-orchestration",
@@ -830,7 +916,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "fin_align_orders_groups_packing_pop_and_insertion"
+        }
+      ]
     },
     {
       "id": "tex82.align.resolve-column-span-widths",
@@ -863,7 +955,17 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "resolve_alignment_widths_applies_tex82_recurrence"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "resolve_alignment_widths_zeroes_null_column_tabskip"
+        }
+      ]
     },
     {
       "id": "tex82.align.pack-preamble-prototype",
@@ -894,7 +996,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "pack_alignment_prototype_applies_spec_in_both_modes"
+        }
+      ]
     },
     {
       "id": "tex82.align.set-list-and-running-rules",
@@ -926,7 +1034,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "set_alignment_list_extends_running_rules_and_offsets_display_rules"
+        }
+      ]
     },
     {
       "id": "tex82.align.materialize-spanned-cell",
@@ -959,7 +1073,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "materialize_spanned_cell_adds_tabskip_and_empty_boxes"
+        }
+      ]
     },
     {
       "id": "tex82.align.convert-unset-cell",
@@ -991,7 +1111,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "convert_unset_cell_computes_tex82_glue_ratio_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.align.insert-finished-list",
@@ -1022,7 +1148,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
+        }
+      ]
     },
     {
       "id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
@@ -1056,7 +1188,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/processor/alignment/tests.rs",
+          "test": "alignment_misplaced_command_recovery_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.align.endv-validation-and-off-save",
@@ -1087,7 +1225,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "do_endv_validates_template_and_group_matrix"
+        }
+      ]
     },
     {
       "id": "tex82.align.missing-cr-before-close",
@@ -1118,7 +1262,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/processor/alignment/tests.rs",
+          "test": "alignment_close_inserts_frozen_cr_before_brace_replay"
+        }
+      ]
     },
     {
       "id": "tex82.align.noalign-group-close",
@@ -1149,7 +1299,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "noalign_close_resumes_row_lookahead_in_both_modes"
+        }
+      ]
     },
     {
       "id": "tex82.align.display-finish",
@@ -1181,7 +1337,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.227"
+      "gap_bead": "umber2-johp.227",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/align.rs",
+          "test": "display_alignment_finish_assignments_delimiters_and_spacing"
+        }
+      ]
     }
   ]
 }
