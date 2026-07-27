@@ -20,9 +20,10 @@
 //!    The repair's shape -- oracle events dropped, Umber events added, or a
 //!    short replaced run -- is itself the diagnosis.
 //! 3. If nothing confirms inside the window the divergence is structural. One
-//!    anchor resync is attempted, scanning both streams forward to the next
-//!    shared high-salience boundary (an input-stack push/retire, or a new
-//!    source line) and requiring the same confirmation there.
+//!    anchor resync is attempted, scanning both streams forward over every
+//!    high-salience boundary (an input-stack push/retire, or a new source
+//!    line) within [`AlignmentTuning::anchor_scan`] events and rejoining at
+//!    the cheapest shared one that carries the same confirmation.
 //! 4. If that also fails, comparison of the fixture stops and says so. An
 //!    over-eager realignment hides a real defect silently; cascade noise at
 //!    least stays visible. The bias is deliberately toward declaring a
@@ -73,11 +74,10 @@ pub const DEFAULT_REALIGN_CONFIRMATION: usize = 8;
 /// Only reached when the window search already failed, so it may be generous;
 /// 4096 events is roughly a page of document activity, enough to cross a macro
 /// body or an alignment that was replayed completely differently, and still a
-/// hard bound.
+/// hard bound. It is the *only* bound on the fallback's reach: every anchor
+/// inside the scan is a candidate, so widening the flag really does widen the
+/// search.
 pub const DEFAULT_ANCHOR_SCAN: usize = 4096;
-
-/// Most anchors considered on each side of one anchor resync.
-const MAX_ANCHORS: usize = 64;
 
 /// Bounds on how hard the comparator works to repair an alignment before it
 /// declares a structural divergence and says so.
@@ -772,8 +772,18 @@ impl<'a> Aligner<'a> {
         true
     }
 
-    /// The one structural fallback: rejoin both streams at the nearest shared
+    /// The one structural fallback: rejoin both streams at the cheapest shared
     /// high-salience boundary, still requiring the usual confirmation.
+    ///
+    /// "Cheapest" is the least total skip, and the search is exhaustive over
+    /// the anchors inside [`AlignmentTuning::anchor_scan`] on each side. That
+    /// matters more than it looks: a rejoin that costs more than the true
+    /// minimum lands the streams on a boundary they only *locally* agree at,
+    /// and the next real key mismatch then has no shared anchor left in reach,
+    /// which reads as a structural fork rather than as the over-costly rejoin
+    /// it inherited. Both anchor lists are in ascending offset order, so once
+    /// a confirmed candidate exists every later candidate whose skip already
+    /// equals or exceeds it can be cut without a key comparison.
     fn anchor_resync(
         &self,
         expected_index: usize,
@@ -786,12 +796,18 @@ impl<'a> Aligner<'a> {
 
         let mut best: Option<(usize, usize, usize, ResyncAnchor)> = None;
         for (expected_skip, expected_anchor) in &expected_anchors {
+            if best
+                .as_ref()
+                .is_some_and(|(best, _, _, _)| *best <= *expected_skip)
+            {
+                break;
+            }
             for (actual_skip, actual_anchor) in &actual_anchors {
-                if expected_anchor != actual_anchor {
-                    continue;
-                }
                 let cost = expected_skip + actual_skip;
                 if best.as_ref().is_some_and(|(best, _, _, _)| *best <= cost) {
+                    break;
+                }
+                if expected_anchor != actual_anchor {
                     continue;
                 }
                 if !self.confirms(expected_index + expected_skip, actual_index + actual_skip) {
@@ -809,8 +825,8 @@ impl<'a> Aligner<'a> {
     }
 }
 
-/// Collects up to [`MAX_ANCHORS`] structural anchors within `scan` events of
-/// `start`, as offsets from `start`.
+/// Collects every structural anchor within `scan` events of `start`, as
+/// offsets from `start`, in ascending offset order.
 fn collect_anchors<'a>(
     events: &[&'a Event],
     start: usize,
@@ -820,9 +836,6 @@ fn collect_anchors<'a>(
     let mut previous_line: Option<(&str, u32)> = None;
     let limit = events.len().min(start.saturating_add(scan));
     for (offset, event) in events[start..limit].iter().enumerate() {
-        if anchors.len() >= MAX_ANCHORS {
-            break;
-        }
         match event {
             Event::Input(input) => anchors.push((
                 offset,

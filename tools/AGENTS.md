@@ -52,10 +52,11 @@ Comparison is a two-tier keyed sequence alignment, not an index-parallel
 scan: `src/compare.rs` splits each event into an identity key and a payload,
 reports a payload-only difference once without desynchronizing, and repairs a
 key mismatch with a bounded wavefront search (`--realign-window`,
-`--realign-confirm`) followed by a structural anchor fallback
-(`--anchor-scan`), stopping a fixture's comparison outright rather than
-guessing when neither confirms. Each entry names its repair and the cascade
-it suppressed. See "Stream alignment" in `docs/testing_infrastructure.md`.
+`--realign-confirm`) followed by a structural anchor fallback that rejoins at
+the least-total-skip shared anchor inside `--anchor-scan`, stopping a
+fixture's comparison outright rather than guessing when neither confirms.
+Each entry names its repair and the cascade it suppressed. See "Stream
+alignment" in `docs/testing_infrastructure.md`.
 
 `src/group.rs` then collapses exact recurrences of one root site into a single
 entry, and `src/report.rs` renders the worklist. Grouping is presentation

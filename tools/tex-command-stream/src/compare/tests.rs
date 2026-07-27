@@ -298,6 +298,84 @@ fn an_anchor_outside_the_scan_bound_is_not_used() {
     assert_eq!(entries[0].repair, Repair::Abandoned);
 }
 
+/// The scan bound is the only bound: an anchor inside it is a candidate however
+/// many other anchors precede it. A dense oracle region reaches dozens of
+/// input-stack boundaries in a few hundred events, so any secondary cap on the
+/// anchor count silently shortens `--anchor-scan` to a fraction of its stated
+/// reach and turns a repairable structural divergence into an abandonment.
+#[test]
+fn every_anchor_inside_the_scan_bound_is_a_candidate() {
+    let mut expected: Vec<Event> = (0..80).map(|index| input(&format!("f{index}"))).collect();
+    expected.push(input("child.tex"));
+    expected.extend(run("shared", 20));
+    let mut actual = vec![input("child.tex")];
+    actual.extend(run("shared", 20));
+
+    let entries = align(
+        &expected,
+        &actual,
+        AlignmentTuning {
+            window: 8,
+            ..AlignmentTuning::default()
+        },
+    );
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].repair,
+        Repair::AnchorResync {
+            expected_skipped: 80,
+            actual_skipped: 0,
+            anchor: ResyncAnchor::Input {
+                transition: InputTransition::Push,
+                reason: InputReason::Source,
+                name: "child.tex".into(),
+            },
+        }
+    );
+}
+
+/// Rejoining at anything but the least-total-skip shared anchor leaves the
+/// streams on a boundary they agree at only locally, and the next real key
+/// mismatch then finds no shared anchor in reach at all. The cheapest candidate
+/// is not the first one visited: anchors are enumerated by oracle offset, so a
+/// distant oracle anchor paired with an immediate observed one can undercut a
+/// nearby oracle anchor paired with a far observed one.
+#[test]
+fn the_cheapest_shared_anchor_wins_over_the_first_one_found() {
+    let mut expected = vec![input("alpha")];
+    expected.extend(run("e", 99));
+    expected.push(input("beta"));
+    expected.extend(run("shared", 20));
+
+    let mut actual = vec![input("beta")];
+    actual.extend(run("shared", 20));
+    actual.extend(run("pad", 179));
+    actual.push(input("alpha"));
+    actual.extend(run("e", 20));
+
+    let entries = align(
+        &expected,
+        &actual,
+        AlignmentTuning {
+            window: 8,
+            ..AlignmentTuning::default()
+        },
+    );
+    assert_eq!(
+        entries[0].repair,
+        Repair::AnchorResync {
+            expected_skipped: 100,
+            actual_skipped: 0,
+            anchor: ResyncAnchor::Input {
+                transition: InputTransition::Push,
+                reason: InputReason::Source,
+                name: "beta".into(),
+            },
+        },
+        "the alpha rejoin costs 200 and is visited first"
+    );
+}
+
 #[test]
 fn abandoning_a_fixture_stops_its_comparison_rather_than_guessing() {
     let expected = run("oracle", 40);
