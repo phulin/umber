@@ -76,6 +76,19 @@ A worklist containing only `tex82/command-transitions-v1` means the document
 traces are not linked. An agent that skips this check can spend an entire run
 against a worklist its own stream was never part of; that has happened.
 
+### The scratchpad is shared, not per-agent
+
+The scratchpad directory is shared across every concurrent agent on the same
+repository. Generic filenames collide silently: one agent overwrote another's
+`after.txt` mid-run with its own tracer output, and the second agent nearly
+reported the first agent's numbers as its own result.
+
+Require every dispatch prompt to namespace scratch files by issue id
+(`johp-208-after.txt`, not `after.txt`). A collision here produces a
+_plausible_ wrong measurement rather than an error, which is the hardest kind
+to notice — the file exists, it parses, and its numbers look like the ones you
+expected.
+
 ### A missing artifact is never a repository gap
 
 Require every dispatch prompt to say this outright: a test that fails on a
