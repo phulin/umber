@@ -6343,8 +6343,8 @@ fn canonical_math_group_spanning_v_template_does_not_redeliver_its_row_terminato
     // nests an empty group before the field: `$\displaystyle{{}##}$`. That
     // outer `{` is a bare `mmode+left_brace` (TeX82 §1153), whose *matching*
     // `}` lives in the column's `v_j` template -- i.e. on the far side of
-    // the row's `\cr`. `scan_math_group_episode`'s `scan_toks`-based capture
-    // (crates/tex-command/src/scanners/structured.rs) must scan straight
+    // the row's `\cr`. A `scan_toks` collection that starts inside such a
+    // cell (crates/tex-command/src/scan_toks.rs) must scan straight
     // through that `\cr`; TeX82 §790's `insert_vj` intercepts it and inserts
     // `v_j` exactly once, never letting the delimiter surface as ordinary
     // scanned text (§343, `car_ret`/`tab_mark` at `align_state=0`). Before

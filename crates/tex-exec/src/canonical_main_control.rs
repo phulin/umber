@@ -1183,18 +1183,22 @@ impl CanonicalMainControl {
         self.finish_math_level(stores)
     }
 
-    /// Runs one live `math_group` (TeX82 §1153) to its closing brace.
+    /// Runs one live `push_math` group to its closing brace.
     ///
-    /// §1153 is ``back_input; scan_left_brace; saved(0):=p; incr(save_ptr);
-    /// push_math(math_group)``: the subformula's body is never absorbed, it
-    /// is ordinary input that main control reads, and §1186's `math_group`
-    /// arm of `handle_right_brace` closes it on the matching `}`. The
-    /// mandatory brace has already been consumed by
-    /// `scan_math_field_episode`; this opens `push_math`'s save level and
-    /// mode level and steps until the brace that closes *this* level
-    /// arrives.
+    /// Both of TeX82's braced mlist openers work this way. §1153 is
+    /// ``back_input; scan_left_brace; saved(0):=p; incr(save_ptr);
+    /// push_math(math_group)`` and §1172/§1174 are
+    /// ``push_math(math_choice_group); scan_left_brace``: in neither case is
+    /// the body absorbed, it is ordinary input that main control reads, and
+    /// the matching arm of `handle_right_brace` (§1186 for `math_group`,
+    /// §1174's `build_choices` for `math_choice_group`) closes it on the
+    /// matching `}`. The mandatory brace has already been consumed by the
+    /// scanner that requested this group; this opens `push_math`'s save
+    /// level and mode level and steps until the brace that closes *this*
+    /// level arrives.
     fn execute_live_math_group(
         &mut self,
+        kind: GroupKind,
         stores: &mut Universe,
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
@@ -1202,7 +1206,7 @@ impl CanonicalMainControl {
         // subformula opens another `math_group`, and any brace group inside
         // the body opens a `simple_group`.
         let enclosing_depth = stores.group_depth();
-        stores.enter_group_with_kind(GroupKind::Math);
+        stores.enter_group_with_kind(kind);
         self.modes.push(Mode::Math);
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
@@ -1252,6 +1256,17 @@ impl CanonicalMainControl {
         )
     }
 
+    /// Opens and runs one `\mathchoice` branch: TeX82 §1172/§1174's
+    /// ``push_math(math_choice_group); scan_left_brace`` followed by the live
+    /// body main control reads until `build_choices` closes it.
+    fn execute_math_choice_branch(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        self.command_scan_math_choice_group(stores)?;
+        self.execute_live_math_group(GroupKind::MathChoice, stores)
+    }
+
     fn execute_math_field(
         &mut self,
         field: tex_command::MathFieldEpisode,
@@ -1259,22 +1274,13 @@ impl CanonicalMainControl {
     ) -> Result<MathField, ExecError> {
         let list = match field.body {
             MathFieldBody::Missing => return Ok(MathField::Empty),
-            MathFieldBody::OpenGroup => self.execute_live_math_group(stores)?,
+            MathFieldBody::OpenGroup => self.execute_live_math_group(GroupKind::Math, stores)?,
             MathFieldBody::Replay => {
                 let episode = self.command.push_math_field_episode(field);
                 self.execute_math_episode(episode, stores)?
             }
         };
         Ok(simplify_canonical_math_field(stores, list))
-    }
-
-    fn execute_math_group(
-        &mut self,
-        group: tex_command::MathGroupEpisode,
-        stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
-        let episode = self.command.push_math_group_episode(group);
-        self.execute_math_episode(episode, stores)
     }
 
     fn apply_canonical_math_request(
@@ -1331,11 +1337,19 @@ impl CanonicalMainControl {
                     }))
             }
             CanonicalMathRequest::Choice => {
-                let choices = self.command_scan_math_choice(stores)?;
-                let display = self.execute_math_group(choices.display, stores)?;
-                let text = self.execute_math_group(choices.text, stores)?;
-                let script = self.execute_math_group(choices.script, stores)?;
-                let script_script = self.execute_math_group(choices.scriptscript, stores)?;
+                // TeX82 §1172's `append_choices` opens the first branch with
+                // `push_math(math_choice_group); scan_left_brace`, and
+                // §1174's `build_choices` repeats exactly that after storing
+                // each finished mlist. All four branches are therefore live
+                // `math_choice_group` bodies read by ordinary main control,
+                // never token lists absorbed ahead of construction: absorbing
+                // them backs the opening brace up a second time (an extra
+                // `backed_up` input level TeX never pushes) and reorders
+                // every input level the branch body itself opens.
+                let display = self.execute_math_choice_branch(stores)?;
+                let text = self.execute_math_choice_branch(stores)?;
+                let script = self.execute_math_choice_branch(stores)?;
+                let script_script = self.execute_math_choice_branch(stores)?;
                 self.modes
                     .current_list_mut()
                     .push(Node::MathChoice(MathChoice {
@@ -1682,10 +1696,10 @@ impl CanonicalMainControl {
         .map_err(command_error)
     }
 
-    fn command_scan_math_choice(
-        &mut self,
-        stores: &mut Universe,
-    ) -> Result<tex_command::MathChoiceEpisodes, ExecError> {
+    /// TeX82 §1172/§1174's `scan_left_brace` for one `\mathchoice` branch.
+    /// §403 recovery opens the group anyway, so the recovered flag is
+    /// diagnostic only.
+    fn command_scan_math_choice_group(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
         command_processor(
             &mut self.command,
             &mut self.runtime,
@@ -1693,7 +1707,7 @@ impl CanonicalMainControl {
             &mut self.operation_observations,
             stores,
         )
-        .scan_math_choice_episodes()
+        .scan_math_choice_group()
         .map_err(command_error)
     }
 
@@ -2678,10 +2692,11 @@ enum ScannedStep {
     ExtraRightBraceEndsSemiSimpleGroup,
     ExtraEndGroup,
     /// TeX82 §1186: the closing brace of a `math_group` opened by §1153's
-    /// `push_math`. Applying it only `unsave`s; the nested field loop in
+    /// `push_math`, or §1174's `build_choices` closing a `math_choice_group`
+    /// opened by §1172/§1174. Applying it only `unsave`s; the nested loop in
     /// `execute_live_math_group` notices the level is gone and finishes the
-    /// subformula's mlist.
-    EndMathGroup,
+    /// mlist.
+    EndMathGroup(GroupKind),
     /// TeX82 §1064's general `off_save`: the innermost group could not
     /// accommodate the scanned command, so `scan_off_save` already chose and
     /// inserted the matching closer ahead of the backed-up command
@@ -3611,12 +3626,13 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndOrdinaryGroup);
     }
-    // TeX82 §1186's `math_group` arm of `handle_right_brace`: the brace that
-    // closes a subformula scanned by §1151's `scan_math`. §1153 opened this
-    // level with `push_math(math_group)`, so the pair really does bracket a
-    // save-stack level and its closer must not fall through to the ordinary
-    // or box brace arms below.
-    if innermost_group == Some(GroupKind::Math)
+    // TeX82 §1186's `math_group` arm of `handle_right_brace` (the brace that
+    // closes a subformula scanned by §1151's `scan_math`) and §1174's
+    // `math_choice_group` arm (the brace that closes one `\mathchoice`
+    // branch). §1153 and §1172/§1174 opened these levels with `push_math`,
+    // so each pair really does bracket a save-stack level and its closer must
+    // not fall through to the ordinary or box brace arms below.
+    if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = innermost_group
         && matches!(
             command.meaning(),
             Meaning::CharToken {
@@ -3625,7 +3641,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::EndMathGroup);
+        return Ok(ScannedStep::EndMathGroup(kind));
     }
     // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
     // directly in math mode starts a subformula that becomes the nucleus of a
@@ -6866,7 +6882,7 @@ fn applied_mutation_observation(
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
         | ScannedStep::EndOrdinaryGroup
-        | ScannedStep::EndMathGroup
+        | ScannedStep::EndMathGroup(..)
         | ScannedStep::OutputRoutineOpeningBrace
         | ScannedStep::EndOutputRoutine
         | ScannedStep::AlignmentPeekCell { .. }
@@ -8924,16 +8940,18 @@ fn apply_scanned_step(
             schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::EndMathGroup => {
-            // TeX82 §1186 opens with `unsave`. Everything after it -- popping
-            // `saved(0)`, `fin_mlist`, and storing the result in the field --
-            // belongs to the scanner that opened the group, so
-            // `execute_live_math_group` performs it once its level is gone.
-            let aftergroup = stores.leave_group_with_kind(GroupKind::Math).map_err(|_| {
-                ExecError::MissingToken {
-                    context: "math group",
-                }
-            })?;
+        ScannedStep::EndMathGroup(kind) => {
+            // TeX82 §1186 and §1174's `build_choices` both open with
+            // `unsave`. Everything after it -- popping `saved`, `fin_mlist`,
+            // and storing the result in the field or branch -- belongs to the
+            // scanner that opened the group, so `execute_live_math_group`
+            // performs it once its level is gone.
+            let aftergroup =
+                stores
+                    .leave_group_with_kind(kind)
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "math group",
+                    })?;
             schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }

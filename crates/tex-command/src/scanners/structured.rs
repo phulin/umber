@@ -510,16 +510,6 @@ pub struct ScannedMathScript {
     pub provenance: StructuredProvenance,
 }
 
-/// Recovery performed while completing a math field or braced math-list
-/// episode. The rejected command has already been retained for canonical
-/// replay; consumers receive no source cursor or raw command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MathEpisodeRecovery {
-    None,
-    MissingOpeningBrace,
-    MissingField,
-}
-
 /// How the stomach must realize one completed math field.
 ///
 /// TeX82 §1151's `scan_math` has exactly two outcomes: an unbraced field is
@@ -554,23 +544,6 @@ pub struct MathFieldEpisode {
     pub(crate) tokens: TracedTokenList,
     pub body: MathFieldBody,
     pub provenance: StructuredProvenance,
-}
-
-/// Immutable command-owned braced mlist episode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathGroupEpisode {
-    pub(crate) tokens: TracedTokenList,
-    pub recovery: MathEpisodeRecovery,
-    pub provenance: StructuredProvenance,
-}
-
-/// The four independently frozen branches of TeX82's `\mathchoice`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathChoiceEpisodes {
-    pub display: MathGroupEpisode,
-    pub text: MathGroupEpisode,
-    pub script: MathGroupEpisode,
-    pub scriptscript: MathGroupEpisode,
 }
 
 /// A completed script attachment. The executor selects the incomplete noad;
@@ -1301,45 +1274,25 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Completes one required braced math list. A missing opening brace is
-    /// recovered here after `scan_left_brace` has backed the rejected command
-    /// up, matching TeX's recovery ownership without exposing it to replay.
+    /// Consumes the mandatory opening brace of one `\mathchoice` branch.
     ///
-    /// This absorbing form serves only `\mathchoice` (TeX82 §1172), which
-    /// needs all four branches before any is built. §1151's `scan_math`
-    /// braced field does *not* use it: see [`MathFieldBody::OpenGroup`].
-    pub fn scan_math_group_episode(&mut self) -> Result<MathGroupEpisode, CommandError> {
+    /// TeX82 §1172's `append_choices` and §1174's `build_choices` both end in
+    /// `push_math(math_choice_group); scan_left_brace`, so all four branches
+    /// go through this one scan. Nothing is absorbed: like §1153's braced
+    /// math field, a branch body is ordinary input that main control reads
+    /// live, closed by §1174's `math_choice_group` arm of
+    /// `handle_right_brace`.
+    ///
+    /// §403's recovery is to behave as though a `{` had been read, so the
+    /// group opens either way and the rejected command -- already backed up
+    /// by `scan_left_brace` -- becomes the first thing the branch body
+    /// reads. The returned flag reports only whether that recovery ran.
+    pub fn scan_math_choice_group(&mut self) -> Result<bool, CommandError> {
         match self.scan_left_brace(true) {
-            Ok(opening) => {
-                let primary = opening.origin();
-                self.back_input(opening)?;
-                let scanned = self.scan_toks(ScanToksMode::General { expanded: false })?;
-                Ok(MathGroupEpisode {
-                    tokens: scanned.replacement_text,
-                    recovery: MathEpisodeRecovery::None,
-                    provenance: StructuredProvenance { primary },
-                })
-            }
-            Err(CommandError::InputInvariant(_)) => Ok(MathGroupEpisode {
-                tokens: self.state.finish_traced_token_list(&[]),
-                recovery: MathEpisodeRecovery::MissingOpeningBrace,
-                provenance: StructuredProvenance {
-                    primary: OriginId::UNKNOWN,
-                },
-            }),
+            Ok(_) => Ok(false),
+            Err(CommandError::InputInvariant(_)) => Ok(true),
             Err(error) => Err(error),
         }
-    }
-
-    /// Completes all four required `\mathchoice` groups before replay starts
-    /// constructing any branch.
-    pub fn scan_math_choice_episodes(&mut self) -> Result<MathChoiceEpisodes, CommandError> {
-        Ok(MathChoiceEpisodes {
-            display: self.scan_math_group_episode()?,
-            text: self.scan_math_group_episode()?,
-            script: self.scan_math_group_episode()?,
-            scriptscript: self.scan_math_group_episode()?,
-        })
     }
 
     /// Completes a script marker and its field in one command-owned episode.

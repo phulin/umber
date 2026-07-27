@@ -5,6 +5,7 @@ use tex_state::token::TracedTokenWord;
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::AlignmentRecord;
+use crate::MathFieldEpisode;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
@@ -23,7 +24,6 @@ use crate::processor::{
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
 };
-use crate::{MathFieldEpisode, MathGroupEpisode};
 
 /// Complete future-relevant state owned by the command machine.
 ///
@@ -67,31 +67,7 @@ impl CommandState {
     /// Schedules one completed math field without exposing its frozen token
     /// list to the executor. The returned opaque identity bounds replay.
     pub fn push_math_field_episode(&mut self, field: MathFieldEpisode) -> CommandReplayEpisode {
-        self.push_math_episode(field.tokens, StoredReplayReason::MathField)
-    }
-
-    /// Schedules one completed braced math-list episode. The executor owns
-    /// math-group state, while command processing retains delivery ownership.
-    pub fn push_math_group_episode(&mut self, group: MathGroupEpisode) -> CommandReplayEpisode {
-        self.push_math_episode(group.tokens, StoredReplayReason::MathGroup)
-    }
-
-    fn push_math_episode(
-        &mut self,
-        tokens: TracedTokenList,
-        reason: StoredReplayReason,
-    ) -> CommandReplayEpisode {
-        let identity = self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(reason),
-        );
-        self.replay_completions.push(identity);
-        CommandReplayEpisode(identity)
+        self.push_stored_episode(field.tokens, StoredReplayReason::MathField)
     }
 
     /// Schedules one completed `\\discretionary` part for canonical replay.

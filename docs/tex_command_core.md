@@ -3515,9 +3515,22 @@ subformula opens another `math_group` and any brace group inside the body
 opens a `simple_group`, so the innermost kind says nothing about whose
 closer arrived.
 
-`\mathchoice` (§1172) keeps the absorbing `scan_math_group_episode`, because
-it is a genuinely different section: `append_choices` needs all four branches
-before any is built. It is not evidence that §1153 may absorb.
+`\mathchoice` (§1172) is the same mechanism, not an exception to it.
+`append_choices` is `tail_append(new_choice); ... push_math(math_choice_group);
+scan_left_brace`, and §1174's `build_choices` -- the `math_choice_group` arm
+of `handle_right_brace` -- `unsave`s, stores the finished mlist in the choice
+node's display/text/script/scriptscript field, and repeats
+`push_math(math_choice_group); scan_left_brace` for the next branch. So all
+four branches are live `push_math` groups read by ordinary main control, one
+at a time, exactly like §1153's; the only difference is which group code is
+pushed and where the finished mlist is stored.
+
+Absorbing the four branches instead added a fifth observable difference on top
+of the four above: the absorbed branches are replayed from stored levels in
+_reverse_ order, so the oracle's `\displaystyle` branch arrived as
+`\scriptscriptstyle` (`umber2-johp.220`). `execute_live_math_group` takes the
+group kind as a parameter for this reason -- `math_group` and
+`math_choice_group` share every line of it.
 
 ### 33.9 `\aftergroup` is one backup per token, not one replay level
 

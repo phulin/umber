@@ -382,16 +382,8 @@ fn replay_completion_precedes_parent_delivery() {
         &mut command,
         [
             Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            Token::Char {
                 ch: 'a',
                 cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
             },
             Token::Char {
                 ch: 'z',
@@ -399,13 +391,17 @@ fn replay_completion_precedes_parent_delivery() {
             },
         ],
     );
-    // `\mathchoice`'s absorbing branch scan (TeX82 §1172) is the vehicle:
-    // §1153's braced *field* deliberately opens no episode at all.
-    let group = {
+    // §1151's unbraced `scan_math` field is the vehicle: it is the one math
+    // scan that still freezes command-owned material. §1153's braced field
+    // and §1172's `\mathchoice` branches deliberately open no episode at all.
+    let field = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor.scan_math_group_episode().expect("group scans")
+        processor
+            .scan_math_field_episode()
+            .expect("unbraced field scans")
     };
-    let episode = command.push_math_group_episode(group);
+    assert_eq!(field.body, MathFieldBody::Replay);
+    let episode = command.push_math_field_episode(field);
 
     let first = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -449,7 +445,7 @@ fn replay_completion_precedes_parent_delivery() {
 }
 
 #[test]
-fn math_choice_groups_are_completed_independently() {
+fn math_choice_group_consumes_only_its_opening_brace() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -469,75 +465,36 @@ fn math_choice_groups_are_completed_independently() {
                 ch: '}',
                 cat: Catcode::EndGroup,
             },
-            Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            Token::Char {
-                ch: 'b',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            },
-            Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            Token::Char {
-                ch: 'c',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            },
-            Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            Token::Char {
-                ch: 'd',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            },
         ],
     );
-    let choices = {
+    // TeX82 §1172/§1174 scan the mandatory brace and nothing else: the
+    // branch body is live input the stomach reads through main control, so
+    // no episode is opened and the first body token is delivered next.
+    let recovered = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor.scan_math_choice_episodes().expect("choice scans")
+        processor
+            .scan_math_choice_group()
+            .expect("branch brace scans")
     };
-    for group in [
-        choices.display,
-        choices.text,
-        choices.script,
-        choices.scriptscript,
-    ] {
-        assert_eq!(group.recovery, MathEpisodeRecovery::None);
-        command.push_math_group_episode(group);
-    }
-    let replayed = {
+    assert!(!recovered);
+    let body = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor
             .get_x_token()
-            .expect("replay remains command owned")
-            .expect("last branch replays first")
+            .expect("body stays live")
+            .expect("body token exists")
     };
     assert_eq!(
-        replayed.spelling().semantic_token(),
+        body.spelling().semantic_token(),
         Token::Char {
-            ch: 'd',
+            ch: 'a',
             cat: Catcode::Letter
         }
     );
 }
 
 #[test]
-fn missing_math_group_brace_recovers_without_consuming_rejected_command() {
+fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -549,13 +506,16 @@ fn missing_math_group_brace_recovers_without_consuming_rejected_command() {
             cat: Catcode::Letter,
         }],
     );
-    let group = {
+    let recovered = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor
-            .scan_math_group_episode()
+            .scan_math_choice_group()
             .expect("recovery completes")
     };
-    assert_eq!(group.recovery, MathEpisodeRecovery::MissingOpeningBrace);
+    // TeX82 §403 backs the rejected command up and proceeds as though a `{`
+    // had been read, so the group still opens and `x` becomes the first
+    // token of the branch body.
+    assert!(recovered);
     let replayed = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor
