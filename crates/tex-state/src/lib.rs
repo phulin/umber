@@ -44,6 +44,7 @@ pub mod cell;
 pub mod code_tables;
 mod command_context;
 pub mod dependency;
+pub mod diagnostic;
 pub mod env;
 pub mod epoch;
 pub mod font;

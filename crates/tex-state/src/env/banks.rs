@@ -129,8 +129,14 @@ impl IntParam {
     /// TeX's job-start year.
     pub const YEAR: Self = Self::new(23);
 
+    /// TeX's `\tracingonline` diagnostic-destination gate (tex.web §245).
+    pub const TRACING_ONLINE: Self = Self::new(29);
+
     /// TeX's `\globaldefs` integer parameter.
     pub const GLOBAL_DEFS: Self = Self::new(32);
+
+    /// TeX's `\tracingpages` page-cost diagnostic level (tex.web §§987, 1005).
+    pub const TRACING_PAGES: Self = Self::new(34);
 
     /// TeX's missing-character diagnostic level.
     pub const TRACING_LOST_CHARS: Self = Self::new(36);

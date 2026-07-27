@@ -21,6 +21,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   reserved for the canonical command processor.
 - `src/dependency.rs`: Region-scoped dependency keys, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, deterministic nested propagation, and handle-independent observation tests.
+- `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
+- `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals.
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
