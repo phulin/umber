@@ -1298,14 +1298,10 @@ fn production_driver_enters_and_packs_hbox_without_legacy_dispatch() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{A}");
 
-    for context in [
-        "setbox",
-        "hbox opening",
-        "body brace",
-        "replayed brace",
-        "hbox character",
-        "hbox close",
-    ] {
+    // TeX82 §645's `scan_spec` consumes the box body's mandatory left brace
+    // itself, so `\hbox{` is one step: no brace is redelivered to main
+    // control before the body's first character.
+    for context in ["setbox", "hbox opening", "hbox character", "hbox close"] {
         assert_eq!(
             control.step(&mut universe).expect(context),
             MainControlStep::Continue
@@ -1335,14 +1331,8 @@ fn production_driver_hands_box_math_and_alignment_to_typed_control() {
         control.step(&mut universe).expect("vbox opening"),
         MainControlStep::Continue
     );
-    assert_eq!(
-        control.step(&mut universe).expect("vbox body opening"),
-        MainControlStep::Continue
-    );
-    assert_eq!(
-        control.step(&mut universe).expect("replayed vbox brace"),
-        MainControlStep::Continue
-    );
+    // §645's `scan_spec` already consumed `{`; the next step is the `}` that
+    // packages the (empty) body.
     assert_eq!(
         control.step(&mut universe).expect("vbox completion"),
         MainControlStep::Continue
@@ -2409,14 +2399,8 @@ fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
         universe.group_kinds().next_back(),
         Some(tex_state::GroupKind::VBox)
     ));
-    assert_eq!(
-        control.step(&mut universe).expect("replay opener"),
-        ReplayStep::Continue
-    );
-    assert_eq!(
-        control.step(&mut universe).expect("enter body"),
-        ReplayStep::Continue
-    );
+    // §645's `scan_spec` consumed `{` during the handoff step above, so the
+    // next delivered command is the `}` that packages the empty body.
     assert_eq!(
         control.step(&mut universe).expect("package vbox"),
         ReplayStep::Continue
@@ -2447,7 +2431,8 @@ fn canonical_initex_replay_scans_box_register_before_stomach_consumes_it() {
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox10=\vbox{}\box10\end");
 
-    for _ in 0..5 {
+    // `\setbox10=`, `\vbox{` (§645 consumes the brace), `}`.
+    for _ in 0..3 {
         assert_eq!(
             control.step(&mut universe).expect("setbox construction"),
             ReplayStep::Continue

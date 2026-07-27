@@ -270,17 +270,14 @@ pub struct ScannedSetBoxAssignment {
 
 /// The completed command-owned prefix of a TeX82 box construction.
 ///
-/// `make_box` scans its optional `to`/`spread` clause before it validates the
-/// required opening brace.  Keeping both operations here means replay only
-/// receives a typed construction request and never needs to reopen input.
+/// `scan_spec` (§645) "scans a box specification and left brace": the optional
+/// `to`/`spread` clause and then the mandatory opening brace, which it
+/// consumes. Keeping both operations here means replay only receives a typed
+/// construction request and never needs to reopen input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedBoxConstruction {
     pub kind: ScannedBoxKind,
     pub packing: ScannedPackingSpec,
-    /// Whether the required body brace was accepted and backed up for its
-    /// ordinary replay delivery. `false` represents TeX's inserted-brace
-    /// recovery; the rejected command has already been backed up.
-    pub opening_brace_replay: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -297,22 +294,22 @@ pub enum ScannedPackingSpec {
     Spread(Scaled),
 }
 
-/// The completed command-owned prefix of TeX82 §968's `begin_insert_or_adjust`
+/// The completed command-owned prefix of TeX82 §1099's `begin_insert_or_adjust`
 /// for `\insert` and `\vadjust`.
 ///
-/// `scan_eight_bit_int`'s range clamp and §968's reserved-255 recovery both
+/// `scan_eight_bit_int`'s range clamp and §1099's reserved-255 recovery both
 /// need to write a `Universe`-routed diagnostic, so this keeps only the raw
-/// scanned class number (any `i32` the integer scanner produced) and the
-/// validated opening-brace backup state. Replay performs the bounded 0..=255
-/// recovery and the `\insert255` rejection immediately before opening the
-/// insertion group -- but only for `\insert`: `\vadjust` sets `class:=255`
-/// unconditionally (`if cur_cmd=vadjust then cur_val:=255`) without ever
-/// calling `scan_eight_bit_int`, so `is_vadjust` tells replay to skip both
-/// diagnostics for that already-valid sentinel class.
+/// scanned class number (any `i32` the integer scanner produced); the
+/// mandatory opening brace is consumed here, exactly as §1099's
+/// `new_save_level(insert_group); scan_left_brace` does. Replay performs the
+/// bounded 0..=255 recovery and the `\insert255` rejection immediately before
+/// opening the insertion group -- but only for `\insert`: `\vadjust` sets
+/// `class:=255` unconditionally (`if cur_cmd=vadjust then cur_val:=255`)
+/// without ever calling `scan_eight_bit_int`, so `is_vadjust` tells replay to
+/// skip both diagnostics for that already-valid sentinel class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedInsertConstruction {
     pub class: i32,
-    pub opening_brace_replay: bool,
     pub is_vadjust: bool,
 }
 
@@ -2040,23 +2037,33 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Validates a box body's required opening brace, then restores it for
-    /// executor-owned group entry.
-    pub fn scan_box_group_opening(&mut self) -> Result<bool, CommandError> {
+    /// Reads a box body's mandatory opening brace: TeX82 §403's
+    /// `scan_left_brace`, which every box-opening site reaches through
+    /// §645's `scan_spec` (`new_save_level(c); scan_left_brace`) or §1099's
+    /// `begin_insert_or_adjust` (`new_save_level(insert_group);
+    /// scan_left_brace`).
+    ///
+    /// §403 *consumes* that brace; the save level it belongs to was already
+    /// opened by the caller, so nothing is delivered to main control on its
+    /// behalf. The brace is therefore never backed up here: replay opens the
+    /// group when it receives the construction, exactly as `new_save_level`
+    /// runs before `scan_left_brace`.
+    ///
+    /// When the mandatory brace is absent, §403 recovers by backing up the
+    /// offending command and behaving as though a `{` had been read.
+    /// `scan_left_brace` has already performed that backup, so this returns
+    /// on the same footing: the brace is accounted for either way.
+    fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
         match self.scan_left_brace(true) {
-            Ok(opening) => {
-                self.back_input(opening)?;
-                Ok(true)
-            }
-            // `scan_left_brace` has retained the rejected command through
-            // its canonical backup. Replay opens the required group as the
-            // inserted brace, then consumes that command as box material.
-            Err(CommandError::InputInvariant(_)) => Ok(false),
+            Ok(_) => Ok(()),
+            Err(CommandError::InputInvariant(_)) => Ok(()),
             Err(error) => Err(error),
         }
     }
 
-    /// Scans TeX82 §§1070--1071's complete box-construction prefix.
+    /// Scans TeX82 §1083's complete box-construction prefix: §645's
+    /// `scan_spec`, whose optional `to`/`spread` clause and mandatory left
+    /// brace are both consumed before replay enters the box group.
     pub fn scan_box_construction(
         &mut self,
         primitive: UnexpandablePrimitive,
@@ -2074,26 +2081,30 @@ impl CommandProcessor<'_> {
         } else {
             ScannedPackingSpec::Natural
         };
-        let opening_brace_replay = self.scan_box_group_opening()?;
-        Ok(ScannedBoxConstruction {
-            kind,
-            packing,
-            opening_brace_replay,
-        })
+        self.scan_box_group_opening()?;
+        Ok(ScannedBoxConstruction { kind, packing })
     }
 
-    /// Scans TeX82 §968's `begin_insert_or_adjust` prefix for `\insert`:
-    /// `scan_eight_bit_int`'s raw integer scan (range validation deferred to
-    /// replay, which alone can report through `Universe`), followed by the
-    /// same required-opening-brace validation `\hbox`/`\vbox`/`\vtop` use.
-    pub fn scan_insert_construction(&mut self) -> Result<ScannedInsertConstruction, CommandError> {
-        let class = self.scan_integer()?.value;
-        let opening_brace_replay = self.scan_box_group_opening()?;
-        Ok(ScannedInsertConstruction {
-            class,
-            opening_brace_replay,
-            is_vadjust: false,
-        })
+    /// Scans TeX82 §1099's `begin_insert_or_adjust` prefix, the one routine
+    /// both `\insert` and `\vadjust` enter: `if cur_cmd=vadjust then
+    /// cur_val:=255 else scan_eight_bit_int`, then
+    /// `new_save_level(insert_group); scan_left_brace`.
+    ///
+    /// The raw integer is carried through unvalidated because
+    /// `scan_eight_bit_int`'s range clamp and the reserved-255 rejection both
+    /// need a `Universe` diagnostic sink; `\vadjust` skips the scan entirely,
+    /// so its fixed 255 is never subject to either.
+    pub fn scan_insert_construction(
+        &mut self,
+        is_vadjust: bool,
+    ) -> Result<ScannedInsertConstruction, CommandError> {
+        let class = if is_vadjust {
+            255
+        } else {
+            self.scan_integer()?.value
+        };
+        self.scan_box_group_opening()?;
+        Ok(ScannedInsertConstruction { class, is_vadjust })
     }
 
     /// Scans TeX82 §1073's box-shift prefix (`\raise`, `\lower`, `\moveleft`,
