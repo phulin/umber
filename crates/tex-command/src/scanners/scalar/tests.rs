@@ -34,6 +34,15 @@ fn push(command: &mut CommandState, tokens: Vec<Token>) {
     );
 }
 
+/// A category-code-10 space. `char_token` gives every non-letter category
+/// code 12, and TeX82 §407's `cur_cmd<>spacer` test is on the category code.
+fn space_token() -> Token {
+    Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    }
+}
+
 fn char_token(ch: char) -> Token {
     Token::Char {
         ch,
@@ -1619,4 +1628,162 @@ fn font_integers_read_the_named_font_rather_than_the_current_one() {
     );
 
     assert_eq!(processor.scan_integer().expect("skewchar scans").value, 96);
+}
+
+/// TeX82 §407's failed match restores the input as two levels, not one.
+///
+/// `back_input` undoes the offending delivery -- one observed backup push
+/// carrying its recovery record -- and `back_list(link(backup_head))` then
+/// pushes the already-matched prefix on top of it as a separate level with no
+/// recovery record of its own. Collapsing both into a single level loses a
+/// push transition the pinned oracle records for every partially matched
+/// keyword, which is what `\lower.5ex` produced when `scan_keyword("em")`
+/// consumed `e` and rejected `x`.
+#[test]
+fn a_failed_keyword_backs_the_offender_and_the_matched_prefix_up_separately() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    push(&mut command, "ex".chars().map(char_token).collect());
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let replayed = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        assert!(!processor.scan_keyword("em").expect("keyword scans").value);
+        let mut replayed = Vec::new();
+        while let Some(command) = processor.get_x_token().expect("replay delivers") {
+            match command.meaning() {
+                Meaning::CharToken { ch, .. } => replayed.push(ch),
+                other => panic!("unexpected replayed meaning {other:?}"),
+            }
+        }
+        replayed
+    };
+
+    // The prefix is pushed above the offender, so it is reread first.
+    assert_eq!(replayed, vec!['e', 'x']);
+
+    let backups = recorder
+        .0
+        .iter()
+        .filter(|record| {
+            matches!(record, CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup)
+        })
+        .count();
+    assert_eq!(backups, 2, "§407 pushes back_input and back_list");
+    let recoveries = recorder
+        .0
+        .iter()
+        .filter(|record| matches!(record, CommandObservation::Recovery(_)))
+        .count();
+    assert_eq!(
+        recoveries, 1,
+        "§323's back_list carries no recovery record; only §325's back_input does"
+    );
+    let first_backup = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup)
+        })
+        .expect("the offender is backed up");
+    assert!(
+        matches!(
+            &recorder.0[first_backup + 1],
+            CommandObservation::Recovery(recovery)
+                if recovery.tokens
+                    == vec![ObservedToken::Character {
+                        character: 'x',
+                        catcode: Catcode::Letter,
+                    }]
+        ),
+        "the recovery record names the offending token, not the matched prefix"
+    );
+}
+
+/// TeX82 §407 consumes a space read before anything has matched and never
+/// gives it back: `(cur_cmd<>spacer)or(p<>backup_head)` is false, so `k` does
+/// not advance and the token is simply dropped. A space read *after* a
+/// partial match is an ordinary mismatch instead.
+#[test]
+fn a_keyword_scan_drops_leading_spaces_and_rejects_interior_ones() {
+    let mut universe = Universe::new();
+    let leading = scan_with(
+        &mut universe,
+        vec![
+            space_token(),
+            space_token(),
+            char_token('x'),
+            char_token('y'),
+        ],
+        |processor| {
+            assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
+            let mut replayed = Vec::new();
+            while let Some(command) = processor.get_x_token().expect("replay delivers") {
+                match command.meaning() {
+                    Meaning::CharToken { ch, .. } => replayed.push(ch),
+                    other => panic!("unexpected replayed meaning {other:?}"),
+                }
+            }
+            replayed
+        },
+    );
+    assert_eq!(leading, vec!['x', 'y'], "leading spaces are discarded");
+
+    let interior = scan_with(
+        &mut universe,
+        vec![char_token('p'), space_token(), char_token('t')],
+        |processor| {
+            assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
+            let mut replayed = Vec::new();
+            while let Some(command) = processor.get_x_token().expect("replay delivers") {
+                match command.meaning() {
+                    Meaning::CharToken { ch, .. } => replayed.push(ch),
+                    other => panic!("unexpected replayed meaning {other:?}"),
+                }
+            }
+            replayed
+        },
+    );
+    assert_eq!(
+        interior,
+        vec!['p', ' ', 't'],
+        "a space after a partial match is restored with the prefix"
+    );
+}
+
+/// TeX82 §407's `cur_cs=0`: only a character token can spell a keyword
+/// letter. A control sequence `\let` to one has the same `cur_cmd` and
+/// `cur_chr` and still cannot match.
+#[test]
+fn a_control_sequence_let_to_a_keyword_letter_does_not_match() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let letter_p = universe.intern("p").symbol();
+    universe.set_meaning(
+        letter_p,
+        Meaning::CharToken {
+            ch: 'p',
+            cat: Catcode::Letter,
+        },
+    );
+    push(&mut command, vec![Token::Cs(letter_p), char_token('t')]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
 }

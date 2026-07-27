@@ -512,6 +512,50 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §323's `back_list`: `begin_token_list(p,backed_up)`.
+    ///
+    /// This is not §325's `back_input`, and the difference is structural
+    /// rather than cosmetic. `back_input` undoes *the* preceding delivery: it
+    /// runs §325's stack-conservation loop, reverses that delivery's literal
+    /// brace `align_state` adjustment, and is observed together with the
+    /// token it is undoing. `back_list` merely pushes a token list the caller
+    /// assembled, so it does none of those things -- the instrumented
+    /// `begin_token_list` observes a `backed_up` push with no recovery record
+    /// at all.
+    ///
+    /// §407's `scan_keyword` is why both exist: a failed match backs the
+    /// offending token up with `back_input` and then pushes the
+    /// already-matched prefix as a second, separate level, so the prefix is
+    /// reread first and the offender after it. Collapsing the two into one
+    /// level loses a push transition the oracle records, and merging the
+    /// prefix into `back_input`'s level would additionally claim the prefix
+    /// as part of the undone delivery.
+    ///
+    /// §407 guards its call with `if p<>backup_head`, so an empty list is the
+    /// caller's business; pushing one here would observe a level that retires
+    /// without ever delivering a token.
+    pub(crate) fn back_list(&mut self, tokens: Vec<BackedUpToken>) {
+        debug_assert!(
+            !tokens.is_empty(),
+            "TeX82 §407 guards back_list with `p<>backup_head`"
+        );
+        let level = self.command.push_token_level(
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(tokens)),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Backup,
+            reason: InputReason::Backup,
+            level: level.0,
+            position: 0,
+        }));
+    }
+
     /// Backs up a token manufactured by command processing rather than by a
     /// preceding raw delivery. TeX82 §25 uses this for the control sequence
     /// constructed by `\\csname`: after name lookup it assigns `cur_tok` and

@@ -186,9 +186,11 @@ const DECIMAL_RADIX: u8 = 10;
 
 /// Recognizes TeX82 §448's `point_token` and `continental_point_token`.
 ///
-/// §445 defines both as `other_token` plus a character, so this is a test on
-/// the whole token, not on its character alone: only a category-12 `.` or `,`
-/// introduces a decimal fraction. `scan_dimen` aliases
+/// §438 defines both as `other_token` plus a character, and §289 defines
+/// `other_token` as `2^8*other_char`, so this is a test on the whole token,
+/// not on its character alone: only a category-12 `.` or `,` introduces a
+/// decimal fraction. (§445 defines `zero_token`, `A_token`, and
+/// `other_A_token`, not these two.) `scan_dimen` aliases
 /// `continental_point_token` to `point_token` twice, so a comma behaves
 /// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
 /// `0.5pt`.
@@ -301,68 +303,116 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Scans an optional expanded keyword. A failed match is replayed through
-    /// the sole canonical raw-delivery path.
+    /// TeX82 §407's `scan_keyword`, which tex.web writes as
+    ///
+    /// ```text
+    /// p:=backup_head; link(p):=null; k:=str_start[s];
+    /// while k<str_start[s+1] do
+    ///   begin get_x_token;
+    ///   if (cur_cs=0)and((cur_chr=so(str_pool[k]))or
+    ///                    (cur_chr=so(str_pool[k])-"a"+"A")) then
+    ///     begin store_new_token(cur_tok); incr(k);
+    ///     end
+    ///   else if (cur_cmd<>spacer)or(p<>backup_head) then
+    ///     begin back_input;
+    ///     if p<>backup_head then back_list(link(backup_head));
+    ///     scan_keyword:=false; return;
+    ///     end;
+    ///   end;
+    /// flush_list(link(backup_head)); scan_keyword:=true;
+    /// ```
+    ///
+    /// Three properties of that loop are load-bearing and none of them is a
+    /// special case.
+    ///
+    /// - The failed match restores the input as **two** levels, not one:
+    ///   §325's `back_input` for the offending token, then §323's `back_list`
+    ///   for the matched prefix pushed on top of it. Both pushes are
+    ///   observable, and only the first carries a recovery record.
+    /// - A spacer read while nothing has matched yet (`p=backup_head`) takes
+    ///   neither branch: it is consumed, discarded for good, and `k` does not
+    ///   advance. `scan_keyword` therefore skips leading spaces rather than
+    ///   restoring them, and a spacer *after* a partial match is an ordinary
+    ///   mismatch.
+    /// - `cur_cs=0` restricts a match to a character token. A control
+    ///   sequence `\let` to a character (or an active character) has the same
+    ///   `cur_cmd`/`cur_chr` and still cannot spell a keyword letter.
+    ///
+    /// The comparison itself is on `cur_chr` alone, so a keyword letter
+    /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
+    /// uppercase form of tex.web's all-lowercase keywords.
     pub fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
-        let mut consumed = Vec::new();
+        let letters = keyword.chars().collect::<Vec<_>>();
+        // `link(backup_head)`: the tokens matched so far, in delivery order.
+        let mut matched = Vec::new();
         let mut provenance = OriginId::UNKNOWN;
-        let first = loop {
+        let mut index = 0;
+        while index < letters.len() {
             let Some(command) = self.get_x_token()? else {
-                return Ok(ScannedScalar {
-                    value: false,
-                    recovery: ScalarRecovery::None,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                });
+                // tex.web cannot reach this: `get_x_token` always yields, and
+                // exhausted input is `\\end`'s business. Restore the prefix
+                // the same way a mismatch would and report no keyword.
+                if !matched.is_empty() {
+                    self.back_matched_keyword_prefix(matched);
+                }
+                return Ok(Self::keyword_result(false, provenance));
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            if matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
-                consumed.push(command);
-                continue;
-            }
-            break command;
-        };
-        let mut first = Some(first);
-        for expected in keyword.chars() {
-            let command = if let Some(command) = first.take() {
-                command
-            } else {
-                let Some(command) = self.get_x_token()? else {
-                    self.replay_scalar_commands(consumed)?;
-                    return Ok(ScannedScalar {
-                        value: false,
-                        recovery: ScalarRecovery::None,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    });
-                };
-                command
-            };
-            if !matches!(command.meaning(), Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected))
+            if command.control_sequence().is_none()
+                && matches!(
+                    command.meaning(),
+                    Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&letters[index])
+                )
             {
-                consumed.push(command);
-                self.replay_scalar_commands(consumed)?;
-                return Ok(ScannedScalar {
-                    value: false,
-                    recovery: ScalarRecovery::None,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                });
+                matched.push(command);
+                index += 1;
+            } else if matched.is_empty()
+                && matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                )
+            {
+                // `(cur_cmd<>spacer)or(p<>backup_head)` is false: §407 drops
+                // the space and rereads without advancing `k`.
+            } else {
+                self.back_input(command)?;
+                if !matched.is_empty() {
+                    self.back_matched_keyword_prefix(matched);
+                }
+                return Ok(Self::keyword_result(false, provenance));
             }
-            consumed.push(command);
         }
-        Ok(ScannedScalar {
-            value: true,
+        // `flush_list(link(backup_head))`: a complete match consumes its
+        // tokens outright.
+        Ok(Self::keyword_result(true, provenance))
+    }
+
+    /// §407's `back_list(link(backup_head))`, over commands rather than raw
+    /// tokens so the replayed prefix keeps each delivery's exact spelling and
+    /// source provenance.
+    fn back_matched_keyword_prefix(&mut self, matched: Vec<CurrentCommand>) {
+        self.back_list(
+            matched
+                .into_iter()
+                .map(|command| crate::input::BackedUpToken {
+                    spelling: command.spelling(),
+                    source_provenance: command.source_provenance(),
+                })
+                .collect(),
+        );
+    }
+
+    const fn keyword_result(value: bool, primary: OriginId) -> ScannedScalar<bool> {
+        ScannedScalar {
+            value,
             recovery: ScalarRecovery::None,
-            provenance: ScalarProvenance {
-                primary: provenance,
-            },
-        })
+            provenance: ScalarProvenance { primary },
+        }
     }
 
     /// Scans an integer or an internal integer quantity.
@@ -708,8 +758,11 @@ impl CommandProcessor<'_> {
             // §452: "|point_token| is being re-scanned". It is `get_token`,
             // not `get_x_token`, so the point is delivered raw exactly once
             // and never expanded. A unit stays in the backed-up input for the
-            // keyword scanner instead.
-            let _ = self.get_next()?;
+            // keyword scanner instead. §13's rule that every raw-delivery
+            // caller matches the section it implements makes this `get_token`
+            // rather than `get_next`, even though the token being re-scanned
+            // can only ever be the point this branch just backed up.
+            let _ = self.get_token()?;
         }
         self.scan_units_after_integer(integer, decimal, allow_infinite, mu)
             .map(Some)
@@ -1817,37 +1870,6 @@ impl CommandProcessor<'_> {
     pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
         Ok(scanned.value as u16)
-    }
-
-    fn replay_scalar_commands(
-        &mut self,
-        commands: Vec<CurrentCommand>,
-    ) -> Result<(), CommandError> {
-        if commands.is_empty() {
-            return Ok(());
-        }
-        if commands.len() == 1 {
-            let command = commands.into_iter().next().expect("checked singleton");
-            return self.back_input(command);
-        }
-        for command in &commands {
-            self.undo_alignment_delivery(command);
-        }
-        self.command.push_token_level(
-            crate::input::TokenPayload::BackedUp(crate::input::SharedBackedUpBuffer::new(
-                commands
-                    .into_iter()
-                    .map(|command| crate::input::BackedUpToken {
-                        spelling: command.spelling(),
-                        source_provenance: command.source_provenance(),
-                    })
-                    .collect::<Vec<_>>(),
-            )),
-            crate::input::TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),
-            crate::input::RetirementBehavior::Pop,
-            crate::input::ReplayTrace::BackedUp,
-        );
-        Ok(())
     }
 }
 
