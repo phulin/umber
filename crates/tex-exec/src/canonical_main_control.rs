@@ -108,7 +108,7 @@ enum ReplayBoxKind {
     HBox,
     VBox,
     VTop,
-    /// TeX82 §968/§1096's `\insert<class>{...}` or `\vadjust{...}` body --
+    /// TeX82 §1099/§1100's `\insert<class>{...}` or `\vadjust{...}` body --
     /// the latter shares the exact same construction with `class` fixed at
     /// 255 (`begin_insert_or_adjust`'s `if cur_cmd=vadjust then
     /// cur_val:=255`). This reuses the box brace-matching machinery
@@ -4077,7 +4077,7 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ScannedStep::VSplit(
             processor.scan_vsplit().map_err(command_error)?,
         )),
-        // TeX82 §1071's `make_box(box_code)` scans the register through
+        // TeX82 §1079's `make_box(box_code)` scans the register through
         // `scan_int` before handing the completed box-list operation to the
         // stomach. In particular, the first digit remains raw command input,
         // never an executor-side backup/replay artifact.
@@ -4169,7 +4169,7 @@ fn scan_command(
                 .scan_box_construction(primitive)
                 .map_err(command_error)?,
         )),
-        // TeX82 §968's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
+        // TeX82 §1099's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
         // is legal in every mode with no mode switch of its own, exactly like
         // `\penalty` and `\mark` above.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Insert) => {
@@ -4179,7 +4179,7 @@ fn scan_command(
                     .map_err(command_error)?,
             ))
         }
-        // TeX82 §968's `begin_insert_or_adjust` with `cur_val:=255` fixed
+        // TeX82 §1099's `begin_insert_or_adjust` with `cur_val:=255` fixed
         // (`if cur_cmd=vadjust then cur_val:=255`) rather than scanned --
         // `\vadjust` shares `\insert`'s exact class-255 body construction,
         // recognized in `finish_insert_or_adjust_group` below. Unlike
@@ -6508,7 +6508,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
     }
 }
 
-/// TeX82 §1071 completes `box_end` synchronously: a `\shipout` box is
+/// TeX82 §1075 completes `box_end` synchronously: a `\shipout` box is
 /// published while its command-owned terminator backup is still live.  The
 /// artifact kernel receives only an already-published detached input summary;
 /// it never receives a legacy source stack or scans the command operand.
@@ -8136,7 +8136,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginInsert(construction) => {
-            // TeX82 §968's `begin_insert_or_adjust`: `scan_eight_bit_int`'s
+            // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`'s
             // own range clamp ("Bad register code", recovering as class 0)
             // and the additional `\insert255` rejection ("box 255 is
             // special") both run here, now that a `Universe` diagnostic sink
@@ -8161,7 +8161,7 @@ fn apply_scanned_step(
             let class = class as u16;
             stores.enter_group_with_kind(GroupKind::Insert);
             modes.push(Mode::InternalVertical);
-            // §968: `normal_paragraph` resets \parshape/\looseness/\hangindent/
+            // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
             crate::assignments::normal_paragraph(modes, stores);
@@ -8174,7 +8174,7 @@ fn apply_scanned_step(
                 leader_kind: None,
                 shift: None,
             });
-            // Unlike `\hbox`/`\vbox`/`\vtop`, §968 never begins the
+            // Unlike `\hbox`/`\vbox`/`\vtop`, §1099 never begins the
             // `\everyhbox`/`\everyvbox` token list for an insertion body.
             Ok(ReplayStep::Continue)
         }
@@ -9142,7 +9142,7 @@ fn apply_box_shift(
     match shift.payload {
         ScannedBoxShiftPayload::Missing => {
             // `scan_box`'s own "A <box> was supposed to be here" recovery
-            // (tex.web §1076); the rejected command has already been backed
+            // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_shift_payload` for ordinary replay.
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
@@ -9479,10 +9479,10 @@ fn start_canonical_paragraph(
     Ok(())
 }
 
-/// Closes a `\insert<class>{...}` or `\vadjust{...}` body: TeX82 §968/§1096's
+/// Closes a `\insert<class>{...}` or `\vadjust{...}` body: TeX82 §1099/§1100's
 /// shared `insert_group` case of `handle_right_brace`.
 ///
-/// `end_graf` first finishes any paragraph left open inside the body (§1096:
+/// `end_graf` first finishes any paragraph left open inside the body (§1100:
 /// `end_graf` runs before anything else, exactly like
 /// `vbox_group`/`vtop_group`). `\splittopskip`, `\splitmaxdepth`, and
 /// `\floatingpenalty` are read at their current (still-local) values before
@@ -9494,7 +9494,7 @@ fn start_canonical_paragraph(
 /// ordinary `\vbox`, neither `\insert` nor `\vadjust` ever suppresses those
 /// parameters.
 ///
-/// §1096 then branches on `saved(0)` (`class`, here): `class<255` builds an
+/// §1100 then branches on `saved(0)` (`class`, here): `class<255` builds an
 /// `ins_node` whose `height` field is the packed natural height+depth
 /// (TeX82's `size`, consumed only by the page builder's splitting
 /// arithmetic, `crate::page_builder`); `class=255` (`\vadjust`) instead
@@ -9504,7 +9504,7 @@ fn start_canonical_paragraph(
 /// `delete_glue_ref(q)`'s discard. Either node is appended to whatever list
 /// was open when `\insert`/`\vadjust` began -- the enclosing mode's list, not
 /// a side channel -- exactly like `\mark` and `\penalty` above. `nest_ptr=0`
-/// (`is_outer_vertical`) then invokes `build_page`, matching §968's `if
+/// (`is_outer_vertical`) then invokes `build_page`, matching §1099's `if
 /// nest_ptr=0 then build_page` (`\vadjust` never actually reaches this since
 /// it is forbidden in outer vertical mode).
 fn finish_insert_or_adjust_group(
