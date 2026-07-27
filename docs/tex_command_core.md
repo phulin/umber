@@ -561,6 +561,14 @@ provenance. The latter returns parameter and replacement lists separately;
 expanded balanced scans continue to use the canonical macro matcher, so macro
 arguments never become executor-owned input.
 
+The collector applies TeX82 §479's parameter-character rule -- `#<digit>`
+becomes an out-parameter token and `##` becomes one parameter character --
+exactly when §477's `macro_def` is set, that is, only for a macro definition's
+replacement text. It is never gated on how many parameters the parameter text
+declared: a parameterless `\def` still collapses `##`. Every other balanced
+scan (`\message`, `\write`, `\toks`, `\mark`, e-TeX `\unexpanded`) stores
+parameter characters verbatim.
+
 Within an expanded `scan_toks` collection, `\the` expands only its
 internal-value target, as TeX82's internal-value scanner requires. Primitive
 register targets (`\count`, `\dimen`, `\skip`, `\muskip`, and `\toks`) keep
