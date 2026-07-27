@@ -33,6 +33,24 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-check-lint-passes.py`: synthetic-input proof that each coverage guard
   in `check-lint-passes.py` fails when it should; the clippy gate runs it
   before trusting them.
+- `tier-runner.sh`: sourced step accounting shared by the deferred tiers; gives
+  each one named steps, a `VERDICT:` line naming what ran, a BLOCKED outcome
+  for an absent prerequisite that never exits 0, and a stamp written from that
+  accounting.
+- `tier_stamp.py`: the deferred-tier registry, stamp writer, and staleness
+  report; classifies each tier against the tree in front of the reader and
+  treats only a whole clean run at HEAD as evidence. `scripts/check.sh` and
+  `run-native-tests.py` print its report, and `--require-attempted` is what
+  `hooks/pre-push` refuses a never-invoked tier with.
+- `test_tier_stamp.py`: synthetic-input proof that the classifier refuses every
+  shape that must not count as evidence; `tier_stamp.py report` runs it first.
+- `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`: the three
+  deferred tiers, each built on `tier-runner.sh`. Run one with no arguments for
+  the whole tier, or name steps to run exactly those. See
+  [Deferred Test Tiers](../docs/testing_infrastructure.md#deferred-test-tiers).
+- `hooks/`: versioned git hooks installed by `install-hooks.sh` through
+  `core.hooksPath`; `pre-commit` runs `check.sh` and `pre-push` refuses a push
+  while a deferred tier has never been invoked in the checkout.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
 - `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
   output-progress, fuel, and termination defaults.

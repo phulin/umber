@@ -593,9 +593,11 @@ integer feature values, script/language/direction identity, mark positioning,
 and exact HTML CSS installation are implemented. Sibling selections reuse one
 retained transport object and decoded SFNT allocation while keeping separate
 metrics, cmap, shaping faces, and instance identities. The optional
-`scripts/check-hb-shape-fixtures.sh` diagnostic compares committed mark and
-complex-shaping fixtures with local C HarfBuzz, reports diffs, and skips
-successfully when `hb-shape` is unavailable; it is not a build or CI input.
+`scripts/check-hb-shape-fixtures.sh` tier compares committed mark and
+complex-shaping fixtures with local C HarfBuzz and reports diffs. It runs on
+demand rather than as a build or CI input, but it does not skip: an absent
+`hb-shape` reports `BLOCKED` and exits 4, and every routine gate run prints
+what the tier last did.
 
 ### Deferred: bidi and complex scripts
 
