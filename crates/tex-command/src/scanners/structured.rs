@@ -1402,15 +1402,40 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Completes the scalar portion of a math-mode primitive.  Any following
+    /// Completes the scalar portion of one math-mode command.  Any following
     /// field or braced list is intentionally represented by a later opaque
     /// replay episode, so the stomach never receives a source cursor.
+    ///
+    /// The table is keyed on the delivered [`Meaning`], not on
+    /// [`UnexpandablePrimitive`], because TeX82's math vocabulary is not
+    /// exclusively primitive-shaped: §1154's `mmode+math_given` case carries
+    /// its math code in the delivered command itself (a `\\mathchardef`
+    /// target, §1224), exactly as `mmode+math_char_num` carries it in the
+    /// integer `\\mathchar` scans. Keying on the primitive alone silently
+    /// excluded `math_given` from the whole mmode table.
     pub fn scan_canonical_math_request(
         &mut self,
-        primitive: UnexpandablePrimitive,
+        command: &crate::CurrentCommand,
     ) -> Result<Option<CanonicalMathRequest>, CommandError> {
         use CanonicalMathRequest as Request;
         use MathTextFieldKind as Field;
+        // TeX82 §1154's `mmode+math_given: set_math_char(cur_chr)`. Unlike
+        // `mmode+math_char_num`, which reaches the same `set_math_char`
+        // (§1155) through §436's `scan_fifteen_bit_int`, the code is already
+        // complete in the delivered command, so nothing is scanned and the
+        // math char's provenance is the delivering token's own origin.
+        if let Meaning::MathCharGiven(code) = command.meaning() {
+            return Ok(Some(Request::Character(ScannedMathCharacter {
+                code,
+                recovered: false,
+                provenance: StructuredProvenance {
+                    primary: command.origin(),
+                },
+            })));
+        }
+        let Meaning::UnexpandablePrimitive(primitive) = command.meaning() else {
+            return Ok(None);
+        };
         let request = match primitive {
             UnexpandablePrimitive::MathChar => Request::Character(self.scan_math_character()?),
             UnexpandablePrimitive::Delimiter => Request::Delimiter(self.scan_math_delimiter()?),

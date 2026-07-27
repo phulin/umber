@@ -849,18 +849,29 @@ itself loops on `CommandProcessor::get_x_token` until a non-space command
 appears, then backs it up for ordinary redelivery, achieving tex.web's `goto
 reswitch` without a `reswitch` label to jump to.
 
-TeX82 §1046's full `non_math(...)` table is exactly the math-noad, math-style,
-and math-delimiter primitive family that `scan_canonical_math_request` (§5's
-math-request vocabulary above) and the `\left`/`\right`/`\middle` gate
-otherwise dispatch only under `Mode::Math`/`Mode::DisplayMath`: `\mathchar`,
+TeX82 §1046's `non_math(...)` table is _not_ primitive-shaped throughout, and
+reading it as though it were is what left `math_given` with no math-mode
+dispatch at all (umber2-johp.194). Three of its members carry no
+`UnexpandablePrimitive`: `non_math(sup_mark)` and `non_math(sub_mark)` are
+character categories, and `non_math(math_given)` is a `\mathchardef` target,
+whose math code lives in the delivered `Meaning::MathCharGiven` itself.
+`scan_canonical_math_request` is therefore keyed on the delivered `Meaning`,
+not on the primitive, so `math_given` joins `math_char_num` in the same
+§1154/§1155 `set_math_char` path instead of falling through to a loud
+`UnimplementedMeaning`.
+
+The rest of the table is the math-noad, math-style, and math-delimiter
+primitive family that `scan_canonical_math_request` (§5's math-request
+vocabulary above) and the `\left`/`\right`/`\middle` gate otherwise dispatch
+only under `Mode::Math`/`Mode::DisplayMath`: `\mathchar`,
 `\delimiter`, the eight `mathord`/`.../mathinner` component primitives plus
 `\underline`/`\overline`, `\left`/`\right`/`\middle`, the six `\above`/`\atop`/
 `\over` (with and without delimiters) fraction primitives, `\radical`, the
 four style primitives, `\mathchoice`, `\vcenter`, `\mkern`, the three
 `\limits`/`\nolimits`/`\displaylimits` switches, `\mskip`, and `\mathaccent`
 (`\nonscript` above is one member of this same family, not a special case).
-`scan_unclassified_primitive`'s fallback match expresses that whole table as
-one grouped arm -- not 34 duplicated ones -- calling the same
+`scan_unclassified_primitive`'s fallback match expresses that primitive part
+of the table as one grouped arm -- not 34 duplicated ones -- calling the same
 `recover_missing_math_shift` used by `mmode+hrule`/`mmode+vskip`/
 `non_math(non_script)`, since every member reaching that fallback has already
 proven `mode` is not math (the math-mode dispatch above would have consumed
