@@ -6999,6 +6999,42 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
     );
 }
 
+/// tex.web §1200's `resume_after_display` ends with
+/// `if nest_ptr=1 then build_page`, and §1005's `fire_up` inside §994's
+/// `build_page` reaches §1025's `begin_token_list(output_routine,output_text)`
+/// before `build_page` returns. So the page the closing `$$` overfills enters
+/// `\output` inside that same command, ahead of whatever token follows the
+/// display -- not one command later (`umber2-johp.237`).
+#[test]
+fn display_resumption_enters_output_before_the_next_command() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        // A 20pt box fills two thirds of a 30pt page; the display contributes
+        // a second one, so the penalty after it is the first breakpoint whose
+        // cost is `awful_bad`. `\count2` records whether `\output` had
+        // already run when the command right after `$$` executed.
+        br"\output={\global\count1=1 \global\setbox9=\box255}\topskip=0pt\vsize=30pt\maxdepth=2pt
+           \setbox0=\hbox{}\ht0=20pt \copy0
+           \noindent$$\copy0$$\global\count2=\count1 \end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.count(1),
+        1,
+        "the overfull page entered the \\output routine"
+    );
+    assert_eq!(
+        universe.count(2),
+        1,
+        "\\output ran during the command that closed the display, so the very \
+         next command already sees its global assignment"
+    );
+}
+
 /// Node identity for a vertical list, with arena handles erased: two
 /// independent runs allocate different `NodeListId`s for structurally
 /// identical material, so only kind and dimensions may be compared.

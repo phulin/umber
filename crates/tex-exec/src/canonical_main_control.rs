@@ -917,6 +917,71 @@ impl CanonicalMainControl {
         ControlFlow::Break(applied)
     }
 
+    /// The page/output tail every step ends with, for the host-owned steps
+    /// [`Self::apply_host_owned_step`] applies instead of `apply_scanned_step`.
+    ///
+    /// tex.web has no deferral here at all: §1005's `fire_up(...)` runs inside
+    /// §994's `build_page`, and §1012's `fire_up` reaches §1025's
+    /// `begin_token_list(output_routine,output_text)` before `build_page`
+    /// returns to whatever contributed. Umber buffers that push and performs it
+    /// in `fire_pending_page_output` at the end of the step instead, so that
+    /// tail is the whole of the mechanism and it has to run after *every*
+    /// step. §1030's math (`init_math`/`after_math`), math-delimiter,
+    /// math-shift, discretionary and replay-completion cases returned before
+    /// it, so a page frozen inside one of them -- §1200's
+    /// `resume_after_display` ends with `if nest_ptr=1 then build_page` -- kept
+    /// `page_fire_up` pending until some later ordinary command's step, and
+    /// `\output` was entered that many deliveries late.
+    fn finish_host_owned_step(
+        &mut self,
+        applied: Result<ReplayStep, ExecError>,
+        artifact_count: usize,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        let applied = match applied {
+            Ok(applied) => applied,
+            Err(error) => {
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.page_output_observations.clear();
+                return Err(error);
+            }
+        };
+        // Only an episode this step actually starts publishes records: when
+        // nothing is pending, draining the command state's held named
+        // token-list pushes here would reorder pushes another step owns.
+        #[cfg(any(test, feature = "instrumentation"))]
+        let opens_output_episode =
+            stores.page_fire_up().is_some() && !self.boxes.output_routine_active;
+        self.fire_pending_page_output(stores)?;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            if opens_output_episode {
+                // Same order as the ordinary tail: the named token-list push
+                // command state held across the transition, then the shipouts
+                // it committed, then the episode's own records.
+                let mut records: Vec<CommandObservation> = self
+                    .command
+                    .take_named_token_list_push_observations()
+                    .into_iter()
+                    .map(CommandObservation::Input)
+                    .collect();
+                records.extend(
+                    committed_shipout_observations(artifact_count, stores)
+                        .into_iter()
+                        .map(CommandObservation::Effect),
+                );
+                records.append(&mut self.page_output_observations);
+                self.observe_committed(records);
+            }
+            self.page_output_observations.clear();
+        }
+        if stores.world().artifact_commits().len() != artifact_count {
+            self.completed_boundaries
+                .push(crate::EngineBoundary::ShipoutComplete);
+        }
+        Ok(applied)
+    }
+
     /// Executes TeX82's three completed discretionary parts as isolated
     /// restricted-horizontal episodes. The command machine owns replay of the
     /// immutable lists, including expansion, grouping recovery, and origins;
@@ -1059,12 +1124,14 @@ impl CanonicalMainControl {
         // `main_loop` entries ends at `goto big_switch`.
         let main_loop_character = scanned.main_loop_character();
         self.main_loop_active = false;
+        let artifact_count = stores.world().artifact_commits().len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
-            ControlFlow::Break(applied) => return applied,
+            ControlFlow::Break(applied) => {
+                return self.finish_host_owned_step(applied, artifact_count, stores);
+            }
             ControlFlow::Continue(scanned) => scanned,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
-        let artifact_count = stores.world().artifact_commits().len();
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -1880,8 +1947,11 @@ impl CanonicalMainControl {
         // `main_loop` entries ends at `goto big_switch`.
         let main_loop_character = scanned.main_loop_character();
         self.main_loop_active = false;
+        let artifact_count = stores.world().artifact_commits().len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
-            ControlFlow::Break(applied) => return applied,
+            ControlFlow::Break(applied) => {
+                return self.finish_host_owned_step(applied, artifact_count, stores);
+            }
             ControlFlow::Continue(scanned) => scanned,
         };
         let mutation = applied_mutation_observation(&scanned, stores);
@@ -1926,7 +1996,6 @@ impl CanonicalMainControl {
             _ => None,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
-        let artifact_count = stores.world().artifact_commits().len();
         let result = apply_scanned_step(
             scanned.clone(),
             stores,
