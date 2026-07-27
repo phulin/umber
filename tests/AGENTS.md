@@ -292,8 +292,14 @@ environment.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
-and return cleanly when an
-external input or local oracle is absent. Run
+and FAIL, naming every missing file and its materialization command, when an
+external input or local oracle is absent; they never return cleanly over an
+unexecuted byte-exact comparison. The gitignored entries in the repository
+`.gitignore` are the single source that the gate registry in
+`crates/umber/tests/it/e2e_conformance/assets.rs` and the
+`scripts/check-and-test.sh` preflight both bind to; adding a fifth oracle
+requires registering a fifth gate. See "End-to-End Conformance Gate Contract"
+in `docs/testing_infrastructure.md`. Run
 `scripts/setup-conformance-tests.sh` to acquire the pinned third-party inputs
 that are not already cached and generate all four oracles with pdfTeX. The
 script delegates regeneration to `scripts/regen-fixtures.sh`; TRIP uses its
