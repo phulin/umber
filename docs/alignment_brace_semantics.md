@@ -4,8 +4,9 @@ Status: implementation contract for TeX82 alignment token delivery.
 
 ## Canonical boundary
 
-The canonical sources are `third_party/reference/tex/tex/tex.web` and the
-matching `third_party/texlive-source/src/texk/web2c/pdftexdir/pdftex.web`.
+The canonical sources are `third_party/texlive-source/src/texk/web2c/tex.web`
+and the matching
+`third_party/texlive-source/src/texk/web2c/pdftexdir/pdftex.web`.
 pdfTeX retains TeX82's alignment scanner, macro argument, conditional,
 `scan_toks`, `off_save`, and `do_endv` rules; its extensions do not introduce
 a second alignment depth.
