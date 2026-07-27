@@ -844,10 +844,8 @@ already do. TeX82 §1171's `mmode+non_script` (`\nonscript`) and §1046's
 `CommandProcessor::recover_missing_math_shift` unchanged -- the same generic
 `insert_dollar_sign` call already used for `\vskip` reached in math mode --
 proving that helper is not `\vskip`-specific. TeX82 §1045's
-`any_mode(ignore_spaces)` needs no apply-side step at all: `scan_command`
-itself loops on `CommandProcessor::get_x_token` until a non-space command
-appears, then backs it up for ordinary redelivery, achieving tex.web's `goto
-reswitch` without a `reswitch` label to jump to.
+`any_mode(ignore_spaces)` needs no apply-side step at all, and no backup
+either -- see §33.7.
 
 TeX82 §1046's `non_math(...)` table is _not_ primitive-shaped throughout, and
 reading it as though it were is what left `math_given` with no math-mode
@@ -3431,6 +3429,34 @@ The `mode>0` test belongs to §1138's probe alone, beside the decision to
 consume or back up the second `$`. A second copy of it in the step's
 application can disagree with the backup that already happened, and then the
 consumed token is simply lost.
+
+### 33.7 `goto reswitch` is not `back_input`
+
+tex.web puts `reswitch:` _above_ `main_control`'s big case and below
+`big_switch`'s `get_x_token` (§1030). A case that has already fetched its own
+replacement command therefore dispatches that command in place: no input level
+is pushed, no recovery record is written, and the command is delivered exactly
+once. `back_input` is a different operation with a different observable
+signature, and the two are not interchangeable.
+
+`scan_step` owns that label. It fetches once, collects §1211's prefixes, and
+loops; a case that reswitches assigns the command it fetched and continues,
+re-entering prefix collection exactly as tex.web's case re-enters through
+`prefix`. The canonical scan owns one such case: TeX82 §1045's
+`any_mode(ignore_spaces)`, whose body is `<Get the next non-blank non-call
+token>; goto reswitch`. §406 spells that helper as
+`repeat get_x_token until cur_cmd<>spacer`, which is `next_non_space`, so
+`\ignorespaces` consumes the spaces and nothing else.
+
+Substituting `back_input` for the jump costs five semantic events per
+`\ignorespaces` -- a backup push, a recovery record, a duplicate raw and
+expanded delivery, and a backup retirement -- and re-derives the redelivered
+command's provenance from the backup level rather than from its source
+(`umber2-johp.196`, plain.tex's `\textindent` reaching `\footstrut`'s
+`\vbox␣to\splittopskip{}`). §1045 is not the only `goto reswitch`: §1030's
+`hmode+no_boundary` is a second one inside `main_control`, and §1151's
+`scan_math` carries a `reswitch` label of its own for `char_num`. Neither may
+grow a backup, for the same reason.
 
 ## 34. End-state invariants
 

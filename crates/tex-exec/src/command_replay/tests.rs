@@ -5959,6 +5959,57 @@ fn canonical_ignorespaces_skips_spaces_before_the_next_command() {
 }
 
 #[test]
+fn canonical_ignorespaces_reswitches_without_backing_the_next_command_up() {
+    // TeX82 §1045's `goto reswitch` dispatches the command §406's
+    // `repeat get_x_token until cur_cmd<>spacer` already fetched, from the
+    // `reswitch:` label §1030 places *above* `main_control`'s big case. No
+    // input level is pushed and the command is delivered exactly once;
+    // `back_input` in its place emits a backup push, a recovery record, a
+    // duplicate raw/expanded delivery pair, and a backup retirement that the
+    // pinned oracle never records (`umber2-johp.196`).
+    // `\relax` is §1045's neighbouring `do_nothing` case: it scans nothing, so
+    // the only backup this run could produce is the one under test.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\ignorespaces   \relax");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert!(
+        !observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(record) if record.reason == InputReason::Backup
+        )),
+        "§1045 reswitches in place and pushes no backup level: {:?}",
+        observations.0
+    );
+    let relax_deliveries = observations
+        .0
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(delivery)
+                    if matches!(&delivery.spelling, ObservedToken::ControlSequence(name) if name == "relax")
+            )
+        })
+        .count();
+    assert_eq!(
+        relax_deliveries, 2,
+        "the reswitched command is delivered once raw and once expanded: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn canonical_noboundary_in_vertical_mode_starts_a_paragraph() {
     // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
     // friends: `back_input; new_graf(true)`.
