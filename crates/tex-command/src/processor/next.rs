@@ -253,23 +253,7 @@ impl CommandProcessor<'_> {
             } => "missing_right_brace",
             _ => return Err(CommandError::input_invariant()),
         };
-        #[cfg(any(test, feature = "instrumentation"))]
-        {
-            self.observe(CommandObservation::Alignment(AlignmentRecord {
-                transition: recovery_name,
-                alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
-                align_state: previous,
-                delimiter: None,
-                previous_align_state: None,
-            }));
-            self.observe(CommandObservation::Alignment(AlignmentRecord {
-                transition: "state_change",
-                alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
-                align_state: self.command.alignment.align_state,
-                delimiter: None,
-                previous_align_state: Some(previous),
-            }));
-        }
+        self.observe_unbalanced_delimiter_correction(recovery_name, previous);
         let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
                 recovery,
@@ -279,30 +263,12 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Input(InputRecord {
-            transition: InputTransition::Recovery,
-            reason: InputReason::Recovery,
-            level: level.0,
-            position: 0,
-        }));
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Recovery(RecoveryRecord {
-            kind: RecoveryKind::InsertedToken,
-            tokens: vec![self.observed_token(TracedTokenWord::pack(recovery, OriginId::UNKNOWN))],
-        }));
+        self.observe_inserted_token_recovery(level, recovery);
         let before_backup = self.command.alignment.align_state;
         self.command
             .alignment
             .correct_inserted_brace_backup(recovery);
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Alignment(AlignmentRecord {
-            transition: "backup_correction",
-            alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
-            align_state: self.command.alignment.align_state,
-            delimiter: None,
-            previous_align_state: Some(before_backup),
-        }));
+        self.observe_alignment_backup_correction(before_backup);
         Ok(Some(recovery))
     }
 
@@ -813,16 +779,7 @@ impl CommandProcessor<'_> {
     /// retires on the following delivery attempt. Keeping the diagnostic here
     /// makes that observer order command-owned just like replay recovery.
     pub fn report_off_save_bottom_drop(&mut self, command: &CurrentCommand) {
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Diagnostic(
-            crate::observation::DiagnosticRecord {
-                severity: "error",
-                diagnostic: "off_save_bottom_drop",
-                arguments: vec![DiagnosticArgument::Token(
-                    self.observed_command_spelling(command),
-                )],
-            },
-        ));
+        self.observe_command_diagnostic("off_save_bottom_drop", command);
     }
 
     /// Whether this delivery has the exact control-sequence spelling `name`.
