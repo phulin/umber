@@ -2383,6 +2383,15 @@ classifier itself, never by matching a per-primitive list: whatever that
 classifier recognizes is retained, so wiring a new internal quantity into it
 also puts it on the retained branch.
 
+The classifier is exhaustive over `Meaning`: `None` means _only_ that a
+named non-internal meaning lies outside §413's range. Host-unavailable
+`\spacefactor`, `\prevdepth`, and `\prevgraf` commit their §418/§422 zero
+values without entering missing-number recovery. Read-only internal integers
+likewise remain internal: `\inputlineno` reads the live enclosing file line,
+and e-TeX's current-group/current-if enquiries read the group and condition
+stacks (including `\unless`'s negated type and branch). Adding a `Meaning`
+variant therefore requires an explicit scanner classification.
+
 `scan_dimen` delegates its integral prefix to that same integer scanner. Its
 backed-up decimal point is then consumed raw, while a backed-up unit remains
 available to the canonical keyword retry sequence.

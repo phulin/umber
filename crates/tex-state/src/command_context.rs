@@ -287,6 +287,17 @@ impl CommandContext<'_> {
         Some(value)
     }
 
+    /// Reads e-TeX's live group enquiries without exposing group ownership.
+    #[must_use]
+    pub fn current_group_values(&self) -> (i32, i32) {
+        (
+            i32::try_from(self.universe.group_depth()).unwrap_or(i32::MAX),
+            self.universe
+                .innermost_group_kind()
+                .map_or(0, crate::GroupKind::etex_code),
+        )
+    }
+
     /// Classifies a box register without exposing node-store ownership.
     #[must_use]
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {

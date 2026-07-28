@@ -45,3 +45,29 @@ pub(crate) struct InputState {
     pub(crate) next_level_identity: u64,
     pub(crate) next_source_identity: u64,
 }
+
+impl InputState {
+    /// TeX82's current `line` value for e-TeX's `\inputlineno`.
+    ///
+    /// Token-list levels retain the source line they interrupted; terminal and
+    /// `\read` levels have no file line number and therefore expose zero.
+    pub(crate) fn current_file_line_number(&self) -> i32 {
+        self.levels
+            .iter()
+            .rev()
+            .find_map(|level| match level {
+                InputLevel::Source(source)
+                    if matches!(source.name_class, SourceNameClass::File) =>
+                {
+                    source
+                        .cursor
+                        .line
+                        .as_ref()
+                        .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
+                }
+                InputLevel::Source(_) => Some(0),
+                InputLevel::Tokens(_) => None,
+            })
+            .unwrap_or(0)
+    }
+}

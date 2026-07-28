@@ -180,6 +180,8 @@ pub(crate) struct ConditionFrame {
     pub(crate) kind: ConditionalKind,
     pub(crate) limit: IfLimit,
     pub(crate) source_line: u32,
+    /// e-TeX's `\unless` negates the current-if type and branch.
+    pub(crate) inverted: bool,
 }
 
 /// Independent persistent condition stack.
@@ -190,7 +192,17 @@ pub(crate) struct ConditionStack {
 }
 
 impl ConditionStack {
+    #[cfg(test)]
     pub(crate) fn push(&mut self, kind: ConditionalKind, source_line: u32) -> ConditionId {
+        self.push_with_inversion(kind, source_line, false)
+    }
+
+    pub(crate) fn push_with_inversion(
+        &mut self,
+        kind: ConditionalKind,
+        source_line: u32,
+        inverted: bool,
+    ) -> ConditionId {
         let identity = ConditionId(self.next_identity);
         self.next_identity = self.next_identity.wrapping_add(1);
         self.frames.push(ConditionFrame {
@@ -198,6 +210,7 @@ impl ConditionStack {
             kind,
             limit: IfLimit::Evaluating,
             source_line,
+            inverted,
         });
         identity
     }
@@ -208,6 +221,24 @@ impl ConditionStack {
 
     pub(crate) fn pop(&mut self) -> Option<ConditionFrame> {
         self.frames.pop()
+    }
+
+    pub(crate) fn current_etex_values(&self) -> (i32, i32, i32) {
+        let level = i32::try_from(self.frames.len()).unwrap_or(i32::MAX);
+        let Some(frame) = self.current() else {
+            return (0, 0, 0);
+        };
+        let ty = frame.kind.etex_code();
+        let branch = match frame.limit {
+            IfLimit::Evaluating => 0,
+            IfLimit::Or | IfLimit::Else => 1,
+            IfLimit::Fi => -1,
+        };
+        if frame.inverted {
+            (level, -ty, -branch)
+        } else {
+            (level, ty, branch)
+        }
     }
 
     /// Changes the exact frame selected before recursive operand expansion.
@@ -250,6 +281,34 @@ impl ConditionStack {
             condition: identity,
             delimiter,
         })
+    }
+}
+
+impl ConditionalKind {
+    const fn etex_code(self) -> i32 {
+        match self {
+            Self::If => 0,
+            Self::IfCat => 1,
+            Self::IfNum => 2,
+            Self::IfDim => 3,
+            Self::IfOdd => 4,
+            Self::IfVMode => 5,
+            Self::IfHMode => 6,
+            Self::IfMMode => 7,
+            Self::IfInner => 8,
+            Self::IfVoid => 9,
+            Self::IfHBox => 10,
+            Self::IfVBox => 11,
+            Self::IfX => 13,
+            Self::IfEof => 14,
+            Self::IfTrue => 15,
+            Self::IfFalse => 16,
+            Self::IfCase => 17,
+            Self::IfDefined => 18,
+            Self::IfCsName => 19,
+            Self::IfFontChar => 20,
+            Self::IfInCsName => 21,
+        }
     }
 }
 
@@ -300,7 +359,10 @@ impl CommandProcessor<'_> {
         };
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
-        let condition = self.command.conditions.push(kind, 0);
+        let condition = self
+            .command
+            .conditions
+            .push_with_inversion(kind, 0, inverted);
         let frame = self
             .command
             .conditions

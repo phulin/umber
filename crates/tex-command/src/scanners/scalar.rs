@@ -4,7 +4,7 @@ use tex_state::BoxDimension;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
     scaled_from_decimal_parts, xn_over_d,
@@ -1753,10 +1753,7 @@ impl CommandProcessor<'_> {
                     .tok_param(tex_state::env::banks::TokParam::new(index)),
             },
             Meaning::InternalInteger(integer) => {
-                let Some(value) = self.state.internal_integer(integer) else {
-                    return Ok(None);
-                };
-                InternalValue::Integer(value)
+                InternalValue::Integer(self.fetch_internal_integer(integer))
             }
             // `space_factor` is owned by the executor's active horizontal
             // list, rather than durable command state.  The bounded host
@@ -1764,10 +1761,7 @@ impl CommandProcessor<'_> {
             // expanded definition can still scan `\the\spacefactor` through
             // the ordinary internal-value path.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
-                let Some(value) = self.host.space_factor() else {
-                    return Ok(None);
-                };
-                InternalValue::Integer(value)
+                InternalValue::Integer(self.host.space_factor().unwrap_or(0))
             }
             // TeX82 §418's "Fetch the `space_factor` or the `prev_depth`":
             // `\prevdepth` is the vertical-mode half of `set_aux` and reads at
@@ -1778,19 +1772,13 @@ impl CommandProcessor<'_> {
             // number would change every `\ifdim\prevdepth>-1000pt` vertical
             // spacing decision.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-                let Some(value) = self.host.prev_depth() else {
-                    return Ok(None);
-                };
-                InternalValue::Dimension(value)
+                InternalValue::Dimension(self.host.prev_depth().unwrap_or(Scaled::from_raw(0)))
             }
             // TeX82 §422's "Fetch the `prev_graf`": the paragraph count of the
             // nearest enclosing vertical level, at `int_val`. `None` records
             // tex.web's `mode=0` case (inside `\write`), which reads zero.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
-                let Some(value) = self.host.prev_graf() else {
-                    return Ok(None);
-                };
-                InternalValue::Integer(value)
+                InternalValue::Integer(self.host.prev_graf().unwrap_or(0))
             }
             // TeX82 §424's "Fetch an item in the current node, if
             // appropriate" (`last_item`): `\lastpenalty`, `\lastkern`, and
@@ -1860,9 +1848,31 @@ impl CommandProcessor<'_> {
                 let font = self.scan_font_selector()?;
                 self.font_identity(font)
             }
-            _ => return Ok(None),
+            // This deliberately names every non-internal Meaning variant.
+            // Adding one to tex-state now fails here until its §413 range
+            // classification is decided, instead of silently becoming zero.
+            Meaning::Undefined
+            | Meaning::Relax
+            | Meaning::Macro { .. }
+            | Meaning::CharToken { .. }
+            | Meaning::ExpandablePrimitive(_)
+            | Meaning::EndV
+            | Meaning::UnexpandablePrimitive(_)
+            | Meaning::Unknown(_) => return Ok(None),
         };
         Ok(Some(value))
+    }
+
+    fn fetch_internal_integer(&self, integer: InternalInteger) -> i32 {
+        match integer {
+            InternalInteger::InputLineNumber => self.command.input.current_file_line_number(),
+            InternalInteger::CurrentGroupLevel => self.state.current_group_values().0,
+            InternalInteger::CurrentGroupType => self.state.current_group_values().1,
+            InternalInteger::CurrentIfLevel => self.command.conditions.current_etex_values().0,
+            InternalInteger::CurrentIfType => self.command.conditions.current_etex_values().1,
+            InternalInteger::CurrentIfBranch => self.command.conditions.current_etex_values().2,
+            _ => self.state.internal_integer(integer).unwrap_or(0),
+        }
     }
 
     /// Commits TeX82 §413's single internal scanner result.

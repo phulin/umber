@@ -74,6 +74,7 @@ fn populated_quiescent_state() -> CommandState {
         kind: ConditionalKind::IfNum,
         limit: IfLimit::Else,
         source_line: 37,
+        inverted: false,
     });
     state.conditions.next_identity = 41;
     state.alignment.align_state = 43;

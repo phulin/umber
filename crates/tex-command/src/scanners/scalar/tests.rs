@@ -1682,7 +1682,7 @@ fn prev_depth_outside_vertical_mode_reads_zero() {
 
     let scanned = processor.scan_dimension().expect("improper mode recovers");
     assert_eq!(scanned.value.raw(), 0);
-    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+    assert_eq!(scanned.recovery, ScalarRecovery::None);
 }
 
 #[test]
@@ -2357,6 +2357,25 @@ fn internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery() {
         assert_eq!(value, expected);
     }
 
+    for (primitive, scan_integer) in [(P::SpaceFactor, true), (P::PrevGraf, true)] {
+        let mut universe = Universe::new();
+        let token = internal_primitive(&mut universe, "unavailable-aux", primitive);
+        if scan_integer {
+            assert_eq!(
+                scan_with(&mut universe, vec![token], |processor| processor
+                    .scan_integer()
+                    .expect("unavailable internal integer scans")),
+                ScannedScalar {
+                    value: 0,
+                    recovery: ScalarRecovery::None,
+                    provenance: ScalarProvenance {
+                        primary: OriginId::UNKNOWN
+                    },
+                }
+            );
+        }
+    }
+
     let mut universe = Universe::new();
     let prev_depth = internal_primitive(&mut universe, "prevdepth", P::PrevDepth);
     assert_eq!(
@@ -2365,12 +2384,116 @@ fn internal_auxiliary_sources_cover_spacefactor_prevdepth_modes_and_recovery() {
             .expect("wrong-mode prevdepth recovers")),
         ScannedScalar {
             value: Scaled::from_raw(0),
-            recovery: ScalarRecovery::InsertedZero,
+            recovery: ScalarRecovery::None,
             provenance: ScalarProvenance {
                 primary: OriginId::UNKNOWN
             },
         }
     );
+}
+
+#[test]
+fn input_line_group_and_conditional_internal_integers_read_live_command_state() {
+    use crate::conditionals::{ConditionalKind, IfLimit};
+    use crate::{RegisteredSourceKind, SourceRegistration};
+
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            std::sync::Arc::<[u8]>::from(b"\\relax\n\\inputlineno".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    command
+        .conditions
+        .push_with_inversion(ConditionalKind::IfTrue, 0, true);
+    assert!(
+        command
+            .conditions
+            .change_if_limit(crate::processor::status::ConditionId(0), IfLimit::Fi)
+    );
+
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.enter_group_with_kind(tex_state::GroupKind::HBox);
+    let input_line = universe.intern("inputlineno").symbol();
+    let group_level = universe.intern("currentgrouplevel").symbol();
+    let group_type = universe.intern("currentgrouptype").symbol();
+    let if_level = universe.intern("currentiflevel").symbol();
+    let if_type = universe.intern("currentiftype").symbol();
+    let if_branch = universe.intern("currentifbranch").symbol();
+    for (symbol, integer) in [
+        (
+            input_line,
+            tex_state::meaning::InternalInteger::InputLineNumber,
+        ),
+        (
+            group_level,
+            tex_state::meaning::InternalInteger::CurrentGroupLevel,
+        ),
+        (
+            group_type,
+            tex_state::meaning::InternalInteger::CurrentGroupType,
+        ),
+        (
+            if_level,
+            tex_state::meaning::InternalInteger::CurrentIfLevel,
+        ),
+        (if_type, tex_state::meaning::InternalInteger::CurrentIfType),
+        (
+            if_branch,
+            tex_state::meaning::InternalInteger::CurrentIfBranch,
+        ),
+    ] {
+        universe.set_meaning(symbol, Meaning::InternalInteger(integer));
+    }
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let _relax = processor
+        .get_x_token()
+        .expect("first source token delivers")
+        .expect("first source token exists");
+    let input = processor
+        .get_x_token()
+        .expect("input-line token delivers")
+        .expect("input-line token exists");
+    assert_eq!(
+        processor
+            .scan_the_internal_value(&input)
+            .expect("input line scans"),
+        Some(InternalValue::Integer(2))
+    );
+    push(
+        processor.command,
+        vec![
+            Token::Cs(group_level),
+            Token::Cs(group_type),
+            Token::Cs(if_level),
+            Token::Cs(if_type),
+            Token::Cs(if_branch),
+        ],
+    );
+    for expected in [1, 2, 1, -15, 1] {
+        let token = processor
+            .get_x_token()
+            .expect("state token delivers")
+            .expect("state token exists");
+        assert_eq!(
+            processor
+                .scan_the_internal_value(&token)
+                .expect("state integer scans"),
+            Some(InternalValue::Integer(expected))
+        );
+    }
 }
 
 #[test]
