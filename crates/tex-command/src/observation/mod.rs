@@ -889,6 +889,28 @@ mod tests {
     }
 
     #[test]
+    fn def_code_addresses_dispatch_by_profile() {
+        for (primitive, tex82, etex) in [
+            (UnexpandablePrimitive::CatCode, 25_631, 25_636),
+            (UnexpandablePrimitive::LcCode, 25_887, 25_892),
+            (UnexpandablePrimitive::UcCode, 26_143, 26_148),
+            (UnexpandablePrimitive::SfCode, 26_399, 26_404),
+            (UnexpandablePrimitive::MathCode, 26_655, 26_660),
+            (UnexpandablePrimitive::DelCode, 27_485, 27_490),
+        ] {
+            let meaning = Meaning::UnexpandablePrimitive(primitive);
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::TEX82, meaning),
+                ("def_code".into(), Some(tex82))
+            );
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::ETEX26, meaning),
+                ("def_code".into(), Some(etex))
+            );
+        }
+    }
+
+    #[test]
     fn tex82_diagnostics_use_shared_xray_selectors() {
         let mut universe = tex_state::Universe::new();
 

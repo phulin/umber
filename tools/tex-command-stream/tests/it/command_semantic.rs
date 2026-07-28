@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tex_command::{
-    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, FatalError,
-    FontResource, InputReason, InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind,
-    SourceRegistration, canonical_names,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
+    DiagnosticArgument, FatalError, FontResource, InputReason, InputTransition, ObservedToken,
+    RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
 use tex_state::{
@@ -630,9 +630,9 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let mut control = match case.profile {
         SessionProfile::Initex => CanonicalMainControl::tex82_initex(&mut universe),
         SessionProfile::EtexInitex => {
-            let control = CanonicalMainControl::tex82_initex(&mut universe);
+            let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
-            control
+            CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
         }
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);

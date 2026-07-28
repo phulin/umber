@@ -65,11 +65,22 @@ const HEIGHT_OFFSET: i64 = 3;
 /// TeX82 `@d depth_offset=2`.
 const DEPTH_OFFSET: i64 = 2;
 
+/// Build-specific `cat_code_base` selected by the observed engine layout.
+///
+/// e-TeX 2.6 etex.ch [17.230] adds one token-list parameter and four
+/// variable-length penalty cells before the TeX82 code tables.
+const fn def_code_base(dialect: CommandDialect) -> i64 {
+    match dialect {
+        CommandDialect::Etex26 => 25_636,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 25_631,
+    }
+}
+
 /// Canonical TeX82/e-TeX/pdfTeX command identity for a delivered
 /// `UnexpandablePrimitive`. See the module documentation for the ground
 /// truth each arm is based on.
 pub(crate) fn unexpandable_primitive_identity(
-    _dialect: CommandDialect,
+    dialect: CommandDialect,
     primitive: UnexpandablePrimitive,
 ) -> (String, Option<i64>) {
     use UnexpandablePrimitive as P;
@@ -115,13 +126,15 @@ pub(crate) fn unexpandable_primitive_identity(
         // CatCode/LcCode/UcCode were previously established
         // (`umber2-johp.65`); SfCode/MathCode/DelCode were confirmed by a
         // live probe of the pinned TeX82 oracle (`\sfcode`/`\mathcode`/
-        // `\delcode` on a fresh INITEX, 2026-07-26).
-        P::CatCode => ("def_code".into(), Some(25_631)),
-        P::LcCode => ("def_code".into(), Some(25_887)),
-        P::UcCode => ("def_code".into(), Some(26_143)),
-        P::SfCode => ("def_code".into(), Some(26_399)),
-        P::MathCode => ("def_code".into(), Some(26_655)),
-        P::DelCode => ("def_code".into(), Some(27_485)),
+        // `\delcode` on a fresh INITEX, 2026-07-26). e-TeX 2.6 etex.ch
+        // [17.230] inserts `\everyeof` plus four penalty-array cells before
+        // `cat_code_base`, shifting the complete code-table chain by five.
+        P::CatCode => ("def_code".into(), Some(def_code_base(dialect))),
+        P::LcCode => ("def_code".into(), Some(def_code_base(dialect) + 256)),
+        P::UcCode => ("def_code".into(), Some(def_code_base(dialect) + 512)),
+        P::SfCode => ("def_code".into(), Some(def_code_base(dialect) + 768)),
+        P::MathCode => ("def_code".into(), Some(def_code_base(dialect) + 1_024)),
+        P::DelCode => ("def_code".into(), Some(def_code_base(dialect) + 1_854)),
         P::Font => ("def_font".into(), Some(0)),
         P::FontDimen => ("assign_font_dimen".into(), Some(0)),
         P::HyphenChar => ("assign_font_int".into(), Some(0)),

@@ -4,6 +4,28 @@
   "property_domain": "main-control-groups-assignments",
   "cases": [
     {
+      "id": "etex-def-code-profile",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-def-code-profile.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [230]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["command"],
+        "commands": ["def_code"],
+        "count_registers": []
+      },
+      "expected": [
+        "command:raw:cs:catcode:def_code:25636",
+        "command:expanded:cs:catcode:def_code:25636"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-showtokens",
       "property_id": "tex82.main-control.show-value",
       "profile": "etex-initex",
