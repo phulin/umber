@@ -103,6 +103,11 @@ pub struct CanonicalMainControl {
     /// [`CanonicalMainControl::tex82_initex`] builds an INITEX session and
     /// every other constructor a production one.
     initex: bool,
+    /// True after TeX82 §1335 has successfully completed an INITEX `\dump`.
+    ///
+    /// This is a committed termination receipt for the host boundary; it is
+    /// not format serialization itself.
+    dumped_format: bool,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     #[cfg(any(test, feature = "instrumentation"))]
@@ -504,6 +509,14 @@ impl CanonicalMainControl {
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
         self.command.profile()
+    }
+
+    /// Reports whether this job terminated through an effective INITEX
+    /// `\dump`, so the host can publish the same `RunResult` contract as the
+    /// retired executor without inspecting command delivery.
+    #[must_use]
+    pub const fn dumped_format(&self) -> bool {
+        self.dumped_format
     }
 
     /// Captures a quiescent named checkpoint for this command processor.
@@ -998,6 +1011,7 @@ impl CanonicalMainControl {
             ControlFlow::Continue(scanned) => scanned,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
+        let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -1014,6 +1028,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
+        self.dumped_format |= dumped_format;
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(
@@ -1343,6 +1358,7 @@ impl CanonicalMainControl {
             ControlFlow::Continue(scanned) => scanned,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
+        let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -1359,6 +1375,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
+        self.dumped_format |= dumped_format;
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(
@@ -2466,6 +2483,12 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         );
+        if result.is_ok()
+            && self.initex
+            && matches!(scanned, ScannedStep::End { dump: true, .. })
+        {
+            self.dumped_format = true;
+        }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
         }

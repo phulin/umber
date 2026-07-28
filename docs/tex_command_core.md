@@ -3752,3 +3752,25 @@ level can be packaged, frozen, or supplied to an output path. `ModeNest::pop`
 rejects an uncommitted run as a backstop, so a new list-finalization path cannot
 silently recreate an empty box or lose geometry by omitting a caller-side
 flush.
+
+## Direct retained-session host boundary
+
+Direct fresh and format-loaded jobs acquire their root through the active
+`World`, transfer that exact `SourceRegistration` into
+`CanonicalEngineSession`, and then drive bounded `CanonicalMainControl`
+operations. Resource policy sees only typed input, font, and image needs plus a
+borrow-scoped `World` capability. It returns immutable matching
+registrations; aggregate rollback owns retry. The host never receives command
+state, an `InputStack`, or an expanded-token delivery API.
+
+Completion publishes one authoritative `RunResult` from committed receipts:
+effects from the session's effect cursor, artifact hashes and bytes from its
+artifact cursor, and prepared DVI pages aligned one-for-one with those
+artifacts. TeX82 §1335's effective INITEX `\dump` is also a committed
+main-control receipt. The host may serialize a format only when that receipt
+is present; it must not infer dump intent by examining source bytes or retired
+executor statistics.
+
+Native virtual compilation and editor/fixed-point checkpoint persistence are
+separate host boundaries. They adopt this contract in their ordered migration
+issues; the direct cutover does not route them through a compatibility adapter.

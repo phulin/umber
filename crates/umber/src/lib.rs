@@ -415,7 +415,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
                 .collect(),
             committed_artifacts: run_committed.to_vec(),
             effects: self.stores.world().effect_records().to_vec(),
-            dumped_format: false,
+            dumped_format: self.canonical.dumped_format(),
         })
     }
 

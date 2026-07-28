@@ -460,7 +460,7 @@ impl<'a> CanonicalEngineSession<'a> {
                 [self.artifact_cursor - artifacts.len()..self.artifact_cursor]
                 .to_vec(),
             effects,
-            dumped_format: false,
+            dumped_format: self.control.dumped_format(),
         }))
     }
 }
@@ -626,6 +626,25 @@ mod tests {
             vec![3, 7],
             "the two oracle pattern matches produce pro-ceed-ing"
         );
+    }
+
+    #[test]
+    fn initex_dump_receipt_survives_the_direct_session_boundary() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        session
+            .register_authored_root("plain.tex", Arc::from(&b"\\dump"[..]))
+            .expect("INITEX root registers");
+
+        let run = session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("INITEX dump completes");
+
+        assert!(run.dumped_format);
+        session
+            .stores()
+            .dump_format()
+            .expect("the host may serialize after the dump receipt");
     }
 
     #[test]
