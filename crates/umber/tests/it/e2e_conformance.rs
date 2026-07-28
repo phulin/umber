@@ -9,7 +9,7 @@ use parity_harness::{
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_command::{CommandProfile, FontResource};
+use tex_command::FontResource;
 use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
@@ -350,10 +350,9 @@ fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
     let job_bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
 
     let mut stores = Universe::with_world(world);
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-
-    let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+    // These staged gates bootstrap plain.tex from source, so this phase is
+    // INITEX rather than a cold job loaded from an already-built format.
+    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
     session
         .register_authored_root(&job_name, Arc::from(job_bytes))
         .map_err(|error| format!("register canonical root {job_name}: {error}"))?;

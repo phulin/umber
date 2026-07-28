@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use tex_command::{CommandProfile, FontResource};
+use tex_command::FontResource;
 use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecError};
 use tex_state::{JobClock, Universe, World};
 use umber::{
@@ -98,10 +98,7 @@ fn main() -> ExitCode {
     seed_corpus_tfms(&mut world, &root);
 
     let mut stores = Universe::with_world(world);
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-
-    let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
     let root_source = format!("\\input plain.tex \\input {source}.tex\n");
     session
         .register_authored_root("job.tex", Arc::from(root_source.into_bytes()))

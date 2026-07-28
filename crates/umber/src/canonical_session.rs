@@ -206,6 +206,24 @@ impl<'a> CanonicalEngineSession<'a> {
         }
     }
 
+    /// Creates a retained TeX82 INITEX session for building a format from
+    /// source.
+    ///
+    /// Unlike [`Self::new`], this enables init-only commands such as
+    /// `\patterns` and installs the TeX82 primitive meanings in `stores`.
+    #[must_use]
+    pub fn tex82_initex(stores: &'a mut Universe) -> Self {
+        Self {
+            artifact_cursor: stores.world().artifact_commits().len(),
+            effect_cursor: stores.world().effect_records().len(),
+            control: CanonicalMainControl::tex82_initex(stores),
+            stores,
+            root_registered: false,
+            started: false,
+            no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+        }
+    }
+
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
         self.control.command_profile()
@@ -574,6 +592,40 @@ mod tests {
         assert!(boundaries.contains(&EngineBoundary::JobStart));
         assert!(boundaries.contains(&EngineBoundary::OuterParagraphEnd));
         assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
+    }
+
+    #[test]
+    fn initex_session_loads_patterns_while_cold_session_rejects_them() {
+        const SOURCE: &[u8] = br"\patterns{o1ce eed3i}\lefthyphenmin=2 \righthyphenmin=3 \end";
+
+        let (mut cold_stores, cold_root) = prepared_session(SOURCE);
+        let mut cold = CanonicalEngineSession::new(&mut cold_stores, CommandProfile::TEX82);
+        cold.register_authored_root("cold.tex", cold_root)
+            .expect("cold root registers");
+        cold.run(&mut WorldHost, &mut Vec::new())
+            .expect("cold session recovers from init-only patterns");
+        assert_eq!(
+            cold.stores()
+                .hyphen_positions_for_language(0, "proceeding", 2, 3),
+            Vec::<usize>::new(),
+            "TeX82 §1252 rejects patterns outside INITEX"
+        );
+
+        let mut initex_stores = Universe::new_with_plain_catcodes();
+        let mut initex = CanonicalEngineSession::tex82_initex(&mut initex_stores);
+        initex
+            .register_authored_root("initex.tex", Arc::from(SOURCE))
+            .expect("INITEX root registers");
+        initex
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("INITEX patterns execute");
+        assert_eq!(
+            initex
+                .stores()
+                .hyphen_positions_for_language(0, "proceeding", 2, 3),
+            vec![3, 7],
+            "the two oracle pattern matches produce pro-ceed-ing"
+        );
     }
 
     #[test]
