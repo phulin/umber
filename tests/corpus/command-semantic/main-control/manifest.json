@@ -334,6 +334,19 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "empty-token-register",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "source": "empty-token-register.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1226, 1227, 1228]
+      },
+      "projection": { "kind": "state", "count_registers": [0] },
+      "expected": ["count:0=0"],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "setbox-request",
       "property_id": "tex82.assignment.setbox-request",
       "source": "setbox-request.tex",
