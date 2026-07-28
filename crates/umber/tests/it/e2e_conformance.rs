@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, mem};
 use parity_harness::run_named_fixture_document;
 #[cfg(feature = "instrumentation")]
 use parity_harness::{
-    TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
-    write_trip_triage_artifact,
+    ManifestBoundSource, TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource,
+    compare_dvi_files, write_trip_triage_artifact,
 };
 #[cfg(feature = "instrumentation")]
 use sha2::{Digest, Sha256};
@@ -185,8 +185,14 @@ fn run_file_in_process(
 ) -> Result<InProcessRun, String> {
     #[cfg(feature = "instrumentation")]
     let mut failure = None;
+    let source_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     run_file_in_process_captured(
         path,
+        &source_name,
         format,
         engine,
         #[cfg(feature = "instrumentation")]
@@ -197,6 +203,7 @@ fn run_file_in_process(
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
 fn run_file_in_process_captured(
     path: &Path,
+    _canonical_source_name: &str,
     format: Option<&[u8]>,
     engine: EngineMode,
     #[cfg(feature = "instrumentation")] failure: &mut Option<LiveCapture>,
@@ -260,11 +267,7 @@ fn run_file_in_process_captured(
             let (terminal, log) = transcript_channels(session.stores().world().effect_records());
             *failure = Some(LiveCapture {
                 root: LiveSource {
-                    name: path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned(),
+                    name: _canonical_source_name.to_owned(),
                     source: root_source,
                     bytes: root_bytes,
                 },
@@ -321,11 +324,7 @@ fn run_file_in_process_captured(
         #[cfg(feature = "instrumentation")]
         capture: LiveCapture {
             root: LiveSource {
-                name: path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
+                name: _canonical_source_name.to_owned(),
                 source: root_source,
                 bytes: root_bytes,
             },
@@ -804,7 +803,8 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     } else {
         source_bytes
     };
-    let input = temp.path().join(local_name);
+    let source_identity = ManifestBoundSource::new(source_name, local_name, &source_bytes);
+    let input = temp.path().join(source_identity.staged_name());
     fs::write(&input, source_bytes).expect("stage conformance source");
     fs::copy(
         root.join("third_party/trip/trip.tfm"),
@@ -823,17 +823,23 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         EngineMode::Tex82
     };
     let mut failure = None;
-    let initial =
-        run_file_in_process_captured(&input, None, engine, &mut failure).unwrap_or_else(|error| {
-            compare_trip_failure(
-                root,
-                fixture_name,
-                "initex",
-                failure.as_ref().expect("failed capture"),
-                &error,
-            );
-            panic!("{fixture_name} format creation failed: {error}")
-        });
+    let initial = run_file_in_process_captured(
+        &input,
+        source_identity.canonical_name(),
+        None,
+        engine,
+        &mut failure,
+    )
+    .unwrap_or_else(|error| {
+        compare_trip_failure(
+            root,
+            fixture_name,
+            "initex",
+            failure.as_ref().expect("failed capture"),
+            &error,
+        );
+        panic!("{fixture_name} format creation failed: {error}")
+    });
     let format = initial
         .format
         .clone()
@@ -849,17 +855,23 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         None,
     );
     let mut failure = None;
-    let loaded = run_file_in_process_captured(&input, Some(&format), engine, &mut failure)
-        .unwrap_or_else(|error| {
-            compare_trip_failure(
-                root,
-                fixture_name,
-                "format-loaded",
-                failure.as_ref().expect("failed capture"),
-                &error,
-            );
-            panic!("{fixture_name} format-loaded run failed: {error}")
-        });
+    let loaded = run_file_in_process_captured(
+        &input,
+        source_identity.canonical_name(),
+        Some(&format),
+        engine,
+        &mut failure,
+    )
+    .unwrap_or_else(|error| {
+        compare_trip_failure(
+            root,
+            fixture_name,
+            "format-loaded",
+            failure.as_ref().expect("failed capture"),
+            &error,
+        );
+        panic!("{fixture_name} format-loaded run failed: {error}")
+    });
     let dvi = loaded
         .dvi
         .clone()

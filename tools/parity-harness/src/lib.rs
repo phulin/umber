@@ -33,6 +33,53 @@ const TRACE_PREFIX: &str =
     "\\tracingoutput=1 \\tracingonline=0 \\showboxbreadth=-1 \\showboxdepth=-1\n";
 const JOB_NAME: &str = "parity-job.tex";
 
+/// One manifest-declared source staged under a possibly different local name.
+///
+/// The local name is a harness implementation detail (for example, a
+/// redistribution license may require a modified source to be renamed).
+/// Canonical observation identity is instead the manifest role/name together
+/// with the exact staged bytes. Thus aliases of the same canonical source
+/// compare equal, while changed bytes or a different source role do not.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestBoundSource {
+    canonical_name: String,
+    staged_name: String,
+    content_sha256: [u8; 32],
+}
+
+impl ManifestBoundSource {
+    #[must_use]
+    pub fn new(
+        canonical_name: impl Into<String>,
+        staged_name: impl Into<String>,
+        bytes: &[u8],
+    ) -> Self {
+        Self {
+            canonical_name: canonical_name.into(),
+            staged_name: staged_name.into(),
+            content_sha256: Sha256::digest(bytes).into(),
+        }
+    }
+
+    /// Name projected into canonical command-event source locations.
+    #[must_use]
+    pub fn canonical_name(&self) -> &str {
+        &self.canonical_name
+    }
+
+    /// Filename used only to materialize the isolated harness workspace.
+    #[must_use]
+    pub fn staged_name(&self) -> &str {
+        &self.staged_name
+    }
+
+    /// Whether two staged files represent the same manifest source identity.
+    #[must_use]
+    pub fn same_source_as(&self, other: &Self) -> bool {
+        self.canonical_name == other.canonical_name && self.content_sha256 == other.content_sha256
+    }
+}
+
 /// TFM font metrics loaded by `plain.tex`'s preload block. Shared by the
 /// staged parity job directory and by diagnostic tools (for example the
 /// `umber` crate's `first_failure_locator` example) that need to seed a
@@ -1175,8 +1222,28 @@ fn print_usage() {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_dvi_files, run_self_test, synthetic_second_page_body_offset, synthetic_two_page_dvi,
+        ManifestBoundSource, compare_dvi_files, run_self_test, synthetic_second_page_body_offset,
+        synthetic_two_page_dvi,
     };
+
+    #[test]
+    fn staged_aliases_share_manifest_bound_source_identity() {
+        let oracle = ManifestBoundSource::new("etrip.tex", "etrip.tex", b"adapted source");
+        let licensed_alias =
+            ManifestBoundSource::new("etrip.tex", "etrip-local.tex", b"adapted source");
+
+        assert!(oracle.same_source_as(&licensed_alias));
+        assert_eq!(licensed_alias.canonical_name(), "etrip.tex");
+        assert_eq!(licensed_alias.staged_name(), "etrip-local.tex");
+    }
+
+    #[test]
+    fn same_manifest_name_with_different_content_is_not_the_same_source() {
+        let first = ManifestBoundSource::new("etrip.tex", "etrip-local.tex", b"version 2.0");
+        let adapted = ManifestBoundSource::new("etrip.tex", "etrip-local.tex", b"version 2.6");
+
+        assert!(!first.same_source_as(&adapted));
+    }
 
     #[test]
     fn self_test_bundle_pinpoints_page_and_opcode() {
