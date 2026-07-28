@@ -224,7 +224,8 @@ struct ActiveReplayAlignment {
     /// Frozen cell material retained for lifecycle diagnostics. The actual
     /// row records live on the alignment level, exactly as TeX82 §775 does.
     captured_rows: Vec<Vec<NodeListId>>,
-    tabskip: tex_state::ids::GlueId,
+    tabskips: Vec<tex_state::ids::GlueId>,
+    default_tabskip: tex_state::ids::GlueId,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
@@ -8164,7 +8165,11 @@ fn begin_replay_alignment_cell(
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind));
         modes.current_list_mut().push(Node::Glue {
-            spec: active.tabskip,
+            spec: active
+                .tabskips
+                .first()
+                .copied()
+                .unwrap_or(active.default_tabskip),
             kind: GlueKind::TabSkip,
             leader: None,
         });
@@ -8223,7 +8228,11 @@ fn capture_replay_alignment_cell(
     )?;
     modes.current_list_mut().push(cell);
     modes.current_list_mut().push(Node::Glue {
-        spec: active.tabskip,
+        spec: active
+            .tabskips
+            .get(active.column.saturating_add(1))
+            .copied()
+            .unwrap_or(active.default_tabskip),
         kind: GlueKind::TabSkip,
         leader: None,
     });
@@ -8304,8 +8313,8 @@ fn finish_replay_alignment(
         active.kind,
         active.packing,
         columns,
-        vec![active.tabskip; active.columns.len().saturating_add(1)],
-        active.tabskip,
+        active.tabskips.clone(),
+        active.default_tabskip,
         active.repeat_start,
     );
     // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent
@@ -10142,7 +10151,8 @@ fn apply_scanned_step(
                 align_peek_after_noalign: false,
                 noalign_depth: None,
                 captured_rows: Vec::new(),
-                tabskip: stores.glue_param(GlueParam::TAB_SKIP),
+                tabskips: vec![stores.glue_param(GlueParam::TAB_SKIP)],
+                default_tabskip: stores.glue_param(GlueParam::TAB_SKIP),
                 row_migrations: Vec::new(),
                 cell_span: 1,
                 row_open: false,
@@ -10209,6 +10219,12 @@ fn apply_scanned_step(
                 && active.identity == alignment
             {
                 active.columns = preamble.columns;
+                active.tabskips = preamble
+                    .tabskips
+                    .into_iter()
+                    .map(|spec| stores.intern_glue(spec))
+                    .collect();
+                active.default_tabskip = stores.intern_glue(preamble.default_tabskip);
                 active.repeat_start = preamble.repeat_start;
                 active.column = 0;
                 active.preamble_start_pending = false;

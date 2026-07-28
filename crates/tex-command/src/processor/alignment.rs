@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod tests;
 
+use tex_state::glue::GlueSpec;
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -77,6 +78,10 @@ pub struct FinishedAlignmentCell {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentPreamble {
     pub columns: Vec<AlignmentCellTemplates>,
+    /// TeX82 §759's `\tabskip` value at each preamble boundary.
+    pub tabskips: Vec<GlueSpec>,
+    /// Value left by the last preamble `\tabskip` assignment.
+    pub default_tabskip: GlueSpec,
     /// First column of TeX82's periodic `&&` preamble suffix, if present.
     ///
     /// TeX82 §760 consumes the second tab while scanning an otherwise empty

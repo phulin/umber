@@ -6,7 +6,8 @@
 
 use crate::{
     ChangedAt, DependencyKey, DependencyValue, ExpansionState, TracedTokenList, Universe,
-    env::banks::{IntParam, TokParam},
+    env::banks::{GlueParam, IntParam, TokParam},
+    glue::GlueSpec,
     ids::{FontId, GlueId},
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::{Symbol, SymbolId},
@@ -274,8 +275,19 @@ impl CommandContext<'_> {
     /// Reads one glue parameter through the aggregate boundary.
     #[must_use]
     pub fn glue_param(&self, index: u16) -> GlueId {
-        self.universe
-            .glue_param(crate::env::banks::GlueParam::new(index))
+        self.universe.glue_param(GlueParam::new(index))
+    }
+
+    /// Applies TeX82 §759's preamble-local `\tabskip` definition.
+    pub fn define_preamble_tabskip(&mut self, value: GlueSpec, global: bool) -> GlueId {
+        let value = self.universe.intern_glue(value);
+        if global {
+            self.universe
+                .set_glue_param_global(GlueParam::TAB_SKIP, value);
+        } else {
+            self.universe.set_glue_param(GlueParam::TAB_SKIP, value);
+        }
+        value
     }
 
     /// Reads an engine-owned internal integer through the aggregate boundary.

@@ -9,7 +9,10 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{FontSizeSpec, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{SourceId, TracedTokenList};
+use tex_state::{
+    SourceId, TracedTokenList,
+    env::banks::{GlueParam, IntParam},
+};
 
 use crate::input::{
     BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason,
@@ -2663,6 +2666,10 @@ impl CommandProcessor<'_> {
             },
         ));
         let mut columns = Vec::new();
+        let mut current_tabskip = self
+            .state
+            .glue(self.state.glue_param(GlueParam::TAB_SKIP.raw()));
+        let mut tabskips = vec![current_tabskip];
         let mut repeat_start = None;
         loop {
             // These are deliberately separate loops, matching TeX82 §760's
@@ -2672,6 +2679,19 @@ impl CommandProcessor<'_> {
             let mut u_template = Vec::new();
             loop {
                 let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                if matches!(
+                    command.meaning(),
+                    Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
+                ) {
+                    // TeX82 §759 executes only a direct `\tabskip`, then
+                    // restarts instead of copying it into the template.
+                    let _ = self.scan_optional_equals()?;
+                    current_tabskip = self.scan_glue(false)?.value;
+                    let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
+                    self.state.define_preamble_tabskip(current_tabskip, global);
+                    tabskips[columns.len()] = current_tabskip;
+                    continue;
+                }
                 let token = command.spelling().semantic_token();
                 if matches!(
                     token,
@@ -2734,6 +2754,17 @@ impl CommandProcessor<'_> {
             let mut v_template = Vec::new();
             let ends_preamble = loop {
                 let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                if matches!(
+                    command.meaning(),
+                    Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
+                ) {
+                    let _ = self.scan_optional_equals()?;
+                    current_tabskip = self.scan_glue(false)?.value;
+                    let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
+                    self.state.define_preamble_tabskip(current_tabskip, global);
+                    tabskips[columns.len()] = current_tabskip;
+                    continue;
+                }
                 let token = command.spelling().semantic_token();
                 let ends_column = matches!(
                     token,
@@ -2786,6 +2817,7 @@ impl CommandProcessor<'_> {
                 u_template: Some(self.state.finish_traced_token_list(&u_template)),
                 v_template: self.state.finish_traced_token_list(&v_template),
             });
+            tabskips.push(current_tabskip);
             if ends_preamble {
                 break;
             }
@@ -2796,6 +2828,8 @@ impl CommandProcessor<'_> {
                 alignment,
                 AlignmentPreamble {
                     columns,
+                    tabskips,
+                    default_tabskip: current_tabskip,
                     repeat_start,
                 },
             )
