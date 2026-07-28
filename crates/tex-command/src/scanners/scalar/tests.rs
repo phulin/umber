@@ -62,7 +62,7 @@ fn scanner_tokens(source: &str) -> Vec<Token> {
         .chars()
         .map(|ch| {
             if ch == ' ' {
-                space_token()
+                char_token(' ')
             } else {
                 char_token(ch)
             }
@@ -2210,7 +2210,7 @@ fn internal_token_sources_preserve_empty_nonempty_and_identifier_values() {
     use tex_state::ids::TokenListId;
 
     let mut universe = Universe::new();
-    let nonempty = universe.intern_token_list(&[char_token('x'), space_token()]);
+    let nonempty = universe.intern_token_list(&[char_token('x'), char_token(' ')]);
     universe.set_toks(7, nonempty);
     let toks = universe.intern("saved").symbol();
     universe.set_meaning(toks, Meaning::ToksRegister(7));
@@ -2275,7 +2275,7 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new();
-    let saved = universe.intern_token_list(&[char_token('x'), space_token()]);
+    let saved = universe.intern_token_list(&[char_token('x'), char_token(' ')]);
     universe.set_toks(7, saved);
     let toks = internal_primitive(&mut universe, "observed-toks", P::Toks);
     push(&mut command, vec![toks, char_token('7')]);
@@ -3515,7 +3515,7 @@ fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
     );
     let scanned = scan_with(
         &mut universe,
-        vec![space_token(), space_token(), Token::Cs(macro_symbol)],
+        vec![char_token(' '), char_token(' '), Token::Cs(macro_symbol)],
         |processor| {
             processor
                 .scan_left_brace(true)
@@ -3556,7 +3556,7 @@ fn scanner_syntax_optional_equals_catcode_and_relax_boundaries() {
     let mut universe = Universe::new();
     assert!(scan_with(
         &mut universe,
-        vec![space_token(), space_token(), char_token('=')],
+        vec![char_token(' '), char_token(' '), char_token('=')],
         |processor| processor
             .scan_optional_equals()
             .expect("equals scans")
@@ -3735,7 +3735,7 @@ fn integer_character_constant_raw_token_and_optional_space_matrix() {
         assert_eq!(
             scan_with(
                 &mut universe,
-                vec![char_token('`'), token, space_token(), char_token('7')],
+                vec![char_token('`'), token, char_token(' '), char_token('7')],
                 |processor| {
                     let value = processor
                         .scan_integer()
