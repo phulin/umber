@@ -1,6 +1,6 @@
 use std::fmt;
 
-use tex_command::CommandError;
+use tex_command::{CommandError, FatalError};
 use tex_expand::ExpandError;
 use tex_expand::scan::ScanToksError;
 use tex_lex::LexError;
@@ -247,6 +247,31 @@ pub enum ExecError {
     OutputLoop {
         dead_cycles: i32,
     },
+    /// TeX82 §93 `succumb`: `history:=fatal_error_stop; jump_out`.
+    ///
+    /// This variant is the Rust spelling of §81's non-local `goto end_of_TEX`.
+    /// It propagates by `?` through every active frame exactly as `jump_out`
+    /// cuts across every active procedure level, and the main-control driver
+    /// -- the only frame that corresponds to `end_of_TEX` -- converts it into
+    /// the session's terminal state instead of an error return. No other
+    /// handler may catch it, recover from it, or roll back over it.
+    Fatal(FatalError),
+}
+
+impl ExecError {
+    /// The fatal payload this error is carrying, if any.
+    ///
+    /// `Captured` wraps an inner error with a diagnostic site, so the search
+    /// has to look through it; a fatal error stays fatal however deeply the
+    /// diagnostic machinery has annotated it.
+    #[must_use]
+    pub fn as_fatal(&self) -> Option<FatalError> {
+        match self {
+            Self::Fatal(fatal) | Self::Command(CommandError::Fatal(fatal)) => Some(*fatal),
+            Self::Captured { error, .. } => error.as_fatal(),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ExecError {
@@ -499,6 +524,7 @@ impl fmt::Display for ExecError {
             Self::OutputLoop { dead_cycles } => {
                 write!(f, "Output loop---{dead_cycles} consecutive dead cycles")
             }
+            Self::Fatal(fatal) => write!(f, "irrecoverable error: {fatal}"),
         }
     }
 }
@@ -532,6 +558,7 @@ impl std::error::Error for ExecError {
             | Self::CumulativeFuelExceeded { .. }
             | Self::ResourceBudgetExceeded { .. }
             | Self::FontOpen { .. }
+            | Self::Fatal(_)
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
@@ -670,6 +697,7 @@ impl ExecError {
             | Self::MissingCanonicalInput { .. }
             | Self::MissingCanonicalFont { .. }
             | Self::MissingCanonicalPdfImage { .. }
+            | Self::Fatal(_)
             | Self::Command(_)
             | Self::UnsupportedAssignmentTarget
             | Self::RegisterNumberOutOfRange(_)

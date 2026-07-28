@@ -10,7 +10,7 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
     CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
-    CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
+    CommandRuntime, CommandState, CommandStateSnapshot, FatalError, FontLoadRequest, FontResource,
     HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind, MathStyleKind,
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
@@ -104,6 +104,14 @@ pub struct CanonicalMainControl {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
+    ///
+    /// `succumb` ends the job through §81's `jump_out`, which a library engine
+    /// cannot spell as leaving the process. This latch is the canonical
+    /// equivalent: once it is set the session is terminal, every further
+    /// operation reports [`MainControlStep::End`] without delivering a
+    /// command, and the host reads the cause from [`Self::fatal_error`].
+    fatal: Option<FatalError>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1100,10 +1108,16 @@ impl CanonicalMainControl {
     /// remain ordinary diagnostics. In either case the next call creates a
     /// fresh command processor; no delivered `CurrentCommand` is retained.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<CanonicalStepResult, ExecError> {
+        if self.fatal.is_some() {
+            return Ok(CanonicalStepResult::Progress(MainControlStep::End));
+        }
         let snapshot = self.snapshot_step(stores);
         match self.step_once(stores, None) {
             Ok(step) => Ok(CanonicalStepResult::Progress(step)),
             Err(error) => {
+                if let Some(fatal) = error.as_fatal() {
+                    return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
+                }
                 self.rollback_step(snapshot, stores);
                 match error {
                     ExecError::MissingCanonicalInput { name } => Ok(
@@ -2012,6 +2026,9 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<CanonicalStepResult, ExecError> {
+        if self.fatal.is_some() {
+            return Ok(CanonicalStepResult::Progress(MainControlStep::End));
+        }
         let snapshot = self.snapshot_step(stores);
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
@@ -2025,6 +2042,15 @@ impl CanonicalMainControl {
                 Ok(CanonicalStepResult::Progress(step))
             }
             Err(error) => {
+                if let Some(fatal) = error.as_fatal() {
+                    // §81 `jump_out` does not undo anything the job already
+                    // committed, so the partial step stands; the observations
+                    // it published are flushed ahead of the fatal record.
+                    pending.flush_into(observer);
+                    let step = self.succumb(fatal);
+                    observer.committed(CommandObservation::Diagnostic(fatal.record()));
+                    return Ok(CanonicalStepResult::Progress(step));
+                }
                 self.rollback_step(snapshot, stores);
                 match error {
                     ExecError::MissingCanonicalInput { name } => Ok(
@@ -2040,6 +2066,28 @@ impl CanonicalMainControl {
                 }
             }
         }
+    }
+
+    /// TeX82 §93's `succumb`: `history:=fatal_error_stop; jump_out`.
+    ///
+    /// `jump_out` cuts across every active procedure level and lands at
+    /// `end_of_TEX`, where §1332's `close_files_and_terminate` finishes the
+    /// job. A library engine has no process to leave, so the driver -- the
+    /// only frame that corresponds to `end_of_TEX` -- latches the terminal
+    /// state and reports the job over. Nothing is rolled back: `jump_out`
+    /// abandons the current procedure, it does not undo it.
+    fn succumb(&mut self, fatal: FatalError) -> MainControlStep {
+        self.fatal.get_or_insert(fatal);
+        MainControlStep::End
+    }
+
+    /// The fatal error that ended this session, if §93's `succumb` ran.
+    ///
+    /// `Some` is exactly TeX82 §76's `history=fatal_error_stop`: the job did
+    /// not run to `\end`, and no further operation will deliver a command.
+    #[must_use]
+    pub const fn fatal_error(&self) -> Option<FatalError> {
+        self.fatal
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
@@ -11104,6 +11152,9 @@ fn command_error(error: CommandError) -> ExecError {
     match error {
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
+        // §93 `succumb` is not a command failure to be re-described; it keeps
+        // its own identity all the way up to the driver.
+        CommandError::Fatal(fatal) => ExecError::Fatal(fatal),
         CommandError::InputInvariant(_)
         | CommandError::StaleDelivery
         | CommandError::MacroPrefixMismatch

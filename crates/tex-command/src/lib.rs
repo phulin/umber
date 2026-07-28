@@ -6,6 +6,7 @@
 mod command;
 mod conditionals;
 mod error;
+mod fatal;
 mod host;
 mod input;
 mod macro_call;
@@ -24,6 +25,7 @@ mod fixture_replay;
 
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
+pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use host::{
     CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
     LastNodeItem, PdfImageResource,
@@ -41,10 +43,10 @@ pub use observation::canonical_names;
 #[cfg(any(test, feature = "instrumentation"))]
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
-    CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, EffectRecord,
-    InputReason, InputRecord, InputTransition, MacroRecord, MutationRecord, ObservedToken,
-    ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord,
-    TokenListRecord, parameter_mutation_key,
+    CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,
+    EffectRecord, InputReason, InputRecord, InputTransition, MacroRecord, MutationRecord,
+    ObservedToken, ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord,
+    ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
 };
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,

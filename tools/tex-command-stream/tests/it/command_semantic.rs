@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tex_command::{
-    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, FontResource,
-    InputReason, InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument, FatalError,
+    FontResource, InputReason, InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind,
     SourceRegistration, canonical_names,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
@@ -179,6 +179,16 @@ struct SemanticRun {
     universe: Universe,
     mode_transitions: Vec<Mode>,
     artifacts: Vec<ContentHash>,
+    /// TeX82 §93 `succumb`'s terminal state, when the job ended through
+    /// §81's `jump_out` instead of running to `\end`.
+    ///
+    /// A fatal error is deliberately *not* an `Err` here. `Err` means the
+    /// runner could not produce a run at all, and such a run is unprojectable
+    /// on purpose so an engine crash can never be mistaken for a fixture
+    /// outcome. A fatal error is the opposite: the engine reached a defined
+    /// TeX82 terminal state and the job is over, which is an observable
+    /// semantic fact that a fixture must be able to pin.
+    fatal: Option<FatalError>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -694,6 +704,7 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                     universe,
                     mode_transitions,
                     artifacts,
+                    fatal: control.fatal_error(),
                 });
             }
         }
@@ -1105,8 +1116,19 @@ fn terminal_check_projection(run: &SemanticRun, projection: &Projection) -> Vec<
     terminal_check_results(&captured_terminal_text(run), &projection.terminal_checks)
 }
 
+/// Projects one completed run.
+///
+/// A fatal termination is a property of the *run*, not of any one projection
+/// kind, so its marker is emitted for every kind, ahead of everything else. A
+/// case whose engine now dies where it used to finish therefore gains a line
+/// its `expected` array must declare; it can never quietly lose one.
 fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
-    let mut output = match projection.kind {
+    let mut output: Vec<String> = run
+        .fatal
+        .map(|fatal| format!("execution:error:{}", fatal.label()))
+        .into_iter()
+        .collect();
+    output.extend(match projection.kind {
         ProjectionKind::Classification => {
             let mut output = Vec::new();
             for command in ["if_test", "fi_or_else"] {
@@ -1165,7 +1187,7 @@ fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
         ProjectionKind::TerminalChecks => terminal_check_projection(run, projection),
         ProjectionKind::ExecutionBoundaries => execution_boundaries(run, projection),
         ProjectionKind::State => Vec::new(),
-    };
+    });
     if projection.include_count_mutations {
         output.extend(run.observations.iter().filter_map(|observation| {
             let CommandObservation::Mutation(record) = observation else {
@@ -1374,6 +1396,7 @@ fn state_projection_emits_only_requested_final_counts() {
         universe: Universe::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
+        fatal: None,
     };
     let projection = Projection {
         kind: ProjectionKind::State,
@@ -1390,6 +1413,38 @@ fn state_projection_emits_only_requested_final_counts() {
     };
 
     assert_eq!(project(&run, &projection), ["count:2=7"]);
+}
+
+#[test]
+fn fatal_termination_precedes_every_projection_kinds_own_output() {
+    let mut counts = [0; COUNT_SLOTS];
+    counts[2] = 7;
+    let run = SemanticRun {
+        observations: Vec::new(),
+        counts,
+        universe: Universe::new(),
+        mode_transitions: Vec::new(),
+        artifacts: Vec::new(),
+        fatal: Some(FatalError::confusion("256 spans")),
+    };
+    let projection = Projection {
+        kind: ProjectionKind::State,
+        count_registers: vec![2],
+        include_count_mutations: false,
+        kinds: Vec::new(),
+        commands: Vec::new(),
+        command_names: Vec::new(),
+        box_registers: Vec::new(),
+        node_depth: None,
+        include_mode_transitions: false,
+        include_artifact_hashes: false,
+        terminal_checks: Vec::new(),
+    };
+
+    assert_eq!(
+        project(&run, &projection),
+        ["execution:error:confusion(256 spans)", "count:2=7"]
+    );
 }
 
 #[test]

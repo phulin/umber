@@ -56,6 +56,10 @@ pub enum CommandError {
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
     /// A pdfTeX navigation scanner rejected an action, identifier, or view.
     PdfNavigation(&'static str),
+    /// TeX82 §93 `succumb`: the job is over. This is not a recoverable command
+    /// failure; it is §81 `jump_out` unwinding to the driver, which latches the
+    /// terminal state and ends the job.
+    Fatal(crate::FatalError),
 }
 
 impl CommandError {
@@ -95,6 +99,7 @@ impl std::fmt::Display for CommandError {
                 )
             }
             Self::PdfNavigation(message) => formatter.write_str(message),
+            Self::Fatal(fatal) => write!(formatter, "irrecoverable error: {fatal}"),
         }
     }
 }
