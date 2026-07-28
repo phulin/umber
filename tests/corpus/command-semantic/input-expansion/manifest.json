@@ -109,7 +109,9 @@
       "expected": [
         "effect:activities:mode=vertical"
       ],
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "input-control-sequences",
@@ -356,14 +358,7 @@
         "command:expanded:char:letter:66:letter:66"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.243",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "command:raw:char:letter:66:letter:66",
-          "actual": "command:raw:char:letter:65:letter:65"
-        }
+        "kind": "pass"
       },
       "terminal_lines": [
         "B"
@@ -495,14 +490,7 @@
         "macro:activate:readvalue:0:"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.253",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "token-list:complete:read:char:letter:82",
-          "actual": "macro:activate:readvalue:0:"
-        }
+        "kind": "pass"
       },
       "terminal_lines": [
         "R"
