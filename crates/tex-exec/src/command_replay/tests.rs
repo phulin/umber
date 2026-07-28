@@ -7345,39 +7345,6 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 /// display -- not one command later (`umber2-johp.237`).
 #[test]
 fn display_resumption_enters_output_before_the_next_command() {
-fn box_children(universe: &Universe, register: u16) -> Vec<Node> {
-    let list = universe.box_reg(register).expect("box register is nonvoid");
-    let boxed = universe.nodes(list).first().expect("box node").to_owned();
-    let children = match boxed {
-        Node::HList(node) | Node::VList(node) => node.children,
-        _ => panic!("box node"),
-    };
-    universe.nodes(children).to_vec()
-}
-
-#[test]
-fn canonical_text_material_space_factor_and_ligature_matrix() {
-    let mut universe = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_cmr10_font(&mut control, &mut universe);
-    register_source(&mut control, br"\font\f=cmr10\f\setbox0=\hbox{A a. A}\end");
-    run_to_end(&mut control, &mut universe);
-    let nodes = box_children(&universe, 0);
-    assert!(
-        nodes
-            .iter()
-            .filter(|node| matches!(node, Node::Char { .. } | Node::Lig { .. }))
-            .count()
-            >= 4
-    );
-    assert!(
-        nodes.iter().any(|node| matches!(node, Node::Glue { .. })),
-        "spaces append glue"
-    );
-}
-
-#[test]
-fn canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
@@ -7427,6 +7394,44 @@ fn vertical_node_shape(node: &Node) -> String {
         Node::Penalty(penalty) => format!("penalty {penalty}"),
         other => format!("{other:?}"),
     }
+}
+fn box_children(universe: &Universe, register: u16) -> Vec<Node> {
+    let list = universe.box_reg(register).expect("box register is nonvoid");
+    let boxed = universe.nodes(list).first().expect("box node").to_owned();
+    let children = match boxed {
+        Node::HList(node) | Node::VList(node) => node.children,
+        _ => panic!("box node"),
+    };
+    universe.nodes(children).to_vec()
+}
+
+#[test]
+fn canonical_text_material_space_factor_and_ligature_matrix() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(&mut control, br"\font\f=cmr10\f\setbox0=\hbox{A a. A}\end");
+    run_to_end(&mut control, &mut universe);
+    let nodes = box_children(&universe, 0);
+    assert!(
+        nodes
+            .iter()
+            .filter(|node| matches!(node, Node::Char { .. } | Node::Lig { .. }))
+            .count()
+            >= 4
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(node, Node::Glue { .. })),
+        "spaces append glue"
+    );
+}
+
+#[test]
+fn canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
         br"\setbox0=\hbox{\kern1pt\hskip2pt\vrule width3pt height4pt}\end",
     );
     run_to_end(&mut control, &mut universe);

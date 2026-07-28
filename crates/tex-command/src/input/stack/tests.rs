@@ -511,7 +511,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
-        ReplayTrace::Stored(StoredReplayReason::TokenList),
+        ReplayTrace::Stored(StoredReplayReason::Mark),
     );
 
     universe.set_meaning(symbol, Meaning::CharGiven('B'));
@@ -534,7 +534,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
             .retire_exhausted_input(level)
             .expect("replay retires")
             .reason,
-        InputRetirementReason::TokenList
+        InputRetirementReason::TokenList(StoredReplayReason::Mark)
     );
 }
 
@@ -601,8 +601,8 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
     for (behavior, trace, expected_reason) in [
         (
             TokenBehavior::Ordinary,
-            ReplayTrace::Stored(StoredReplayReason::TokenList),
-            InputRetirementReason::TokenList,
+            ReplayTrace::Stored(StoredReplayReason::Mark),
+            InputRetirementReason::TokenList(StoredReplayReason::Mark),
         ),
         (
             TokenBehavior::Parameter,
@@ -687,7 +687,7 @@ fn input_level_retirement_covers_source_token_parameter_and_reference_actions() 
             RetirementBehavior::StopAtEnd,
             ReplayTrace::Stored(StoredReplayReason::EveryJob),
             InputRetirementAction::TerminalStop,
-            InputRetirementReason::TokenList,
+            InputRetirementReason::TokenList(StoredReplayReason::EveryJob),
         ),
         (
             TokenBehavior::Parameter,

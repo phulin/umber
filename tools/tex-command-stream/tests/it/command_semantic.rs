@@ -957,7 +957,16 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
                     InputReason::AlignmentUTemplate => "u-template",
                     InputReason::AlignmentVTemplate => "v-template",
                     InputReason::Recovery => "recovery",
-                    InputReason::TokenList => "token-list",
+                    InputReason::OutputRoutine
+                    | InputReason::EveryPar
+                    | InputReason::EveryMath
+                    | InputReason::EveryDisplay
+                    | InputReason::EveryHBox
+                    | InputReason::EveryVBox
+                    | InputReason::EveryJob
+                    | InputReason::EveryCr
+                    | InputReason::Mark
+                    | InputReason::UmberReplay(_) => "token-list",
                     InputReason::Write => "write",
                 };
                 Some(format!("input:{transition}:{reason}"))

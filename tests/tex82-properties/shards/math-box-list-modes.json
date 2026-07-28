@@ -1492,10 +1492,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "math_choice_groups_are_completed_independently"
-        },
-        {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "production_driver_math_choice_inside_alignment_cell_retires_cleanly"
         },

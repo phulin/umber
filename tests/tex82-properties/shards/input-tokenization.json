@@ -795,7 +795,7 @@
         },
         {
           "path": "crates/tex-command/src/processor/next.rs",
-          "test": "get_next_alone_intercepts_top_level_alignment_delimiters_and_backup_replays_them"
+          "test": "main_control_delivery_surfaces_top_level_delimiters_and_backup_replays_them"
         },
         {
           "path": "crates/tex-command/src/processor/next.rs",

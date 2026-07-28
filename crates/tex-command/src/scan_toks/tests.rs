@@ -1382,3 +1382,62 @@ fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
         .expect("completed direct-splice result is observed");
     assert!(splice < restore && restore < complete);
 }
+
+/// TeX82 §403 opens with §404's "Get the next non-blank non-relax
+/// non-call token", so a `\relax` before a mandatory `{` is skipped
+/// rather than treated as the missing brace.
+///
+/// §403 states the rule in prose too: "\TeX\ allows \relax to appear
+/// before the left_brace". Skipping only spaces made every mandatory
+/// group that a `\relax` guards -- the plain-TeX idiom for stopping an
+/// unwanted lookahead -- take §403's `back_error` recovery instead
+/// (umber2-johp.209).
+#[test]
+fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(relax),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(relax),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let scanned = processor
+        .scan_toks(ScanToksMode::General { expanded: false })
+        .expect("§404 skips the guarding `\\relax`");
+    assert_eq!(
+        processor
+            .state
+            .tokens(scanned.replacement_text.token_list()),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
+}
