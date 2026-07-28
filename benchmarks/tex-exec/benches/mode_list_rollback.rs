@@ -39,18 +39,16 @@ fn mode_list_rollback(c: &mut Criterion) {
             BenchmarkId::new("journal_successful_appends", prefix_len),
             &prefix_len,
             |b, &prefix_len| {
-                b.iter_batched(
-                    || (0..prefix_len).map(node).collect::<Vec<_>>(),
-                    |mut live| {
-                        for index in 0..STEPS {
-                            let rollback_length = live.len();
-                            live.push(node(index));
-                            black_box(rollback_length);
-                        }
-                        black_box(live)
-                    },
-                    criterion::BatchSize::SmallInput,
-                )
+                let mut live = Vec::with_capacity(prefix_len + STEPS);
+                live.extend((0..prefix_len).map(node));
+                b.iter(|| {
+                    let rollback_length = live.len();
+                    for index in 0..STEPS {
+                        live.push(node(index));
+                    }
+                    black_box(&live);
+                    live.truncate(rollback_length);
+                })
             },
         );
     }
