@@ -25,7 +25,9 @@ use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineChec
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
-use tex_state::{EffectRecord, JobClock, PrintSink, Universe, World};
+#[cfg(feature = "instrumentation")]
+use tex_state::{EffectRecord, PrintSink};
+use tex_state::{JobClock, Universe, World};
 
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
@@ -232,6 +234,8 @@ fn run_file_in_process_captured(
     let root_source = session
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
+    #[cfg(not(feature = "instrumentation"))]
+    let _ = root_source;
     #[cfg(feature = "instrumentation")]
     let registered_inputs = fs::read_dir(&base_dir)
         .map_err(|error| error.to_string())?
