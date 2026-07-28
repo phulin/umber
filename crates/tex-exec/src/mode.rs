@@ -144,6 +144,10 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
+    pub(crate) fn node_mut(&mut self, index: usize) -> Option<&mut Node> {
+        Arc::make_mut(&mut self.nodes).get_mut(index)
+    }
+
     pub(crate) fn reconstitution_target(&mut self) -> &mut Vec<Node> {
         Arc::make_mut(&mut self.nodes)
     }

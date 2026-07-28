@@ -1665,9 +1665,14 @@ impl CanonicalMainControl {
                     )));
             }
             CanonicalMathRequest::Script(script) => {
-                let episode = self.command_scan_math_script(script.kind, stores)?;
+                let target = reserve_canonical_script_target(
+                    self.modes.current_list_mut(),
+                    stores,
+                    script.kind,
+                );
+                let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
-                attach_canonical_script(self.modes.current_list_mut(), stores, field, script.kind);
+                fill_canonical_script_target(self.modes.current_list_mut(), target, field);
             }
             CanonicalMathRequest::Limits(kind) => {
                 apply_canonical_limits(self.modes.current_list_mut(), stores, kind)
@@ -2067,23 +2072,6 @@ impl CanonicalMainControl {
             stores,
         )
         .scan_math_field_episode()
-        .map_err(command_error)
-    }
-
-    fn command_scan_math_script(
-        &mut self,
-        kind: MathScriptKind,
-        stores: &mut Universe,
-    ) -> Result<tex_command::MathFieldEpisode, ExecError> {
-        command_processor(
-            &mut self.command,
-            &mut self.runtime,
-            &mut self.capabilities,
-            &mut self.operation_observations,
-            stores,
-        )
-        .scan_math_script_attachment(kind)
-        .map(|attachment| attachment.field)
         .map_err(command_error)
     }
 
@@ -2730,11 +2718,20 @@ fn canonical_scripts_allowed(node: &Node) -> bool {
     }
 }
 
-fn canonical_script_field_mut(noad: &mut MathNoad, kind: MathScriptKind) -> &mut MathField {
+pub(crate) fn canonical_script_field_mut(
+    noad: &mut MathNoad,
+    kind: MathScriptKind,
+) -> &mut MathField {
     match kind {
         MathScriptKind::Superscript => &mut noad.superscript,
         MathScriptKind::Subscript => &mut noad.subscript,
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CanonicalScriptTarget {
+    pub(crate) node_index: usize,
+    kind: MathScriptKind,
 }
 
 /// tex.web §1176's `sub_sup`.
@@ -2747,48 +2744,73 @@ fn canonical_script_field_mut(noad: &mut MathNoad, kind: MathScriptKind) -> &mut
 /// scan_math(p);
 /// ```
 ///
-/// So the script lands on the list's tail only when the list is non-empty and
-/// that tail passes §687's `scripts_allowed`; anything else leaves `p` null.
-/// §1177 appends a fresh Ord noad whenever `p=null` **or** the selected field
-/// is already occupied, but reports an error only in the second case
-/// (`if t<>empty`), and its two messages are `print_err("Double superscript")`
-/// and `print_err("Double subscript")`: §73's `print_err` opens the line with
-/// an exclamation mark and a space, and §82's `error` closes it with a period.
-fn attach_canonical_script(
+/// The returned index is the Rust counterpart of §1176's pointer `p`.
+/// Reserving it before §1151's `scan_math` is observable: §1177's diagnostic
+/// precedes every side effect of the field scan, and material appended while a
+/// recovered or nested field executes cannot move the eventual attachment to a
+/// newer tail.
+pub(crate) fn reserve_canonical_script_target(
     list: &mut crate::ModeList,
     stores: &mut Universe,
-    field: MathField,
     kind: MathScriptKind,
-) {
+) -> CanonicalScriptTarget {
     // `t<>empty`: the tail was eligible but already carries this script.
-    let occupied = match list.last_node_mut() {
+    let tail_index = list.nodes().len().checked_sub(1);
+    let (eligible, occupied) = match tail_index.and_then(|index| list.nodes().get(index)) {
         Some(node) if canonical_scripts_allowed(node) => {
             let Node::MathNoad(noad) = node else {
                 unreachable!("canonical_scripts_allowed admits only noads")
             };
-            let target = canonical_script_field_mut(noad, kind);
-            if matches!(target, MathField::Empty) {
-                *target = field;
-                return;
-            }
-            true
+            let occupied = match kind {
+                MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
+                MathScriptKind::Subscript => !matches!(noad.subscript, MathField::Empty),
+            };
+            (true, occupied)
         }
-        _ => false,
+        _ => (false, false),
     };
 
-    let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
-    *canonical_script_field_mut(&mut noad, kind) = field;
-    list.push(Node::MathNoad(noad));
+    let node_index = if eligible && !occupied {
+        tail_index.expect("eligible tail has an index")
+    } else {
+        let index = list.nodes().len();
+        list.push(Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )));
+        index
+    };
 
     if occupied {
-        let message = match kind {
-            MathScriptKind::Superscript => "\n! Double superscript.\n",
-            MathScriptKind::Subscript => "\n! Double subscript.\n",
+        let (message, help) = match kind {
+            MathScriptKind::Superscript => (
+                "Double superscript",
+                "I treat `x^1^2' essentially like `x^1{}^2'.",
+            ),
+            MathScriptKind::Subscript => (
+                "Double subscript",
+                "I treat `x_1_2' essentially like `x_1{}_2'.",
+            ),
         };
-        stores
-            .world_mut()
-            .write_text(PrintSink::TerminalAndLog, message);
+        let mut report = stores.print_err(message);
+        report.help(&[help]);
+        report.error();
     }
+
+    CanonicalScriptTarget { node_index, kind }
+}
+
+pub(crate) fn fill_canonical_script_target(
+    list: &mut crate::ModeList,
+    target: CanonicalScriptTarget,
+    field: MathField,
+) {
+    let Some(Node::MathNoad(noad)) = list.node_mut(target.node_index) else {
+        unreachable!("reserved canonical script target must remain a noad")
+    };
+    let reserved = canonical_script_field_mut(noad, target.kind);
+    debug_assert!(matches!(reserved, MathField::Empty));
+    *reserved = field;
 }
 
 fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, kind: MathLimitKind) {

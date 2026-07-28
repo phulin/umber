@@ -1852,28 +1852,137 @@ fn canonical_script_after_left_delimiter_starts_a_fresh_ord_noad() {
     assert_eq!(canonical_log_text(&stores), "");
 }
 
-/// §1177's two messages are `print_err("Double superscript")` and
-/// `print_err("Double subscript")`; §73's `print_err` opens the line with an
-/// exclamation mark and a space, and §82's `error` closes it with a period.
-/// The dummy noad is appended either
-/// way, so `x^1^2` behaves like `x^1{}^2`.
+/// §1177's two messages and `help1` lines run before §1176 calls §1151's
+/// `scan_math`. The dummy noad is appended either way, so `x^1^2` behaves
+/// like `x^1{}^2`.
 #[test]
-fn canonical_double_script_reports_tex82_message_text() {
+fn canonical_double_script_reports_tex82_message_and_help_before_field_scan() {
     let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$a^1^2");
 
     assert_eq!(nodes.len(), 2);
     assert_math_char(&math_noad(&nodes[0]).superscript, 0, '1');
     assert_math_char(&math_noad(&nodes[1]).superscript, 0, '2');
-    let stores = super::core::run_canonical_tex82(r"$a^1^2$\end");
-    assert_eq!(canonical_log_text(&stores), "\n! Double superscript.\n");
+    let stores = super::core::run_canonical_tex82(r"$a^1^{\message{SUP-FIELD-SCANNED}}$\end");
+    assert_eq!(
+        canonical_log_text(&stores),
+        "! Double superscript.\n\
+         I treat `x^1^2' essentially like `x^1{}^2'.\n\n\
+         SUP-FIELD-SCANNED"
+    );
 
     let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$a_1_2");
 
     assert_eq!(nodes.len(), 2);
     assert_math_char(&math_noad(&nodes[0]).subscript, 0, '1');
     assert_math_char(&math_noad(&nodes[1]).subscript, 0, '2');
-    let stores = super::core::run_canonical_tex82(r"$a_1_2$\end");
-    assert_eq!(canonical_log_text(&stores), "\n! Double subscript.\n");
+    let stores = super::core::run_canonical_tex82(r"$a_1_{\message{SUB-FIELD-SCANNED}}$\end");
+    assert_eq!(
+        canonical_log_text(&stores),
+        "! Double subscript.\n\
+         I treat `x_1_2' essentially like `x_1{}_2'.\n\n\
+         SUB-FIELD-SCANNED"
+    );
+}
+
+/// TeX82 §§1151–1153 and §§1176–1177 keep `p`, the selected field pointer,
+/// live while a braced field runs ordinary main control. Nodes appended by
+/// that nested execution must not make the completed field attach to the new
+/// tail. The scalar cases also retain their own local source provenance.
+#[test]
+fn canonical_script_target_reservation_survives_nested_mlist_mutation() {
+    let (stores, nodes) = super::core::run_canonical_tex82_current_list(r"$a^1^{b_c^d}_e");
+
+    assert_eq!(nodes.len(), 2);
+    assert_math_char(&math_noad(&nodes[0]).superscript, 0, '1');
+    assert_math_char(&math_noad(&nodes[1]).subscript, 1, 'e');
+    let MathField::SubMlist(nested) = math_noad(&nodes[1]).superscript else {
+        panic!("reserved duplicate target should hold the completed sub-mlist");
+    };
+    let nested = stores.nodes(nested).testing_decoded();
+    assert_eq!(nested.len(), 1);
+    let inner = math_noad(&nested[0]);
+    assert_math_char(&inner.nucleus, 1, 'b');
+    assert_math_char(&inner.subscript, 1, 'c');
+    assert_math_char(&inner.superscript, 1, 'd');
+    let MathField::MathChar(subscript) = math_noad(&nodes[1]).subscript else {
+        panic!("expected scalar subscript");
+    };
+    assert_ne!(subscript.origin, OriginId::UNKNOWN);
+}
+
+/// The reserved list position is intentionally stronger than "find the tail
+/// again": §1153 recovery and a live math group may execute arbitrary commands
+/// before §1151 fills `p`. Challenge both script slots, both empty and occupied
+/// eligible fields, and a disallowed tail while appending a later noad.
+#[test]
+fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
+    for kind in [
+        tex_command::MathScriptKind::Superscript,
+        tex_command::MathScriptKind::Subscript,
+    ] {
+        for occupied in [false, true] {
+            let mut stores = Universe::new_with_plain_catcodes();
+            let mut list = crate::ModeList::default();
+            let mut first = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+            if occupied {
+                *crate::canonical_main_control::canonical_script_field_mut(&mut first, kind) =
+                    MathField::MathChar(tex_state::math::MathChar {
+                        family: 0,
+                        character: '1',
+                        origin: OriginId::UNKNOWN,
+                    });
+            }
+            list.push(Node::MathNoad(first));
+            let target = crate::canonical_main_control::reserve_canonical_script_target(
+                &mut list,
+                &mut stores,
+                kind,
+            );
+            let reserved_index = usize::from(occupied);
+            assert_eq!(target.node_index, reserved_index);
+
+            list.push(Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::Empty,
+            )));
+            crate::canonical_main_control::fill_canonical_script_target(
+                &mut list,
+                target,
+                MathField::MathChar(tex_state::math::MathChar {
+                    family: 0,
+                    character: '2',
+                    origin: OriginId::UNKNOWN,
+                }),
+            );
+            let reserved = math_noad(&list.nodes()[reserved_index]);
+            assert_math_char(
+                match kind {
+                    tex_command::MathScriptKind::Superscript => &reserved.superscript,
+                    tex_command::MathScriptKind::Subscript => &reserved.subscript,
+                },
+                0,
+                '2',
+            );
+            let later_tail = math_noad(list.nodes().last().expect("later tail"));
+            assert!(matches!(later_tail.superscript, MathField::Empty));
+            assert!(matches!(later_tail.subscript, MathField::Empty));
+        }
+
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut list = crate::ModeList::default();
+        list.push(Node::Glue {
+            spec: stores.intern_glue(tex_state::glue::GlueSpec::ZERO),
+            kind: GlueKind::MuSkip,
+            leader: None,
+        });
+        let target = crate::canonical_main_control::reserve_canonical_script_target(
+            &mut list,
+            &mut stores,
+            kind,
+        );
+        assert_eq!(target.node_index, 1);
+        assert_eq!(canonical_log_text(&stores), "");
+    }
 }
 
 fn canonical_log_text(stores: &Universe) -> String {

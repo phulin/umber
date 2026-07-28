@@ -618,14 +618,6 @@ pub struct MathFieldEpisode {
     pub provenance: StructuredProvenance,
 }
 
-/// A completed script attachment. The executor selects the incomplete noad;
-/// command processing has already completed the field it attaches.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathScriptAttachment {
-    pub kind: MathScriptKind,
-    pub field: MathFieldEpisode,
-}
-
 /// The structural delimiter boundary selected by `\left`, `\right`, or
 /// e-TeX's `\middle`. The corresponding delimiter scan is complete before
 /// this value crosses the command boundary.
@@ -1464,17 +1456,6 @@ impl CommandProcessor<'_> {
             self.scan_left_brace(true)?,
             crate::scan_toks::ScannedLeftBrace::Inserted
         ))
-    }
-
-    /// Completes a script marker and its field in one command-owned episode.
-    pub fn scan_math_script_attachment(
-        &mut self,
-        kind: MathScriptKind,
-    ) -> Result<MathScriptAttachment, CommandError> {
-        Ok(MathScriptAttachment {
-            kind,
-            field: self.scan_math_field_episode()?,
-        })
     }
 
     /// Completes the delimiter immediately following a structural math
