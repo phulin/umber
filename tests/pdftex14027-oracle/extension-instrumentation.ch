@@ -285,6 +285,18 @@ else if state_kind=4 then
 else write(umber_trace_file,'{"type":"integer","value":',value:1,'}');
 write_ln(umber_trace_file,',"scope":"global"}}}');
 end;
+
+procedure umber_trace_pdf_space_font(@!value:str_number);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"mutation","data":{"target":"parameter",',
+  '"key":{"type":"name","value":"pdfspacefont"},',
+  '"value":{"type":"name","value":"');
+umber_trace_string_contents(value);
+write_ln(umber_trace_file,'"}}}');
+end;
 @z
 
 @x [18] Distinguish externally committed PDF and DVI page artifacts.

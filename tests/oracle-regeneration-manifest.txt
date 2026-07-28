@@ -9,6 +9,6 @@ contract-schema 2
 event-schema 1
 engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt 740c42e96e64cd9a64e2e4860ad128a5e476f469fe326900ef21809aebe909a7 tex82-oracle-web2c-texlive-2025
 engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt d61b78a9ba980d917401bb05788ca5ae36a9040562e4255d6428ebb203a0487a etex26-oracle-web2c-texlive-2025
-engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt 5b5d06495d4fc662f5d2ee3923dd7b8045a67d198fccc7410c764ee6c0d10f01 pdftex14027-oracle-web2c-texlive-2025
+engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt ad5d7c4c4a5963166cda6145ba8848ccf0e166795a5d8aa8d2860b3afead166f pdftex14027-oracle-web2c-texlive-2025
 fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json f8547d462e8a3abb3082bbbcbc75acfd0a61d82210425edabaa09625a604983e
 fixture-audit tex82/command-transitions-v1 tests/tex82-oracle/semantic-event-matrix.txt 6e25b1917913de7334cf11921da6bccb092470d96e208dff353b58f61dd50d6c tests/tex82-oracle/fixture-audit-matrix.txt 12499d065d49f2cef209ad5fe43d8263f6bef80d1f607f5a4a5b9a05cefad30d

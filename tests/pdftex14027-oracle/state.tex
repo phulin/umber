@@ -106,5 +106,7 @@
 \immediate\openout1=state-effects.out
 \immediate\write1{PDFTEX-COMMAND-STATE}
 \immediate\closeout1
+\def\spacefontname{oracle-space}
+\pdfspacefont{\spacefontname}
 \shipout\hbox{\pdfinterwordspaceon\pdffakespace\pdfinterwordspaceoff}
 \end

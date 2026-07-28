@@ -130,7 +130,7 @@ pdfshellescape|command-core|state|phase-2 enquiry matrix|host-policy enquiry
 pdfsnaprefpoint|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
 pdfsnapy|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
 pdfsnapycomp|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
-pdfspacefont|executor-backend|backend|tex-exec PDF font tests|font-state execution
+pdfspacefont|command-core|state|state.tex|expanded global fallback font-name commit
 pdfstartlink|executor-backend|backend|tex-exec PDF link tests|link node execution
 pdfstartthread|executor-backend|backend|tex-exec PDF thread tests|thread node execution
 pdfstrcmp|command-core|expansion|string comparison negative|bytewise comparison return

@@ -295,3 +295,14 @@ end
     umber_trace_pdf_state(4,0);
 end
 @z
+
+@x [53a] Observe the expanded global fallback-space font selection.
+    pdf_space_font_name := tokens_to_string(def_ref);
+    delete_token_ref(def_ref);
+end
+@y
+    pdf_space_font_name := tokens_to_string(def_ref);
+    delete_token_ref(def_ref);
+    umber_trace_pdf_space_font(pdf_space_font_name);
+end
+@z
