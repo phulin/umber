@@ -1280,7 +1280,11 @@
         },
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "accent_scanner_returns_completed_operands_and_replays_noncharacter_base"
+          "test": "accent_scanner_separates_the_accent_code_from_the_base_lookahead"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment"
         },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
