@@ -691,7 +691,7 @@ fn auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\prevdepth=2pt\prevgraf=3\spacefactor=2000\prevgraf=-1\xdef\depth{\the\prevdepth}\xdef\graf{\the\prevgraf}\setbox0=\hbox{}\wd0=6pt\ht0=7pt\dp0=8pt\copy0\pagegoal=10pt\deadcycles=4\insertpenalties=5\xdef\goal{\the\pagegoal}\xdef\dead{\the\deadcycles}\xdef\penalties{\the\insertpenalties}\end",
+        br"\prevdepth=2pt\prevgraf=3\spacefactor\prevgraf=-1\xdef\depth{\the\prevdepth}\xdef\graf{\the\prevgraf}\setbox0=\hbox{}\wd0=6pt\ht0=7pt\dp0=8pt\copy0\pagegoal=10pt\deadcycles=4\insertpenalties=5\xdef\goal{\the\pagegoal}\xdef\dead{\the\deadcycles}\xdef\penalties{\the\insertpenalties}\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(macro_text(&stores, "depth"), "2.0pt");

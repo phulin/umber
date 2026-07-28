@@ -7099,50 +7099,98 @@ fn canonical_valign_in_vertical_mode_starts_a_paragraph() {
 }
 
 #[test]
-fn canonical_spacefactor_assignment_sets_the_current_horizontal_list() {
-    // TeX82 §1243's `alter_aux` (`set_aux` with `cur_chr=hmode`): a legal
-    // `\spacefactor=<number>` in horizontal or restricted-horizontal mode
-    // writes the current list's space factor directly -- regression test for
-    // umber2-johp.86.
-    let mut universe = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
-    register_source(&mut control, br"\spacefactor=250 ");
-    run_to_end(&mut control, &mut universe);
+fn canonical_spacefactor_accepts_both_horizontal_modes_and_boundary_values() {
+    // TeX82 §§1210/1243: `set_aux` is delivered in every mode, but
+    // `alter_aux` accepts the hmode selector only when `abs(mode)=hmode`.
+    for (mode, value) in [
+        (Mode::Horizontal, 1),
+        (Mode::Horizontal, 32_767),
+        (Mode::RestrictedHorizontal, 1),
+        (Mode::RestrictedHorizontal, 32_767),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        control.modes.push(mode);
+        register_source(&mut control, format!("\\spacefactor = {value} ").as_bytes());
+        run_to_end(&mut control, &mut universe);
 
-    assert_eq!(control.modes.current_list().space_factor(), 250);
+        assert_eq!(control.modes.current_list().space_factor(), value);
+        assert!(!terminal_text(&universe).contains('!'));
+    }
 }
 
 #[test]
-fn canonical_spacefactor_out_of_range_value_is_diagnosed_and_left_unchanged() {
+fn canonical_spacefactor_out_of_range_values_are_diagnosed_and_leave_state_unchanged() {
     // TeX82 §1243: `if (cur_val<=0)or(cur_val>32767) then int_error(cur_val)
     // else space_factor:=cur_val` -- an out-of-range value is diagnosed and
     // the space factor is left untouched, not clamped.
-    let mut universe = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
-    control.modes.current_list_mut().set_space_factor(1000);
-    register_source(&mut control, br"\spacefactor=0 ");
-    run_to_end(&mut control, &mut universe);
+    for value in [-1, 0, 32_768] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        control.modes.push(Mode::Horizontal);
+        control.modes.current_list_mut().set_space_factor(1234);
+        register_source(&mut control, format!("\\spacefactor={value} ").as_bytes());
+        run_to_end(&mut control, &mut universe);
 
-    assert_eq!(control.modes.current_list().space_factor(), 1000);
-    assert!(terminal_text(&universe).contains("Bad space factor (0)"));
+        assert_eq!(control.modes.current_list().space_factor(), 1234);
+        let terminal = terminal_text(&universe);
+        assert!(terminal.contains(&format!("! Bad space factor ({value}).")));
+        assert!(terminal.contains("I allow only values in the range 1..32767 here."));
+    }
 }
 
 #[test]
-fn canonical_spacefactor_assignment_in_vertical_mode_is_illegal_and_ignored() {
-    // TeX82 §1243's `report_illegal_case` (`cur_chr<>abs(mode)`): outer
-    // vertical mode rejects `\spacefactor` entirely.
+fn canonical_spacefactor_illegal_modes_report_before_scanning_and_preserve_next_token() {
+    // TeX82 §1243 tests the mode before `scan_optional_equals; scan_int`.
+    // The following assignment must therefore execute in all four illegal
+    // modes instead of being consumed as a putative integer operand.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Math,
+        Mode::DisplayMath,
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\spacefactor\global\count0=17 ");
+        run_to_end(&mut control, &mut universe);
+
+        assert_eq!(universe.count(0), 17, "following token in {mode:?}");
+        let terminal = terminal_text(&universe);
+        let mode_text = match mode {
+            Mode::Vertical => "vertical mode",
+            Mode::InternalVertical => "internal vertical mode",
+            Mode::Math => "math mode",
+            Mode::DisplayMath => "display math mode",
+            _ => unreachable!("the table contains only illegal modes"),
+        };
+        assert!(
+            terminal.contains(&format!("You can't use `\\spacefactor' in {mode_text}.")),
+            "{terminal}"
+        );
+    }
+}
+
+#[test]
+fn canonical_spacefactor_targets_only_the_current_list_and_is_always_global() {
+    // TeX82 §§1242/1243 identify auxiliary assignments as always global:
+    // braces and `\global` do not create save-stack entries. The target is
+    // nevertheless the current horizontal list, so a nested hbox owns an
+    // independent value.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\spacefactor=250 ");
+    control.modes.push(Mode::Horizontal);
+    register_source(
+        &mut control,
+        br"{\spacefactor 2000}\setbox0=\hbox{\global\spacefactor=3000}\relax",
+    );
     run_to_end(&mut control, &mut universe);
 
-    assert!(
-        terminal_text(&universe).contains("You can't use `\\spacefactor' in this mode."),
-        "{}",
-        terminal_text(&universe)
-    );
+    assert_eq!(control.modes.current_list().space_factor(), 2000);
+    assert!(!terminal_text(&universe).contains('!'));
 }
 
 #[test]

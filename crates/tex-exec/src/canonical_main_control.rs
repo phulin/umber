@@ -3188,6 +3188,13 @@ enum ScannedStep {
     SpaceFactor {
         value: i32,
     },
+    /// TeX82 §1243 checks `cur_chr<>abs(mode)` before calling either
+    /// `scan_optional_equals` or `scan_int`. Thus an illegal-mode
+    /// `\spacefactor` reports `report_illegal_case` while preserving the
+    /// very next token as an ordinary main-control command.
+    IllegalSpaceFactor {
+        token: Token,
+    },
     /// TeX82 §1244's `set_prev_graf` (`alter_prev_graf`): `\prevgraf=<number>`
     /// is `any_mode` and walks the mode nest up to its nearest enclosing
     /// vertical level (`while abs(nest[p].mode_field)<>vmode do decr(p)`),
@@ -4884,9 +4891,15 @@ fn scan_command(
             | UnexpandablePrimitive::ErrorStopMode),
         ) => Ok(ScannedStep::SetInteractionMode(primitive)),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_integer().map_err(command_error)?.value;
-            Ok(ScannedStep::SpaceFactor { value })
+            if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+                let _ = processor.scan_optional_equals().map_err(command_error)?;
+                let value = processor.scan_integer().map_err(command_error)?.value;
+                Ok(ScannedStep::SpaceFactor { value })
+            } else {
+                Ok(ScannedStep::IllegalSpaceFactor {
+                    token: command.spelling().semantic_token(),
+                })
+            }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
@@ -7603,6 +7616,7 @@ fn applied_mutation_observation(
         ScannedStep::BoxDimensionAssignment { .. }
         | ScannedStep::PrevDepth { .. }
         | ScannedStep::SpaceFactor { .. }
+        | ScannedStep::IllegalSpaceFactor { .. }
         | ScannedStep::PrevGraf { .. }
         | ScannedStep::PageDimension { .. }
         | ScannedStep::PageInteger { .. }
@@ -8815,32 +8829,28 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SpaceFactor { value } => {
-            if matches!(
+            debug_assert!(matches!(
                 modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
-            ) {
-                // TeX82 §1243's `alter_aux`: `if (cur_val<=0)or(cur_val>32767)
-                // then int_error(cur_val) else space_factor:=cur_val` -- an
-                // out-of-range value is diagnosed and left unchanged, exactly
-                // like an illegal mode, rather than being clamped.
-                if (1..=32767).contains(&value) {
-                    modes.current_list_mut().set_space_factor(value);
-                } else {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        &format!(
-                            "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
-                        ),
-                    );
-                }
+            ));
+            // TeX82 §1243's `alter_aux`: `if (cur_val<=0)or(cur_val>32767)
+            // then int_error(cur_val) else space_factor:=cur_val` -- an
+            // out-of-range value is diagnosed and left unchanged rather than
+            // clamped.
+            if (1..=32767).contains(&value) {
+                modes.current_list_mut().set_space_factor(value);
             } else {
-                // TeX82 §1243's `alter_aux`: `if cur_chr<>abs(mode) then
-                // report_illegal_case`.
                 stores.world_mut().write_text(
                     PrintSink::TerminalAndLog,
-                    "\n! You can't use `\\spacefactor' in this mode.\n",
+                    &format!(
+                        "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
+                    ),
                 );
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalSpaceFactor { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PrevGraf { value } => {
