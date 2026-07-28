@@ -63,8 +63,8 @@ pdfinclusionerrorlevel|command-core|state|phase-2 command-state matrix|named par
 pdfinfoomitdate|command-core|state|phase-2 command-state matrix|named parameter write
 pdfinfo|executor-backend|backend|tex-exec PDF metadata tests|info dictionary effect
 pdfinsertht|command-core|state|phase-2 enquiry matrix|page insertion-height enquiry
-pdfinterwordspaceoff|executor-backend|backend|tex-exec PDF text tests|text-state execution
-pdfinterwordspaceon|executor-backend|backend|tex-exec PDF text tests|text-state execution
+pdfinterwordspaceoff|command-core|state|state.tex|ordered whatsit append
+pdfinterwordspaceon|command-core|state|state.tex|ordered whatsit append
 pdflastannot|executor-backend|backend|tex-exec PDF annotation tests|PDF object identity enquiry
 pdflastlinedepth|command-core|state|phase-2 command-state matrix|named dimension write
 pdflastlink|executor-backend|backend|tex-exec PDF link tests|PDF object identity enquiry

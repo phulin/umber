@@ -269,10 +269,16 @@ write(umber_trace_file,
   '{"event":"mutation","data":{"target":"parameter",',
   '"key":{"type":"name","value":"');
 if state_kind=0 then write(umber_trace_file,'pdfresettimer')
-else write(umber_trace_file,'pdfsetrandomseed');
+else if state_kind=1 then write(umber_trace_file,'pdfsetrandomseed')
+else if state_kind=2 then write(umber_trace_file,'pdfinterwordspaceon')
+else write(umber_trace_file,'pdfinterwordspaceoff');
 write(umber_trace_file,'"},"value":');
 if state_kind=0 then
   write(umber_trace_file,'{"type":"name","value":"reset"}')
+else if state_kind=2 then
+  write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-on"}')
+else if state_kind=3 then
+  write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-off"}')
 else write(umber_trace_file,'{"type":"integer","value":',value:1,'}');
 write_ln(umber_trace_file,',"scope":"global"}}}');
 end;

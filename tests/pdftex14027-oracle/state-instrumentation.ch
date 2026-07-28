@@ -268,3 +268,21 @@ begin
   umber_trace_pdf_state(0,0);
 end
 @z
+
+@x [53a] Observe the ordered interword-space-on whatsit.
+    new_whatsit(pdf_interword_space_on_node, small_node_size);
+end
+@y
+    new_whatsit(pdf_interword_space_on_node, small_node_size);
+    umber_trace_pdf_state(2,0);
+end
+@z
+
+@x [53a] Observe the ordered interword-space-off whatsit.
+    new_whatsit(pdf_interword_space_off_node, small_node_size);
+end
+@y
+    new_whatsit(pdf_interword_space_off_node, small_node_size);
+    umber_trace_pdf_state(3,0);
+end
+@z
