@@ -6,7 +6,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
-use crate::{CommandState, RegisteredSourceKind, SourceRegistration};
+use crate::{CommandState, RegisteredSourceKind, SourceNameClass, SourceRegistration};
 
 use super::{
     InputRetirementAction, InputRetirementError, InputRetirementReason, OutParameterReplay,
@@ -594,6 +594,83 @@ fn source_level_begin_end_restore_line_and_terminal_state() {
         state.retire_exhausted_input(outer_identity),
         Err(InputRetirementError::NoInput)
     );
+}
+
+#[test]
+fn source_retirement_reports_tex_web_303_name_classification() {
+    // tex.web §303 partitions a source level's `name` into the terminal
+    // (`name=0`), input stream `name-1` (`1<=name<=17`), and a text file
+    // (`name>17`). §328's `begin_file_reading` opens every level at `name=0`,
+    // §483's `read_toks` sets `name:=m+1`, and §537's `start_input` installs a
+    // file's string number; §329's `end_file_reading` acts on the last of
+    // those alone. Retirement therefore has to report which one ended, and a
+    // §307 `token_type` -- what `InputRetirementReason` models -- cannot say.
+    for class in [
+        SourceNameClass::Terminal,
+        SourceNameClass::ReadStream(0),
+        SourceNameClass::ReadStream(16),
+        SourceNameClass::File,
+    ] {
+        let mut state = CommandState::default();
+        let source = state
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                b"x\n".to_vec(),
+            ))
+            .expect("source registers");
+        state
+            .open_registered_source_as(source, class)
+            .expect("source opens");
+        let InputLevel::Source(level) = state.input.levels.last().expect("source level") else {
+            panic!("opened source is not a source level");
+        };
+        assert_eq!(level.name_class, class);
+        let identity = level.identity;
+        let retired = state
+            .retire_exhausted_input(identity)
+            .expect("source retires");
+        assert_eq!(retired.action, InputRetirementAction::SourcePopped);
+        assert_eq!(retired.reason, InputRetirementReason::Source);
+        assert_eq!(retired.name_class, Some(class));
+    }
+}
+
+#[test]
+fn ordinary_source_open_classifies_as_tex_web_537_start_input_file() {
+    // Every `\input`, and the job's own root file, reaches TeX through §537's
+    // `start_input`, so an unqualified open is a file and never the terminal
+    // §328 would have left it as.
+    let mut state = CommandState::default();
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Vec::new(),
+        ))
+        .expect("source registers");
+    state
+        .open_registered_source(source)
+        .expect("source opens");
+    let InputLevel::Source(level) = state.input.levels.last().expect("source level") else {
+        panic!("opened source is not a source level");
+    };
+    assert_eq!(level.name_class, SourceNameClass::File);
+}
+
+#[test]
+fn token_list_retirement_reports_no_name_classification() {
+    // §307 reuses `name` on a token-list level as the eqtb address of the
+    // macro being expanded, so §303's classification does not apply at all.
+    let mut state = CommandState::default();
+    let identity = state.push_token_level(
+        transient_payload(&[traced('x')]),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    let retired = state
+        .retire_exhausted_input(identity)
+        .expect("token list retires");
+    assert_eq!(retired.name_class, None);
 }
 
 #[test]

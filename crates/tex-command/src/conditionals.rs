@@ -796,6 +796,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));

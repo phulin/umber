@@ -254,6 +254,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Macro,
+            source_name: None,
             level: _level.0,
             position: 0,
         }));

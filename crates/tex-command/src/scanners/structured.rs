@@ -2840,6 +2840,7 @@ impl CommandProcessor<'_> {
         self.observe(crate::CommandObservation::Input(crate::InputRecord {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::Backup,
+            source_name: None,
             level: level.0,
             position: 0,
         }));

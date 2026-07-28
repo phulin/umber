@@ -39,6 +39,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Recovery,
             reason: InputReason::Recovery,
+            source_name: None,
             level: level.0,
             position: 0,
         }));
@@ -95,6 +96,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Write,
+            source_name: None,
             level: level.0,
             position: 0,
         }));

@@ -961,7 +961,12 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
                     InputTransition::Recovery => "recovery",
                 };
                 let reason = match record.reason {
-                    InputReason::Source => "source",
+                    // A source level is named by tex.web §303's `name`
+                    // classification, which §307's `token_type` -- the rest of
+                    // this table -- cannot express.
+                    InputReason::Source => record
+                        .source_name
+                        .map_or("source", canonical_names::source_name_class_name),
                     InputReason::Backup => "backup",
                     InputReason::Macro => "macro",
                     InputReason::Parameter => "parameter",

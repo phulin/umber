@@ -17,7 +17,7 @@ use tex_command::{
     ConditionRecord, EffectRecord, FontResource, InputReason as CommandInputReason, InputRecord,
     InputTransition, MacroRecord, MutationRecord, ObservedToken,
     RecoveryKind as CommandRecoveryKind, RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord,
-    SourceRegistration, TokenListRecord,
+    SourceNameClass, SourceRegistration, TokenListRecord,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_oracle::{
@@ -693,9 +693,14 @@ impl CanonicalStartup {
                 "canonical startup assigned non-deterministic source identities".into(),
             ));
         }
-        command.open_registered_source(terminal).map_err(|error| {
-            RunnerError::Replay(format!("terminal filename cannot open: {error}"))
-        })?;
+        // The `**` filename line is read from the terminal, which tex.web
+        // §331 opens with `name:=0`; §537's `start_input` is what then opens
+        // the root file it names.
+        command
+            .open_registered_source_as(terminal, SourceNameClass::Terminal)
+            .map_err(|error| {
+                RunnerError::Replay(format!("terminal filename cannot open: {error}"))
+            })?;
 
         for (name, bytes) in &self.input_capabilities {
             control.capabilities_mut().register_input(

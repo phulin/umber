@@ -34,7 +34,16 @@ Private state-machine modules must not be widened for compatibility with
   modelled by the executor latching it as the session's terminal state.
 - `src/input/source.rs`, `src/input/source/tests.rs`: public host-neutral
   source-registration inputs and errors plus private immutable backing,
-  source cursors, and focused registration tests.
+  source cursors, and focused registration tests. It also owns
+  `SourceNameClass`, TeX82 §303's partition of a source level's `name` into
+  the terminal (`name=0`), input stream `name-1` (`1..=17`), and a text file
+  (`name>17`). That is a third, independent classification: `InputReason` is
+  a strict model of §307's `token_type` codes, which a source level does not
+  have at all, and `RegisteredSourceKind` names how Umber acquired the bytes
+  rather than which channel TeX reads them as. An open with no explicit class
+  is §537 `start_input`'s file, because §537 is how TeX reaches every `\input`
+  and the job's root file alike; only §331's terminal and §483's `\read`
+  streams need `open_registered_source_as` (`umber2-johp.245`).
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
   and focused line-contract tests.

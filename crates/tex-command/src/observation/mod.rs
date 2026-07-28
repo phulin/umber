@@ -13,7 +13,7 @@ use tex_state::meaning::Meaning;
 use crate::command::{CommandIdentity, CurrentCommand};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
+use crate::{DeliveryStamp, SourceLocation, SourceNameClass, SourceProvenance, SourceRange};
 
 pub mod canonical_names;
 mod primitive_identity;
@@ -429,6 +429,14 @@ pub enum UmberReplayKind {
 pub struct InputRecord {
     pub transition: InputTransition,
     pub reason: InputReason,
+    /// tex.web §303's `name` classification of a source level.
+    ///
+    /// This is `Some` exactly when `reason` is [`InputReason::Source`].
+    /// §303 partitions `name` into the terminal, a `\read` stream, and a text
+    /// file, and §329's `end_file_reading` acts on that partition; none of it
+    /// is expressible as an `InputReason`, whose remaining arms are a strict
+    /// one-to-one model of §307's `token_type` codes.
+    pub source_name: Option<SourceNameClass>,
     pub level: u64,
     pub position: u64,
 }

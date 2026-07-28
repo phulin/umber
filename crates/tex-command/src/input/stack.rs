@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
-    TokenCursor, TokenPayload,
+    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass,
+    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 
 /// One committed input-lifecycle transition.
@@ -20,6 +20,11 @@ pub(crate) struct InputRetirement {
     pub(crate) identity: InputLevelId,
     pub(crate) action: InputRetirementAction,
     pub(crate) reason: InputRetirementReason,
+    /// tex.web §303's `name` classification of the level that ended, present
+    /// exactly when a source level ended. §329's `end_file_reading` is the
+    /// only retirement that consults it (`if name>17 then a_close`), and
+    /// §307's token-list levels have no `name` classification at all.
+    pub(crate) name_class: Option<SourceNameClass>,
     pub(crate) trace: Option<ReplayTrace>,
 }
 
@@ -268,11 +273,16 @@ impl CommandState {
         }
 
         let InputLevel::Tokens(cursor) = level else {
+            let InputLevel::Source(source) = level else {
+                unreachable!("the inspected top level was not a token cursor");
+            };
+            let name_class = source.name_class;
             self.input.levels.pop();
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::SourcePopped,
                 reason: InputRetirementReason::Source,
+                name_class: Some(name_class),
                 trace: None,
             });
         };
@@ -294,6 +304,7 @@ impl CommandState {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
                 reason: input_retirement_reason(&cursor.behavior, &trace),
+                name_class: None,
                 trace: Some(trace),
             });
         }
@@ -326,6 +337,7 @@ impl CommandState {
             identity: expected,
             action,
             reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            name_class: None,
             trace: Some(cursor.trace),
         })
     }
@@ -344,10 +356,14 @@ impl CommandState {
         let level = self.input.levels.pop()?;
         let identity = input_level_identity(&level);
         let InputLevel::Tokens(cursor) = level else {
+            let InputLevel::Source(source) = level else {
+                unreachable!("the popped level was not a token cursor");
+            };
             return Some(InputRetirement {
                 identity,
                 action: InputRetirementAction::SourcePopped,
                 reason: InputRetirementReason::Source,
+                name_class: Some(source.name_class),
                 trace: None,
             });
         };
@@ -365,6 +381,7 @@ impl CommandState {
             identity,
             action,
             reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
+            name_class: None,
             trace: Some(cursor.trace),
         })
     }

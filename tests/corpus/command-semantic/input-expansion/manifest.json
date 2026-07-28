@@ -174,25 +174,18 @@
       "expected": [
         "input:backup:backup",
         "input:retire:backup",
-        "effect:input:child",
+        "effect:input:child.tex",
         "input:backup:backup",
         "input:retire:backup",
         "input:retire:file",
-        "input:retire:source",
-        "input:stop:source"
+        "input:retire:file",
+        "input:stop:terminal"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.245",
-        "mismatch": {
-          "index": 5,
-          "kind": "observation",
-          "expected": "input:retire:file",
-          "actual": "input:retire:source"
-        }
+        "kind": "pass"
       },
       "inputs": {
-        "child": "C"
+        "child.tex": "C"
       }
     },
     {

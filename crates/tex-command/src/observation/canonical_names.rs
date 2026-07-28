@@ -244,6 +244,27 @@ pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
     })
 }
 
+/// tex.web §303's `name` classification for one source input level.
+///
+/// [`input_level_name`] returns `None` for a source level because §307's
+/// `token_type` does not classify one. This is the classification that does:
+/// §303 splits `name` into the terminal (`0`), input stream `name-1`
+/// (`1..=17`), and a text file (`>17`), and §329's `end_file_reading` closes
+/// a handle for the last of those alone.
+///
+/// The stream number stays on [`SourceNameClass::ReadStream`] rather than in
+/// the name, so that every source level in a trace is named by its channel
+/// and never by a value a fixture would have to spell one variant at a time.
+#[must_use]
+pub fn source_name_class_name(class: crate::SourceNameClass) -> &'static str {
+    use crate::SourceNameClass;
+    match class {
+        SourceNameClass::Terminal => "terminal",
+        SourceNameClass::ReadStream(_) => "read_stream",
+        SourceNameClass::File => "file",
+    }
+}
+
 /// tex.web §305's `scanner_status` name.
 ///
 /// The canonical vocabulary is the six documented values, not Umber's Rust

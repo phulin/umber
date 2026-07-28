@@ -29,6 +29,45 @@ pub enum RegisteredSourceKind {
     ReadLine,
 }
 
+/// tex.web §303's classification of a source input level's `name`.
+///
+/// §303 states the whole partition: `name` "is zero if we are reading from
+/// the terminal; it is `n+1` if we are reading from input stream `n`, where
+/// `0<=n<=16`", and otherwise it is the string number of a text file. Only
+/// three assignments in tex.web ever set a source level's `name`, and each
+/// lands in exactly one arm below: §328's `begin_file_reading` (`name:=0`,
+/// which §331 repeats for the base terminal level), §483's
+/// `begin_file_reading; name:=m+1` inside `read_toks`, and §537's
+/// `start_input` (`name:=a_make_name_string(cur_file)`). §329's
+/// `end_file_reading` tests `name>17` to decide whether a real file handle
+/// must be closed, and §313 renders `<*>`/`<insert>` for `name=0`, `<read n>`
+/// for `1<=name<=17`, and `l.<line>` otherwise.
+///
+/// This is deliberately _not_ [`InputReason`](crate::InputReason). That enum
+/// is a one-to-one model of §307's sixteen `token_type` codes plus one
+/// `Source` arm for §303's `state<>token_list`; `token_type` is what §307
+/// stores in place of `index` on a token-list level and has no meaning for a
+/// source level at all. Nor is it [`RegisteredSourceKind`], which classifies
+/// how Umber _acquired_ immutable bytes rather than which of TeX's three
+/// input channels a level reads them as.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SourceNameClass {
+    /// §303 `name=0`: the terminal, for which §304 defines the abbreviation
+    /// `terminal_input==(name=0)`. §328's `begin_file_reading` leaves every
+    /// new level here until its opener says otherwise, and §331 initializes
+    /// the base level this way.
+    Terminal,
+    /// §303 `name=n+1` for `0<=n<=16`: input stream `n`, established by
+    /// §483's `name:=m+1`. Stream 16 is §303's invalid stream number, whose
+    /// input actually comes from the terminal under `read_toks` control and
+    /// which §313 prints as `<read *>`.
+    ReadStream(u8),
+    /// §303 `name>17`: a text file, whose name §537's `start_input` records
+    /// with `a_make_name_string`. This is the only arm §329's
+    /// `end_file_reading` closes a handle for.
+    File,
+}
+
 /// Host-neutral input used to register one complete immutable source.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SourceRegistration {

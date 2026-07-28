@@ -691,6 +691,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Mark,
+            source_name: None,
             level: level.0,
             position: 0,
         }));
@@ -758,6 +759,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -793,6 +795,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));

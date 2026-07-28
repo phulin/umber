@@ -9,7 +9,8 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
     InputLevel, InputLevelId, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor,
-    SourceLevel, SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
+    SourceLevel, SourceNameClass, SourceRegistration, SourceRegistrationError,
+    SourceTokenizationStep,
 };
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
@@ -218,6 +219,7 @@ impl CommandState {
             .map(|(level, reason)| crate::InputRecord {
                 transition: crate::InputTransition::Push,
                 reason: crate::processor::stored_input_reason(reason),
+                source_name: None,
                 level: level.0,
                 position: 0,
             })
@@ -484,6 +486,7 @@ impl CommandState {
         cell.u_level.map(|level| crate::InputRecord {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::AlignmentUTemplate,
+            source_name: None,
             level: level.0,
             position: 0,
         })
@@ -578,6 +581,7 @@ impl CommandState {
         cell.v_level.map(|level| crate::InputRecord {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::AlignmentVTemplate,
+            source_name: None,
             level: level.0,
             position: 0,
         })
@@ -777,13 +781,30 @@ impl CommandState {
         Ok(id)
     }
 
-    /// Opens an already registered source as a future input level.
+    /// Opens an already registered source as a text file, the way tex.web
+    /// §537's `start_input` does.
+    ///
+    /// §537 is how TeX reaches every `\input` file _and_ the job's own root
+    /// file, so [`SourceNameClass::File`] is the classification of an ordinary
+    /// open. The terminal and `\read`'s streams are the two levels TeX opens
+    /// some other way (§331 and §483); they use
+    /// [`Self::open_registered_source_as`].
     ///
     /// This operation only clones retained immutable backing. It cannot search
     /// for files, invoke a host callback, or diagnose text encoding.
     pub fn open_registered_source(
         &mut self,
         source: tex_state::SourceId,
+    ) -> Result<(), UnknownRegisteredSource> {
+        self.open_registered_source_as(source, SourceNameClass::File)
+    }
+
+    /// Opens an already registered source under an explicit tex.web §303
+    /// `name` classification.
+    pub fn open_registered_source_as(
+        &mut self,
+        source: tex_state::SourceId,
+        name_class: SourceNameClass,
     ) -> Result<(), UnknownRegisteredSource> {
         let registered = self
             .input
@@ -797,6 +818,7 @@ impl CommandState {
         self.input.levels.push(InputLevel::Source(SourceLevel {
             identity,
             cursor: SourceCursor::new(registered),
+            name_class,
         }));
         Ok(())
     }

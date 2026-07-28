@@ -34,8 +34,8 @@ pub use host::{
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
     RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceLocation,
-    SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceScalarRange,
-    SourceToken, SourceTokenizationStep,
+    SourceNameClass, SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError,
+    SourceScalarRange, SourceToken, SourceTokenizationStep,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).

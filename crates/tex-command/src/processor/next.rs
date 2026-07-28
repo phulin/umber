@@ -16,6 +16,9 @@ use crate::input::{
     OutParameterReplay, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer,
     TokenBehavior, TokenCursor, TokenPayload,
 };
+// tex.web §303's `name` classification only reaches an observation payload.
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::input::SourceNameClass;
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
     AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
@@ -64,6 +67,7 @@ impl CommandProcessor<'_> {
                     InputTransition::Retire
                 },
                 reason: observed_retirement_reason(retirement.action, retirement.reason),
+                source_name: retirement.name_class,
                 level: retirement.identity.0,
                 position: 0,
             }));
@@ -73,6 +77,9 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Stop,
                 reason: InputReason::Source,
+                // tex.web §1335 unwinds down to `input_ptr=0`, which §331
+                // established as the `name=0` terminal level.
+                source_name: Some(SourceNameClass::Terminal),
                 level: 0,
                 position: 0,
             }));
@@ -337,6 +344,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -611,6 +619,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Backup,
             reason: InputReason::Backup,
+            source_name: None,
             level: level.0,
             position: 0,
         }));
@@ -660,6 +669,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -708,6 +718,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -756,6 +767,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -791,6 +803,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::OutputRoutine,
+            source_name: None,
             level: level.0,
             position: 0,
         }));
@@ -841,6 +854,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -980,6 +994,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
+                source_name: None,
                 level: level.0,
                 position: 0,
             }));
@@ -1067,6 +1082,7 @@ impl CommandProcessor<'_> {
                     self.observe(CommandObservation::Input(InputRecord {
                         transition: InputTransition::Push,
                         reason: InputReason::Parameter,
+                        source_name: None,
                         level: _parameter_level.0,
                         position: 0,
                     }));
@@ -1159,6 +1175,9 @@ impl CommandProcessor<'_> {
                 self.observe(CommandObservation::Input(InputRecord {
                     transition: InputTransition::Stop,
                     reason: InputReason::Source,
+                    // Nothing is left on the stack, so what has stopped is
+                    // §331's `name=0` base terminal level.
+                    source_name: Some(SourceNameClass::Terminal),
                     level: 0,
                     position: 0,
                 }));
@@ -1279,6 +1298,7 @@ impl CommandProcessor<'_> {
                     InputTransition::Retire
                 },
                 reason,
+                source_name: retirement.name_class,
                 level: identity.0,
                 position: 0,
             }));
@@ -1645,6 +1665,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Recovery,
             reason: InputReason::Recovery,
+            source_name: None,
             level: level.0,
             position: 0,
         }));

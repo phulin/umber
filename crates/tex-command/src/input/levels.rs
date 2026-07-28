@@ -8,7 +8,10 @@ use tex_state::token::TracedTokenWord;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 
-use super::{lines::SourceProvenance, source::SourceCursor};
+use super::{
+    lines::SourceProvenance,
+    source::{SourceCursor, SourceNameClass},
+};
 
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -29,6 +32,11 @@ pub(crate) enum InputLevel {
 pub(crate) struct SourceLevel {
     pub(crate) identity: InputLevelId,
     pub(crate) cursor: SourceCursor,
+    /// tex.web §303's `name` classification for this level. A token-list
+    /// level has no counterpart: §307 reuses `name` there as the eqtb address
+    /// of the macro being expanded, which is why this lives on `SourceLevel`
+    /// and not on [`InputLevel`].
+    pub(crate) name_class: SourceNameClass,
 }
 
 /// One token-list cursor.
