@@ -767,25 +767,43 @@ command exercises the bundle writer with synthetic DVI.
 e2e/gentle` verify the manifest-pinned normalized reference hash before
 rewriting either fixture.
 
-### Canonical Story Regression Gate
+### Canonical Story and Gentle Regression Gates
 
-`e2e_conformance_story_canonical` in the same `crates/umber/tests/it/e2e_conformance.rs`
-protects the `umber2-johp` epic's first canonical/reference byte-identical DVI
-milestone (commit 5eed4dc3): the canonical `tex-command`/`CanonicalEngineSession`
-architecture's assembled DVI for `story.tex` must remain byte-identical to real
-pdfTeX's output, normalized only the same way `e2e_conformance_story` already
-is. It is kept alongside, not instead of, the legacy `e2e_conformance_story`
-test while the migration is in progress; both share the exact same staged
-fixture directory (`parity_harness::run_named_fixture_document`, the same
-`plain.tex`/`story.tex`/`hyphen.tex`/TFM staging the legacy in-process runner
-consumes) and the same registered `story` gate, so both reach their assets
-through `assets::with_gate` and neither can skip silently. See the
+`e2e_conformance_story_canonical` and the explicitly ignored manual
+`e2e_conformance_gentle_canonical` in the same
+`crates/umber/tests/it/e2e_conformance.rs` check canonical/reference DVI
+parity: the canonical `tex-command`/
+`CanonicalEngineSession` architecture's assembled DVI for `story.tex` and
+`gentle.tex` must remain byte-identical to real pdfTeX's output, normalized
+only the same way the legacy conformance tests already are. They are kept
+alongside, not instead of, their legacy `EngineSession` gates while the
+migration is in progress. Each shares its exact staged fixture directory
+(`parity_harness::run_named_fixture_document`, the same
+`plain.tex`/document/`hyphen.tex`/TFM staging the legacy in-process runner
+consumes) and its registered gate, so both reach their assets through
+`assets::with_gate` and neither can skip silently. See the
 [End-to-End Conformance Gate Contract](#end-to-end-conformance-gate-contract)
 above for what an absent oracle does.
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story_canonical -- --nocapture
+cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --ignored --exact --nocapture
 ```
+
+The Gentle oracle is the existing 263424-byte real-pdfTeX artifact, SHA-256
+`04f86e97e8264f9b8ce35dc1e9df27f2b075ca85365af71acc5fe1478399866b`.
+The previously reported 263472-byte canonical artifact was not stale:
+executable comparison reproduced genuine geometry differences after the
+TeX82 §1093 list-commit fix. The generic TeX82 fixes tracked through
+`umber2-johp.286`--`.292` advanced those differences, but did not establish
+final parity. At integration tip f9dabd38, the manual gate produces 263456
+bytes with SHA-256
+`1494281fc822f41c9d433160c691f67102b38e96080f34c7f2b5d730b813e4c9` and
+reports the first difference at byte 162675 on page 52 (`z0` versus `down3`);
+`umber2-johp.294` tracks that downstream DVI boundary. Gentle remains a
+byte-exact DVI conformance gate only: its `#[ignore]` keeps the full document
+out of routine native tests, and it is not an automated differential-tracer
+fixture. Run it only through the explicit manual command above.
 
 Unlike the legacy runner (`EngineSession` over `ExecutionContext`/
 `InputResolver`/`FontResolver`), this test drives

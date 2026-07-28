@@ -332,9 +332,9 @@ fn canonical_error_message(
 /// (the canonical `tex-command` architecture, not the legacy
 /// `EngineSession`/`ExecutionContext` path above) and returns its assembled
 /// DVI bytes. This is the production migration path's equivalent of
-/// `run_file_in_process`, sharing the same staged directory contract so
-/// `e2e_conformance_story_canonical` below is a real regression gate on
-/// `umber2-johp`'s first canonical/reference byte-identical DVI milestone.
+/// `run_file_in_process`, sharing the same staged directory contract so the
+/// canonical Story and Gentle regression gates below are real byte-exact
+/// checks on the `umber2-johp` canonical/reference DVI milestones.
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
 fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
     let (world, path) = staged_world(path)?;
@@ -459,6 +459,17 @@ fn canonical_math_group_singleton_ord_matches_reference_dvi() {
         normalized_dvi_for_comparison(&actual).expect("normalize actual"),
         normalized_dvi_for_comparison(&expected).expect("normalize reference")
     );
+}
+
+/// Pins the canonical engine's Gentle DVI to the real-pdfTeX oracle. The
+/// shared conformance comparator permits only the variable preamble comment;
+/// every remaining byte, including list-setting geometry, must match.
+#[test]
+#[ignore = "explicit canonical Gentle byte-exact conformance gate"]
+fn e2e_conformance_gentle_canonical() {
+    assets::with_gate("gentle", |gate| {
+        run_plain_fixture_case_canonical("gentle.tex", gate);
+    });
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
