@@ -157,6 +157,7 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
             UnexpandablePrimitive::PdfInterwordSpaceOff,
         ),
         ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
+        ("pdfspacefont", UnexpandablePrimitive::PdfSpaceFont),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -320,6 +321,11 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
     for mode in MODES {
         let mut stores = Universe::new_with_plain_catcodes();
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let def = stores.intern("def");
+        stores.set_meaning(
+            def,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def),
+        );
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
             control.modes.push(mode);
@@ -450,6 +456,104 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
         ]
     );
+}
+
+#[test]
+fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_interword_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\def\n{fixture}{\pdfspacefont{\n-space}}X");
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(
+            stores.pdf_space_font_name(1),
+            Some(b"fixture-space".as_slice()),
+            "mode {mode:?}: expanded general text selects the typed global name"
+        );
+    }
+}
+
+#[test]
+fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\global\pdfspacefont{selected}");
+
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.pdf_space_font_name(1), None);
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control.step(&mut stores).expect("replayed extension"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.pdf_space_font_name(1), Some(b"selected".as_slice()));
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+    register_source(&mut dvi_control, br"\pdfspacefont{unscanned}");
+    assert!(matches!(
+        dvi_control.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfspacefont"))
+    ));
+    assert_eq!(dvi_stores.pdf_space_font_name(1), None);
+}
+
+#[test]
+fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\pdfspacefont{first}\pdfspacefont{second}");
+
+    assert_eq!(
+        control.step(&mut stores).expect("first selection"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("space-font state checkpoints");
+    assert_eq!(
+        control.step(&mut stores).expect("second selection"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.pdf_space_font_name(2), Some(b"second".as_slice()));
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("space-font state restores");
+    assert_eq!(stores.pdf_space_font_name(2), None);
+    assert_eq!(
+        control.step(&mut stores).expect("second selection retries"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.pdf_space_font_name(2), Some(b"second".as_slice()));
 }
 
 #[test]

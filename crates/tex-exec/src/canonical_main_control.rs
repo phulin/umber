@@ -3461,6 +3461,9 @@ enum ScannedStep {
     /// Application appends an ordered whatsit after flushing any pending
     /// horizontal character run; shipout traversal owns the toggle state.
     PdfInterwordSpace(tex_state::node::PdfAccessibilityControl),
+    /// pdftex.web §1599's expanded balanced text selecting the global,
+    /// job-owned fallback font name used by accessible-space PDF output.
+    PdfSpaceFont(TracedTokenList),
     PdfGraphics(PdfGraphicsRequest),
     PdfObject(PdfObjectRequest),
     PdfReferenceObject(PdfReferenceObjectRequest),
@@ -5403,6 +5406,14 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFakeSpace) => Ok(
             ScannedStep::PdfInterwordSpace(tex_state::node::PdfAccessibilityControl::FakeSpace),
         ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSpaceFont) => {
+            Ok(ScannedStep::PdfSpaceFont(
+                processor
+                    .scan_balanced_text(true)
+                    .map_err(command_error)?
+                    .tokens,
+            ))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
             ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
         ),
@@ -6346,6 +6357,7 @@ fn scan_unclassified_primitive(
         | P::PdfInterwordSpaceOff
         | P::PdfInterwordSpaceOn
         | P::PdfFakeSpace
+        | P::PdfSpaceFont
         | P::PdfRefXForm
         | P::PdfRefXImage
         | P::PdfReferenceObject
@@ -6571,7 +6583,6 @@ fn scan_unclassified_primitive(
         | P::PdfSnapRefPoint
         | P::PdfSnapY
         | P::PdfSnapYComp
-        | P::PdfSpaceFont
         | P::PdfStbsCode
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
@@ -7981,6 +7992,7 @@ fn applied_mutation_observation(
         | ScannedStep::PdfSetRandomSeed { .. }
         | ScannedStep::PdfResetTimer
         | ScannedStep::PdfInterwordSpace(..)
+        | ScannedStep::PdfSpaceFont(..)
         | ScannedStep::PdfGraphics(..)
         | ScannedStep::PdfObject(..)
         | ScannedStep::PdfReferenceObject(..)
@@ -9827,6 +9839,13 @@ fn apply_scanned_step(
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfAccessibility(control)));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfSpaceFont(tokens) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
+            }
+            stores.set_pdf_space_font_name(pdf_graphics_text(tokens, stores));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
