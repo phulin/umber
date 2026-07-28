@@ -1,6 +1,6 @@
 # Mode-list rollback journal
 
-Status: measured design; typed mutation-boundary work in progress; journal disabled
+Status: implemented behind test-only activation; production journal disabled
 
 Scope: canonical aggregate operations in `tex-exec`. This document does not
 change TeX semantics or the atomic boundary in
@@ -66,7 +66,7 @@ Semantic hashing and named checkpoints read only live mode state. Journal
 cursors, inverse capacity, and spare allocation are operational state and must
 not enter semantic equality, traces, formats, or durable summaries.
 
-## Why implementation remains deferred
+## Disabled implementation
 
 The typed-boundary phase removed the mutable aggregate escape hatch before any
 journal behavior was enabled. Its final production census reduced five
@@ -78,18 +78,19 @@ closure write barriers that cannot return their mutable borrow. The capability
 does not implement `DerefMut`, `AsMut`, or `BorrowMut`, and it has no generic
 raw-list mutation closure.
 
-The boundary alone does not make a partial journal correct. Installing only an
-append watermark would still silently break rollback for math-node edits,
-reconstitution, alignment state, list ownership transfer, and nested
-operations.
+`mode/journal.rs` now implements the complete disabled representation. Entry
+frames capture stack identities, node-length watermarks, and scalar
+projections. Destructive node, reconstitution, alignment, ownership-transfer,
+and level operations add generation-checked inverses; append-only operations
+add none. Nested commit retains the inverse suffix required by its parent,
+while rollback validates the exact innermost frame before replay.
 
-The bounded benchmark establishes the performance opportunity, but it cannot
-bound the correctness risk of converting all 233 seams in the same profiling
-issue. Promotion therefore requires a separate architecture change that first
-makes mutation capabilities typed and non-escaping, then installs the journal,
-then switches `CanonicalStepSnapshot` from a retained `ModeNest` root to its
-opaque savepoint. Until all three land together, the retained root remains the
-correct implementation.
+Production construction leaves the journal disabled. Cloning a `ModeNest`
+also produces a disabled journal, and journal generation, cursors, log length,
+and capacity are excluded from `Debug`, equality, summaries, semantic hashes,
+formats, and durable checkpoints. `CanonicalStepSnapshot` still retains the
+`ModeNest` root and remains the authoritative rollback path until the separate
+promotion and profiling phase.
 
 ## Implementation sequence
 

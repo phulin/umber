@@ -13,6 +13,8 @@ use tex_state::{EngineBoundaryHasher, Universe};
 
 use crate::ExecError;
 
+mod journal;
+
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 
@@ -389,12 +391,16 @@ impl ModeList {
 /// higher-ranked closure whose mutable borrow cannot escape.
 pub(crate) struct ModeListMutation<'a> {
     list: &'a mut ModeList,
+    journal: Option<journal::ListJournal<'a>>,
 }
 
 impl ModeListMutation<'_> {
     #[cfg(test)]
     pub(crate) fn for_test(list: &mut ModeList) -> ModeListMutation<'_> {
-        ModeListMutation { list }
+        ModeListMutation {
+            list,
+            journal: None,
+        }
     }
 
     pub(crate) fn push(&mut self, node: Node) {
@@ -410,14 +416,17 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn take_nodes(&mut self) -> Vec<Node> {
+        self.record_nodes();
         self.list.take_nodes()
     }
 
     pub(crate) fn pop_last_node(&mut self) -> Option<Node> {
+        self.record_nodes();
         self.list.pop_last_node()
     }
 
     pub(crate) fn take_last_box(&mut self) -> Option<Node> {
+        self.record_nodes();
         self.list.take_last_box()
     }
 
@@ -426,6 +435,7 @@ impl ModeListMutation<'_> {
         index: usize,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
+        self.record_node(index);
         self.list.with_node_mut(index, mutate)
     }
 
@@ -433,6 +443,9 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
+        if let Some(index) = self.list.nodes.len().checked_sub(1) {
+            self.record_node(index);
+        }
         self.list.with_last_node_mut(mutate)
     }
 
@@ -440,6 +453,7 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
     ) -> R {
+        self.record_nodes();
         self.list.with_reconstitution_target(mutate)
     }
 
@@ -450,6 +464,9 @@ impl ModeListMutation<'_> {
         second: Option<Node>,
         third: Option<Node>,
     ) {
+        if insertion.is_some() {
+            self.record_nodes();
+        }
         self.list
             .push_reconstituted(insertion, first, second, third);
     }
@@ -505,10 +522,12 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
     ) -> Option<R> {
+        self.record_align_state();
         self.list.with_align_state_mut(mutate)
     }
 
     pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
+        self.record_align_state();
         self.list.take_align_state()
     }
 
@@ -545,7 +564,30 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn take_display_alignment(&mut self) -> Option<(Vec<Node>, Option<Scaled>)> {
+        if self.list.display_alignment {
+            self.record_nodes();
+        }
         self.list.take_display_alignment()
+    }
+
+    fn record_node(&mut self, index: usize) {
+        if let Some(journal) = &mut self.journal
+            && let Some(node) = self.list.nodes.get(index)
+        {
+            journal.record_node(index, node.clone());
+        }
+    }
+
+    fn record_nodes(&mut self) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_nodes(self.list.nodes.clone());
+        }
+    }
+
+    fn record_align_state(&mut self) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_align_state(self.list.align_state.clone());
+        }
     }
 }
 
@@ -843,6 +885,7 @@ impl ModeLevelSummary {
     pub(crate) fn list_mutation(&mut self) -> ModeListMutation<'_> {
         ModeListMutation {
             list: &mut self.list,
+            journal: None,
         }
     }
 }
@@ -1021,9 +1064,33 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 }
 
 /// Explicit stack of TeX mode levels.
-#[derive(Clone, Debug, PartialEq)]
 pub struct ModeNest {
     levels: Arc<Vec<ModeLevelSummary>>,
+    journal: journal::ModeJournal,
+}
+
+impl Clone for ModeNest {
+    fn clone(&self) -> Self {
+        Self {
+            levels: self.levels.clone(),
+            journal: journal::ModeJournal::disabled(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ModeNest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ModeNest")
+            .field("levels", &self.levels)
+            .finish()
+    }
+}
+
+impl PartialEq for ModeNest {
+    fn eq(&self, other: &Self) -> bool {
+        self.levels == other.levels
+    }
 }
 
 impl Default for ModeNest {
@@ -1043,6 +1110,7 @@ impl ModeNest {
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
             levels: Arc::new(levels),
+            journal: journal::ModeJournal::disabled(),
         }
     }
 
@@ -1053,6 +1121,7 @@ impl ModeNest {
         }
         Ok(Self {
             levels: summary.levels,
+            journal: journal::ModeJournal::disabled(),
         })
     }
 
@@ -1082,6 +1151,7 @@ impl ModeNest {
             level.mutate_list(|list| list.set_space_factor(1000));
         }
         self.levels_mut_for_push().push(level);
+        self.journal.record_level_push();
     }
 
     fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
@@ -1109,9 +1179,11 @@ impl ModeNest {
         if self.current_list().pending_hchars().is_some() {
             return Err(ExecError::UncommittedPendingHchars);
         }
-        Ok(Arc::make_mut(&mut self.levels)
+        let popped = Arc::make_mut(&mut self.levels)
             .pop()
-            .expect("length checked before popping mode level"))
+            .expect("length checked before popping mode level");
+        self.journal.record_level_pop(popped.clone());
+        Ok(popped)
     }
 
     pub fn current_list(&self) -> &ModeList {
@@ -1122,11 +1194,14 @@ impl ModeNest {
     }
 
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
-        let level = Arc::make_mut(&mut self.levels)
+        let index = self.levels.len() - 1;
+        let (levels, journal) = (&mut self.levels, &mut self.journal);
+        let level = Arc::make_mut(levels)
             .last_mut()
             .expect("ModeNest always has at least one level");
         ModeListMutation {
             list: &mut level.list,
+            journal: journal.list(index),
         }
     }
 
@@ -1135,10 +1210,12 @@ impl ModeNest {
     }
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
-        Arc::make_mut(&mut self.levels)
+        let (levels, journal) = (&mut self.levels, &mut self.journal);
+        Arc::make_mut(levels)
             .get_mut(index)
             .map(|level| ModeListMutation {
                 list: &mut level.list,
+                journal: journal.list(index),
             })
     }
 
@@ -1156,7 +1233,9 @@ impl ModeNest {
 
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
         let index = self.enclosing_vertical_index();
-        Arc::make_mut(&mut self.levels)[index].mutate_list(|list| list.set_prev_graf(lines));
+        self.list_mutation(index)
+            .expect("enclosing vertical level exists")
+            .set_prev_graf(lines);
     }
 
     fn enclosing_vertical_index(&self) -> usize {
