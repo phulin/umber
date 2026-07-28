@@ -1184,6 +1184,14 @@ impl Stores {
             .register_with_line_starts(source, descriptor, line_starts)
     }
 
+    pub(crate) fn existing_source_registration(
+        &self,
+        source: SourceId,
+        descriptor: &SourceDescriptor,
+    ) -> Result<Option<SourcePos>, SourceMapError> {
+        self.source_map.existing_registration(source, descriptor)
+    }
+
     /// Assigns one local byte offset in a live source to logical source space.
     pub(crate) fn source_position(
         &self,

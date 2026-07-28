@@ -91,6 +91,49 @@ fn registration_is_idempotent_but_rejects_conflicting_backing() {
 }
 
 #[test]
+fn existing_registration_distinguishes_absent_identical_and_conflicting_sources() {
+    let mut map = SourceMap::default();
+    let source = SourceId::new(7);
+    let descriptor = generated(b"same\nbacking");
+    assert_eq!(
+        map.existing_registration(source, &descriptor),
+        Ok(None),
+        "an unused source identity has no cached registration"
+    );
+
+    let position = map
+        .register(source, descriptor.clone())
+        .expect("source registers");
+    assert_eq!(
+        map.existing_registration(source, &descriptor),
+        Ok(Some(position)),
+        "an identical descriptor reuses the registered index"
+    );
+    assert_eq!(
+        map.existing_registration(source, &generated(b"same\nbacking")),
+        Ok(Some(position)),
+        "equal bytes from a distinct allocation remain semantically identical"
+    );
+    assert_eq!(
+        map.existing_registration(source, &generated(b"different")),
+        Err(SourceMapError::ConflictingRegistration)
+    );
+
+    let named_source = SourceId::new(8);
+    let named = SourceDescriptor::named_generated("first.tex", Arc::from(&b"bytes"[..]));
+    map.register(named_source, named)
+        .expect("named source registers");
+    assert_eq!(
+        map.existing_registration(
+            named_source,
+            &SourceDescriptor::named_generated("other.tex", Arc::from(&b"bytes"[..]))
+        ),
+        Err(SourceMapError::ConflictingRegistration),
+        "logical path remains part of generated source identity"
+    );
+}
+
+#[test]
 fn registered_source_capability_encodes_only_backed_nonempty_direct_ranges() {
     let source = RegisteredSource::new(SourcePos(40), 4);
     let origin = source.direct_origin(1, 3).expect("range is direct");

@@ -34,6 +34,29 @@ outside `tools/tex-command-stream`; do not infer a target from source reading.
 Bounded synthetic streams and focused unit tests are the suitable regression
 coverage for comparison and translation kernels.
 
+Issue `umber2-dz4x` found that the index itself was already retained with the
+rollback-coupled source region, but canonical main control asked to register
+the same immutable source before every delivery. `Universe::register_source`
+therefore rebuilt and discarded the complete newline index before
+`SourceMap` recognized the identical registration. Registration now validates
+World record liveness and length as before, then resolves the existing live
+descriptor before deriving an index. Generated backings use shared-`Arc`
+identity as their common constant-time path while retaining exact byte
+comparison for separately allocated equal content. Source-map rollback still
+invalidates the registration and its index together.
+
+The focused benchmark is:
+
+```bash
+cargo bench --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bench state_budgets repeated_source_registration
+```
+
+It repeatedly registers one shared 1 MiB generated source after priming its
+live source region. This is the bounded reproduction of the command-stream
+hot path; full Plain, Story, and Gentle traces remain manual profiling inputs
+rather than test fixtures.
+
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:
 

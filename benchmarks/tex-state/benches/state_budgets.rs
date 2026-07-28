@@ -16,6 +16,7 @@ use tex_state::meaning::MeaningFlags;
 use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::source_map::SourceDescriptor;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{DependencyKey, DependencyRuntime, DependencyValue};
 use tex_state::{EditorLayout, FragmentStore, LayoutGeneration, Piece, Universe};
@@ -1332,6 +1333,29 @@ fn char_token(ch: char) -> Token {
     Token::Char { ch, cat }
 }
 
+fn repeated_source_registration(c: &mut Criterion) {
+    let bytes: Arc<[u8]> = (0..(1024 * 1024))
+        .map(|index| if index % 80 == 79 { b'\n' } else { b'x' })
+        .collect::<Vec<_>>()
+        .into();
+    let descriptor = SourceDescriptor::generated(bytes);
+    let source = SourceId::new(0);
+    let mut universe = Universe::new();
+    universe
+        .register_source(source, descriptor.clone())
+        .expect("benchmark source registers");
+
+    c.bench_function("repeated_source_registration/1mib", |b| {
+        b.iter(|| {
+            black_box(
+                universe
+                    .register_source(source, black_box(descriptor.clone()))
+                    .expect("identical registration remains live"),
+            );
+        });
+    });
+}
+
 fn space_token() -> Token {
     Token::Char {
         ch: ' ',
@@ -1363,6 +1387,7 @@ criterion_group!(
     provenance_expansion,
     provenance_memory_invariants,
     provenance_diagnostic_rendering,
-    edit_stable_source_coordinates
+    edit_stable_source_coordinates,
+    repeated_source_registration
 );
 criterion_main!(benches);

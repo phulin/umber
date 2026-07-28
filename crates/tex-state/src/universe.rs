@@ -4399,6 +4399,12 @@ impl Universe {
             if u64::try_from(record.len()).ok() != Some(byte_len) {
                 return Err(SourceMapError::WorldInputLengthMismatch);
             }
+            if let Some(position) = self
+                .stores
+                .existing_source_registration(source, &descriptor)?
+            {
+                return Ok(position);
+            }
             let bytes = self
                 .world
                 .input_content(record.hash())
@@ -4413,6 +4419,12 @@ impl Universe {
         let SourceDescriptor::Generated(generated) = &descriptor else {
             unreachable!("world source handled above")
         };
+        if let Some(position) = self
+            .stores
+            .existing_source_registration(source, &descriptor)?
+        {
+            return Ok(position);
+        }
         let line_starts = source_line_starts(generated.bytes());
         self.stores.register_source(source, descriptor, line_starts)
     }

@@ -185,6 +185,12 @@ impl GeneratedSource {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    fn same_backing(&self, other: &Self) -> bool {
+        self.hash == other.hash
+            && self.logical_path == other.logical_path
+            && (Arc::ptr_eq(&self.bytes, &other.bytes) || self.bytes == other.bytes)
+    }
 }
 
 /// Immutable descriptor supplied by an input adapter during registration.
@@ -369,11 +375,8 @@ impl SourceMap {
         descriptor: SourceDescriptor,
         line_starts: Arc<[usize]>,
     ) -> Result<SourcePos, SourceMapError> {
-        if let Some(region) = self.region_for_source(source) {
-            return self
-                .descriptor_matches(region, &descriptor)
-                .then_some(region.start)
-                .ok_or(SourceMapError::ConflictingRegistration);
+        if let Some(position) = self.existing_registration(source, &descriptor)? {
+            return Ok(position);
         }
 
         let byte_len = descriptor.byte_len();
@@ -403,6 +406,21 @@ impl SourceMap {
         Ok(SourcePos(start))
     }
 
+    /// Resolves an already-live registration before callers build derived
+    /// indexes for an immutable backing.
+    pub(crate) fn existing_registration(
+        &self,
+        source: SourceId,
+        descriptor: &SourceDescriptor,
+    ) -> Result<Option<SourcePos>, SourceMapError> {
+        let Some(region) = self.region_for_source(source) else {
+            return Ok(None);
+        };
+        self.descriptor_matches(region, descriptor)
+            .then_some(Some(region.start))
+            .ok_or(SourceMapError::ConflictingRegistration)
+    }
+
     fn reserve_positions(&mut self, byte_len: u64) -> Result<(u64, u64), SourceMapError> {
         if self.forced_next_pos {
             let start = self.next_pos;
@@ -423,9 +441,9 @@ impl SourceMap {
             (SourceBacking::World(old), SourceDescriptor::World { input_record, .. }) => {
                 old == *input_record
             }
-            (SourceBacking::Generated(id), SourceDescriptor::Generated(source)) => {
-                self.generated(id).is_some_and(|old| old == source)
-            }
+            (SourceBacking::Generated(id), SourceDescriptor::Generated(source)) => self
+                .generated(id)
+                .is_some_and(|old| old.same_backing(source)),
             _ => false,
         }
     }

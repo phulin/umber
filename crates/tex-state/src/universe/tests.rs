@@ -2038,6 +2038,80 @@ fn world_registration_checks_record_liveness_and_length() {
 }
 
 #[test]
+fn repeated_generated_and_world_registration_reuses_line_indexes() {
+    let mut universe = Universe::new();
+    let generated_source = SourceId::new(3);
+    let generated = SourceDescriptor::generated(Arc::from(&b"one\n\ntwo\n"[..]));
+    let generated_start = universe
+        .register_source(generated_source, generated.clone())
+        .expect("generated source registers");
+    let generated_region = universe
+        .source_region(generated_source)
+        .expect("generated source is live");
+    let generated_index = universe
+        .source_line_starts(generated_region)
+        .expect("generated source has a line index")
+        .as_ptr();
+    for _ in 0..32 {
+        assert_eq!(
+            universe
+                .register_source(generated_source, generated.clone())
+                .expect("identical generated registration is idempotent"),
+            generated_start
+        );
+        assert_eq!(
+            universe
+                .source_line_starts(generated_region)
+                .expect("generated index remains live")
+                .as_ptr(),
+            generated_index
+        );
+    }
+    assert_eq!(
+        universe.source_line_starts(generated_region),
+        Some(&[0, 4, 5, 9][..])
+    );
+
+    let mut world = World::memory();
+    world
+        .set_memory_file("lines.tex", b"alpha\nbeta".to_vec())
+        .expect("memory input installs");
+    let mut universe = Universe::with_world(world);
+    let content = universe
+        .world_mut()
+        .read_file("lines.tex")
+        .expect("memory input reads");
+    let world_source = SourceId::new(9);
+    let descriptor = SourceDescriptor::world(content.record(), content.bytes().len() as u64);
+    let world_start = universe
+        .register_source(world_source, descriptor.clone())
+        .expect("world source registers");
+    let world_region = universe
+        .source_region(world_source)
+        .expect("world source is live");
+    let world_index = universe
+        .source_line_starts(world_region)
+        .expect("world source has a line index")
+        .as_ptr();
+    for _ in 0..32 {
+        assert_eq!(
+            universe
+                .register_source(world_source, descriptor.clone())
+                .expect("identical world registration is idempotent"),
+            world_start
+        );
+        assert_eq!(
+            universe
+                .source_line_starts(world_region)
+                .expect("world index remains live")
+                .as_ptr(),
+            world_index
+        );
+    }
+    assert_eq!(universe.source_line_starts(world_region), Some(&[0, 6][..]));
+}
+
+#[test]
 fn semantic_hash_ignores_pending_source_token_origins() {
     let mut universe = Universe::new();
     let registration = universe
