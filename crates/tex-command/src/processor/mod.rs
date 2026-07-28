@@ -67,7 +67,7 @@ pub struct CommandProcessor<'a> {
     /// Completion published by raw retirement to the episode-aware expanded
     /// delivery boundary. It is processor-local because retirement itself is
     /// already represented by command state.
-    replay_completion: Option<CommandReplayEpisode>,
+    pub(crate) replay_completion: Option<CommandReplayEpisode>,
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
@@ -83,6 +83,7 @@ pub struct CommandProcessor<'a> {
     /// two must not share one `None`.
     pub(crate) read_line_ended: bool,
     pub(crate) outer_recovered_while_matching: bool,
+    pub(crate) outer_recovered_while_absorbing: bool,
     /// Set only when terminal EOF invokes TeX82's `check_outer_validity`
     /// recovery while a scalar macro matcher is live. The inserted frozen
     /// `\\par` terminates the failed match, but must not become a visible
@@ -119,6 +120,7 @@ impl<'a> CommandProcessor<'a> {
             next_delivery_sequence: 0,
             read_line_ended: false,
             outer_recovered_while_matching: false,
+            outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
             restricted_integer_recoveries: Vec::new(),
         }

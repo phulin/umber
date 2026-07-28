@@ -11,8 +11,8 @@ pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass, RestrictedIntegerRecovery};
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
-    AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
-    FontLoadRequest, FontSizeRecovery, ImmediateExtension, InputStreamRequest,
+    AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, ExpandedWriteText,
+    FileNameTermination, FontLoadRequest, FontSizeRecovery, ImmediateExtension, InputStreamRequest,
     MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
     MathFieldEpisode, MathFractionKind, MathLimitKind, MathScriptKind, MathStyleKind,
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,

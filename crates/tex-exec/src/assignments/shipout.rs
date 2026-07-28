@@ -46,7 +46,14 @@ pub(crate) fn shipout_node(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     let input_summary = input.publication_summary(stores);
-    shipout_node_with_input_summary(node, input_summary, stores, execution)
+    let mut legacy_write_expander = |_: &mut Universe, _: tex_state::ids::TokenListId| Ok(None);
+    shipout_node_with_input_summary(
+        node,
+        input_summary,
+        stores,
+        execution,
+        &mut legacy_write_expander,
+    )
 }
 
 /// Ships a completed box using an already-owned publication summary.
@@ -60,6 +67,7 @@ pub(crate) fn shipout_node_with_input_summary(
     input_summary: tex_state::InputSummary,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
+    write_expander: &mut direct::WriteExpander<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     prepare_pdf_output_policy(stores)?;
     let geometry = shipout_geometry(&node);
@@ -138,7 +146,13 @@ pub(crate) fn shipout_node_with_input_summary(
     }
     let effect_start = stores.world().effect_records().len();
     let mut transaction = stores.begin_shipout();
-    let staged = direct::stage_shipout(node, input_summary, &mut transaction, execution)?;
+    let staged = direct::stage_shipout(
+        node,
+        input_summary,
+        &mut transaction,
+        execution,
+        write_expander,
+    )?;
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
         .into_boxed_slice();
@@ -202,11 +216,13 @@ pub(crate) fn test_stage_shipout_artifact(
     stores: &mut Universe,
 ) -> Result<tex_out::PageArtifact, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
+    let mut legacy_write_expander = |_: &mut Universe, _: tex_state::ids::TokenListId| Ok(None);
     let staged = direct::stage_shipout(
         node,
         tex_state::InputSummary::default(),
         stores,
         &mut execution,
+        &mut legacy_write_expander,
     )?;
     tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
         .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))

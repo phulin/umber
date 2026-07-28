@@ -270,6 +270,54 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
 }
 
 #[test]
+fn deferred_write_unbalanced_recovery_stops_at_endwrite() {
+    let stores = run_source(
+        br"\def\missingright{\iftrue{\else}\fi}\shipout\hbox{\write16{before\missingright after}}\count0=37\end",
+    );
+    let terminal = std::str::from_utf8(
+        stores
+            .world()
+            .memory_terminal_output()
+            .expect("memory terminal"),
+    )
+    .expect("terminal is UTF-8");
+    assert!(
+        !stores.world().committed_artifacts().is_empty(),
+        "{terminal:?}"
+    );
+    let artifact = last_artifact(&stores);
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Write { text, .. }] if text.contains("before")
+    ));
+    assert!(
+        terminal.contains("Unbalanced write command"),
+        "{terminal:?}"
+    );
+    assert_eq!(stores.count(0), 37, "following source input must survive");
+}
+
+#[test]
+fn deferred_write_balanced_and_nested_groups_do_not_trigger_recovery() {
+    for source in [
+        br"\shipout\hbox{\write16{balanced}}\end".as_slice(),
+        br"\def\nested{{inner}}\shipout\hbox{\write16{outer\nested tail}}\end".as_slice(),
+    ] {
+        let stores = run_source(source);
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        assert!(
+            !terminal
+                .windows(b"Unbalanced write command".len())
+                .any(|window| window == b"Unbalanced write command")
+        );
+        assert!(matches!(
+            last_artifact(&stores).effects.as_slice(),
+            [PageEffect::Write { text, .. }] if text.ends_with('\n')
+        ));
+    }
+}
+
+#[test]
 fn deferred_write_stream_selector_and_newline_boundaries_match_tex82() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut stores);

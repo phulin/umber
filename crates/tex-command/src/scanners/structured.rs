@@ -15,8 +15,8 @@ use tex_state::{
 };
 
 use crate::input::{
-    BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason,
-    TokenBehavior, TokenPayload,
+    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
+    StoredReplayReason, TokenBehavior, TokenPayload,
 };
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
@@ -45,6 +45,12 @@ pub struct StructuredProvenance {
 pub struct ScannedBalancedText {
     pub tokens: TracedTokenList,
     pub provenance: StructuredProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpandedWriteText {
+    pub tokens: TracedTokenList,
+    pub unbalanced: bool,
 }
 
 /// The two immutable lists collected for a macro definition.
@@ -2055,8 +2061,11 @@ impl CommandProcessor<'_> {
                 // and scans the resulting expanded text. Keep both episodes
                 // command-owned; replay receives only the frozen result.
                 let tokens = self.scan_immediate_write_text()?;
-                let tokens = self.expand_write_text(tokens)?;
-                Ok(ImmediateExtension::Write { stream, tokens })
+                let expanded = self.expand_write_text(tokens)?;
+                Ok(ImmediateExtension::Write {
+                    stream,
+                    tokens: expanded.tokens,
+                })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
                 let stream = self.scan_write_stream()?;
@@ -2077,10 +2086,17 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn expand_write_text(
+    /// Expands TeX82 §§1369--1372 write text inside the artificial brace and
+    /// frozen-`\endwrite` input episode installed by `write_out`.
+    ///
+    /// The returned recovery flag is §1371's `cur_tok<>end_write_token`
+    /// test. In that case TeX reports "Unbalanced write command" and consumes
+    /// through the inaccessible sentinel, never through the surrounding
+    /// source input.
+    pub fn expand_write_text(
         &mut self,
         tokens: TracedTokenList,
-    ) -> Result<TracedTokenList, CommandError> {
+    ) -> Result<ExpandedWriteText, CommandError> {
         let endwrite = self
             .state
             .primitive_token("endwrite")
@@ -2097,7 +2113,7 @@ impl CommandProcessor<'_> {
         // The bottom stopper delivers the synthetic closing brace followed
         // by frozen outer `\\endwrite`; the write list and opening brace sit
         // above it exactly as TeX82's three `ins_list` calls do.
-        self.push_write_recovery(vec![right_brace, endwrite], right_brace);
+        let stopper_level = self.push_write_recovery(vec![right_brace, endwrite], right_brace);
         let write_level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_list(),
@@ -2110,13 +2126,27 @@ impl CommandProcessor<'_> {
         self.observe_write_list_push(write_level);
         self.push_write_recovery(vec![left_brace], left_brace);
 
+        self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
-        let stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        if stopper.spelling().semantic_token() != endwrite {
-            return Err(CommandError::input_invariant());
+        let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let unbalanced =
+            self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
+        self.outer_recovered_while_absorbing = false;
+        while stopper.spelling().semantic_token() != endwrite {
+            stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         }
         self.retire_last_delivery_level()?;
-        Ok(expanded)
+        if unbalanced {
+            self.retire_exhausted_through(stopper_level)?;
+        }
+        // This nested replay belongs wholly to `write_out`; its completion
+        // must not surface as completion of the surrounding main-control
+        // source episode.
+        self.replay_completion = None;
+        Ok(ExpandedWriteText {
+            tokens: expanded,
+            unbalanced,
+        })
     }
 
     /// Freezes the ordinary `\\write` text after TeX82's `scan_int`
@@ -2131,7 +2161,7 @@ impl CommandProcessor<'_> {
         Ok(scanned.replacement_text)
     }
 
-    fn push_write_recovery(&mut self, tokens: Vec<Token>, observed: Token) {
+    fn push_write_recovery(&mut self, tokens: Vec<Token>, observed: Token) -> InputLevelId {
         let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(
                 tokens
@@ -2144,6 +2174,7 @@ impl CommandProcessor<'_> {
             ReplayTrace::Inserted,
         );
         self.observe_inserted_token_recovery(level, observed);
+        level
     }
 
     /// Scans the register number and optional equals sign of `\setbox`.

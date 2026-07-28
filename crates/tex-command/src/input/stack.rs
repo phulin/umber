@@ -113,6 +113,10 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl CommandState {
+    pub(crate) fn top_input_level_identity(&self) -> Option<InputLevelId> {
+        self.input.levels.last().map(input_level_identity)
+    }
+
     /// Installs one complete macro activation and its replacement-body level.
     ///
     /// The canonical replacement list remains in immutable storage. Only the

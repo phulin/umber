@@ -23,12 +23,18 @@ pub(super) struct DirectionPermutation {
     pub(super) order: Vec<usize>,
 }
 
+struct NormalizeExpansion<'a, 'b> {
+    expansion: &'a mut tex_expand::ExpansionContext<'b>,
+    write_expander: &'a mut super::WriteExpander<'a>,
+}
+
 pub(super) fn normalize_page(
     root: NodeListId,
     root_vertical: bool,
     effects: Vec<PageEffect>,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
+    write_expander: &mut super::WriteExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
     let mut effects = effects;
@@ -70,9 +76,13 @@ pub(super) fn normalize_page(
         color_target,
         running_thread_depth: None,
     };
+    let mut expansion = NormalizeExpansion {
+        expansion,
+        write_expander,
+    };
     normalize_list(
         stores,
-        expansion,
+        &mut expansion,
         root,
         false,
         !root_vertical,
@@ -99,7 +109,7 @@ struct NormalizeLocation {
 
 fn normalize_list(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: &mut NormalizeExpansion<'_, '_>,
     list: NodeListId,
     suppress_deferred_streams: bool,
     in_hlist: bool,
@@ -150,7 +160,7 @@ fn normalize_list(
 
 fn normalize_index(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: &mut NormalizeExpansion<'_, '_>,
     list: NodeListId,
     index: usize,
     suppress_deferred_streams: bool,
@@ -265,7 +275,7 @@ fn normalize_index(
 
 fn append_whatsit_effect(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: &mut NormalizeExpansion<'_, '_>,
     overlay: &mut PageOverlay,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
@@ -292,7 +302,10 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let text = expand_write_tokens(stores, expansion, tokens)?;
+            let text = match (expansion.write_expander)(stores, tokens)? {
+                Some(text) => text,
+                None => expand_write_tokens(stores, expansion.expansion, tokens)?,
+            };
             stores.world_mut().write_text(sink, &text);
             effects.push(PageEffect::Write {
                 sink: lower_sink(sink),
@@ -345,7 +358,7 @@ fn append_whatsit_effect(
             payload,
         }),
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
-            let payload = expand_pdf_literal_tokens(stores, expansion, tokens)?;
+            let payload = expand_pdf_literal_tokens(stores, expansion.expansion, tokens)?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
                 payload,
@@ -398,7 +411,7 @@ fn append_whatsit_effect(
                 let form = stores
                     .pdf_form(object)
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-                let artifact = super::stage_form(form, stores, expansion)?;
+                let artifact = super::stage_form(form, stores, expansion.expansion)?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     stores.pdf_snap_reference(),

@@ -44,6 +44,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::page::{PageDimension, PageInteger};
 use tex_state::scaled::Scaled;
+use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
     ExpansionState, GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PrintSink,
@@ -1480,7 +1481,14 @@ impl CanonicalMainControl {
             };
             match crate::output::select_pending_page_output(stores, fire_up)? {
                 crate::output::SelectedPageOutput::Default(page) => {
-                    if let Some(receipt) = shipout_replay_box(page, stores)? {
+                    let mut command = CommandMachine {
+                        state: &mut self.command,
+                        runtime: &mut self.runtime,
+                        capabilities: &mut self.capabilities,
+                        observations: &mut self.operation_observations,
+                        initex: self.initex,
+                    };
+                    if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
                         self.prepared_dvi_pages.push(receipt);
                     }
                 }
@@ -7914,14 +7922,41 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
 fn shipout_replay_box(
     node: Node,
     stores: &mut Universe,
+    command: &mut CommandMachine<'_>,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
     let input_summary = stores.input_summary().clone();
+    let mut expand_write = |stores: &mut Universe, tokens: tex_state::ids::TokenListId| {
+        let traced = stores
+            .tokens(tokens)
+            .iter()
+            .copied()
+            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+            .collect::<Vec<_>>();
+        let traced = stores.finish_traced_token_list(&traced);
+        let expanded = command
+            .processor(stores)
+            .expand_write_text(traced)
+            .map_err(command_error)?;
+        if expanded.unbalanced {
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, "\n! Unbalanced write command.\n");
+        }
+        let mut text = String::new();
+        for &token in stores.tokens(expanded.tokens.token_list()) {
+            crate::diagnostics::append_token_show_text(stores, token, &mut text);
+        }
+        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+        text.push('\n');
+        Ok(Some(text))
+    };
     let receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
         stores,
         &mut execution,
+        &mut expand_write,
     )?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
@@ -7935,7 +7970,14 @@ pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
-    shipout_replay_box(node, stores)
+    let mut command = CommandMachine {
+        state: &mut CommandState::default(),
+        runtime: &mut CommandRuntime::default(),
+        capabilities: &mut CommandHostCapabilities::default(),
+        observations: &mut None,
+        initex: true,
+    };
+    shipout_replay_box(node, stores, &mut command)
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -9650,7 +9692,7 @@ fn apply_scanned_step(
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             let context = boxes.take_box_context(false);
-            box_end(context, node, modes, stores, prepared_dvi_pages)?;
+            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxRegister {
@@ -9668,7 +9710,7 @@ fn apply_scanned_step(
             }
             let node = crate::assignments::first_box_node(stores, id);
             let context = boxes.take_box_context(ships_out);
-            box_end(context, node, modes, stores, prepared_dvi_pages)?;
+            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
@@ -9678,7 +9720,7 @@ fn apply_scanned_step(
         ScannedStep::LastBox => {
             let node = crate::assignments::take_last_box(modes, stores)?;
             let context = boxes.take_box_context(false);
-            box_end(context, node, modes, stores, prepared_dvi_pages)?;
+            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Leaders {
@@ -10162,7 +10204,7 @@ fn apply_scanned_step(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                if let Some(receipt) = shipout_replay_box(node, stores)? {
+                if let Some(receipt) = shipout_replay_box(node, stores, command)? {
                     prepared_dvi_pages.push(receipt);
                 }
             } else if let Some(target) = box_state.target {
@@ -11052,6 +11094,7 @@ fn box_end(
     modes: &mut ModeNest,
     stores: &mut Universe,
     prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
+    command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
     match context {
         BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta),
@@ -11075,7 +11118,7 @@ fn box_end(
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut => {
             if let Some(node) = node
-                && let Some(receipt) = shipout_replay_box(node, stores)?
+                && let Some(receipt) = shipout_replay_box(node, stores, command)?
             {
                 prepared_dvi_pages.push(receipt);
             }

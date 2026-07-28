@@ -101,9 +101,34 @@ impl CommandProcessor<'_> {
     pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
         let stamp = self.last_delivery.ok_or(CommandError::input_invariant())?;
         match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
-            RetirementRestart::Continue => Ok(()),
-            RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
+            RetirementRestart::Continue | RetirementRestart::Completed => Ok(()),
+            RetirementRestart::Stop | RetirementRestart::EndV(_) => {
                 Err(CommandError::input_invariant())
+            }
+        }
+    }
+
+    pub(crate) fn retire_exhausted_through(
+        &mut self,
+        level: InputLevelId,
+    ) -> Result<(), CommandError> {
+        loop {
+            let top = self
+                .command
+                .top_input_level_identity()
+                .ok_or(CommandError::input_invariant())?;
+            if top < level {
+                return Ok(());
+            }
+            let reached = top == level;
+            match self.retire_and_restart(top)? {
+                RetirementRestart::Continue | RetirementRestart::Completed => {}
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+            if reached {
+                return Ok(());
             }
         }
     }
@@ -1585,6 +1610,9 @@ impl CommandProcessor<'_> {
         self.observe_outer_validity_diagnostic(&recovery.status, false);
         if matches!(recovery.status, ScannerStatus::Matching(_)) {
             self.outer_recovered_while_matching = true;
+        }
+        if matches!(recovery.status, ScannerStatus::Absorbing(_)) {
+            self.outer_recovered_while_absorbing = true;
         }
         self.back_input(command.copy_for_backup())?;
         self.install_outer_recovery(recovery)?;

@@ -1602,11 +1602,19 @@
         },
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_balanced_and_nested_groups_do_not_trigger_recovery"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "deferred_write_stream_selector_and_newline_boundaries_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-p8ox"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.open-write-close-dispatch",

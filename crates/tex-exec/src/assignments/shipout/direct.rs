@@ -24,6 +24,9 @@ use crate::diagnostics;
 
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
+pub(super) type WriteExpander<'a> =
+    dyn FnMut(&mut Universe, TokenListId) -> Result<Option<String>, ExecError> + 'a;
+
 pub(super) struct StagedShipout {
     pub(super) artifact: VerifiedArtifact,
     pub(super) dvi_plan: Option<DviPagePlan>,
@@ -49,6 +52,7 @@ fn stage_form_inner(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    let mut legacy_write_expander = |_: &mut Universe, _: TokenListId| Ok(None);
     let root_node = stores
         .nodes(form.box_list())
         .first()
@@ -65,6 +69,7 @@ fn stage_form_inner(
         Vec::new(),
         stores,
         expansion,
+        &mut legacy_write_expander,
         tex_state::PdfColorStackTarget::Form,
     )?;
     let job = JobInfo {
@@ -136,6 +141,7 @@ pub(super) fn stage_shipout(
     input_summary: tex_state::InputSummary,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
+    write_expander: &mut WriteExpander<'_>,
 ) -> Result<StagedShipout, ExecError> {
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
@@ -190,6 +196,7 @@ pub(super) fn stage_shipout(
             pending_effects,
             stores,
             expansion,
+            write_expander,
             tex_state::PdfColorStackTarget::Page,
         )
     })?;
