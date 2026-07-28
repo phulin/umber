@@ -3898,7 +3898,10 @@ fn dispatch_main_control_command(
                 }
                 _ => break,
             }
-            command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
+            command = processor
+                .next_non_blank_non_relax_x_token()
+                .map_err(command_error)?
+                .ok_or(ExecError::MissingPrefixedCommand)?;
             // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
             // erroneous prefixes and return>`: §209's partition, not a
             // hand-listed set of assignment families.

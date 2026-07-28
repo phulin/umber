@@ -210,7 +210,7 @@ impl CommandProcessor<'_> {
     /// `\relax`, and the two are not interchangeable: §1160 classifies the
     /// token it stops on, so a `\relax` that reached it as a command rather
     /// than as a skipped filler would scan as an invalid delimiter.
-    pub(crate) fn next_non_blank_non_relax_x_token(
+    pub fn next_non_blank_non_relax_x_token(
         &mut self,
     ) -> Result<Option<CurrentCommand>, CommandError> {
         loop {

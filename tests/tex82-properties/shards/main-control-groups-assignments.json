@@ -698,11 +698,11 @@
     {
       "id": "tex82.assignment.prefix-collection",
       "sections": [1208, 1209, 1210, 1211, 1212, 1213, 1214],
-      "claim": "Expandable material between prefixes is expanded, legal bits accumulate idempotently, illegal prefixes diagnose, and globaldefs determines effective scope.",
+      "claim": "Expandable calls are expanded and blank or relax commands are skipped between prefixes; legal bits accumulate idempotently, illegal prefixes diagnose and back_error replays the retained command, and globaldefs determines effective scope.",
       "preconditions": ["Main control delivered a prefix."],
       "stimulus": [
-        "Phase 2 white-box unit `prefix_collection_expands_repeats_validates_and_resolves_globaldefs` covers definitions, assignments, and nonprefixable commands.",
-        "The committed command-semantic prefix-collection case observes the illegal-prefix gap as a strict xfail linked to umber2-o96f."
+        "White-box and replay units cover repeated global/long/outer prefixes across spaces, relax, and macro calls, nested scope, afterassignment ordering, and exact illegal-prefix diagnostics and one-token replay.",
+        "The committed tex-exec prefixed-macro reference microfixture and canonical replay cover §404 filler plus an expanded call; the command-semantic prefix-collection minifixture covers the broader §1211 property."
       ],
       "expected_observations": [
         "One normalized prefix set reaches the command; rejection retains the substantive command."
@@ -714,25 +714,39 @@
         "The strict xfail pins the first canonical-versus-current execution mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-o96f",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "prefix_collection_expands_repeats_validates_and_resolves_globaldefs"
         },
         {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "prefix_collection_skips_spaces_relax_and_macro_calls_without_losing_bits"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_prefixed_command_skips_relax_and_preserves_group_scope"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_illegal_prefix_reports_and_replays_the_command_once"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_relax_inside_prefix_collection_does_not_fire_afterassignment"
+        },
+        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
-            "prefix-collection strict xfail",
-            "linked to umber2-o96f",
-            "pinned first mismatch rejects XPASS and changed failure"
+            "main-control/prefix-collection"
           ]
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.redefinable-target",

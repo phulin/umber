@@ -6615,6 +6615,70 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
 }
 
 #[test]
+fn canonical_prefixed_command_skips_relax_and_preserves_group_scope() {
+    let source = include_bytes!("../../../../tests/corpus/tex_exec/prefixed_macro.tex");
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.count(0),
+        7,
+        "the committed TeX82 microfixture proves §§404,1211 retain the prefix across relax and a macro call"
+    );
+    assert!(
+        terminal_text(&universe).contains("P:7"),
+        "the canonical replay matches the committed reference observation"
+    );
+}
+
+#[test]
+fn canonical_illegal_prefix_reports_and_replays_the_command_once() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\global\relax\message{replayed}\count0=1\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 1, "execution continues after back_error");
+    let output = terminal_text(&universe);
+    assert_eq!(
+        output.matches("replayed").count(),
+        1,
+        "§1212 backs the rejected command up exactly once: {output}"
+    );
+    assert!(
+        output.contains("! You can't use a prefix with `\\message'."),
+        "§1212 prints the rejected command exactly: {output}"
+    );
+    assert!(
+        output.contains("I'll pretend you didn't say \\long or \\outer or \\global."),
+        "§1212 prints its one-line help exactly: {output}"
+    );
+}
+
+#[test]
+fn canonical_relax_inside_prefix_collection_does_not_fire_afterassignment() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\mark{\count1=\count0}\afterassignment\mark\global\relax\count0=9\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 9);
+    assert_eq!(
+        universe.count(1),
+        9,
+        "§404 filler does not interrupt §1211 or fire afterassignment before the assignment commits"
+    );
+}
+
+#[test]
 fn canonical_vsplit_scans_operands_before_replaying_destructive_repack() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

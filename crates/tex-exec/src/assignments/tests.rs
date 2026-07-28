@@ -353,6 +353,36 @@ fn prefix_collection_expands_repeats_validates_and_resolves_globaldefs() {
 }
 
 #[test]
+fn prefix_collection_skips_spaces_relax_and_macro_calls_without_losing_bits() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\G{\global\relax}\def\L{\long\relax}\def\O{\outer\relax}\begingroup\G \relax\G\count0=7\L \relax\O\def\local{L}\global\L\O\def\shared{S}\endgroup\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.count(0),
+        7,
+        "§404 filler and expanded calls retain the accumulated global prefix"
+    );
+    assert!(
+        stores
+            .symbol("local")
+            .and_then(|symbol| stores.macro_meaning(symbol))
+            .is_none(),
+        "the unprefixed long/outer definition remains local"
+    );
+    let shared = stores
+        .macro_meaning(stores.symbol("shared").expect("global definition target"))
+        .expect("global prefixed definition survives");
+    assert!(shared.flags().contains(MeaningFlags::LONG));
+    assert!(shared.flags().contains(MeaningFlags::OUTER));
+}
+
+#[test]
 fn get_r_token_skips_spaces_and_recovers_non_control_sequence_targets() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
