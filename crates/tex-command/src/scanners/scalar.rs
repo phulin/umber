@@ -1432,15 +1432,37 @@ impl CommandProcessor<'_> {
         } else {
             InternalLevel::Dimension
         };
-        let unit = match self.scan_something_internal(&command, level, false)? {
-            InternalScan::Value(InternalValue::Dimension(value)) if !mu => Some(value),
-            InternalScan::Value(InternalValue::MuGlue(value)) if mu => Some(value.width),
-            _ => None,
-        };
-        if unit.is_none() {
-            self.back_input(command)?;
+        // §455's internal branch is selected by the command range, not by the
+        // level the resulting quantity happens to have. §413 has already
+        // performed every downward coercion requested above; an integer is a
+        // scaled unit unchanged, while either glue kind supplies its width.
+        // In a mu scan §455 reports `mu_error` for every level below `mu_val`,
+        // but still accepts that value as the unit.
+        match self.scan_something_internal(&command, level, false)? {
+            InternalScan::Value(value) => {
+                if mu && !matches!(value, InternalValue::MuGlue(_)) {
+                    self.mu_error();
+                }
+                let unit = match value {
+                    InternalValue::Integer(value) => Scaled::from_raw(value),
+                    InternalValue::Dimension(value) => value,
+                    InternalValue::Glue(value) | InternalValue::MuGlue(value) => value.width,
+                    InternalValue::Font(_) | InternalValue::Tokens { .. } => {
+                        unreachable!("TeX82 §416 recovers nonnumeric internal values before §455")
+                    }
+                };
+                Ok(Some(unit))
+            }
+            // §416 has already committed its requested-level zero. It took
+            // the internal branch, so §455 reaches `found:` rather than
+            // backing it up and attempting `em`, `ex`, or physical units.
+            InternalScan::NotANumber => Ok(Some(Scaled::from_raw(0))),
+            // Only this range-miss branch owns §455's `back_input`.
+            InternalScan::NotInternal => {
+                self.back_input(command)?;
+                Ok(None)
+            }
         }
-        Ok(unit)
     }
 
     /// TeX82 §443's `⟨Scan an optional space⟩`:

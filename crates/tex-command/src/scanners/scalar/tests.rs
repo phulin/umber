@@ -3331,7 +3331,7 @@ fn dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundar
 }
 
 #[test]
-fn dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery() {
+fn dimension_mu_units_cover_success_nonmu_and_mixed_internal_units() {
     let mut universe = Universe::new();
     assert_eq!(
         scan_with(
@@ -3397,19 +3397,94 @@ fn dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery() {
         |processor| {
             let value = processor
                 .scan_mu_dimension()
-                .expect("mixed internal unit recovers")
+                .expect("mixed internal unit scans")
                 .value
                 .raw();
             let following = processor
                 .get_x_token()
-                .expect("rejected internal delivers")
-                .expect("rejected internal remains")
-                .meaning();
+                .expect("input remains available")
+                .map(|command| command.meaning());
             (value, following)
         },
     );
-    assert_eq!(value, 2 * Scaled::UNITY);
-    assert_eq!(following, Meaning::SkipRegister(1));
+    assert_eq!(value, 6 * Scaled::UNITY);
+    assert_eq!(following, None, "§455 consumes an internal unit once");
+    assert!(diagnostic_text(&universe).contains("Incompatible glue units"));
+}
+
+#[test]
+fn dimension_internal_unit_probe_accepts_integer_and_missing_number_zero_without_keyword_replay() {
+    // TeX82 §455 branches on `min_internal..max_internal`, not on the final
+    // value level. An integer is therefore a scaled unit, and §416's zero is
+    // likewise an accepted unit rather than an `em`/`ex`/physical-unit probe.
+    let mut universe = Universe::new();
+    let count = universe.intern("unit-count").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(1));
+    universe.set_count(1, 3);
+    let (ordinary, mu) = scan_with(
+        &mut universe,
+        vec![
+            char_token('2'),
+            Token::Cs(count),
+            char_token('2'),
+            Token::Cs(count),
+        ],
+        |processor| {
+            (
+                processor
+                    .scan_dimension()
+                    .expect("integer unit scans")
+                    .value
+                    .raw(),
+                processor
+                    .scan_mu_dimension()
+                    .expect("integer mu unit scans")
+                    .value
+                    .raw(),
+            )
+        },
+    );
+    assert_eq!((ordinary, mu), (6, 6));
+    assert!(diagnostic_text(&universe).contains("Incompatible glue units"));
+
+    use tex_state::font::NULL_FONT;
+
+    let mut universe = Universe::new();
+    let font = universe.intern("unit-font").symbol();
+    universe.set_meaning(font, Meaning::Font(NULL_FONT));
+    let (value, following) = scan_with(
+        &mut universe,
+        vec![
+            char_token('9'),
+            Token::Cs(font),
+            char_token('p'),
+            char_token('t'),
+        ],
+        |processor| {
+            let value = processor
+                .scan_dimension()
+                .expect("missing-number unit recovers as zero")
+                .value
+                .raw();
+            let following = processor
+                .get_x_token()
+                .expect("remaining input scans")
+                .map(|command| command.meaning());
+            (value, following)
+        },
+    );
+    assert_eq!(value, 0);
+    assert_eq!(
+        following,
+        Some(Meaning::CharToken {
+            ch: 'p',
+            cat: Catcode::Letter
+        })
+    );
+    assert!(
+        !diagnostic_text(&universe).contains("Illegal unit of measure"),
+        "§455 must not fall through to physical-unit recovery for §416 zero"
+    );
 }
 
 #[test]

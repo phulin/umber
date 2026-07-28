@@ -245,7 +245,7 @@
         "Incompatible mu and non-mu quantities emit the canonical diagnostic and continue using the documented one-mu-equals-one-point assumption."
       ],
       "semantic_owner": "tex-command::scanners",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -754,17 +754,17 @@
     {
       "id": "tex82.scanner.dimension-internal-relative-infinite-units",
       "sections": [454, 455, 456],
-      "claim": "Dimension unit scanning recognizes canonical fil orders, internal dimension units, current-font em/ex units, and mu units with their distinct scaling, optional-space, and compatibility rules.",
+      "claim": "Dimension unit scanning recognizes canonical fil orders, every internal quantity as a consumed scaled unit, current-font em/ex units, and mu units with their distinct scaling, optional-space, and compatibility rules.",
       "preconditions": [
         "A numeric integral/fraction prefix is available and the caller selects ordinary or mu units plus whether infinite units are allowed.",
-        "Current-font metrics and internal dimension or muglue quantities are explicit."
+        "Current-font metrics and internal integer, dimension, glue, muglue, or §416 zero quantities are explicit."
       ],
       "stimulus": [
-        "Attach fil through excess l suffixes, internal dimensions, internal muglue, em, ex, and mu to whole and fractional prefixes with case and space variants."
+        "Attach fil through excess l suffixes, every internal level under ordinary and mu requests, em, ex, and mu to whole and fractional prefixes with case and space variants."
       ],
       "expected_observations": [
         "fil suffix count selects fil, fill, or filll and consumes excess l tokens after one error.",
-        "Internal, em, and ex units scale both integral and fractional components; mu is accepted only for mu dimensions.",
+        "Every internal branch is consumed once and supplies its resulting value as the unit; em and ex scale both integral and fractional components, while mu is accepted only for mu dimensions.",
         "Each accepted unit consumes exactly its documented optional following space."
       ],
       "postconditions": [
@@ -779,7 +779,8 @@
       "recovery_cases": [
         "Infinite units when inf is false fall through to ordinary-unit recovery rather than setting an order.",
         "Excess l suffixes report one error, consume all l candidates, and clamp order to filll.",
-        "A non-mu unit in a mu scan assumes mu; mixed internal unit kinds report Incompatible glue units."
+        "A non-mu unit in a mu scan assumes mu; mixed internal unit kinds report Incompatible glue units without an invented keyword or illegal-unit recovery.",
+        "§416's missing-number zero remains an internal unit and leaves subsequent unit-keyword text unconsumed."
       ],
       "semantic_owner": "tex-command::scanners",
       "test_level": "rust-unit",
@@ -810,7 +811,17 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_mu_units_cover_success_nonmu_and_mixed_internal_recovery"
+          "test": "dimension_mu_units_cover_success_nonmu_and_mixed_internal_units"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_internal_unit_probe_accepts_integer_and_missing_number_zero_without_keyword_replay",
+          "cases": [
+            "ordinary and mu integer units",
+            "mu compatibility observation",
+            "§416 zero unit",
+            "no physical-keyword fallback"
+          ]
         }
       ],
       "planned_coverage": [
