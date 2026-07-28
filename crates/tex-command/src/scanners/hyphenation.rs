@@ -18,6 +18,8 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
 use crate::{CommandError, CommandProcessor};
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::{CommandObservation, DiagnosticRecord};
 
 #[cfg(test)]
 mod tests;
@@ -96,12 +98,13 @@ impl CommandProcessor<'_> {
                     }
                     return Ok(ScannedHyphenationData { words });
                 }
-                // §936's "Improper \hyphenation will be flushed" and §961's
-                // "Bad \patterns" `othercases`. Both call `error` and resume
-                // the same loop with the offending command already consumed;
-                // the message itself is host print policy Umber does not
-                // reproduce yet (umber2-johp.162).
-                _ => continue,
+                // §§936/961: diagnose and resume with the offending command
+                // consumed. In particular, this does not end or reset the
+                // partially collected word.
+                _ => {
+                    self.report_hyphenation_scan_error(kind);
+                    continue;
+                }
             };
             match character {
                 Some(character) => current.push(character),
@@ -112,5 +115,30 @@ impl CommandProcessor<'_> {
                 }
             }
         }
+    }
+
+    fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {
+        let (message, help): (&str, &[&str]) = match kind {
+            HyphenationDataKind::Exceptions => (
+                "Improper \\hyphenation will be flushed",
+                &[
+                    "Hyphenation exceptions must contain only letters",
+                    "and hyphens. But continue; I'll forgive and forget.",
+                ],
+            ),
+            HyphenationDataKind::Patterns => ("Bad \\patterns", &["(See Appendix H.)"]),
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic: match kind {
+                HyphenationDataKind::Exceptions => "improper_hyphenation",
+                HyphenationDataKind::Patterns => "bad_patterns",
+            },
+            arguments: Vec::new(),
+        }));
+        let mut report = self.state.print_err(message);
+        report.help(help);
+        report.error();
     }
 }

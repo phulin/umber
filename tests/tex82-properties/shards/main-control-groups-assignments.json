@@ -1073,8 +1073,8 @@
     },
     {
       "id": "tex82.assignment.hyphenation-data",
-      "sections": [1250, 1251, 1252],
-      "claim": "Hyphenation loads exception words in all profiles, while patterns load only under INITEX and otherwise flush one braced argument after diagnosis.",
+      "sections": [934, 935, 936, 937, 960, 961, 962, 963, 1250, 1251, 1252],
+      "claim": "Hyphenation loads exception words in all profiles, while patterns load only under INITEX; scanner and application errors diagnose in canonical order while preserving TeX82 recovery and mutation.",
       "preconditions": ["A hyphenation-data command and braced input are current."],
       "stimulus": [
         "Phase 2 white-box unit `hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery` covers both profile classes."
@@ -1086,27 +1086,31 @@
       "equivalence_cases": [
         "Exceptions/patterns with empty, singleton, and multiple entries in INITEX and production profiles."
       ],
-      "recovery_cases": ["Production pattern use diagnoses and flushes through the matching right brace."],
+      "recovery_cases": [
+        "Improper exception and pattern commands consume the offending command while retaining the partial word.",
+        "Zero lccodes are ignored in exceptions and retained as null pattern letters after diagnosis.",
+        "A duplicate pattern diagnoses and then replaces the prior operation.",
+        "Production pattern use reports the finalized-trie diagnostic and flushes through the matching right brace."
+      ],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-ktj0",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery"
+          "path": "crates/tex-command/src/scanners/hyphenation/tests.rs",
+          "test": "othercases_report_typed_diagnostics_and_preserve_the_partial_word"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "hyphenation-data strict xfail",
-            "linked to umber2-ktj0",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.font-parameters",

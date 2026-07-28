@@ -3987,11 +3987,17 @@ impl Universe {
             .mark_changed(DependencyKey::HyphenationPatterns(0));
     }
 
-    pub fn add_hyphenation_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
-        self.stores
+    pub fn add_hyphenation_pattern_for_language(
+        &mut self,
+        language: u8,
+        pattern: PatternSpec,
+    ) -> bool {
+        let duplicate = self
+            .stores
             .add_hyphenation_pattern_for_language(language, pattern);
         self.dependencies
             .mark_changed(DependencyKey::HyphenationPatterns(language));
+        duplicate
     }
 
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {

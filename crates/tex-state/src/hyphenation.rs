@@ -101,12 +101,14 @@ impl HyphenationTable {
     }
 
     pub fn add_pattern(&mut self, pattern: PatternSpec) {
-        self.add_pattern_for_language(0, pattern);
+        let _ = self.add_pattern_for_language(0, pattern);
     }
 
-    pub fn add_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
+    /// Inserts or replaces a pattern and reports whether the same letter path
+    /// already carried pattern values (TeX82 §963's duplicate test).
+    pub fn add_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) -> bool {
         if pattern.letters.is_empty() {
-            return;
+            return false;
         }
         self.dependency_fingerprints = OnceLock::new();
         let table = self.languages.entry(language).or_default();
@@ -114,7 +116,9 @@ impl HyphenationTable {
         for ch in pattern.letters {
             node = table.edge_or_insert(node, ch);
         }
+        let duplicate = !table.nodes[node].values.is_empty();
         table.nodes[node].values = pattern.values;
+        duplicate
     }
 
     pub fn add_exception(&mut self, exception: ExceptionSpec) {

@@ -15,7 +15,8 @@ pub(super) fn execute_patterns(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let words = scan_hyphenation_words(input, stores, execution, "\\patterns")?;
-    apply_patterns(stores, words);
+    let diagnostics = apply_patterns(stores, words);
+    report_apply_diagnostics(stores, diagnostics);
     Ok(())
 }
 
@@ -25,7 +26,8 @@ pub(super) fn execute_hyphenation(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let words = scan_hyphenation_words(input, stores, execution, "\\hyphenation")?;
-    apply_hyphenation_exceptions(stores, words);
+    let diagnostics = apply_hyphenation_exceptions(stores, words);
+    report_apply_diagnostics(stores, diagnostics);
     Ok(())
 }
 
@@ -34,11 +36,51 @@ pub(super) fn execute_hyphenation(
 /// by the legacy `InputStack` scanner above and canonical main control, which
 /// collects the same raw words from an already-frozen expanded token list
 /// instead of a live input stream.
-pub(crate) fn apply_patterns(stores: &mut Universe, words: Vec<Vec<char>>) {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HyphenationApplyDiagnostic {
+    NotALetter,
+    Nonletter,
+    DuplicatePattern,
+}
+
+pub(crate) fn report_apply_diagnostics(
+    stores: &mut Universe,
+    diagnostics: Vec<HyphenationApplyDiagnostic>,
+) {
+    for diagnostic in diagnostics {
+        let (message, help): (&str, &[&str]) = match diagnostic {
+            HyphenationApplyDiagnostic::NotALetter => (
+                "Not a letter",
+                &[
+                    "Letters in \\hyphenation words must have \\lccode>0.",
+                    "Proceed; I'll ignore the character I just read.",
+                ],
+            ),
+            HyphenationApplyDiagnostic::Nonletter => ("Nonletter", &["(See Appendix H.)"]),
+            HyphenationApplyDiagnostic::DuplicatePattern => {
+                ("Duplicate pattern", &["(See Appendix H.)"])
+            }
+        };
+        let mut report = stores.print_err(message);
+        report.help(help);
+        report.error();
+    }
+}
+
+pub(crate) fn apply_patterns(
+    stores: &mut Universe,
+    words: Vec<Vec<char>>,
+) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
+    let mut diagnostics = Vec::new();
     for word in words {
-        if let Some(pattern) = parse_pattern_word(stores, &word) {
-            stores.add_hyphenation_pattern_for_language(language, pattern);
+        let (pattern, nonletters) = parse_pattern_word(stores, &word);
+        diagnostics.extend(std::iter::repeat_n(
+            HyphenationApplyDiagnostic::Nonletter,
+            nonletters,
+        ));
+        if stores.add_hyphenation_pattern_for_language(language, pattern) {
+            diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
         }
     }
     if stores.int_param(IntParam::SAVING_HYPH_CODES) > 0 {
@@ -50,17 +92,28 @@ pub(crate) fn apply_patterns(stores: &mut Universe, words: Vec<Vec<char>>) {
         });
         stores.save_hyphenation_codes(language, codes.collect::<Vec<_>>());
     }
+    diagnostics
 }
 
 /// TeX82's analogous `new_hyph_exceptions` word application for
 /// `\hyphenation`, shared with canonical main control; see [`apply_patterns`].
-pub(crate) fn apply_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec<char>>) {
+pub(crate) fn apply_hyphenation_exceptions(
+    stores: &mut Universe,
+    words: Vec<Vec<char>>,
+) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
+    let mut diagnostics = Vec::new();
     for word in words {
-        if let Some(exception) = parse_exception_word(stores, language, &word) {
+        let (exception, not_letters) = parse_exception_word(stores, language, &word);
+        diagnostics.extend(std::iter::repeat_n(
+            HyphenationApplyDiagnostic::NotALetter,
+            not_letters,
+        ));
+        if let Some(exception) = exception {
             stores.add_hyphenation_exception_for_language(language, exception);
         }
     }
+    diagnostics
 }
 
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
@@ -454,39 +507,61 @@ fn scan_hyphenation_words(
     Err(ExecError::MissingToken { context })
 }
 
-fn parse_pattern_word(stores: &Universe, word: &[char]) -> Option<PatternSpec> {
+fn parse_pattern_word(stores: &Universe, word: &[char]) -> (PatternSpec, usize) {
     let mut letters = Vec::new();
     let mut values = vec![0u8];
+    let mut digit_sensed = false;
+    let mut nonletters = 0;
     for &ch in word {
-        if let Some(digit) = ch.to_digit(10) {
+        if !digit_sensed && ch.is_ascii_digit() {
+            let digit = ch.to_digit(10).expect("ASCII digit has a value");
             *values.last_mut().expect("values is non-empty") = digit as u8;
+            digit_sensed = true;
         } else {
             let normalized = if ch == '.' {
                 '.'
             } else {
-                normalized_lccode(stores, ch)?
+                normalized_lccode(stores, ch).unwrap_or_else(|| {
+                    nonletters += 1;
+                    '\0'
+                })
             };
-            letters.push(normalized);
-            values.push(0);
+            if letters.len() < 63 {
+                letters.push(normalized);
+                values.push(0);
+                digit_sensed = false;
+            }
         }
     }
-    Some(PatternSpec { letters, values })
+    (PatternSpec { letters, values }, nonletters)
 }
 
-fn parse_exception_word(stores: &Universe, language: u8, word: &[char]) -> Option<ExceptionSpec> {
+fn parse_exception_word(
+    stores: &Universe,
+    language: u8,
+    word: &[char],
+) -> (Option<ExceptionSpec>, usize) {
     let mut normalized = String::new();
     let mut positions = Vec::new();
+    let mut not_letters = 0;
     for &ch in word {
         if ch == '-' {
             positions.push(normalized.chars().count());
+        } else if let Some(ch) = normalized_hyphen_code(stores, language, ch) {
+            if normalized.chars().count() < 63 {
+                normalized.push(ch);
+            }
         } else {
-            normalized.push(normalized_hyphen_code(stores, language, ch)?);
+            not_letters += 1;
         }
     }
-    Some(ExceptionSpec {
-        word: normalized,
-        positions,
-    })
+    (
+        (!normalized.is_empty()).then_some(ExceptionSpec {
+            word: normalized,
+            positions,
+        }),
+        not_letters,
+    )
 }
 
 fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {

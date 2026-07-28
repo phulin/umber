@@ -465,11 +465,15 @@ impl Stores {
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
-        self.add_hyphenation_pattern_for_language(0, pattern);
+        let _ = self.add_hyphenation_pattern_for_language(0, pattern);
     }
 
-    pub fn add_hyphenation_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
-        Arc::make_mut(&mut self.hyphenation).add_pattern_for_language(language, pattern);
+    pub fn add_hyphenation_pattern_for_language(
+        &mut self,
+        language: u8,
+        pattern: PatternSpec,
+    ) -> bool {
+        Arc::make_mut(&mut self.hyphenation).add_pattern_for_language(language, pattern)
     }
 
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {

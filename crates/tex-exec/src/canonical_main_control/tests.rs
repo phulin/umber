@@ -897,6 +897,11 @@ fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
     run_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.count(0), 1);
+    assert_eq!(
+        stores.hyphen_positions_for_language(0, "ab", 0, 0),
+        Vec::<usize>::new(),
+        "§963 diagnoses the duplicate before replacing it with a2b"
+    );
     let output = terminal_text(&stores);
     assert!(
         output.contains("! Font \\nullfont has only 7 fontdimen parameters."),
@@ -972,13 +977,54 @@ fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
 
     assert_eq!(stores.count(0), 1);
     let output = terminal_text(&stores);
-    assert!(
-        output.contains("! Patterns can be loaded only by INITEX."),
-        "{output}"
-    );
+    assert!(output.contains("! Too late for \\patterns."), "{output}");
     assert!(
         output.contains("(\\dump is performed only by INITEX)"),
         "{output}"
+    );
+}
+
+#[test]
+fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
+    // TeX82 §§936-937 and §§961-963: scanner othercases retain the
+    // partially collected word; invalid lccodes are diagnosed during apply;
+    // a duplicate is diagnosed after its replacement has been installed.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+           \hyphenation{ab\relax cd ab!c-d}
+           \patterns{a\relax b a!b a1b a2b}
+           \count0=1\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    let output = terminal_text(&stores);
+    for expected in [
+        "! Improper \\hyphenation will be flushed.",
+        "! Not a letter.",
+        "! Bad \\patterns.",
+        "! Nonletter.",
+        "! Duplicate pattern.",
+    ] {
+        assert!(
+            output.contains(expected),
+            "missing {expected:?} in {output}"
+        );
+    }
+    let positions = [
+        "Improper \\hyphenation",
+        "Not a letter",
+        "Bad \\patterns",
+        "Nonletter",
+        "Duplicate pattern",
+    ]
+    .map(|message| output.find(message).expect("diagnostic is present"));
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "scanner/apply diagnostic order changed: {output}"
     );
 }
 

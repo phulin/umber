@@ -24,8 +24,9 @@ use tex_command::{
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
-    CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
-    ObservedToken, ParameterClass, canonical_names::glue_order_name, parameter_mutation_key,
+    CommandObservation, CommandObserver, DiagnosticRecord, EffectRecord, GeometryRecord,
+    MutationRecord, ObservedToken, ParameterClass, canonical_names::glue_order_name,
+    parameter_mutation_key,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_state::GeometryObservation;
@@ -9328,16 +9329,47 @@ fn apply_scanned_step(
             // group, and returns with the trie unchanged; `\hyphenation`
             // stays legal in both binaries.
             if patterns && !command.initex {
-                let mut report = stores.print_err("Patterns can be loaded only by INITEX");
-                report.help(&[]);
+                #[cfg(any(test, feature = "instrumentation"))]
+                if let Some(buffer) = command.observations.as_mut() {
+                    buffer
+                        .0
+                        .push(CommandObservation::Diagnostic(DiagnosticRecord {
+                            severity: "error",
+                            diagnostic: "too_late_for_patterns",
+                            arguments: Vec::new(),
+                        }));
+                }
+                let mut report = stores.print_err("Too late for \\patterns");
+                report.help(&["All patterns must be given before typesetting begins."]);
                 report.error();
                 return Ok(ReplayStep::Continue);
             }
-            if patterns {
-                crate::assignments::apply_patterns(stores, words);
+            let diagnostics = if patterns {
+                crate::assignments::apply_patterns(stores, words)
             } else {
-                crate::assignments::apply_hyphenation_exceptions(stores, words);
+                crate::assignments::apply_hyphenation_exceptions(stores, words)
+            };
+            #[cfg(any(test, feature = "instrumentation"))]
+            if let Some(buffer) = command.observations.as_mut() {
+                buffer.0.extend(diagnostics.iter().map(|diagnostic| {
+                    CommandObservation::Diagnostic(DiagnosticRecord {
+                        severity: "error",
+                        diagnostic: match diagnostic {
+                            crate::assignments::HyphenationApplyDiagnostic::NotALetter => {
+                                "hyphenation_not_a_letter"
+                            }
+                            crate::assignments::HyphenationApplyDiagnostic::Nonletter => {
+                                "patterns_nonletter"
+                            }
+                            crate::assignments::HyphenationApplyDiagnostic::DuplicatePattern => {
+                                "duplicate_pattern"
+                            }
+                        },
+                        arguments: Vec::new(),
+                    })
+                }));
             }
+            crate::assignments::report_apply_diagnostics(stores, diagnostics);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Let {

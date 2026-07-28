@@ -329,10 +329,47 @@
       },
       "projection": {
         "kind": "terminal-checks",
-        "terminal_checks": ["Patterns can be loaded only by INITEX"],
+        "terminal_checks": ["Too late for \\patterns", "All patterns must be given before typesetting begins."],
         "count_registers": [0]
       },
-      "expected": ["terminal-check:Patterns can be loaded only by INITEX=true", "count:0=1"],
+      "expected": [
+        "terminal-check:Too late for \\patterns=true",
+        "terminal-check:All patterns must be given before typesetting begins.=true",
+        "count:0=1"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "hyphenation-errors",
+      "property_id": "tex82.assignment.hyphenation-data",
+      "profile": "initex",
+      "source": "hyphenation-errors.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [934, 935, 936, 937, 960, 961, 962, 963]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "Improper \\hyphenation will be flushed",
+          "Not a letter",
+          "Bad \\patterns",
+          "Nonletter",
+          "Duplicate pattern",
+          "(See Appendix H.)"
+        ],
+        "count_registers": [0]
+      },
+      "expected": [
+        "terminal-check:Improper \\hyphenation will be flushed=true",
+        "terminal-check:Not a letter=true",
+        "terminal-check:Bad \\patterns=true",
+        "terminal-check:Nonletter=true",
+        "terminal-check:Duplicate pattern=true",
+        "terminal-check:(See Appendix H.)=true",
+        "count:0=1"
+      ],
       "expectation": { "kind": "pass" }
     },
     {

@@ -77,6 +77,8 @@ pub(crate) use hmode::{
     append_given_char, append_italic_correction, commit_current_list, control_space_glue_spec,
     flush_pending_hchars, norm_min, try_append_character, try_append_tfm_character_span,
 };
+#[cfg(any(test, feature = "instrumentation"))]
+pub(crate) use hyphenation::HyphenationApplyDiagnostic;
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]
@@ -84,7 +86,9 @@ pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word_text;
 use hyphenation::*;
-pub(crate) use hyphenation::{apply_hyphenation_exceptions, apply_patterns};
+pub(crate) use hyphenation::{
+    apply_hyphenation_exceptions, apply_patterns, report_apply_diagnostics,
+};
 use macros::*;
 #[cfg(test)]
 pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
