@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::encoding::{StreamHasher, encode_line};
-use crate::{Event, ManifestIdentity, NormalizedEvent, Normalizer, SCHEMA_VERSION, StreamIdentity};
+use crate::{Event, ManifestIdentity, NormalizedEvent, Normalizer, SchemaVersion, StreamIdentity};
 
 /// The first JSON line of every semantic event stream.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -18,8 +18,13 @@ pub struct ObservationHeader {
 impl ObservationHeader {
     #[must_use]
     pub fn new(manifest: ManifestIdentity) -> Self {
+        Self::for_schema(SchemaVersion::V1, manifest)
+    }
+
+    #[must_use]
+    pub fn for_schema(schema: SchemaVersion, manifest: ManifestIdentity) -> Self {
         Self {
-            schema: SCHEMA_VERSION,
+            schema: schema.number(),
             manifest: manifest.hex(),
         }
     }
@@ -46,12 +51,8 @@ impl ObservationStream {
             ObservationError::InvalidStream("event stream is missing its header".into())
         })?;
         let header: ObservationHeader = decode_canonical_line(header_line)?;
-        if header.schema != SCHEMA_VERSION {
-            return Err(ObservationError::InvalidStream(format!(
-                "unsupported oracle schema {}; expected {SCHEMA_VERSION}",
-                header.schema
-            )));
-        }
+        let _schema =
+            SchemaVersion::try_from(header.schema).map_err(ObservationError::InvalidStream)?;
         validate_identity("manifest", &header.manifest)?;
 
         let mut events = Vec::new();
@@ -70,7 +71,13 @@ impl ObservationStream {
 
     #[must_use]
     pub fn identity(bytes: &[u8]) -> StreamIdentity {
-        let mut hasher = StreamHasher::new();
+        let schema = bytes
+            .split_inclusive(|byte| *byte == b'\n')
+            .next()
+            .and_then(|line| serde_json::from_slice::<ObservationHeader>(line).ok())
+            .and_then(|header| SchemaVersion::try_from(header.schema).ok())
+            .unwrap_or(SchemaVersion::V1);
+        let mut hasher = StreamHasher::new(schema);
         hasher.update(bytes);
         hasher.finish()
     }
@@ -135,10 +142,18 @@ pub struct JsonLinesObserver<W> {
 }
 
 impl<W: Write> JsonLinesObserver<W> {
-    pub fn new(mut writer: W, manifest: ManifestIdentity) -> Result<Self, ObservationError> {
-        let header = encode_line(&ObservationHeader::new(manifest))?;
+    pub fn new(writer: W, manifest: ManifestIdentity) -> Result<Self, ObservationError> {
+        Self::new_for_schema(writer, SchemaVersion::V1, manifest)
+    }
+
+    pub fn new_for_schema(
+        mut writer: W,
+        schema: SchemaVersion,
+        manifest: ManifestIdentity,
+    ) -> Result<Self, ObservationError> {
+        let header = encode_line(&ObservationHeader::for_schema(schema, manifest))?;
         writer.write_all(&header)?;
-        let mut identity = StreamHasher::new();
+        let mut identity = StreamHasher::new(schema);
         identity.update(&header);
         Ok(Self {
             writer,

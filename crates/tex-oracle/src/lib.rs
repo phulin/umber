@@ -25,10 +25,11 @@ pub use profile::Tex82ObserverProfile;
 pub use schema::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
-    EffectEvent, EffectKind, EngineDialect, EngineIdentity, Event, InputEvent, InputReason,
-    InputTransition, MacroEvent, Manifest, ManifestInput, MutationEvent, OracleToken,
-    RecoveryEvent, RecoveryKind, SCHEMA_VERSION, ScannerEvent, ScannerStatus, ScannerStatusEvent,
-    SourceLocation, StateTarget, TokenListEvent, TokenListTransition,
+    EffectEvent, EffectKind, EngineDialect, EngineIdentity, Event, GeometryEvent, InputEvent,
+    InputReason, InputTransition, LATEST_SCHEMA_VERSION, MacroEvent, Manifest, ManifestInput,
+    MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, SCHEMA_VERSION, ScannerEvent,
+    ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation, StateTarget, TokenListEvent,
+    TokenListTransition,
 };
 pub use suite::{Tex82CommandTraceSuite, Tex82TraceFixture, validate_tex82_command_trace_suite};
 pub use transport::{

@@ -56,10 +56,10 @@ pub struct FixtureArtifact {
 
 /// Complete repository manifest for one committed canonical semantic fixture.
 ///
-/// `oracle` is the immutable schema-v1 semantic manifest whose identity is
+/// `oracle` is the immutable schema-version semantic manifest whose identity is
 /// written in the event-stream header. This outer contract adds repository
 /// selection, tool, profile, citation, and committed-file identities without
-/// changing the schema-v1 manifest preimage.
+/// changing the schema-version manifest preimage.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixtureManifest {
@@ -166,18 +166,18 @@ impl FixtureManifest {
             validate_artifact("source", artifact, &mut paths)?;
             let Some(input) = self.oracle.inputs.get(logical_name) else {
                 return Err(FixtureError::Invalid(format!(
-                    "source {logical_name} is absent from the schema-v1 oracle manifest"
+                    "source {logical_name} is absent from the schema-version oracle manifest"
                 )));
             };
             if input.bytes != artifact.bytes || input.sha256 != artifact.sha256 {
                 return Err(FixtureError::Invalid(format!(
-                    "source {logical_name} identity disagrees with the schema-v1 oracle manifest"
+                    "source {logical_name} identity disagrees with the schema-version oracle manifest"
                 )));
             }
         }
         if self.oracle.inputs.len() != self.sources.len() {
             return Err(FixtureError::Invalid(
-                "schema-v1 oracle inputs and committed fixture sources differ".into(),
+                "schema-version oracle inputs and committed fixture sources differ".into(),
             ));
         }
 
@@ -187,13 +187,13 @@ impl FixtureManifest {
             validate_artifact("ordinary output", artifact, &mut paths)?;
             if self.oracle.ordinary_output_sha256.get(channel) != Some(&artifact.sha256) {
                 return Err(FixtureError::Invalid(format!(
-                    "ordinary output {channel} identity disagrees with the schema-v1 oracle manifest"
+                    "ordinary output {channel} identity disagrees with the schema-version oracle manifest"
                 )));
             }
         }
         if self.oracle.ordinary_output_sha256.len() != self.outputs.len() {
             return Err(FixtureError::Invalid(
-                "schema-v1 ordinary outputs and committed artifact observations differ".into(),
+                "schema-version ordinary outputs and committed artifact observations differ".into(),
             ));
         }
         Ok(())
@@ -236,7 +236,7 @@ impl CommittedFixture {
             .hex();
         if stream.header.manifest != expected_manifest {
             return Err(FixtureError::Invalid(
-                "event stream is not bound to the fixture's schema-v1 oracle manifest".into(),
+                "event stream is not bound to the fixture's schema-version oracle manifest".into(),
             ));
         }
         validate_stream_sources(&stream, &manifest.sources)?;

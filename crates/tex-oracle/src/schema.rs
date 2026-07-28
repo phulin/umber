@@ -2,8 +2,45 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Current canonical semantic-event schema.
-pub const SCHEMA_VERSION: u32 = 1;
+/// Immutable semantic-event schema versions understood by this crate.
+///
+/// Schema v1 remains the contract for the committed command fixtures. Schema
+/// v2 adds detached box/package and shipout geometry observations; it never
+/// changes a v1 event, manifest, or identity preimage.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub enum SchemaVersion {
+    V1 = 1,
+    V2 = 2,
+}
+
+impl SchemaVersion {
+    #[must_use]
+    pub const fn number(self) -> u32 {
+        self as u32
+    }
+}
+
+impl TryFrom<u32> for SchemaVersion {
+    type Error = String;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::V1),
+            2 => Ok(Self::V2),
+            _ => Err(format!("unsupported oracle schema {value}")),
+        }
+    }
+}
+impl From<SchemaVersion> for u32 {
+    fn from(value: SchemaVersion) -> Self {
+        value.number()
+    }
+}
+
+/// Schema of the established, committed semantic fixtures.
+pub const SCHEMA_VERSION: u32 = SchemaVersion::V1.number();
+/// Most recent schema available for newly authored fixtures and observers.
+pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V2.number();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,8 +91,14 @@ pub struct Manifest {
 impl Manifest {
     #[must_use]
     pub fn new(engine: EngineIdentity) -> Self {
+        Self::new_for_schema(SchemaVersion::V1, engine)
+    }
+
+    /// Constructs a manifest for an explicitly selected immutable schema.
+    #[must_use]
+    pub fn new_for_schema(schema: SchemaVersion, engine: EngineIdentity) -> Self {
         Self {
-            schema: SCHEMA_VERSION,
+            schema: schema.number(),
             engine,
             inputs: BTreeMap::new(),
             environment: BTreeMap::new(),
@@ -339,6 +382,33 @@ pub struct EffectEvent {
     pub kind: EffectKind,
     pub channel: String,
     pub value: CanonicalValue,
+}
+
+/// Geometry transition introduced by schema v2.
+///
+/// Every numeric field is a signed TeX scaled point (sp): exactly 1/65536 pt.
+/// It contains finalized dimensions only, never node, pointer, glue-ratio, or
+/// output-driver state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "transition", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GeometryEvent {
+    /// Dimensions of a box after `hpack` commits.
+    Hpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    /// Dimensions of a box after `vpack` commits.
+    Vpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    /// Final page totals selected by `ship_out`: width and height plus depth.
+    Shipout {
+        page_width_sp: i64,
+        page_height_sp: i64,
+    },
 }
 
 /// One committed semantic delivery or transition.

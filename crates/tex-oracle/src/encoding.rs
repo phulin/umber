@@ -4,7 +4,7 @@ use std::fmt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::{Manifest, SCHEMA_VERSION};
+use crate::{Manifest, SchemaVersion};
 
 const MANIFEST_DOMAIN: &[u8] = b"umber-command-oracle-manifest\0";
 const STREAM_DOMAIN: &[u8] = b"umber-command-oracle-stream\0";
@@ -61,7 +61,12 @@ impl Manifest {
 
     pub fn identity(&self) -> Result<ManifestIdentity, EncodingError> {
         let bytes = self.to_canonical_json()?;
-        Ok(ManifestIdentity(domain_hash(MANIFEST_DOMAIN, &bytes)))
+        let schema = SchemaVersion::try_from(self.schema).map_err(EncodingError)?;
+        Ok(ManifestIdentity(domain_hash(
+            MANIFEST_DOMAIN,
+            schema,
+            &bytes,
+        )))
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, EncodingError> {
@@ -80,10 +85,10 @@ pub(crate) fn encode_line<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodingEr
 pub(crate) struct StreamHasher(Sha256);
 
 impl StreamHasher {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(schema: SchemaVersion) -> Self {
         let mut digest = Sha256::new();
         digest.update(STREAM_DOMAIN);
-        digest.update(SCHEMA_VERSION.to_le_bytes());
+        digest.update(schema.number().to_le_bytes());
         Self(digest)
     }
 
@@ -96,21 +101,16 @@ impl StreamHasher {
     }
 }
 
-fn domain_hash(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
+fn domain_hash(domain: &[u8], schema: SchemaVersion, bytes: &[u8]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(domain);
-    digest.update(SCHEMA_VERSION.to_le_bytes());
+    digest.update(schema.number().to_le_bytes());
     digest.update(bytes);
     digest.finalize().into()
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), EncodingError> {
-    if manifest.schema != SCHEMA_VERSION {
-        return Err(EncodingError(format!(
-            "unsupported oracle schema {}; expected {SCHEMA_VERSION}",
-            manifest.schema
-        )));
-    }
+    let _ = SchemaVersion::try_from(manifest.schema).map_err(EncodingError)?;
     validate_hash("web source", &manifest.engine.web_source_sha256)?;
     for hash in &manifest.engine.upstream_change_sha256 {
         validate_hash("upstream change", hash)?;

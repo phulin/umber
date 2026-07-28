@@ -15,8 +15,8 @@ use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
     CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
     EngineIdentity, Event, EventObserver, FixtureArtifact, FixtureManifest, FixtureProfile,
-    JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationStream, SCHEMA_VERSION,
-    ToolIdentity,
+    GeometryEvent, JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationHeader,
+    ObservationStream, SCHEMA_VERSION, SchemaVersion, ToolIdentity,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -221,7 +221,7 @@ fn fixture_manifest_rejects_schema_profile_output_and_citation_drift() {
     let mut value = fixture_manifest();
     assert!(value.validate().is_ok());
 
-    value.oracle.schema = SCHEMA_VERSION + 1;
+    value.oracle.schema = SchemaVersion::V2.number() + 1;
     assert!(value.validate().is_err());
     value = fixture_manifest();
     value.profile.characters = "unicode_extended".into();
@@ -377,4 +377,82 @@ fn hex_hash(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn geometry() -> GeometryEvent {
+    GeometryEvent::Hpack {
+        width_sp: 65_536,
+        height_sp: 12,
+        depth_sp: -3,
+    }
+}
+
+#[test]
+fn schema_v2_geometry_round_trips_with_scaled_point_units() {
+    let geometry = geometry();
+    let bytes = serde_json::to_vec(&geometry).expect("encode geometry");
+    assert_eq!(
+        serde_json::from_slice::<GeometryEvent>(&bytes).expect("decode geometry"),
+        geometry
+    );
+    let text = String::from_utf8(bytes).expect("utf8");
+    assert!(text.contains("\"width_sp\":65536"));
+    assert!(!text.contains("point"));
+}
+
+#[test]
+fn schema_version_selects_distinct_manifest_and_stream_domains() {
+    let v1 = manifest();
+    let mut v2 = v1.clone();
+    v2.schema = SchemaVersion::V2.number();
+    assert_ne!(v1.identity().expect("v1"), v2.identity().expect("v2"));
+
+    let identity = v1.identity().expect("v1 identity");
+    let v1_header = ObservationHeader::new(identity);
+    let v2_header = ObservationHeader::for_schema(SchemaVersion::V2, identity);
+    assert_ne!(
+        serde_json::to_vec(&v1_header).expect("v1 header"),
+        serde_json::to_vec(&v2_header).expect("v2 header")
+    );
+}
+
+#[test]
+fn geometry_rejects_malformed_input_and_v1_manifest() {
+    assert!(
+        serde_json::from_str::<GeometryEvent>(
+            r#"{"transition":"hpack","width_sp":1,"height_sp":2,"depth_sp":3,"node":7}"#
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_str::<GeometryEvent>(
+            r#"{"transition":"shipout","page_width_sp":1,"page_height_sp":"2"}"#
+        )
+        .is_err()
+    );
+    let mut v1 = manifest();
+    v1.schema = SchemaVersion::V2.number() + 1;
+    assert!(v1.to_canonical_json().is_err());
+}
+
+#[test]
+fn geometry_uses_finalized_signed_scaled_points() {
+    assert_eq!(
+        geometry(),
+        GeometryEvent::Hpack {
+            width_sp: 65_536,
+            height_sp: 12,
+            depth_sp: -3
+        }
+    );
+    assert_eq!(
+        GeometryEvent::Shipout {
+            page_width_sp: 65_536,
+            page_height_sp: 98_304
+        },
+        GeometryEvent::Shipout {
+            page_width_sp: 65_536,
+            page_height_sp: 98_304
+        }
+    );
 }
