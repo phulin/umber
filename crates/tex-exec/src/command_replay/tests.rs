@@ -8551,6 +8551,27 @@ fn canonical_math_group_spanning_v_template_does_not_redeliver_its_row_terminato
 }
 
 #[test]
+fn canonical_display_alignment_discards_a_preceding_formula() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"$$A\over B\begingroup\halign{#\cr a\cr}$$\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    let output = terminal_text(&universe);
+    assert!(
+        output.contains("Missing \\endgroup inserted"),
+        "alignment first restores the enclosing display-math group"
+    );
+    assert!(
+        output.contains("Improper \\halign inside $$'s"),
+        "display alignment reports and flushes its preceding formula"
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+}
+
+#[test]
 fn canonical_interaction_mode_assignment_is_ungrouped() {
     // `interaction` is a plain global Pascal variable outside `eqtb`
     // (tex.web's globals), so `\batchmode` inside a group is never undone at

@@ -5855,7 +5855,13 @@ fn scan_command(
         // `vmode+halign,hmode+valign:init_align`) and is not part of §1090's
         // vmode-paragraph-starting list, so it is never mode-gated here.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
-            Ok(ScannedStep::BeginAlignment { vertical: false })
+            if matches!(mode, Mode::Math | Mode::DisplayMath)
+                && innermost_group != Some(GroupKind::MathShift)
+            {
+                scan_off_save(processor, command, innermost_group)
+            } else {
+                Ok(ScannedStep::BeginAlignment { vertical: false })
+            }
         }
         // Only `hmode+valign` reaches here: §1090 lists `vmode+valign` (unlike
         // `vmode+halign` above), so the shared backup already turned a bare
@@ -5863,7 +5869,13 @@ fn scan_command(
         // the redelivered token arrives as `hmode+valign` -- embedded
         // alignment material inside the resulting paragraph's horizontal list.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign) => {
-            Ok(ScannedStep::BeginAlignment { vertical: true })
+            if matches!(mode, Mode::Math | Mode::DisplayMath)
+                && innermost_group != Some(GroupKind::MathShift)
+            {
+                scan_off_save(processor, command, innermost_group)
+            } else {
+                Ok(ScannedStep::BeginAlignment { vertical: true })
+            }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ScannedStep::Paragraph),
         Meaning::CharToken {
@@ -10517,6 +10529,27 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginAlignment { vertical } => {
+            // TeX82 §774's display-math entry accepts an alignment only when
+            // the current formula is empty. `flush_math` owns both the
+            // material and an incomplete fraction before `push_nest` opens
+            // the alignment list; retaining either here makes §812's display
+            // alignment handoff collide with pre-alignment math material.
+            if modes.current_mode() == Mode::DisplayMath {
+                let has_formula = !modes.current_list().nodes().is_empty()
+                    || modes.current_list().incomplete_fraction().is_some();
+                if has_formula {
+                    let primitive = if vertical { "\\valign" } else { "\\halign" };
+                    let mut report = stores.print_err(&format!("Improper {primitive} inside $$'s"));
+                    report.help(&[
+                        "Displays can use special alignments (like \\eqalignno)",
+                        "only if nothing but the alignment itself is between $$'s.",
+                        "So I've deleted the formulas that preceded this alignment.",
+                    ]);
+                    report.error();
+                    modes.current_list_mut().take_nodes();
+                    modes.current_list_mut().take_incomplete_fraction();
+                }
+            }
             if let Some(outer) = active_alignment.take() {
                 command
                     .state
