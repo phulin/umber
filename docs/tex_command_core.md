@@ -564,6 +564,12 @@ through the same `get_next` path, so executor code cannot create a second
 lexer, expansion loop, or backup mechanism. `CommandState::snapshot` remains
 the transaction boundary for the resulting future input state.
 
+Recoverable scalar diagnostics use the same borrow-scoped `CommandContext`
+that the processor already holds: its §73 `print_err` forwarding method opens
+the live `Universe` error report only for the duration of that report. Thus
+TeX82 scanner recovery text reaches the terminal/log channel without placing a
+host capability in command state, snapshots, formats, or summaries.
+
 The integer scanner also owns TeX82 §442's backtick character-code form: its
 following token is delivered raw and interpreted from `cur_tok`, rather than
 from its resolved meaning. Therefore active characters and one-character

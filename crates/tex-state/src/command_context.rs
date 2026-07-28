@@ -30,6 +30,16 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Opens tex.web §73's recoverable-error report through the live command
+    /// aggregate borrow.
+    ///
+    /// The report remains tied to this context's borrow of [`Universe`], so a
+    /// command processor can emit canonical scanner diagnostics without
+    /// retaining the print channel in command state, snapshots, or formats.
+    pub fn print_err(&mut self, text: &str) -> crate::print::ErrorReport<'_> {
+        self.universe.print_err(text)
+    }
+
     /// Registers immutable command input before its first source delivery.
     ///
     /// The command processor retains the backing and supplies the descriptor;

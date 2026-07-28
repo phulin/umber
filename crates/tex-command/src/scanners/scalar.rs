@@ -1,6 +1,5 @@
 //! Executor-facing canonical scalar scanners.
 
-use tex_state::BoxDimension;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::Symbol;
@@ -10,6 +9,7 @@ use tex_state::scaled::{
     scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::{BoxDimension, PrepareMagDiagnostic};
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::canonical_names::glue_order_name;
@@ -502,6 +502,7 @@ impl CommandProcessor<'_> {
                 // operand up, and yields zero.
                 InternalScan::NotANumber => {
                     self.back_input(first)?;
+                    self.missing_number_error();
                     return Ok((self.inserted_zero_integer(provenance), NO_RADIX));
                 }
                 InternalScan::NotInternal => match first.meaning() {
@@ -1218,16 +1219,17 @@ impl CommandProcessor<'_> {
         // recognizing `true` and converting the physical unit: `prepare_mag`
         // validates and freezes `\mag`, and a magnification other than 1000
         // divides the scanned quantity by `mag/1000` so that one `true` unit
-        // still measures one physical unit on the magnified page. Its
-        // diagnostic (an illegal or job-incompatible `\mag`) needs a canonical
-        // scanner diagnostic channel that does not exist yet.
+        // still measures one physical unit on the magnified page.
         // Every arithmetic failure below is tex.web's `arith_error`, which
         // §460's `attach_sign` turns into "Dimension too large" -- a reported,
         // recoverable error that clamps to `max_dimen` and keeps going, not an
         // abandoned job.
         let mut arith_error = false;
         let (integer, fraction) = if true_dimension {
-            let (mag, _diagnostic) = self.state.prepare_mag();
+            let (mag, diagnostic) = self.state.prepare_mag();
+            if let Some(diagnostic) = diagnostic {
+                self.prepare_mag_error(diagnostic);
+            }
             scale_true_dimension_parts(integer, fraction, mag).unwrap_or_else(|_| {
                 arith_error = true;
                 (integer, fraction)
@@ -1237,35 +1239,49 @@ impl CommandProcessor<'_> {
         };
         let (value, order) = match unit {
             // §455's `nx_plus_y(save_cur_val,v,xn_over_d(v,f,@'200000))`.
-            DimensionUnit::Internal(unit) => (
-                nx_plus_y(
-                    integer,
-                    unit,
-                    xn_over_d(unit, fraction, Scaled::UNITY)
-                        .map_or(Scaled::MAX_DIMEN, |result| result.quotient),
-                )
-                .unwrap_or(Scaled::MAX_DIMEN),
-                Order::Normal,
-            ),
-            DimensionUnit::Physical(unit) => (
-                scaled_from_decimal_parts(integer, fraction, unit).unwrap_or(Scaled::MAX_DIMEN),
-                Order::Normal,
-            ),
+            DimensionUnit::Internal(unit) => {
+                let fraction = match xn_over_d(unit, fraction, Scaled::UNITY) {
+                    Ok(result) => result.quotient,
+                    Err(_) => {
+                        arith_error = true;
+                        Scaled::MAX_DIMEN
+                    }
+                };
+                let value = nx_plus_y(integer, unit, fraction);
+                if value.is_err() {
+                    arith_error = true;
+                }
+                (value.unwrap_or(Scaled::MAX_DIMEN), Order::Normal)
+            }
+            DimensionUnit::Physical(unit) => {
+                let value = scaled_from_decimal_parts(integer, fraction, unit);
+                if value.is_err() {
+                    arith_error = true;
+                }
+                (value.unwrap_or(Scaled::MAX_DIMEN), Order::Normal)
+            }
             // TeX stores an infinite glue component's finite coefficient as a
             // scaled value, while its order is carried separately.
-            DimensionUnit::Infinite(order) => (
-                scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .unwrap_or(Scaled::MAX_DIMEN),
-                order,
-            ),
+            DimensionUnit::Infinite(order) => {
+                let value = scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt);
+                if value.is_err() {
+                    arith_error = true;
+                }
+                (value.unwrap_or(Scaled::MAX_DIMEN), order)
+            }
             // A mu unit has the same scaled representation as a point; its
             // distinctness belongs to the surrounding glue family.
-            DimensionUnit::Mu => (
-                scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .unwrap_or(Scaled::MAX_DIMEN),
-                Order::Normal,
-            ),
+            DimensionUnit::Mu => {
+                let value = scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt);
+                if value.is_err() {
+                    arith_error = true;
+                }
+                (value.unwrap_or(Scaled::MAX_DIMEN), Order::Normal)
+            }
         };
+        if arith_error {
+            self.dimension_too_large_error();
+        }
         Ok(ScannedUnits {
             value: if arith_error {
                 Scaled::MAX_DIMEN
@@ -1325,7 +1341,9 @@ impl CommandProcessor<'_> {
         // measure (mu inserted)": TeX reports it, keeps the scanned quantity
         // as mu, and leaves the offending text for the caller to re-read.
         if mu {
-            let _ = self.scan_keyword("mu")?;
+            if !self.scan_keyword("mu")?.value {
+                self.illegal_unit_mu_error();
+            }
             return Ok((DimensionUnit::Mu, false));
         }
         let true_dimension = self.scan_keyword("true")?.value;
@@ -1346,9 +1364,9 @@ impl CommandProcessor<'_> {
                 return Ok((DimensionUnit::Physical(unit), true_dimension));
             }
         }
-        // §459's "Complain about unknown unit": TeX reports "Illegal unit of
-        // measure (pt inserted)", assumes `pt`, and finishes the job that a
-        // hard scanner failure here would abandon.
+        // §459's "Complain about unknown unit": TeX assumes `pt` and
+        // finishes the job that a hard scanner failure here would abandon.
+        self.illegal_unit_pt_error();
         Ok((DimensionUnit::Physical(PhysicalUnit::Pt), true_dimension))
     }
 
@@ -1527,12 +1545,87 @@ impl CommandProcessor<'_> {
     /// TeX82 §408's `mu_error`: "Incompatible glue units" -- mu and non-mu
     /// quantities were mixed, and TeX assumes `1mu=1pt` and continues.
     ///
-    /// The recovery is the observable behavior and is implemented by every
-    /// caller. The accompanying terminal/log text is not: `tex-command` has
-    /// no diagnostic channel yet (no canonical scanner prints anything), so
-    /// the message is tracked separately rather than half-routed here.
     fn mu_error(&mut self) {
-        let _ = self;
+        let mut report = self.state.print_err("Incompatible glue units");
+        report.help(&["I'm going to assume that 1mu=1pt when they're mixed."]);
+        report.error();
+    }
+
+    /// TeX82 §415's `back_error` before the scanner publishes zero.
+    fn missing_number_error(&mut self) {
+        let mut report = self.state.print_err("Missing number, treated as zero");
+        report.help(&[
+            "A number should have been here; I inserted `0'.",
+            "(If you can't figure out why I needed to see a number,",
+            "look up `weird error' in the index to The TeXbook.)",
+        ]);
+        report.error();
+    }
+
+    /// TeX82 §456's unit recovery for math glue.
+    fn illegal_unit_mu_error(&mut self) {
+        let mut report = self
+            .state
+            .print_err("Illegal unit of measure (mu inserted)");
+        report.help(&[
+            "The unit of measurement in math glue must be mu.",
+            "To recover gracefully from this error, it's best to",
+            "delete the erroneous units; e.g., type `2' to delete",
+            "two letters. (See Chapter 27 of The TeXbook.)",
+        ]);
+        report.error();
+    }
+
+    /// TeX82 §459's unit recovery for ordinary dimensions.
+    fn illegal_unit_pt_error(&mut self) {
+        let mut report = self
+            .state
+            .print_err("Illegal unit of measure (pt inserted)");
+        report.help(&[
+            "Dimensions can be in units of em, ex, in, pt, pc,",
+            "cm, mm, dd, cc, bp, or sp; but yours is a new one!",
+            "I'll assume that you meant to say pt, for printer's points.",
+            "To recover gracefully from this error, it's best to",
+            "delete the erroneous units; e.g., type `2' to delete",
+            "two letters. (See Chapter 27 of The TeXbook.)",
+        ]);
+        report.error();
+    }
+
+    /// TeX82 §460's clamped dimension recovery.
+    fn dimension_too_large_error(&mut self) {
+        let mut report = self.state.print_err("Dimension too large");
+        report.help(&[
+            "I can't work with sizes bigger than about 19 feet.",
+            "Continue and I'll use the largest value I can.",
+        ]);
+        report.error();
+    }
+
+    /// Renders the recoverable `prepare_mag` outcome used by §457.
+    fn prepare_mag_error(&mut self, diagnostic: PrepareMagDiagnostic) {
+        match diagnostic {
+            PrepareMagDiagnostic::IllegalMagnification { attempted } => {
+                let mut report = self
+                    .state
+                    .print_err("Illegal magnification has been changed to 1000");
+                report.help(&["The magnification ratio must be between 1 and 32768."]);
+                report.int_error(attempted);
+            }
+            PrepareMagDiagnostic::IncompatibleMagnification {
+                attempted,
+                retained,
+            } => {
+                let mut report = self.state.print_err(&format!(
+                    "Incompatible magnification ({attempted}); the previous value will be retained ({retained})"
+                ));
+                report.help(&[
+                    "I can handle only one magnification ratio per job. So I've",
+                    "reverted to the magnification you used earlier on this run.",
+                ]);
+                report.error();
+            }
+        }
     }
 
     /// Runs TeX82 §413's `scan_something_internal` end to end.

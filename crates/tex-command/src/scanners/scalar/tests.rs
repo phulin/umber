@@ -1,6 +1,7 @@
 use tex_state::Universe;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{EffectRecord, PrintSink};
 
 use super::*;
 use crate::input::{
@@ -66,6 +67,21 @@ fn scanner_tokens(source: &str) -> Vec<Token> {
             } else {
                 char_token(ch)
             }
+        })
+        .collect()
+}
+
+fn diagnostic_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
         })
         .collect()
 }
@@ -4136,6 +4152,116 @@ fn muglue_complete_internal_and_mixed_unit_recovery_matrix() {
                 .value
         }),
         glue(7, 8, 9)
+    );
+}
+
+#[test]
+fn scanner_recoveries_emit_tex82_error_reports_without_changing_values() {
+    let mut universe = Universe::new();
+
+    assert_eq!(
+        scan_with(&mut universe, scanner_tokens("1wat"), |processor| {
+            processor.scan_dimension().expect("pt recovery scans").value
+        })
+        .raw(),
+        Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(&mut universe, scanner_tokens("1wat"), |processor| {
+            processor
+                .scan_mu_dimension()
+                .expect("mu recovery scans")
+                .value
+        })
+        .raw(),
+        Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with(&mut universe, scanner_tokens("20000pt"), |processor| {
+            processor
+                .scan_dimension()
+                .expect("overflow recovery scans")
+                .value
+        }),
+        Scaled::MAX_DIMEN
+    );
+
+    let tokens = universe.intern("tokens").symbol();
+    universe.set_meaning(tokens, Meaning::TokParam(0));
+    let missing = scan_with(&mut universe, vec![Token::Cs(tokens)], |processor| {
+        processor.scan_integer().expect("token list recovers")
+    });
+    assert_eq!(missing.value, 0);
+    assert_eq!(missing.recovery, ScalarRecovery::InsertedZero);
+
+    let mu = universe.intern_glue(glue(Scaled::UNITY, 0, 0));
+    universe.set_muskip(0, mu);
+    let muskip = universe.intern("muskip").symbol();
+    universe.set_meaning(muskip, Meaning::MuskipRegister(0));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(muskip)], |processor| {
+            processor.scan_integer().expect("mu glue recovers").value
+        }),
+        Scaled::UNITY
+    );
+
+    let text = diagnostic_text(&universe);
+    for message in [
+        "! Illegal unit of measure (pt inserted).",
+        "! Illegal unit of measure (mu inserted).",
+        "! Dimension too large.",
+        "! Missing number, treated as zero.",
+        "! Incompatible glue units.",
+        "Dimensions can be in units of em, ex, in, pt, pc,",
+        "The unit of measurement in math glue must be mu.",
+        "I can't work with sizes bigger than about 19 feet.",
+        "A number should have been here; I inserted `0'.",
+        "I'm going to assume that 1mu=1pt when they're mixed.",
+    ] {
+        assert!(text.contains(message), "missing {message:?} in {text}");
+    }
+}
+
+#[test]
+fn true_dimension_scanner_reports_prepare_mag_recoveries() {
+    let mut illegal = Universe::new();
+    illegal.set_mag_global(40_000);
+    assert_eq!(
+        scan_with(&mut illegal, scanner_tokens("1truept"), |processor| {
+            processor
+                .scan_dimension()
+                .expect("illegal mag recovers")
+                .value
+        })
+        .raw(),
+        Scaled::UNITY
+    );
+    let illegal_text = diagnostic_text(&illegal);
+    assert!(illegal_text.contains("! Illegal magnification has been changed to 1000 (40000)."));
+    assert!(illegal_text.contains("The magnification ratio must be between 1 and 32768."));
+
+    let mut incompatible = Universe::new();
+    incompatible.set_mag_global(1200);
+    let _ = scan_with(&mut incompatible, scanner_tokens("1truept"), |processor| {
+        processor.scan_dimension().expect("first mag prepares")
+    });
+    incompatible.set_mag_global(2000);
+    assert_eq!(
+        scan_with(&mut incompatible, scanner_tokens("1truept"), |processor| {
+            processor
+                .scan_dimension()
+                .expect("incompatible mag recovers")
+                .value
+        })
+        .raw(),
+        54_613
+    );
+    let incompatible_text = diagnostic_text(&incompatible);
+    assert!(incompatible_text.contains(
+        "! Incompatible magnification (2000); the previous value will be retained (1200)."
+    ));
+    assert!(
+        incompatible_text.contains("reverted to the magnification you used earlier on this run.")
     );
 }
 
