@@ -1,5 +1,8 @@
 {"schema":2,"manifest":"0000000000000000000000000000000000000000000000000000000000000000"}
 {"sequence":0,"semantic":{"event":"geometry","data":{"transition":"hpack","width_sp":196608,"height_sp":327680,"depth_sp":131072}}}
 {"sequence":1,"semantic":{"event":"geometry","data":{"transition":"vpack","width_sp":458752,"height_sp":720896,"depth_sp":0}}}
-{"sequence":2,"semantic":{"event":"geometry","data":{"transition":"vpack","width_sp":458752,"height_sp":1179648,"depth_sp":0}}}
-{"sequence":3,"semantic":{"event":"geometry","data":{"transition":"shipout","page_width_sp":458752,"page_height_sp":1179648}}}
+{"sequence":2,"semantic":{"event":"geometry","data":{"transition":"hpack","width_sp":655360,"height_sp":262144,"depth_sp":65536}}}
+{"sequence":3,"semantic":{"event":"geometry","data":{"transition":"vpack","width_sp":458752,"height_sp":1179648,"depth_sp":0}}}
+{"sequence":4,"semantic":{"event":"geometry","data":{"transition":"shipout","page_width_sp":458752,"page_height_sp":1179648}}}
+{"sequence":5,"semantic":{"event":"geometry","data":{"transition":"vpack","width_sp":655360,"height_sp":983040,"depth_sp":0}}}
+{"sequence":6,"semantic":{"event":"geometry","data":{"transition":"shipout","page_width_sp":655360,"page_height_sp":983040}}}

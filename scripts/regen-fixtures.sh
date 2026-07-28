@@ -784,8 +784,13 @@ validate_oracle_build_record() {
   esac
   while IFS= read -r trace; do
     trace_count=$((trace_count + 1))
-    [[ "$(sed -n '1p' "$trace")" == '{"schema":1,'* ]] ||
-      die "${engine} emitted a trace without a schema-v1 header"
+    if [[ "$engine" == tex82 && "$trace" == */geometry/* ]]; then
+      [[ "$(sed -n '1p' "$trace")" == '{"schema":2,'* ]] ||
+        die "${engine} geometry profile emitted a trace without a schema-v2 header"
+    else
+      [[ "$(sed -n '1p' "$trace")" == '{"schema":1,'* ]] ||
+        die "${engine} emitted a trace without a schema-v1 header"
+    fi
     cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace" ||
       die "${engine} emitted an invalid semantic trace"
   done < <(find "${target_dir}/${area}" -type f -name '*events.jsonl' | sort)
