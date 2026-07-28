@@ -1573,6 +1573,14 @@
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "frozen_endwrite_is_internal_but_source_endwrite_stays_undefined"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "frozen_write_registration_preserves_sibling_sentinel_boundaries"
         }
       ],
       "expected_observations": [

@@ -233,7 +233,7 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
         "inputlineno",
         Meaning::InternalInteger(InternalInteger::InputLineNumber),
     );
-    configure_write_stopper(stores, install);
+    configure_write_stopper(stores);
 }
 
 /// Registers TeX82's inaccessible outer `\endwrite` sentinel with every fresh
@@ -243,16 +243,14 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
 /// it `text(end_write):="endwrite"` with `eq_type:=outer_call`, so it is the
 /// one non-`primitive(...)` name this table owns. (The previous citation here,
 /// "§53", is TeX.POOL's check sum and was never about `\endwrite`.)
-fn configure_write_stopper(stores: &mut Universe, install: bool) {
+fn configure_write_stopper(stores: &mut Universe) {
     if let Some(meaning) = stores.primitive_meaning("endwrite") {
-        configure_primitive(stores, install, "endwrite", meaning);
+        stores.register_primitive_meaning("endwrite", meaning);
         return;
     }
     let empty = stores.intern_token_list(&[]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
-    configure_primitive(
-        stores,
-        install,
+    stores.register_primitive_meaning(
         "endwrite",
         Meaning::Macro {
             flags: MeaningFlags::OUTER,

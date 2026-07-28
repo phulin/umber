@@ -5,6 +5,7 @@ use tex_out::dvi::write_dvi;
 use tex_out::{
     DiscKind as PageDiscKind, EffectSink, PageArtifact, PageEffect, PageNode, PageToken,
 };
+use tex_state::meaning::MeaningFlags;
 use tex_state::scaled::Scaled;
 
 #[test]
@@ -1506,6 +1507,71 @@ fn read_io_source(stem: &str) -> String {
         .join(format!("{stem}.tex"));
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+#[test]
+fn frozen_endwrite_is_internal_but_source_endwrite_stays_undefined() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+
+    let stopper = stores
+        .primitive_token("endwrite")
+        .expect("write stopper is registered");
+    let stopper_meaning = stores
+        .frozen_primitive_meaning(stopper)
+        .expect("frozen write stopper has an immutable meaning");
+    assert!(matches!(
+        stopper_meaning,
+        Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
+    ));
+    assert_eq!(stores.primitive_name(stopper_meaning), Some("endwrite"));
+    assert!(
+        stores.symbol("endwrite").is_none(),
+        "§1369's frozen sentinel must not create a source-addressable hash entry"
+    );
+
+    let source = read_io_source("frozen_endwrite");
+    let mut stores = super::core::run_canonical_tex82(&source);
+
+    let source_endwrite = stores
+        .symbol("endwrite")
+        .expect("source tokenization interns an ordinary control sequence");
+    assert_eq!(stores.meaning(source_endwrite), Meaning::Undefined);
+    let source_token = Token::Cs(stores.intern("endwrite").symbol());
+    assert_ne!(source_token, stopper);
+
+    let terminal = terminal_effect_text(&stores);
+    assert!(terminal.contains("MEANING=[undefined]"), "{terminal:?}");
+    assert!(
+        terminal.contains("! Undefined control sequence."),
+        "{terminal:?}"
+    );
+    assert!(terminal.contains("BEFORE \\endwrite AFTER"), "{terminal:?}");
+    assert!(terminal.contains("REPLAYED"), "{terminal:?}");
+}
+
+#[test]
+fn frozen_write_registration_preserves_sibling_sentinel_boundaries() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+
+    let endwrite = stores.primitive_token("endwrite").expect("endwrite");
+    for name in ["cr", "fi", "par"] {
+        let frozen = stores.primitive_token(name).expect("registered primitive");
+        let source = stores.symbol(name).expect("installed source primitive");
+        let source_token = Token::Cs(stores.intern(name).symbol());
+        assert_ne!(frozen, source_token, "{name}");
+        assert_eq!(
+            stores.frozen_primitive_meaning(frozen),
+            Some(stores.meaning(source)),
+            "{name}"
+        );
+        assert_ne!(frozen, endwrite, "{name}");
+    }
+
+    assert!(stores.symbol("endtemplate").is_none());
 }
 
 fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
