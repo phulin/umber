@@ -174,6 +174,26 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
     ));
 }
 
+#[test]
+fn list_commit_flushes_pending_characters_and_raw_pop_rejects_them() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = opentype_test_font(&mut stores, 10);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal);
+    append_hchar(&mut nest, &mut stores, 'A', OriginId::UNKNOWN);
+
+    assert!(matches!(
+        nest.pop(),
+        Err(ExecError::UncommittedPendingHchars)
+    ));
+    let level = commit_current_list(&mut nest, &mut stores).expect("commit flushes before pop");
+    assert!(matches!(
+        level.list().nodes(),
+        [Node::Char { ch: 'A', .. }, ..]
+    ));
+}
+
 fn opentype_test_font(stores: &mut Universe, points: i32) -> tex_state::ids::FontId {
     use tex_fonts::{
         AcceptedFontContainers, FontFeaturePolicy, FontLimits, FontPurposes, FontRequest,

@@ -13,7 +13,7 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{GroupKind, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
-use crate::assignments::{self, shipout_node};
+use crate::assignments::shipout_node;
 use crate::executor::{MainControlExit, run_main_control_until};
 use crate::mode::ignored_depth;
 use crate::packing_params::vpack;
@@ -521,8 +521,7 @@ fn run_output_routine_inner(
         }
     }
 
-    assignments::flush_pending_hchars(nest, stores)?;
-    let output_level = nest.pop()?;
+    let output_level = crate::assignments::commit_current_list(nest, stores)?;
     leave_group(input, stores, GroupKind::Output)?;
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);

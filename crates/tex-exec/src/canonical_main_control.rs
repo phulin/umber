@@ -1116,8 +1116,8 @@ impl CanonicalMainControl {
             let _ = self.nested_step_once(stores, None)?;
         }
         self.main_loop_active = false;
-        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
-        let level = self.modes.pop()?;
+
+        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let nodes = stores.freeze_node_list(level.list().nodes());
         let aftergroup =
             stores
@@ -1526,7 +1526,7 @@ impl CanonicalMainControl {
                 stores,
             )?;
         }
-        let level = self.modes.pop()?;
+        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         finish_canonical_math_list(
             level.list().nodes(),
             level.list().incomplete_fraction(),
@@ -1805,7 +1805,7 @@ impl CanonicalMainControl {
 
     fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        let _ = self.modes.pop()?;
+        let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             stores,
@@ -1828,7 +1828,7 @@ impl CanonicalMainControl {
 
     fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        let mut level = self.modes.pop()?;
+        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let eq = level
             .list_mut()
             .take_display_eq_no()
@@ -1849,7 +1849,7 @@ impl CanonicalMainControl {
         eq_no: Option<crate::math::display::FinishedEqNo>,
     ) -> Result<(), ExecError> {
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        let mut level = self.modes.pop()?;
+        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let interrupt =
             level
                 .list_mut()
@@ -1957,7 +1957,7 @@ impl CanonicalMainControl {
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                let _ = self.modes.pop()?;
+                let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
                 let mut nodes: Vec<_> = stores
                     .nodes(content)
                     .into_iter()
@@ -7997,8 +7997,8 @@ fn capture_replay_alignment_cell(
     if !active.cell_open {
         return Ok(());
     }
-    crate::assignments::flush_pending_hchars(modes, stores)?;
-    let mut cell = modes.pop()?;
+
+    let mut cell = crate::assignments::commit_current_list(modes, stores)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 remove its insertions, marks, and `\vadjust` contents
@@ -8046,8 +8046,8 @@ fn finish_replay_alignment_row(
     if !active.row_open {
         return Ok(());
     }
-    crate::assignments::flush_pending_hchars(modes, stores)?;
-    let mut row = modes.pop()?;
+
+    let mut row = crate::assignments::commit_current_list(modes, stores)?;
     let children = stores.freeze_node_list(&row.list_mut().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
@@ -8093,7 +8093,7 @@ fn finish_replay_alignment(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores)?;
-    let mut alignment = modes.pop()?;
+    let mut alignment = crate::assignments::commit_current_list(modes, stores)?;
     let rows = alignment.list_mut().take_nodes();
     let columns = active
         .columns
@@ -9584,9 +9584,9 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
             ) {
-                let _ = modes.pop()?;
+                let _ = crate::assignments::commit_current_list(modes, stores)?;
             }
-            let output_level = modes.pop()?;
+            let output_level = crate::assignments::commit_current_list(modes, stores)?;
             stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
@@ -9748,8 +9748,8 @@ fn apply_scanned_step(
             // `\c`) silently packages an empty list: the pending characters
             // are dropped along with the popped mode level instead of ever
             // becoming node.
-            crate::assignments::flush_pending_hchars(modes, stores)?;
-            let level = modes.pop()?;
+
+            let level = crate::assignments::commit_current_list(modes, stores)?;
             let children = stores.freeze_node_list(level.list().nodes());
             let node = if box_state.kind.horizontal() {
                 Node::HList(crate::assignments::hpack_with_overfull_rule(
@@ -10013,7 +10013,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
             ) {
-                let _ = modes.pop()?;
+                let _ = crate::assignments::commit_current_list(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -11050,7 +11050,7 @@ fn finish_insert_or_adjust_group(
         .map_err(|_| ExecError::MissingToken {
             context: "insert group",
         })?;
-    let level = modes.pop()?;
+    let level = crate::assignments::commit_current_list(modes, stores)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,

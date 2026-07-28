@@ -229,7 +229,7 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     }
     flush_pending_hchars(nest, stores)?;
     if nest.current_list().is_empty() {
-        let _ = nest.pop()?;
+        let _ = crate::assignments::commit_current_list(nest, stores)?;
         normal_paragraph(nest, stores);
         build_page_if_outer_vertical(nest, stores)?;
         return Ok(());
@@ -340,7 +340,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
         Node::HList(line) => Some(*line),
         _ => None,
     });
-    let _ = nest.pop()?;
+    let _ = crate::assignments::commit_current_list(nest, stores)?;
     for node in finished {
         match node {
             Node::Adjust(list) => {
@@ -378,7 +378,7 @@ pub(crate) fn interrupt_paragraph_for_display(
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     if nest.current_list().is_empty() {
-        let _ = nest.pop()?;
+        let _ = crate::assignments::commit_current_list(nest, stores)?;
         return Ok(ParagraphBreakResult {
             last_line: None,
             active_directions: Vec::new(),
@@ -406,7 +406,7 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     if nest.current_list().is_empty() {
-        let _ = nest.pop()?;
+        let _ = crate::assignments::commit_current_list(nest, stores)?;
         return Ok(ParagraphBreakResult {
             last_line: None,
             active_directions: Vec::new(),
@@ -476,7 +476,7 @@ fn break_current_paragraph(
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
-    let mut level = nest.pop()?;
+    let mut level = crate::assignments::commit_current_list(nest, stores)?;
     let hlist = crate::math::finish_math_lists_owned(stores, level.list_mut().take_nodes(), true);
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {

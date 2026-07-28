@@ -12,6 +12,18 @@ fn run(source: &str) -> Universe {
 }
 
 #[test]
+fn pending_character_box_commit_preserves_nonempty_geometry() {
+    let stores = run(r"\setbox0=\hbox{\vrule height7pt A}");
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("committed box has a height")
+            .raw(),
+        7 * tex_state::scaled::Scaled::UNITY
+    );
+}
+
+#[test]
 fn every_box_hooks_match_tex82_reference_observation() {
     let reference = test_support::read_fixture("tex_exec", "every_box_hooks", "ref");
     assert!(

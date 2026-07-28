@@ -251,7 +251,7 @@ pub(super) fn scan_box_node(
         // list beneath it.
         crate::assignments::end_paragraph(&mut inner, stores)?;
     }
-    let level = inner.pop()?;
+    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
     let nodes = if kind == BoxKind::HBox {
         crate::math::finish_math_lists(stores, level.list().nodes(), false)
     } else {

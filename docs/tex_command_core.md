@@ -3704,3 +3704,13 @@ caches, and would make editing or rollback change TeX behavior.
 
 Rejected because pdfTeX is an 8-bit engine. Unicode support is valuable but
 must remain an explicitly identified Umber extension.
+
+## List commit invariant
+
+Horizontal construction may retain a pending shaped character run, but a mode
+level may never be popped while it does. `tex-exec` routes list closure through
+`assignments::commit_current_list`, which materializes that run before the
+level can be packaged, frozen, or supplied to an output path. `ModeNest::pop`
+rejects an uncommitted run as a backstop, so a new list-finalization path cannot
+silently recreate an empty box or lose geometry by omitting a caller-side
+flush.

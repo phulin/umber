@@ -52,6 +52,9 @@ pub enum ExecError {
     OpenTypeMathUnsupported,
     EmptyModeNestSummary,
     CannotPopBaseMode,
+    /// A mode level cannot be discarded until its buffered horizontal run has
+    /// been materialized into the list it belongs to.
+    UncommittedPendingHchars,
     UndefinedControlSequence {
         name: String,
         origin: OriginId,
@@ -324,6 +327,10 @@ impl fmt::Display for ExecError {
             ),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
+            Self::UncommittedPendingHchars => write!(
+                f,
+                "cannot pop a mode level with uncommitted pending horizontal characters"
+            ),
             Self::UndefinedControlSequence { name, .. } => {
                 write!(f, "undefined control sequence \\{name}")
             }
@@ -562,6 +569,7 @@ impl std::error::Error for ExecError {
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
+            | Self::UncommittedPendingHchars
             | Self::UndefinedControlSequence { .. }
             | Self::UnexpectedMacroDelivery { .. }
             | Self::UnexpectedExpandableDelivery { .. }
@@ -691,6 +699,7 @@ impl ExecError {
             | Self::OpenTypeMathUnsupported
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
+            | Self::UncommittedPendingHchars
             | Self::MissingPrefixedCommand
             | Self::MissingControlSequence { .. }
             | Self::MissingToken { .. }

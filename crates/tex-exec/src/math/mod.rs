@@ -367,7 +367,7 @@ fn finish_math(
             .world_mut()
             .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
-    let mut level = nest.pop()?;
+    let mut level = crate::assignments::commit_current_list(nest, stores)?;
     if display {
         let interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
@@ -438,7 +438,7 @@ fn finish_equation_number(
             .world_mut()
             .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
-    let mut eq_level = nest.pop()?;
+    let mut eq_level = crate::assignments::commit_current_list(nest, stores)?;
     let mut eq_no = eq_level
         .list_mut()
         .take_display_eq_no()
@@ -450,7 +450,7 @@ fn finish_equation_number(
     leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     execution.paragraph_group_exited(stores);
 
-    let mut display_level = nest.pop()?;
+    let mut display_level = crate::assignments::commit_current_list(nest, stores)?;
     let interrupt = display_level.list_mut().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
@@ -945,7 +945,7 @@ fn finish_display_halign(
         let _ = nest.current_list_mut().take_nodes();
         let _ = nest.current_list_mut().take_display_eq_no();
     }
-    let mut level = nest.pop()?;
+    let mut level = crate::assignments::commit_current_list(nest, stores)?;
     let interrupt =
         level
             .list_mut()

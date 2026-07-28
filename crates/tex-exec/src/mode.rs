@@ -891,6 +891,9 @@ impl ModeNest {
         if self.levels.len() == 1 {
             return Err(ExecError::CannotPopBaseMode);
         }
+        if self.current_list().pending_hchars().is_some() {
+            return Err(ExecError::UncommittedPendingHchars);
+        }
         Ok(Arc::make_mut(&mut self.levels)
             .pop()
             .expect("length checked before popping mode level"))

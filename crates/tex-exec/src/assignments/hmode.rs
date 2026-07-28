@@ -180,6 +180,21 @@ pub(crate) fn flush_pending_hchars(
     Ok(())
 }
 
+/// Closes the current list's mutable construction phase.
+///
+/// `ModeNest::pop` rejects a level that still owns a pending character run,
+/// making this the only successful path from a live list to a packaged,
+/// frozen, or otherwise detached list. Non-commit barriers can still call
+/// [`flush_pending_hchars`] directly when TeX needs the run materialized but
+/// must keep the mode level open.
+pub(crate) fn commit_current_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<crate::mode::ModeLevelSummary, ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    nest.pop()
+}
+
 fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hyphen_discs: bool) {
     let Some(pending) = nest.current_list_mut().take_pending_hchars() else {
         return;
@@ -412,7 +427,7 @@ fn execute_insert(
     if inner.current_mode() == Mode::Horizontal {
         end_paragraph(&mut inner, stores)?;
     }
-    let level = inner.pop()?;
+    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let packed = vpack(
         stores,
@@ -492,7 +507,7 @@ fn execute_vadjust(
     if inner.current_mode() == Mode::Horizontal {
         end_paragraph(&mut inner, stores)?;
     }
-    let level = inner.pop()?;
+    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
     let content = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::AdjustedHBox)?;
     execution.paragraph_group_exited(stores);
@@ -1615,7 +1630,7 @@ fn scan_hlist_group(
     inner.push(Mode::RestrictedHorizontal);
     let box_group_depth = stores.execution_group_depth();
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
-    let level = inner.pop()?;
+    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
     let nodes = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::Disc)?;
     execution.paragraph_group_exited(stores);

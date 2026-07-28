@@ -145,7 +145,7 @@ fn finish_alignment_level(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<FinishedAlignment, ExecError> {
-    let mut level = nest.pop()?;
+    let mut level = crate::assignments::commit_current_list(nest, stores)?;
     let aux_prev_depth = level.list().prev_depth();
     let state = level
         .list_mut()
@@ -286,8 +286,8 @@ fn fin_row(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let kind = align_kind(nest, align_level)?;
-    flush_pending_hchars(nest, stores)?;
-    let mut row_level = nest.pop()?;
+
+    let mut row_level = crate::assignments::commit_current_list(nest, stores)?;
     let nodes = row_level.list_mut().take_nodes();
     let children = stores.freeze_node_list(&nodes);
     let row = super::packaging::make_unset_node(
@@ -517,8 +517,8 @@ fn package_cell(
     if kind == AlignmentKind::VAlign && nest.current_mode() == Mode::Horizontal {
         crate::assignments::end_paragraph(nest, stores)?;
     }
-    flush_pending_hchars(nest, stores)?;
-    let mut cell_level = nest.pop()?;
+
+    let mut cell_level = crate::assignments::commit_current_list(nest, stores)?;
     let nodes = cell_level.list_mut().take_nodes();
     let nodes = if kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,

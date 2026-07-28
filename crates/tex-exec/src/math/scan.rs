@@ -183,7 +183,7 @@ fn scan_math_group_after_open_inner(
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
             execution.paragraph_group_exited(stores);
             let list = finish_current_math_list(nest, stores);
-            let _ = nest.pop()?;
+            let _ = crate::assignments::commit_current_list(nest, stores)?;
             return Ok(list);
         }
         match dispatch_math_token_with_context(nest, token, input, stores, execution)? {
@@ -361,7 +361,7 @@ fn close_left_group(
         MathField::Empty,
     )));
     let content = stores.freeze_node_list(&nodes);
-    let _ = nest.pop()?;
+    let _ = crate::assignments::commit_current_list(nest, stores)?;
     append_noad(
         nest,
         NoadKind::Normal(NoadClass::Inner),
@@ -549,7 +549,7 @@ pub(super) fn scan_vcenter_field(
         input.push_token_list(everyvbox, TokenListReplayKind::EveryVBox);
     }
     assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
-    let level = inner.pop()?;
+    let level = crate::assignments::commit_current_list(inner, stores)?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(
         vpack(
