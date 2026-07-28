@@ -313,3 +313,60 @@ fn assert_shared_input_matrix_coverage() {
         );
     }
 }
+
+#[test]
+fn tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery() {
+    // TeX82 §§440--446 scan both \ifnum operands before §501 selects the
+    // true limb. This ordinary source-path microfixture keeps the signed
+    // hexadecimal result, scanner observation order, and continuation visible.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&br#"\ifnum-"53=-83 T\else F\fi Z"#[..]),
+        ))
+        .expect("conditional fixture registers");
+    command
+        .open_registered_source(source)
+        .expect("conditional fixture opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    for (name, primitive) in [
+        ("ifnum", tex_state::meaning::ExpandablePrimitive::IfNum),
+        ("else", tex_state::meaning::ExpandablePrimitive::Else),
+        ("fi", tex_state::meaning::ExpandablePrimitive::Fi),
+    ] {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(
+            symbol,
+            tex_state::meaning::Meaning::ExpandablePrimitive(primitive),
+        );
+    }
+    let mut capabilities = CommandHostCapabilities::default();
+    let delivered = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        [
+            processor
+                .get_x_token()
+                .expect("true limb expands")
+                .expect("T remains"),
+            processor
+                .get_x_token()
+                .expect("continuation expands")
+                .expect("Z remains"),
+        ]
+    };
+    assert!(matches!(
+        delivered[0].meaning(),
+        tex_state::meaning::Meaning::CharToken { ch: 'T', .. }
+    ));
+    assert!(matches!(
+        delivered[1].meaning(),
+        tex_state::meaning::Meaning::CharToken { ch: 'Z', .. }
+    ));
+}

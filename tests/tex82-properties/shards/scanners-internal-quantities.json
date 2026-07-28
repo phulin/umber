@@ -671,22 +671,24 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "integer_character_constants_recover_values_above_255_in_exact_profile",
-          "cases": ["direct Unicode character", "one-character control sequence", "exact profile", "umber2-johp.251"]
+          "cases": [
+            "0/255/256 boundaries",
+            "direct Unicode character",
+            "one-character control sequence",
+            "exact recovery and Unicode extension"
+          ]
         },
         {
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery",
-          "cases": ["signed radix results", "nested scanner ordering", "ordinary transcript recovery"]
+          "cases": ["signed hexadecimal operands", "conditional selection", "ordinary-source continuation"]
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.251"
+      "status": "covered"
     },
     {
       "id": "tex82.scanner.dimension-prefix-fraction",

@@ -8,8 +8,8 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandRuntime, CommandState, InputTransition, ObservedToken,
+    CommandDialect, CommandHostCapabilities, CommandHostContext, CommandObservation,
+    CommandObserver, CommandProfile, CommandRuntime, CommandState, InputTransition, ObservedToken,
 };
 
 #[derive(Default)]
@@ -1130,7 +1130,17 @@ fn scan_with<T>(
     tokens: Vec<Token>,
     scan: impl FnOnce(&mut CommandProcessor<'_>) -> T,
 ) -> T {
-    let mut command = CommandState::default();
+    scan_with_profile(universe, CommandProfile::TEX82, tokens, scan)
+}
+
+/// Runs a focused scalar scan under an explicit immutable character profile.
+fn scan_with_profile<T>(
+    universe: &mut Universe,
+    profile: CommandProfile,
+    tokens: Vec<Token>,
+    scan: impl FnOnce(&mut CommandProcessor<'_>) -> T,
+) -> T {
+    let mut command = CommandState::new(profile);
     push(&mut command, tokens);
     let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
@@ -4026,8 +4036,111 @@ fn integer_character_constant_raw_token_and_optional_space_matrix() {
         (0, ScalarRecovery::None, Some(word))
     );
 
-    // Exact-profile character constants above 255 remain owned by
-    // umber2-johp.251; do not encode Unicode leakage as canonical evidence.
+    for (character, expected) in [('\0', 0), ('ÿ', 255)] {
+        let mut universe = Universe::new();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                vec![char_token('`'), char_token(character)],
+                |processor| processor
+                    .scan_integer()
+                    .expect("eight-bit constant scans")
+                    .value,
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
+fn integer_character_constants_recover_values_above_255_in_exact_profile() {
+    for token_is_control_sequence in [false, true] {
+        let mut universe = Universe::new();
+        let lambda = if token_is_control_sequence {
+            Token::Cs(universe.intern("λ").symbol())
+        } else {
+            char_token('λ')
+        };
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        push(
+            &mut command,
+            vec![char_token('`'), lambda, char_token(' '), char_token('7')],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let (scanned, replayed, spacer, continuation) = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            let scanned = processor.scan_integer().expect("high constant recovers");
+            let replayed = processor
+                .get_next()
+                .expect("offender replays")
+                .expect("offender remains")
+                .spelling()
+                .semantic_token();
+            let spacer = processor
+                .get_next()
+                .expect("space replays")
+                .expect("space remains")
+                .spelling()
+                .semantic_token();
+            let continuation = processor.scan_integer().expect("scanner continues").value;
+            (scanned, replayed, spacer, continuation)
+        };
+        assert_eq!(scanned.value, 0);
+        assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+        assert_eq!(replayed, lambda);
+        assert!(matches!(
+            spacer,
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space
+            }
+        ));
+        assert_eq!(continuation, 7);
+        let text = diagnostic_text(&universe);
+        assert_eq!(text.matches("! Improper alphabetic constant.").count(), 1);
+        assert_eq!(
+            text.matches("A one-character control sequence belongs after a ` mark.")
+                .count(),
+            1
+        );
+        assert_eq!(
+            text.matches("So I'm essentially inserting \\0 here.")
+                .count(),
+            1
+        );
+    }
+
+    let mut universe = Universe::new();
+    let values = scan_with_profile(
+        &mut universe,
+        CommandProfile::unicode_extended(CommandDialect::Tex82),
+        vec![
+            char_token('`'),
+            char_token('λ'),
+            char_token(' '),
+            char_token('7'),
+        ],
+        |processor| {
+            (
+                processor
+                    .scan_integer()
+                    .expect("Unicode constant scans")
+                    .value,
+                processor
+                    .scan_integer()
+                    .expect("Unicode optional space consumes")
+                    .value,
+            )
+        },
+    );
+    assert_eq!(values, (955, 7));
+    assert!(!diagnostic_text(&universe).contains("Improper alphabetic constant"));
 }
 
 #[test]
