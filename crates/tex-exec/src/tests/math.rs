@@ -1885,3 +1885,44 @@ fn canonical_log_text(stores: &Universe) -> String {
     )
     .into_owned()
 }
+
+/// TeX82 §1167's `mmode+vcenter` opens a box, not a math text field:
+/// `scan_spec(vcenter_group,false); normal_paragraph; push_nest; mode:=-vmode`.
+/// Its body is therefore an internal *vertical* list, so vertical-mode-only
+/// constructions -- above all §1130's `\halign` -- build normally inside it and
+/// §1168 packages the result with `vpack` before wrapping it in a
+/// `vcenter_noad`. Scanning the body as an mlist instead silently dropped every
+/// alignment row, which is what collapsed plain's `\pmatrix`/`\matrix`/
+/// `\cases`/`\eqalign` to their bare `\mathstrut` (`umber2-johp.260`).
+#[test]
+fn canonical_vcenter_body_is_an_internal_vertical_list() {
+    let (stores, nodes) = super::core::run_canonical_tex82_current_list(
+        r"\baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt
+          $\vcenter{\halign{#\cr\hbox to 7pt{}\cr\hbox to 9pt{}\cr}}",
+    );
+
+    assert_eq!(nodes.len(), 1);
+    let vcenter = math_noad(&nodes[0]);
+    assert!(matches!(vcenter.kind, tex_state::math::NoadKind::VCenter));
+    let MathField::SubBox(list) = vcenter.nucleus else {
+        panic!("§1168 stores the packaged box as the vcenter noad's nucleus");
+    };
+    let Node::VList(packaged) = &stores.nodes(list).testing_decoded()[0] else {
+        panic!("§1168 vpacks the body");
+    };
+    let rows = stores.nodes(packaged.children).testing_decoded();
+    assert_eq!(
+        rows.len(),
+        3,
+        "two alignment rows separated by §799's interline glue: {rows:?}"
+    );
+    assert!(matches!(rows[0], Node::HList(_)));
+    assert!(matches!(
+        rows[1],
+        Node::Glue {
+            kind: GlueKind::BaselineSkip,
+            ..
+        }
+    ));
+    assert!(matches!(rows[2], Node::HList(_)));
+}

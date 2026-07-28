@@ -135,6 +135,12 @@ enum ReplayBoxKind {
     HBox,
     VBox,
     VTop,
+    /// TeX82 §1167's `mmode+vcenter` body. It shares §645's `scan_spec`
+    /// prefix, §1083's `push_nest; mode:=-vmode` internal vertical list, and
+    /// §1085's `end_graf` before packaging with `\vbox`; §1168 then differs
+    /// only in disposal, appending a `vcenter_noad` whose nucleus is the
+    /// packaged box instead of running §1075's `box_end`.
+    VCenter,
     /// TeX82 §1099/§1100's `\insert<class>{...}` or `\vadjust{...}` body --
     /// the latter shares the exact same construction with `class` fixed at
     /// 255 (`begin_insert_or_adjust`'s `if cur_cmd=vadjust then
@@ -149,6 +155,20 @@ enum ReplayBoxKind {
 }
 
 impl ReplayBoxKind {
+    /// The one mapping from a scanned §645 `scan_spec` construction to the
+    /// replay kind that closes it. `\leaders`' payload scan and §1073's
+    /// box-shift scan both require `cur_cmd=make_box` (§1073/§1078), so
+    /// neither can deliver `\vcenter`; sharing this mapping keeps that fact
+    /// stated once instead of once per call site.
+    const fn from_scanned(kind: ScannedBoxKind) -> Self {
+        match kind {
+            ScannedBoxKind::HBox => Self::HBox,
+            ScannedBoxKind::VBox => Self::VBox,
+            ScannedBoxKind::VTop => Self::VTop,
+            ScannedBoxKind::VCenter => Self::VCenter,
+        }
+    }
+
     const fn horizontal(self) -> bool {
         matches!(self, Self::HBox)
     }
@@ -158,6 +178,7 @@ impl ReplayBoxKind {
             Self::HBox => GroupKind::HBox,
             Self::VBox => GroupKind::VBox,
             Self::VTop => GroupKind::VTop,
+            Self::VCenter => GroupKind::VCenter,
             Self::Insert(_) => GroupKind::Insert,
         }
     }
@@ -2442,7 +2463,6 @@ fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
         MathTextFieldKind::Inner => NoadKind::Normal(NoadClass::Inner),
         MathTextFieldKind::Underline => NoadKind::Underline,
         MathTextFieldKind::Overline => NoadKind::Overline,
-        MathTextFieldKind::VCenter => NoadKind::VCenter,
     }
 }
 
@@ -5097,6 +5117,37 @@ fn scan_command(
                 .scan_box_construction(primitive)
                 .map_err(command_error)?,
         )),
+        // TeX82 §1167's `mmode+vcenter`:
+        //
+        //     mmode+vcenter: begin scan_spec(vcenter_group,false);
+        //       normal_paragraph;
+        //       push_nest; mode:=-vmode; prev_depth:=ignore_depth;
+        //       if every_vbox<>null then
+        //         begin_token_list(every_vbox,every_vbox_text);
+        //       end;
+        //
+        // `\vcenter` is a *box* opener, not a math-text field: its body is an
+        // internal vertical list built by the same §645 `scan_spec` prefix and
+        // the same `push_nest; mode:=-vmode` as `\vbox`, and §1168 packages it
+        // with `vpack` before wrapping it in a `vcenter_noad`. Scanning it as
+        // a `math_group` field instead (an mlist) silently loses every
+        // vertical-mode construction a `\vcenter` body is built from -- above
+        // all `\halign`, which §1130 admits only in vertical mode, so plain's
+        // `\pmatrix`/`\matrix`/`\cases`/`\eqalign` (all `\vcenter{\ialign{
+        // ...}}`) collapsed to their `\mathstrut` alone (`umber2-johp.260`).
+        //
+        // Outside math mode `\vcenter` never reaches here: §1046's
+        // `non_math(vcenter)` sends it through `insert_dollar_sign`, which is
+        // the `P::VCenter` arm of the exhaustive fallback below.
+        Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VCenter)
+            if matches!(mode, Mode::Math | Mode::DisplayMath) =>
+        {
+            Ok(ScannedStep::BeginBox(
+                processor
+                    .scan_box_construction(primitive)
+                    .map_err(command_error)?,
+            ))
+        }
         // TeX82 §1099's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
         // is legal in every mode with no mode switch of its own, exactly like
         // `\penalty` and `\mark` above.
@@ -9149,16 +9200,18 @@ fn apply_scanned_step(
         ScannedStep::BeginBox(construction) => {
             let target = boxes.pending_setbox.take();
             let ships_out = std::mem::take(&mut boxes.pending_shipout);
-            let kind = match construction.kind {
-                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
-                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
-                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
-            };
+            let kind = ReplayBoxKind::from_scanned(construction.kind);
             let packing = match construction.packing {
                 ScannedPackingSpec::Natural => PackSpec::Natural,
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
+            // TeX82 §1167's `scan_spec(vcenter_group,false); normal_paragraph`.
+            // (§1083's `\vbox`/`\vtop` branch runs the same `normal_paragraph`;
+            // that call is still missing here and is tracked separately.)
+            if kind == ReplayBoxKind::VCenter {
+                crate::assignments::normal_paragraph(modes, stores);
+            }
             stores.enter_group_with_kind(kind.group_kind());
             modes.push(if kind.horizontal() {
                 Mode::RestrictedHorizontal
@@ -9251,11 +9304,7 @@ fn apply_scanned_step(
             construction,
             kind: leader_kind,
         } => {
-            let kind = match construction.kind {
-                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
-                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
-                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
-            };
+            let kind = ReplayBoxKind::from_scanned(construction.kind);
             let packing = match construction.packing {
                 ScannedPackingSpec::Natural => PackSpec::Natural,
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
@@ -9491,6 +9540,15 @@ fn apply_scanned_step(
                         )
                         .node
                     }
+                    ReplayBoxKind::VCenter => {
+                        crate::packing_params::vpack(
+                            stores,
+                            children,
+                            box_state.packing,
+                            crate::packing_params::vpack_params(stores),
+                        )
+                        .node
+                    }
                     ReplayBoxKind::VTop => {
                         crate::packing_params::vtop(
                             stores,
@@ -9514,6 +9572,29 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
+            // TeX82 §1168's `vcenter_group` case of `handle_right_brace`:
+            //
+            //     vcenter_group: begin end_graf; unsave; save_ptr:=save_ptr-2;
+            //       p:=vpack(link(head),saved(1),saved(0)); pop_nest;
+            //       tail_append(new_noad); type(tail):=vcenter_noad;
+            //       math_type(nucleus(tail)):=sub_box; info(nucleus(tail)):=p;
+            //       end;
+            //
+            // The packaged box becomes a `vcenter_noad` nucleus on the
+            // enclosing mlist. It never reaches §1075's `box_end`: §1073's
+            // `scan_box` admits only `cur_cmd=make_box`, so a `\vcenter` can
+            // be neither a `\setbox` target, a `\shipout` operand, a leader
+            // payload, nor a `\raise`/`\lower` operand, and the whole box
+            // context every other branch below classifies is inapplicable.
+            if box_state.kind == ReplayBoxKind::VCenter {
+                modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::VCenter,
+                        MathField::SubBox(boxed),
+                    )));
+                return Ok(ReplayStep::Continue);
+            }
             if let Some(kind) = box_state.leader_kind {
                 let payload = payload_from_node(node).ok_or(ExecError::MissingToken {
                     context: "leader box payload",
@@ -10299,11 +10380,7 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
-            let kind = match construction.kind {
-                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
-                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
-                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
-            };
+            let kind = ReplayBoxKind::from_scanned(construction.kind);
             let packing = match construction.packing {
                 ScannedPackingSpec::Natural => PackSpec::Natural,
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),

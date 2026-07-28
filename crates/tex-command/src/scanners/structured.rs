@@ -295,6 +295,14 @@ pub enum ScannedBoxKind {
     HBox,
     VBox,
     VTop,
+    /// TeX82 §1167's `mmode+vcenter`: `scan_spec(vcenter_group,false);
+    /// normal_paragraph; push_nest; mode:=-vmode`. `\vcenter` opens the same
+    /// §645 `scan_spec` prefix and the same internal vertical list as
+    /// `\vbox`; only §1168's closing action differs (a `vcenter_noad`
+    /// nucleus instead of §1075's `box_end`), which is why it shares this
+    /// scan and not the math-text-field scan a noad-building primitive would
+    /// otherwise take.
+    VCenter,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -667,7 +675,6 @@ pub enum MathTextFieldKind {
     Inner,
     Underline,
     Overline,
-    VCenter,
 }
 
 /// Immutable request kinds delivered from command processing to canonical main
@@ -1625,7 +1632,6 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::MathInner => Request::TextField(Field::Inner),
             UnexpandablePrimitive::Underline => Request::TextField(Field::Underline),
             UnexpandablePrimitive::Overline => Request::TextField(Field::Overline),
-            UnexpandablePrimitive::VCenter => Request::TextField(Field::VCenter),
             UnexpandablePrimitive::Limits => Request::Limits(MathLimitKind::Limits),
             UnexpandablePrimitive::NoLimits => Request::Limits(MathLimitKind::NoLimits),
             UnexpandablePrimitive::DisplayLimits => Request::Limits(MathLimitKind::DisplayLimits),
@@ -2288,6 +2294,12 @@ impl CommandProcessor<'_> {
     /// Scans TeX82 §1083's complete box-construction prefix: §645's
     /// `scan_spec`, whose optional `to`/`spread` clause and mandatory left
     /// brace are both consumed before replay enters the box group.
+    ///
+    /// §1167's `mmode+vcenter` runs the identical prefix
+    /// (`scan_spec(vcenter_group,false)`), so `\vcenter` is scanned here
+    /// rather than as a math text field: its body is an internal vertical
+    /// list, not an mlist, and only §1168's closing action distinguishes it
+    /// from `\vbox`.
     pub fn scan_box_construction(
         &mut self,
         primitive: UnexpandablePrimitive,
@@ -2296,6 +2308,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::HBox => ScannedBoxKind::HBox,
             UnexpandablePrimitive::VBox => ScannedBoxKind::VBox,
             UnexpandablePrimitive::VTop => ScannedBoxKind::VTop,
+            UnexpandablePrimitive::VCenter => ScannedBoxKind::VCenter,
             _ => return Err(CommandError::input_invariant()),
         };
         let packing = self.scan_spec_packing()?;
