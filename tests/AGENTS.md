@@ -3,6 +3,12 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
+`tests/native-test-assets.lock` is the explicit SHA-256 allowlist of
+gitignored inputs that the mandatory native suite may copy from the primary
+checkout into an isolated Git worktree. It contains files only, never
+directories; update it when audited conformance regeneration intentionally
+changes an input or oracle.
+
 `tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory, generated default deferrals and domain-local reviewed disposition/property shards. The routine `test-support` catalogue gate validates completeness, citations, ownership, status, and exact Rust test links.
 
 `tests/tex82-oracle-manifest.txt` pins the canonical TeX82 WEB source, ordered

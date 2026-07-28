@@ -94,6 +94,12 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   `profile-analyzer`. The script selects every host-testable member and ends
   with a `VERDICT:` line stating how many packages, test binaries, and tests
   ran; that line, not a quiet exit, is the result to report.
+- In a linked Git worktree, `scripts/run-native-tests.py` first provisions its
+  mandatory gitignored conformance assets from the primary checkout. The
+  bootstrap copies only the file allowlist in `tests/native-test-assets.lock`,
+  verifies every SHA-256, and leaves the copies ignored. Do not manually link
+  or broadly copy `third_party/`; if the primary checkout lacks an asset, run
+  `scripts/setup-conformance-tests.sh` there.
 - Direct `cargo build` output to a log file; it has verbose output.
 - Use `scripts/check-and-test.sh` when a single command should run the default
   native correctness suite concurrently with the format and clippy gate.

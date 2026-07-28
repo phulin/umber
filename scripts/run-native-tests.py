@@ -57,6 +57,13 @@ tier_stamp = importlib.util.module_from_spec(_TIER_SPEC)
 sys.modules["tier_stamp"] = tier_stamp
 _TIER_SPEC.loader.exec_module(tier_stamp)
 
+_ASSET_SPEC = importlib.util.spec_from_file_location(
+    "native_test_assets", REPO_ROOT / "scripts" / "native-test-assets.py"
+)
+assert _ASSET_SPEC is not None and _ASSET_SPEC.loader is not None
+native_test_assets = importlib.util.module_from_spec(_ASSET_SPEC)
+_ASSET_SPEC.loader.exec_module(native_test_assets)
+
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_COVERAGE = 2
@@ -314,6 +321,7 @@ def main(argv: list[str]) -> int:
     # reason the clippy gate self-tests `check-lint-passes.py`: a coverage
     # check nobody has watched fail proves nothing when it stays quiet.
     for guard in (
+        "test-native-test-assets.py",
         "test-run-native-tests.py",
         "test_tier_stamp.py",
         "test-deferred-tier-entrypoints.py",
@@ -330,6 +338,22 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return EXIT_COVERAGE
+
+    try:
+        provisioned = native_test_assets.provision(REPO_ROOT)
+    except native_test_assets.AssetError as error:
+        print(
+            "\nrun-native-tests: VERDICT: FAIL - mandatory native-suite asset "
+            f"provisioning failed:\n{error}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    if provisioned:
+        print(
+            f"run-native-tests: provisioned {provisioned} verified pinned "
+            "asset(s) from the owning checkout.",
+            flush=True,
+        )
 
     members = workspace_members()
     try:

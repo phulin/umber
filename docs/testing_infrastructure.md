@@ -683,13 +683,33 @@ gate and warns that absent ones will cause failures, not skips. Its list is read
 from `.gitignore`, the same single source the registry meta-test binds to, so
 the preflight cannot go stale when a gate is added.
 
+`scripts/run-native-tests.py` additionally makes this contract usable from an
+isolated linked worktree. Before Cargo starts, `scripts/native-test-assets.py`
+resolves the primary checkout from Git's shared worktree metadata and
+materializes missing files from the explicit `tests/native-test-assets.lock`
+allowlist. The allowlist contains only the four oracles and their declared
+corpus, hyphenation, TFM, and TRIP/e-TRIP file dependencies. It cannot select a
+directory.
+
+Every source and destination must match its committed SHA-256. Provisioning
+uses an independently verified temporary copy followed by atomic rename, not a
+symlink or hard link, so code running in one worktree cannot rewrite the
+primary checkout's evidence through the provisioned path. Existing mismatched
+files are rejected rather than replaced, missing primary assets produce an
+error naming that checkout and the setup command, and successful copies remain
+gitignored so `git status` stays clean. A primary-checkout run never searches
+another cache or downloads anything; it reports its exact missing allowlist and
+requires `scripts/setup-conformance-tests.sh`.
+
 Story and Gentle additionally verify their oracle against the
 `expected_ref_dvi_sha256` pin in `tests/corpus-manifest.txt` inside
 `parity_harness::run_named_fixture_document`, so a stale or foreign oracle fails
 with a hash-drift message rather than a confusing DVI mismatch. TRIP and e-TRIP
-oracles are deliberately not digest-pinned: they are regenerated from whatever
-local pdfTeX is installed, and pinning one host's engine build would turn an
-ordinary version difference into a spurious parity failure.
+do not have a normalized-DVI manifest pin inside the Rust harness. Their raw
+bytes, like all assets copied between worktrees, are nevertheless pinned by
+`tests/native-test-assets.lock`; an intentional regeneration therefore requires
+an audited lock update rather than silently distributing one checkout's changed
+oracle to every linked worktree.
 
 ## External Document Corpus
 

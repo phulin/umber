@@ -23,6 +23,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   directory to name the gate that runs it instead, checks the number of test
   binaries that reported against the number the selected manifests declare, and
   ends in a `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
+- `native-test-assets.py`: copy-only bootstrap for the routine suite's exact
+  gitignored conformance inputs; resolves the primary checkout through Git
+  worktree metadata and accepts only SHA-256-pinned paths from
+  `tests/native-test-assets.lock`.
+- `test-native-test-assets.py`: temporary-Git-repository proof of bounded,
+  idempotent, status-clean worktree provisioning and hard failures for missing,
+  altered, or unsafe assets.
 - `test-run-native-tests.py`: synthetic-input proof that each guard in
   `run-native-tests.py` fails when it should; the runner runs it before
   trusting its own verdict.
