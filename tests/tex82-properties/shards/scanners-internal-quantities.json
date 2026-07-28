@@ -289,11 +289,6 @@
           "test": "math_field_rejects_a_non_field_command_into_an_open_group"
         },
         {
-          "path": "tests/corpus/command-semantic/scanners-internal-quantities/missing-left-brace-recovery.tex",
-          "test": "missing-left-brace-recovery",
-          "cases": ["bare INITEX other-category brace", "box group continuation", "terminal text"]
-        },
-        {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "scanner_syntax_optional_equals_catcode_and_relax_boundaries",
           "cases": [
