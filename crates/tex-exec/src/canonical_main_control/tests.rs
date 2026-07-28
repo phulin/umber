@@ -156,6 +156,7 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
             "pdfinterwordspaceoff",
             UnexpandablePrimitive::PdfInterwordSpaceOff,
         ),
+        ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -306,7 +307,7 @@ fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
 }
 
 #[test]
-fn pdfinterwordspace_toggles_are_operand_free_any_mode_ordered_whatsits() {
+fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
     const MODES: [Mode; 6] = [
         Mode::Vertical,
         Mode::InternalVertical,
@@ -323,7 +324,10 @@ fn pdfinterwordspace_toggles_are_operand_free_any_mode_ordered_whatsits() {
         if mode != Mode::Vertical {
             control.modes.push(mode);
         }
-        register_source(&mut control, br"\pdfinterwordspaceon\pdfinterwordspaceoff");
+        register_source(
+            &mut control,
+            br"\pdfinterwordspaceon\pdffakespace\pdfinterwordspaceoff",
+        );
         run_to_end(&mut control, &mut stores);
 
         let controls: Vec<_> = control
@@ -340,6 +344,7 @@ fn pdfinterwordspace_toggles_are_operand_free_any_mode_ordered_whatsits() {
             controls,
             [
                 tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
+                tex_state::node::PdfAccessibilityControl::FakeSpace,
                 tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
             ],
             "mode {mode:?}: the controls remain ordered and consume no operand"
@@ -349,12 +354,12 @@ fn pdfinterwordspace_toggles_are_operand_free_any_mode_ordered_whatsits() {
     let mut grouped_stores = Universe::new_with_plain_catcodes();
     grouped_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let mut grouped = pdftex_interword_control(&mut grouped_stores);
-    register_source(&mut grouped, br"{\pdfinterwordspaceon}");
+    register_source(&mut grouped, br"{\pdffakespace}");
     run_to_end(&mut grouped, &mut grouped_stores);
     assert!(matches!(
         grouped.modes.current_list().nodes(),
         [Node::Whatsit(Whatsit::PdfAccessibility(
-            tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
+            tex_state::node::PdfAccessibilityControl::FakeSpace
         ))]
     ));
 }
@@ -390,10 +395,10 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
 
     let mut dvi_stores = Universe::new_with_plain_catcodes();
     let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
-    register_source(&mut dvi_control, br"\pdfinterwordspaceoff");
+    register_source(&mut dvi_control, br"\pdffakespace");
     assert!(matches!(
         dvi_control.step(&mut dvi_stores),
-        Err(ExecError::PdfExtensionInDviMode("pdfinterwordspaceoff"))
+        Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
     ));
     assert!(dvi_control.modes.current_list().nodes().is_empty());
 }

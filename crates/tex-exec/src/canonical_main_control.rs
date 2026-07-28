@@ -3457,7 +3457,7 @@ enum ScannedStep {
     /// atomically rebases the ungrouped job timer to the deterministic
     /// monotonic sample already held by `World`.
     PdfResetTimer,
-    /// pdftex.web §§1594–1595's operand-free interword-space controls.
+    /// pdftex.web §§1594–1596's operand-free interword-space controls.
     /// Application appends an ordered whatsit after flushing any pending
     /// horizontal character run; shipout traversal owns the toggle state.
     PdfInterwordSpace(tex_state::node::PdfAccessibilityControl),
@@ -5400,6 +5400,9 @@ fn scan_command(
                 tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
             ))
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFakeSpace) => Ok(
+            ScannedStep::PdfInterwordSpace(tex_state::node::PdfAccessibilityControl::FakeSpace),
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
             ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
         ),
@@ -6342,6 +6345,7 @@ fn scan_unclassified_primitive(
         | P::PdfObject
         | P::PdfInterwordSpaceOff
         | P::PdfInterwordSpaceOn
+        | P::PdfFakeSpace
         | P::PdfRefXForm
         | P::PdfRefXImage
         | P::PdfReferenceObject
@@ -6547,7 +6551,6 @@ fn scan_unclassified_primitive(
         | P::ParShapeLength
         | P::PdfCopyFont
         | P::PdfEfCode
-        | P::PdfFakeSpace
         | P::PdfFontAttr
         | P::PdfFontExpand
         | P::PdfGlyphToUnicode
@@ -9816,9 +9819,7 @@ fn apply_scanned_step(
                     tex_state::node::PdfAccessibilityControl::InterwordSpaceOff => {
                         "pdfinterwordspaceoff"
                     }
-                    tex_state::node::PdfAccessibilityControl::FakeSpace => {
-                        unreachable!("fake-space dispatch is not part of this step")
-                    }
+                    tex_state::node::PdfAccessibilityControl::FakeSpace => "pdffakespace",
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
