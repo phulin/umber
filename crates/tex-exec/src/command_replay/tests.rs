@@ -7799,6 +7799,36 @@ fn canonical_text_material_space_factor_and_ligature_matrix() {
 }
 
 #[test]
+fn canonical_vrule_resets_space_factor_before_zero_sfcode_closer() {
+    // TeX82 §1056 sets `space_factor:=1000` after `\vrule` in hmode. The
+    // closing parenthesis has sfcode zero, so it preserves that reset. The
+    // no-rule box is the negative control: there the same closer preserves
+    // the colon's sentence-space factor.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \sfcode41=0
+           \setbox0=\hbox{\f A\spacefactor=2000\vrule width0pt height0pt depth0pt) X}
+           \setbox1=\hbox{\f A\spacefactor=2000) X}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let glue_widths = |register| {
+        box_children(&universe, register)
+            .into_iter()
+            .filter_map(|node| match node {
+                Node::Glue { spec, .. } => Some(universe.glue(spec).width.raw()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(glue_widths(0), vec![218_453]);
+    assert_eq!(glue_widths(1), vec![291_271]);
+}
+
+#[test]
 fn canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

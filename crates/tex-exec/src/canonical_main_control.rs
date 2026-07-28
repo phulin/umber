@@ -10950,6 +10950,16 @@ fn apply_scanned_rule(
             start_canonical_paragraph(command, modes, stores, true)?;
         }
         modes.current_list_mut().push(node);
+        // TeX82 §1056 resets `space_factor` after a rule in either
+        // horizontal mode. This matters when a zero-sfcode closer follows
+        // the rule: it must inherit 1000, not sentence spacing from text
+        // before the rule.
+        if matches!(
+            modes.current_mode(),
+            Mode::Horizontal | Mode::RestrictedHorizontal
+        ) {
+            modes.current_list_mut().set_space_factor(1000);
+        }
     }
     Ok(ReplayStep::Continue)
 }
