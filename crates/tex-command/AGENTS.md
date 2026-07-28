@@ -58,6 +58,15 @@ Private state-machine modules must not be widened for compatibility with
   back_input`, inside the delivery episode that fetched the command; a
   prefixed command is handed back still delivered, because §1270 executes it
   in place and a backup level here would deliver it twice.
+  `scalar.rs` owns `back_input_unless_spacer`, TeX82's
+  `if cur_cmd<>spacer then back_input`. §443's `⟨Scan an optional space⟩`,
+  §444's `⟨Scan a numeric constant⟩`, and §452's `⟨Scan decimal fraction⟩`
+  all end a numeric scan with that one rule, so every numeric scan routes its
+  terminator through it rather than choosing per call site whether to absorb
+  a space. The test is on the command, so it is the category code and never
+  the character: §207 makes `spacer` the command a category-10 character
+  carries, and §349 is what normalizes such a character's `cur_chr` to a
+  space inside §341's `get_next`.
   `restricted.rs` owns TeX82 §433-§437's five restricted integer classes as a
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the
