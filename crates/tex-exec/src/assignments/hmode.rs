@@ -406,6 +406,10 @@ fn execute_insert(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError> {
+    // TeX's character loop finishes the pending run before main control
+    // reswitches to `ital_corr`. Preserve that ordering: boundary processing
+    // may leave a kern at the tail, and §1113 deliberately does nothing
+    // unless the post-flush tail itself is a character or ligature.
     flush_pending_hchars(nest, stores)?;
     let mut value = scan_i32(input, stores, execution, context)?;
     if !(0..=255).contains(&value) {

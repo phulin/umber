@@ -440,6 +440,167 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
 }
 
 #[test]
+fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LigatureCommand, LoadedFont};
+
+    let italic = Scaled::from_raw(23_456);
+    let mut characters = vec![None; 256];
+    for (ch, correction, tag) in [
+        (
+            b'A',
+            Scaled::from_raw(0),
+            CharTag::LigKern {
+                program_index: 0,
+                start_index: 0,
+            },
+        ),
+        (b'B', italic, CharTag::None),
+    ] {
+        characters[usize::from(ch)] = Some(CharMetrics {
+            width: Scaled::from_raw(Scaled::UNITY),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            italic_correction: correction,
+            tag,
+        });
+    }
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'A',
+            command: Some(LigKernCommand::Ligature(LigatureCommand {
+                replacement: b'B',
+                delete_current: true,
+                delete_next: true,
+                pass_over: 0,
+            })),
+        }],
+        None,
+        None,
+        Vec::new(),
+    );
+    metrics.validate().expect("synthetic ligature TFM is valid");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "italic-ligature",
+        "italic-ligature.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    let first_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
+    let second_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
+    let mut nest = ModeNest::new();
+    append_pending_hchar(
+        nest.current_list_mut(),
+        &mut stores,
+        Mode::RestrictedHorizontal,
+        font,
+        false,
+        'A',
+        first_origin,
+    );
+    append_pending_hchar(
+        nest.current_list_mut(),
+        &mut stores,
+        Mode::RestrictedHorizontal,
+        font,
+        false,
+        'A',
+        second_origin,
+    );
+
+    append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [
+            Node::Lig {
+                font: actual_font,
+                ch: 'B',
+                orig,
+                origins,
+            },
+            Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            },
+        ] if *actual_font == font
+            && orig.as_ref() == ['A', 'A']
+            && origins.as_ref() == [first_origin, second_origin]
+            && *amount == italic
+    ));
+}
+
+#[test]
+fn right_boundary_kern_prevents_a_following_italic_correction() {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LoadedFont};
+
+    let boundary_kern = Scaled::from_raw(12_345);
+    let italic = Scaled::from_raw(54_321);
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: Scaled::from_raw(Scaled::UNITY),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: italic,
+        tag: CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        },
+    });
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: 255,
+            command: Some(LigKernCommand::Kern(boundary_kern)),
+        }],
+        Some(255),
+        None,
+        Vec::new(),
+    );
+    metrics.validate().expect("synthetic boundary TFM is valid");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "italic-boundary",
+        "italic-boundary.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    let mut nest = ModeNest::new();
+    nest.current_list_mut()
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
+
+    append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");
+
+    assert!(
+        matches!(
+            nest.current_list().nodes(),
+            [
+                Node::Char { ch: 'A', .. },
+                Node::Kern {
+                    amount: boundary,
+                    kind: KernKind::Font,
+                },
+            ] if *boundary == boundary_kern
+        ),
+        "{:?}",
+        nest.current_list().nodes()
+    );
+}
+
+#[test]
 fn batched_tfm_run_records_an_absolute_insertion_index() {
     use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 

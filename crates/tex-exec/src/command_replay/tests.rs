@@ -7851,6 +7851,113 @@ fn canonical_italic_correction_in_vertical_mode_reports_illegal_case() {
 }
 
 #[test]
+fn canonical_italic_correction_is_illegal_in_internal_vertical_mode_too() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\vbox{\/X}\end");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\/' in internal vertical mode."),
+        "{text}"
+    );
+    assert!(
+        universe.box_reg(0).is_some(),
+        "the following token remains available after the operand-free error"
+    );
+}
+
+#[test]
+fn canonical_italic_correction_respects_right_noboundary_before_metric_lookup() {
+    // TeX82 §§1038/1113: an ordinary run flush may append right-boundary
+    // material, in which case the tail is no longer a character and \/ does
+    // nothing. A consumed \noboundary suppresses that material, leaving the
+    // character at the tail for §1113's metric lookup.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_boundary_probe_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=boundary-probe
+           \setbox0=\hbox{\f A\/}
+           \setbox1=\hbox{\f A\noboundary\/}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let children = |register| {
+        let hbox = universe
+            .box_reg(register)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("box register stores");
+        let Node::HList(hbox) = hbox else {
+            panic!("box register contains an hbox");
+        };
+        universe.nodes(hbox.children).to_vec()
+    };
+    let with_boundary = children(0);
+    let without_boundary = children(1);
+    assert!(matches!(
+        with_boundary.as_slice(),
+        [
+            Node::Char { ch: 'A', .. },
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            }
+        ]
+    ));
+    assert!(matches!(
+        without_boundary.as_slice(),
+        [
+            Node::Char { ch: 'A', .. },
+            Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            }
+        ] if *amount == Scaled::from_raw(0)
+    ));
+}
+
+#[test]
+fn prefix_before_italic_correction_recovers_without_losing_following_input() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10\setbox0=\hbox{\f f\global\/X}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        terminal_text(&universe).contains("You can't use a prefix with `\\/'."),
+        "{}",
+        terminal_text(&universe)
+    );
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("box register stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("box register contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(children.iter().any(|node| matches!(
+        node,
+        Node::Kern {
+            kind: KernKind::Explicit,
+            ..
+        }
+    )));
+    assert!(
+        children
+            .iter()
+            .any(|node| matches!(node, Node::Char { ch: 'X', .. }))
+    );
+}
+
+#[test]
 fn canonical_ignorespaces_skips_spaces_before_the_next_command() {
     // TeX82 §1045's `any_mode(ignore_spaces)`: repeated `get_x_token` skips
     // spaces, then the first non-space command is reprocessed in place --

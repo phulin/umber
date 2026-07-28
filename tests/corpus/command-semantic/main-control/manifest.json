@@ -721,6 +721,30 @@
         "terminal-check:! =false"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "italic-correction",
+      "property_id": "tex82.main-control.mode-dispatch",
+      "source": "italic-correction.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1111, 1112, 1113]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["command"],
+        "commands": ["ital_corr"]
+      },
+      "expected": [
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0",
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0",
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }
