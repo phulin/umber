@@ -46,9 +46,11 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `hooks/pre-push` refuses a never-invoked tier with.
 - `test_tier_stamp.py`: synthetic-input proof that the classifier refuses every
   shape that must not count as evidence; `tier_stamp.py report` runs it first.
-- `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`: the three
-  deferred tiers, each built on `tier-runner.sh`. Run one with no arguments for
-  the whole tier, or name steps to run exactly those. See
+- `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`, and the
+  three `check-latex-*.sh` entry points: the deferred tiers, each built on
+  `tier-runner.sh`. Run one with no arguments for the whole tier, or name steps
+  to run exactly those. The LaTeX entry points delegate to `run-latex-*.sh` so
+  their established implementation options remain available. See
   [Deferred Test Tiers](../docs/testing_infrastructure.md#deferred-test-tiers).
 - `hooks/`: versioned git hooks installed by `install-hooks.sh` through
   `core.hooksPath`; `pre-commit` runs `check.sh` and `pre-push` refuses a push

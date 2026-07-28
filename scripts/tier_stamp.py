@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Record and report what the repository's deferred test tiers actually ran.
 
-Three named tiers are deliberately outside the routine gate because they need
+Six named tiers are deliberately outside the routine gate because they need
 tools, corpora, or a browser the routine gate must not depend on:
 `scripts/check-tools.sh`, `scripts/check-wasm.sh`, and
-`scripts/check-hb-shape-fixtures.sh`.  Moving them into `scripts/check.sh` or
+`scripts/check-hb-shape-fixtures.sh`, and the three explicit LaTeX tiers.
+Moving them into `scripts/check.sh` or
 `scripts/run-native-tests.py` would make the fast path depend on wasm-pack,
 Firefox, ripgrep, and three extra dependency trees, which is precisely why they
 are separate (`umber2-johp.211`).
@@ -96,6 +97,18 @@ TIERS: dict[str, TierSpec] = {
     "check-hb-shape-fixtures.sh": TierSpec(
         command="scripts/check-hb-shape-fixtures.sh",
         covers="the rustybuzz cross-check against C HarfBuzz",
+    ),
+    "check-latex-corpus.sh": TierSpec(
+        command="scripts/check-latex-corpus.sh",
+        covers="the pinned native LaTeX base-class corpus and runtime closure",
+    ),
+    "check-latex-wasm.sh": TierSpec(
+        command="scripts/check-latex-wasm.sh",
+        covers="the pinned LaTeX native/WASM article parity build",
+    ),
+    "check-latex-parity.sh": TierSpec(
+        command="scripts/check-latex-parity.sh",
+        covers="the pinned upstream LaTeX2e DVI parity cohort",
     ),
 }
 

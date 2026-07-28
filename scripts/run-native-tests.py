@@ -313,7 +313,11 @@ def main(argv: list[str]) -> int:
     # The guards below are checked against synthetic inputs first, for the same
     # reason the clippy gate self-tests `check-lint-passes.py`: a coverage
     # check nobody has watched fail proves nothing when it stays quiet.
-    for guard in ("test-run-native-tests.py", "test_tier_stamp.py"):
+    for guard in (
+        "test-run-native-tests.py",
+        "test_tier_stamp.py",
+        "test-deferred-tier-entrypoints.py",
+    ):
         self_test = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / guard)],
             cwd=REPO_ROOT,

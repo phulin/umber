@@ -1,7 +1,8 @@
 name: Deferred tiers
 
 # The named tiers the routine gate cannot run: they need wasm-pack, a headless
-# browser, ripgrep, and three dependency trees outside the workspace lockfile.
+# browser, ripgrep, HarfBuzz, live LaTeX inputs, and dependency trees outside
+# the workspace lockfile.
 #
 # Before umber2-johp.213 this file ran check-wasm.sh behind a path filter and
 # nothing at all ran check-tools.sh, so the coverage run-native-tests.py hands
@@ -69,3 +70,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Host tool tier
         run: scripts/check-tools.sh
+
+  hb-shape:
+    name: check-hb-shape-fixtures.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # `hb-shape` is the C HarfBuzz oracle for this cross-check. Installing
+      # it explicitly keeps a missing executable from becoming a green skip.
+      - name: Install HarfBuzz command-line tools
+        run: sudo apt-get update && sudo apt-get install -y libharfbuzz-bin
+      - name: HarfBuzz shape-fixture tier
+        run: scripts/check-hb-shape-fixtures.sh

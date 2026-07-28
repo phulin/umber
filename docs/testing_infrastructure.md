@@ -112,7 +112,7 @@ instead of reading as coverage.
 
 ### Deferred Test Tiers
 
-Three tiers are deliberately outside the routine gate, because running them
+Six tiers are deliberately outside the routine gate, because running them
 there would make the fast path depend on wasm-pack, a headless browser,
 ripgrep, HarfBuzz, and three dependency trees the workspace lockfile does not
 cover:
@@ -122,6 +122,9 @@ cover:
 | `scripts/check-tools.sh`             | the three `[workspace] exclude` directories, `parity-harness` in its `reference-tools` resolution, and the opt-in clippy features |
 | `scripts/check-wasm.sh`              | `umber-wasm`'s `#[wasm_bindgen_test]` suite and the authored browser package                                                      |
 | `scripts/check-hb-shape-fixtures.sh` | the rustybuzz cross-check against C HarfBuzz                                                                                      |
+| `scripts/check-latex-corpus.sh`      | the pinned native LaTeX base-class corpus and runtime closure                                                                     |
+| `scripts/check-latex-wasm.sh`        | the pinned LaTeX native/WASM article parity build                                                                                 |
+| `scripts/check-latex-parity.sh`      | the pinned upstream LaTeX2e DVI parity cohort                                                                                     |
 
 Being separate was never the defect. The defect (`umber2-johp.213`) was that
 the routine gates asserted these tiers cover what they exclude while nothing
@@ -163,11 +166,17 @@ run-native-tests: VERDICT: PASS - 33 packages, 46/46 test binaries, 3625 passed,
 _not_ count as evidence -- a stale commit, a dirty tree, a named-step subset, a
 blocked run -- and `tier_stamp.py report` runs it before printing anything, for
 the same reason the clippy gate self-tests `check-lint-passes.py`.
+`scripts/test-deferred-tier-entrypoints.py`, which the native gate runs before
+its own verdict, verifies that the stamped LaTeX entries are registered,
+discoverable, and report a missing prerequisite as BLOCKED.
 
 **Something invokes them.** `.github/workflows/deferred-tiers.yml` runs
-`check-wasm.sh` and `check-tools.sh` on every pull request, on pushes to `main`,
-and weekly; the path filters that previously let a change skip the wasm job are
-gone. Locally, `scripts/hooks/pre-push` refuses to push a branch while any tier
+`check-wasm.sh`, `check-tools.sh`, and `check-hb-shape-fixtures.sh` on every
+pull request, on pushes to `main`, and weekly; the HarfBuzz job installs the
+`hb-shape` provider explicitly. The LaTeX tiers remain manual because they
+need the pinned live distribution and reference inputs, but their entry points
+write the same stamps and are therefore visible in ordinary verdicts. Locally,
+`scripts/hooks/pre-push` refuses to push a branch while any tier
 has never been invoked in that checkout. It refuses only `NEVER-RUN`: a tier
 that answered `BLOCKED` because a tool is absent has told you something, while
 refusing `BLOCKED` and `FAILED` too would make recording a bad outcome worse
