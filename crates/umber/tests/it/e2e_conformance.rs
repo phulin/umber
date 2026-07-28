@@ -10,7 +10,7 @@ use parity_harness::{
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_command::FontResource;
-use tex_exec::{CanonicalResourceNeed, EngineCheckpoint};
+use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineCheckpoint};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
 use tex_state::{JobClock, Universe, World};
@@ -45,6 +45,16 @@ struct InProcessRun {
     format: Option<Vec<u8>>,
     provenance: ProvenanceStats,
     macro_provenance: MacroInvocationProvenanceStats,
+}
+
+struct NoCheckpoints;
+
+impl CheckpointSink for NoCheckpoints {
+    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
+        false
+    }
+
+    fn checkpoint(&mut self, _checkpoint: EngineCheckpoint) {}
 }
 
 /// Canonicalizes a staged fixture directory's job path and loads every file
@@ -124,7 +134,7 @@ fn run_file_in_process(
         .map_err(|error| error.to_string())?;
     let mut host = StagedDirResourceHost { base_dir };
     let run = session
-        .run(&mut host, &mut Vec::new())
+        .run(&mut host, &mut NoCheckpoints)
         .map_err(|error| canonical_error_message(&session, &error))?;
     drop(session);
     for (index, committed) in run.committed_artifacts.iter().enumerate() {
@@ -227,16 +237,19 @@ impl CanonicalResourceHost for StagedDirResourceHost {
             }
             CanonicalResourceNeed::Font { request } => {
                 let path = with_default_extension(&request.name, "tfm");
-                world
-                    .read_file(self.base_dir.join(path))
-                    .ok()
-                    .map(|metrics| CanonicalResourceFulfillment::Font {
+                Some(world.read_file(self.base_dir.join(path)).map_or_else(
+                    |_| CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Unavailable),
+                    },
+                    |metrics| CanonicalResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(FontResource::Tfm {
                             metrics,
                             opentype: None,
                         }),
-                    })
+                    },
+                ))
             }
             CanonicalResourceNeed::PdfImage { .. } => None,
         }
@@ -479,6 +492,11 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         temp.path().join(format!("{fixture_name}.tfm")),
     )
     .expect("stage conformance TFM");
+    fs::copy(
+        root.join("third_party/trip/tripos.tex"),
+        temp.path().join("tripos.tex"),
+    )
+    .expect("stage shared TRIP input");
 
     let engine = if etex {
         EngineMode::ETex

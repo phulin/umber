@@ -567,17 +567,24 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 if path.extension().is_none() {
                     path.set_extension("tfm");
                 }
-                self.font
-                    .0
-                    .read_from_canonical_world(world, &path)
-                    .ok()
-                    .map(|metrics| CanonicalResourceFulfillment::Font {
-                        request: request.clone(),
-                        resource: Box::new(FontResource::Tfm {
-                            metrics,
-                            opentype: None,
-                        }),
-                    })
+                Some(
+                    self.font
+                        .0
+                        .read_from_canonical_world(world, &path)
+                        .map_or_else(
+                            |_| CanonicalResourceFulfillment::Font {
+                                request: request.clone(),
+                                resource: Box::new(FontResource::Unavailable),
+                            },
+                            |metrics| CanonicalResourceFulfillment::Font {
+                                request: request.clone(),
+                                resource: Box::new(FontResource::Tfm {
+                                    metrics,
+                                    opentype: None,
+                                }),
+                            },
+                        ),
+                )
             }
             tex_exec::CanonicalResourceNeed::PdfImage { request } => {
                 let content = self
