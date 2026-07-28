@@ -405,7 +405,6 @@
       "expected": [
         "command:raw:cs:^^@:undefined_cs:-268435455",
         "diagnostic:error:undefined_control_sequence:cs:^^@",
-        "command:expanded:cs:^^@:relax:256",
         "command:raw:char:letter:65:letter:65",
         "command:expanded:char:letter:65:letter:65",
         "command:raw:char:letter:65:letter:65",
