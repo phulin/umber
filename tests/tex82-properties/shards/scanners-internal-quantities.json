@@ -182,7 +182,8 @@
         "Scaled values use sixteen fractional bits and the TeX82 max_dimen bound."
       ],
       "stimulus": [
-        "Evaluate zero, signed odd halves, decimal digit sequences through seventeen digits, exact and inexact products and quotients, and values immediately inside and outside every representable bound."
+        "Evaluate zero, signed odd halves, decimal digit sequences through seventeen digits, exact and inexact products and quotients, and values immediately inside and outside every representable bound.",
+        "The committed command-semantic scaled-division case pins §106's x_over_n truncation toward zero for positive and negative scaled dividends."
       ],
       "expected_observations": [
         "Rounded scaled values, quotients, signed remainders, and arithmetic-error flags equal the numbered algorithms.",
@@ -201,7 +202,7 @@
         "Division records the canonical remainder for the caller's subsequent fraction computation."
       ],
       "semantic_owner": "tex-arith",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "half_matches_tex_signed_odd_convention" },
         { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "x_over_n_matches_tex_sign_and_remainder_rules" },
@@ -210,7 +211,12 @@
           "path": "crates/tex-arith/src/scaled_tests.rs",
           "test": "xn_over_d_matches_tex_remainder_and_overflow_rules"
         },
-        { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "decimal_fraction_rounding_matches_tex_edges" }
+        { "path": "crates/tex-arith/src/scaled_tests.rs", "test": "decimal_fraction_rounding_matches_tex_edges" },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["scaled-division passing semantic case"]
+        }
       ],
       "planned_coverage": [],
       "status": "covered",
@@ -483,7 +489,8 @@
         "The current internal command identifies one register family."
       ],
       "stimulus": [
-        "Fetch every register family at indexes -1, 0, a middle value, 255, and 256 using direct and expanded integer forms."
+        "Fetch every register family at indexes -1, 0, a middle value, 255, and 256 using direct and expanded integer forms.",
+        "The committed command-semantic register-sources case reads §427's count, dimension, and glue register fetches back through count registers."
       ],
       "expected_observations": [
         "The nested integer and restricted-index results precede the internal result.",
@@ -502,7 +509,7 @@
         "A missing selector inserts zero while preserving the rejected operand token."
       ],
       "semantic_owner": "tex-command::scanners",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -519,6 +526,11 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "internal_register_sources_recover_missing_negative_and_above_eight_bit_indexes"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["register-sources passing semantic case"]
         }
       ],
       "planned_coverage": [],
@@ -534,7 +546,8 @@
         "The caller supplies a requested maximum level and sign."
       ],
       "stimulus": [
-        "Request every legal lowering step and sign combination for integer, dimension, glue, and muglue values, plus a non-internal command and token/identifier below tok_val."
+        "Request every legal lowering step and sign combination for integer, dimension, glue, and muglue values, plus a non-internal command and token/identifier below tok_val.",
+        "The committed command-semantic coercion-ownership case pins §§429–431 glue-to-dimension width selection and negation through count registers."
       ],
       "expected_observations": [
         "Glue lowers to its width and dimension lowers to the identical scaled integer representation until the requested level is reached.",
@@ -553,7 +566,7 @@
         "A token or identifier below tok_val follows §416's caller-independent Missing number recovery, single backup, dimen_val-zero commit, and §429 lowering before the scalar result observation."
       ],
       "semantic_owner": "tex-command::scanners",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -578,6 +591,11 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "internal_coercion_recovers_noninternal_and_token_values_below_tok_level"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["coercion-ownership passing semantic case"]
         }
       ],
       "planned_coverage": [],
@@ -656,7 +674,8 @@
         "The exact-byte profile supplies TeX82 character codes and integer bounds."
       ],
       "stimulus": [
-        "Scan empty input, multiple mixed signs, internal quantities, backtick character/control-sequence constants, every radix introducer and category variant, valid and invalid digits, category-letter/category-other A-F, lowercase terminators, boundary magnitudes, and trailing space/nonspace tokens."
+        "Scan empty input, multiple mixed signs, internal quantities, backtick character/control-sequence constants, every radix introducer and category variant, valid and invalid digits, category-letter/category-other A-F, lowercase terminators, boundary magnitudes, and trailing space/nonspace tokens.",
+        "The committed command-semantic integer-radix-forms case pins §§442/444 alphabetic, hexadecimal, and octal constants and a negated alphabetic constant."
       ],
       "expected_observations": [
         "Signs toggle negativity while spaces are ignored until the first operand.",
@@ -678,7 +697,7 @@
         "Numeric overflow diagnoses Number too big and saturates the magnitude before applying the sign."
       ],
       "semantic_owner": "tex-command::scanners",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -723,6 +742,11 @@
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery",
           "cases": ["signed hexadecimal operands", "conditional selection", "ordinary-source continuation"]
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["integer-radix-forms passing semantic case"]
         }
       ],
       "status": "covered"
@@ -736,7 +760,8 @@
         "Expanded delivery, scan_int, internal-value classification, and round_decimals are available."
       ],
       "stimulus": [
-        "Scan signed whole, leading-point/comma, decimal, radix, alphabetic, internal integer, and complete internal dimension prefixes with zero, seventeen, and excess fraction digits."
+        "Scan signed whole, leading-point/comma, decimal, radix, alphabetic, internal integer, and complete internal dimension prefixes with zero, seventeen, and excess fraction digits.",
+        "The committed command-semantic dimension-fraction case pins §§452–453's leading-point fraction, a negative fraction, and an octal-prefixed dimension."
       ],
       "expected_observations": [
         "A leading category-other point or comma bypasses scan_int and is redelivered raw exactly once.",
@@ -757,7 +782,7 @@
         "Prefix arithmetic overflow is retained for final dimension-range recovery rather than wrapping."
       ],
       "semantic_owner": "tex-command::scanners",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -786,6 +811,11 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["dimension-fraction passing semantic case"]
         }
       ],
       "planned_coverage": [],

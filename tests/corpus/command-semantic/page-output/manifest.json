@@ -10,12 +10,20 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1344, 1376, 1377]
+        "sections": [
+          1344,
+          1376,
+          1377
+        ]
       },
       "projection": {
         "kind": "execution-boundaries",
-        "command_names": ["extension"],
-        "box_registers": [0],
+        "command_names": [
+          "extension"
+        ],
+        "box_registers": [
+          0
+        ],
         "node_depth": 1
       },
       "expected": [
@@ -23,7 +31,9 @@
         "box:0/0:hlist",
         "box:0/0/0:whatsit"
       ],
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "open-close-effect-observation",
@@ -32,11 +42,18 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1342, 1373, 1374, 1375]
+        "sections": [
+          1342,
+          1373,
+          1374,
+          1375
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"]
+        "kinds": [
+          "effect"
+        ]
       },
       "expected": [
         "effect:open:stream:3\u0000deferred.tex",
@@ -44,7 +61,97 @@
         "effect:shipout:dvi\u00001",
         "effect:terminate:engine\u0000"
       ],
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "special-whatsit",
+      "property_id": "tex82.effects.special-output",
+      "source": "special-whatsit.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1344,
+          1368
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "extension"
+        ],
+        "box_registers": [
+          0
+        ],
+        "node_depth": 1
+      },
+      "expected": [
+        "command:extension:3",
+        "box:0/0:hlist",
+        "box:0/0/0:whatsit"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "shipout-hlist",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "shipout-hlist.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          619,
+          640,
+          1071
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:0ec56fdd67b5453aa3c5b5ba5508a909731dffc6f6e531e5976188bf2fc61ed6"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "shipout-vlist",
+      "property_id": "tex82.shipout.vlist-traversal",
+      "source": "shipout-vlist.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          629,
+          630,
+          640,
+          1071
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:1c2132a96ee7b38d2f28b946dc10b15bbf701c4df5a39daab85e059b36e38e50"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

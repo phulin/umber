@@ -707,7 +707,8 @@
         "A finite packed hlist supplies glue sign/order/ratio and valid child nodes."
       ],
       "stimulus": [
-        "Traverse mixed characters, ligatures, shifted empty/nonempty boxes, rules, kern/math nodes, adjusted glue, and all leader kinds in the structured Phase 2 units below."
+        "Traverse mixed characters, ligatures, shifted empty/nonempty boxes, rules, kern/math nodes, adjusted glue, and all leader kinds in the structured Phase 2 units below.",
+        "The committed command-semantic shipout-hlist case pins §640's ship_out dispatch and the resulting page artifact identity as a regression anchor."
       ],
       "planned_coverage": [],
       "expected_observations": [
@@ -723,7 +724,7 @@
         "Nonpositive rules emit no rule but still advance width; nonpositive leader boxes or extents emit no copies."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -740,6 +741,11 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["shipout-hlist passing semantic case"]
         }
       ],
       "status": "covered",
@@ -763,7 +769,8 @@
         "A finite packed vlist supplies glue sign/order/ratio and valid child nodes."
       ],
       "stimulus": [
-        "Traverse shifted empty/nonempty boxes, rules, kerns, adjusted glue, all leader kinds, and nested hlists/vlists in the structured Phase 2 units below."
+        "Traverse shifted empty/nonempty boxes, rules, kerns, adjusted glue, all leader kinds, and nested hlists/vlists in the structured Phase 2 units below.",
+        "The committed command-semantic shipout-vlist case pins §§629–630's vlist traversal through a distinct shipped page artifact identity."
       ],
       "planned_coverage": [],
       "expected_observations": [
@@ -779,7 +786,7 @@
         "Nonpositive rules emit no rule but still advance vertically; nonpositive leader boxes or extents emit no copies."
       ],
       "semantic_owner": "tex-out::dvi",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -796,6 +803,11 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["shipout-vlist passing semantic case"]
         }
       ],
       "status": "covered",
@@ -1518,7 +1530,8 @@
         "A special whatsit has reached out_what at a valid shipout coordinate."
       ],
       "stimulus": [
-        "Emit lengths 0, 255, 256, and multibyte TeX character payloads at shifted positions in the structured Phase 2 units below."
+        "Emit lengths 0, 255, 256, and multibyte TeX character payloads at shifted positions in the structured Phase 2 units below.",
+        "The committed command-semantic special-whatsit case pins §1344's extension dispatch code and the §1368 special whatsit's placement in the enclosing hlist."
       ],
       "planned_coverage": [],
       "expected_observations": [
@@ -1534,7 +1547,7 @@
         "A scan-time truncated diagnostic representation is not used; special_out requires the complete stored list produced by §1354."
       ],
       "semantic_owner": "tex-exec::effects",
-      "test_level": "rust-unit",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
@@ -1547,6 +1560,11 @@
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "special_out_xxx1_xxx4_length_boundary_matches_tex82"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["special-whatsit passing semantic case"]
         }
       ],
       "status": "covered",
