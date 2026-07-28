@@ -24,10 +24,7 @@ pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
     write_diagnostic(stores, &format!("\n! Bad interaction mode ({value}).\n"));
 }
 pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
-    let command = match token {
-        Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
-        _ => format!("{token:?}"),
-    };
+    let command = tex_command::command_token_text(&mut stores.command_context(), token);
     let mode = match mode {
         Mode::Vertical => "vertical mode",
         Mode::InternalVertical => "internal vertical mode",
@@ -61,11 +58,7 @@ pub(crate) fn report_undefined_control_sequence(stores: &mut Universe) {
 
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
 pub(crate) fn report_misplaced_alignment_delimiter(stores: &mut Universe, token: Token) {
-    let delimiter = match token {
-        Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
-        Token::Char { ch, .. } => ch.to_string(),
-        _ => format!("{token:?}"),
-    };
+    let delimiter = tex_command::command_token_text(&mut stores.command_context(), token);
     let tab_mark = matches!(
         token,
         Token::Char {

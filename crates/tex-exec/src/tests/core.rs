@@ -3798,7 +3798,7 @@ fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
         Some(Node::Rule { .. })
     ));
     let log = terminal_effect_text(&stores);
-    assert!(log.contains("You can't use `Char { ch: '#', cat: Parameter }' in vertical mode"));
+    assert!(log.contains("You can't use `macro parameter character #' in vertical mode"));
     assert!(log.contains("### recent contributions:"));
 }
 

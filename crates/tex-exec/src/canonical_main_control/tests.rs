@@ -1084,7 +1084,13 @@ fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
     assert_eq!(stores.count(0), 19, "the delimiter was not backed up");
     assert_eq!(stores.world().error_channel().error_count(), 1);
     let output = terminal_text(&stores);
-    assert_eq!(output.matches("! Misplaced &.").count(), 1, "{output}");
+    assert_eq!(
+        output
+            .matches("! Misplaced alignment tab character &.")
+            .count(),
+        1,
+        "{output}"
+    );
     assert!(
         output.contains("here. If you just want an ampersand, the remedy is"),
         "{output}"

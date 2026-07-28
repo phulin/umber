@@ -9877,10 +9877,7 @@ fn apply_scanned_step(
             // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
             // cur_chr)". `scan_off_save` already dropped the command itself
             // (no backup, nothing to replay); this only names it.
-            let command = match token {
-                Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
-                _ => format!("{token:?}"),
-            };
+            let command = tex_command::command_token_text(&mut stores.command_context(), token);
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 &format!("\n! Extra {command}.\n"),

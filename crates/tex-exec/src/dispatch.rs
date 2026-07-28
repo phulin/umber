@@ -514,7 +514,7 @@ impl ResolveTokenName for Universe {
     fn resolve_cs_name(&self, token: Token) -> String {
         match token {
             Token::Cs(symbol) => self.resolve(symbol).to_owned(),
-            Token::Char { ch, cat } => format!("{ch:?}/{cat:?}"),
+            Token::Char { ch, cat } => tex_command::character_command_text(ch, cat),
             Token::Param(slot) => format!("#{slot}"),
             Token::Frozen(_) => "\\endtemplate".to_owned(),
         }

@@ -992,6 +992,143 @@ fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
 }
 
 #[test]
+fn meaning_macro_token_list_distinguishes_words_symbols_spaces_and_active_chars() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let word = universe.intern("word").symbol();
+    let symbol = universe.intern("!").symbol();
+    let active = universe.intern_active_character('~').symbol();
+    let empty = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&[
+        Token::Cs(word),
+        Token::Cs(symbol),
+        Token::Cs(active),
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+    ]);
+    let definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+    let macro_name = universe.intern("shown").symbol();
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(macro_name)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+
+    assert_eq!(
+        meaning_text(&universe.command_context(), &command),
+        "macro:->\\word \\!~ "
+    );
+}
+
+#[test]
+fn character_command_renderer_covers_tex82_print_cmd_chr_table() {
+    for (cat, ch, expected) in [
+        (Catcode::BeginGroup, '{', "begin-group character {"),
+        (Catcode::EndGroup, '}', "end-group character }"),
+        (Catcode::MathShift, '$', "math shift character $"),
+        (Catcode::AlignmentTab, '&', "alignment tab character &"),
+        (Catcode::EndLine, '\r', "end of line character \r"),
+        (Catcode::Parameter, '#', "macro parameter character #"),
+        (Catcode::Superscript, '^', "superscript character ^"),
+        (Catcode::Subscript, '_', "subscript character _"),
+        (Catcode::Space, ' ', "blank space  "),
+        (Catcode::Letter, 'a', "the letter a"),
+        (Catcode::Other, '7', "the character 7"),
+        (Catcode::Escape, '\\', "the character \\"),
+        (Catcode::Ignored, '\0', "the character \0"),
+        (Catcode::Active, '~', "the character ~"),
+        (Catcode::Comment, '%', "the character %"),
+        (Catcode::Invalid, '\u{7f}', "the character \u{7f}"),
+    ] {
+        assert_eq!(character_command_text(ch, cat), expected);
+    }
+}
+
+#[test]
+fn meaning_renderer_covers_register_quantity_and_primitive_families() {
+    use tex_state::env::banks::IntParam;
+    use tex_state::meaning::{InternalInteger, UnexpandablePrimitive};
+    use tex_state::page::{PageDimension, PageInteger};
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    for (index, meaning, canonical_name, expected) in [
+        (0, Meaning::CountRegister(3), "aliascount", "\\count3"),
+        (1, Meaning::DimenRegister(4), "aliasdimen", "\\dimen4"),
+        (2, Meaning::SkipRegister(5), "aliasskip", "\\skip5"),
+        (3, Meaning::MuskipRegister(6), "aliasmuskip", "\\muskip6"),
+        (4, Meaning::ToksRegister(7), "aliastoks", "\\toks7"),
+        (
+            5,
+            Meaning::IntParam(IntParam::ESCAPE_CHAR.raw()),
+            "escapechar",
+            "\\escapechar",
+        ),
+        (
+            6,
+            Meaning::InternalInteger(InternalInteger::Badness),
+            "badness",
+            "\\badness",
+        ),
+        (
+            7,
+            Meaning::PageDimension(PageDimension::Goal),
+            "pagegoal",
+            "\\pagegoal",
+        ),
+        (
+            8,
+            Meaning::PageInteger(PageInteger::DeadCycles),
+            "deadcycles",
+            "\\deadcycles",
+        ),
+        (
+            9,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning),
+            "meaning",
+            "\\meaning",
+        ),
+        (
+            10,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show),
+            "show",
+            "\\show",
+        ),
+    ] {
+        universe.register_primitive_meaning(canonical_name, meaning);
+        let alias = universe.intern(&format!("alias{index}")).symbol();
+        universe.set_meaning(alias, meaning);
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(alias)),
+                crate::command::DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        let rendered = meaning_text(&universe.command_context(), &command);
+        assert_eq!(rendered, expected);
+        assert!(!rendered.contains("Register("));
+        assert!(!rendered.contains("Primitive("));
+    }
+}
+
+#[test]
 fn expandafter_and_noexpand_preserve_canonical_raw_order() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

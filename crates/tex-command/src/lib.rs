@@ -54,7 +54,8 @@ pub use observation::{
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
-    AlignmentRequestResult, CommandProcessor, FinishedAlignmentCell,
+    AlignmentRequestResult, CommandProcessor, FinishedAlignmentCell, character_command_text,
+    command_token_text,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

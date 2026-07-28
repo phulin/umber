@@ -3,6 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
@@ -943,12 +944,22 @@ pub(crate) fn meaning_text(
     match command.meaning() {
         Meaning::Undefined => "undefined".to_owned(),
         Meaning::Relax => "\\relax".to_owned(),
-        Meaning::CharToken { ch, cat } => format!("the character {ch} (catcode {})", cat as u8),
+        Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
         Meaning::CharGiven(ch) => format!("the character {ch}"),
+        Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
         Meaning::CountRegister(index) => format!("\\count{index}"),
+        Meaning::DimenRegister(index) => format!("\\dimen{index}"),
+        Meaning::SkipRegister(index) => format!("\\skip{index}"),
+        Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
         Meaning::ToksRegister(index) => format!("\\toks{index}"),
-        Meaning::IntParam(index) => format!("integer parameter {index}"),
-        Meaning::TokParam(index) => format!("token parameter {index}"),
+        meaning @ (Meaning::IntParam(_)
+        | Meaning::InternalInteger(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
+        | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_)) => meaning_control_sequence_text(state, command, meaning),
         Meaning::Font(font) => format!("select font {}", state.font_name(font)),
         Meaning::Macro { flags, definition } => {
             // `\\meaning` prints the definition, not a live macro-body input
@@ -956,29 +967,86 @@ pub(crate) fn meaning_text(
             // whereas the definition's parameter and replacement lists remain
             // immutable state owned by the meaning.
             let macro_meaning = state.macro_definition(definition);
-            let prefix = match (
-                flags.contains(MeaningFlags::LONG),
-                flags.contains(MeaningFlags::OUTER),
-            ) {
-                (false, false) => "macro".to_owned(),
-                // TeX82's `print_cmd_chr` uses `print_esc` for these command
-                // identities, so the escape character is part of conv_toks'
-                // inserted spelling, not source provenance.
-                (true, false) => "\\long macro".to_owned(),
-                (false, true) => "\\outer macro".to_owned(),
-                (true, true) => "\\long\\outer macro".to_owned(),
-            };
+            let mut prefix = String::new();
+            if flags.contains(MeaningFlags::PROTECTED) {
+                prefix.push_str("\\protected");
+            }
+            if flags.contains(MeaningFlags::LONG) {
+                prefix.push_str("\\long");
+            }
+            if flags.contains(MeaningFlags::OUTER) {
+                prefix.push_str("\\outer");
+            }
+            if !prefix.is_empty() {
+                prefix.push(' ');
+            }
+            prefix.push_str("macro");
             format!(
                 "{prefix}:{}->{}",
                 token_list_text(state, macro_meaning.parameter_text()),
                 token_list_text(state, macro_meaning.replacement_text()),
             )
         }
-        Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_) => command
+        meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
+            meaning_control_sequence_text(state, command, meaning)
+        }
+        Meaning::EndV => "end of alignment template".to_owned(),
+        Meaning::Unknown(_) => "unknown".to_owned(),
+    }
+}
+
+fn meaning_control_sequence_text(
+    state: &tex_state::CommandContext<'_>,
+    command: &CurrentCommand,
+    meaning: Meaning,
+) -> String {
+    let name = state.primitive_name(meaning).or_else(|| {
+        command
             .control_sequence()
-            .map(|symbol| format!("\\{}", state.resolve(symbol)))
-            .unwrap_or_else(|| "primitive".to_owned()),
-        other => format!("{other:?}"),
+            .map(|symbol| state.resolve(symbol))
+    });
+    name.map_or_else(|| "undefined".to_owned(), |name| format!("\\{name}"))
+}
+
+/// TeX82 §298's character-command cases used by `print_meaning`.
+pub fn character_command_text(ch: char, cat: Catcode) -> String {
+    match cat {
+        Catcode::BeginGroup => format!("begin-group character {ch}"),
+        Catcode::EndGroup => format!("end-group character {ch}"),
+        Catcode::MathShift => format!("math shift character {ch}"),
+        Catcode::AlignmentTab => format!("alignment tab character {ch}"),
+        Catcode::Parameter => format!("macro parameter character {ch}"),
+        Catcode::Superscript => format!("superscript character {ch}"),
+        Catcode::Subscript => format!("subscript character {ch}"),
+        Catcode::Space => "blank space  ".to_owned(),
+        Catcode::Letter => format!("the letter {ch}"),
+        Catcode::Other => format!("the character {ch}"),
+        Catcode::EndLine => format!("end of line character {ch}"),
+        Catcode::Escape
+        | Catcode::Ignored
+        | Catcode::Active
+        | Catcode::Comment
+        | Catcode::Invalid => format!("the character {ch}"),
+    }
+}
+
+/// TeX82 §298's `print_cmd_chr` representation for a delivered token.
+///
+/// Diagnostics use this same renderer as `\meaning`; consequently Rust enum
+/// spellings cannot leak into ordinary terminal or transcript output.
+#[must_use]
+pub fn command_token_text(state: &mut tex_state::CommandContext<'_>, token: Token) -> String {
+    match token {
+        Token::Char { ch, cat } => character_command_text(ch, cat),
+        Token::Param(slot) => format!("macro parameter character #{slot}"),
+        Token::Frozen(_) => "end of alignment template".to_owned(),
+        Token::Cs(symbol) => {
+            let meaning = state.meaning(symbol);
+            state.primitive_name(meaning).map_or_else(
+                || format!("\\{}", state.resolve(symbol)),
+                |name| format!("\\{name}"),
+            )
+        }
     }
 }
 
@@ -999,8 +1067,17 @@ fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) ->
         return string_text(state, token);
     };
     let name = state.resolve(symbol);
-    let mut text = format!("\\{name}");
-    if name.chars().last().is_some_and(char::is_alphabetic) {
+    if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+        return name.to_owned();
+    }
+    let mut text = if name.is_empty() {
+        "\\csname\\endcsname".to_owned()
+    } else {
+        format!("\\{name}")
+    };
+    let mut chars = name.chars();
+    let control_symbol = matches!((chars.next(), chars.next()), (Some(_), None));
+    if !control_symbol || name.chars().next().is_some_and(char::is_alphabetic) {
         text.push(' ');
     }
     text

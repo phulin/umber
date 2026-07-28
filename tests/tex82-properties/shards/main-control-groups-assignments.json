@@ -1466,16 +1466,19 @@
     {
       "id": "tex82.main-control.show-meaning",
       "sections": [1294, 1295],
-      "claim": "Show consumes one raw token and prints its control-sequence spelling when present followed by the canonical meaning vocabulary.",
+      "claim": "Show consumes one raw token and prints its control-sequence spelling when present followed by tex.web §§294-298's exact command and token-list rendering; meaning conversion inserts the same rendering as character tokens.",
       "preconditions": ["Show-meaning dispatch has begun."],
       "stimulus": [
-        "Phase 2 white-box unit `show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind` covers undefined, primitive, and macro kinds."
+        "White-box tables cover character commands, registers, internal quantities, primitives, and every macro prefix combination; the semantic microfixture covers register aliases and a letter token."
       ],
       "expected_observations": [
         "The token is not expanded and its exact current command/operand determines the rendering."
       ],
       "postconditions": ["No assignment, expansion, or replay mutation occurs."],
-      "equivalence_cases": ["Control sequence/character and call/long/outer/long-outer/end-template meanings."],
+      "equivalence_cases": [
+        "Control sequence/character and call/long/outer/long-outer/end-template meanings.",
+        "Register aliases render the underlying register command, never a Rust enum name."
+      ],
       "recovery_cases": ["EOF raw-token recovery precedes meaning rendering."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
