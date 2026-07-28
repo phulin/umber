@@ -190,6 +190,33 @@ fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
 }
 
 #[test]
+fn etex_revision_uses_the_canonical_conversion_token_path() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let revision = install_expandable(
+        &mut universe,
+        "eTeXrevision",
+        ExpandablePrimitive::ETeXRevision,
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(revision))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(
+        &mut command,
+        &mut runtime,
+        &mut universe,
+        &mut capabilities,
+    );
+
+    assert_eq!(rendered(&mut processor), ".6");
+}
+
+#[test]
 fn scalar_conversions_render_immutable_other_character_tokens() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

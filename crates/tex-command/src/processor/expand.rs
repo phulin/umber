@@ -475,6 +475,13 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&job_name, command.origin());
                 Ok(())
             }
+            // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
+            // `convert` command; §1387 prints the immutable revision string
+            // through TeX82 §470's ordinary conversion-token path.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
+                self.push_rendered_text(".6", command.origin());
+                Ok(())
+            }
             Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::TopMark
                 | ExpandablePrimitive::FirstMark
