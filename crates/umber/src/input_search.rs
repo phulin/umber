@@ -78,6 +78,39 @@ impl TexInputSearchPath {
         read_first_world(world, candidates)
     }
 
+    pub(crate) fn read_from_canonical_world(
+        &self,
+        world: &mut crate::CanonicalResourceWorld<'_>,
+        name: &str,
+    ) -> Result<FileContent, String> {
+        let name = Path::new(name);
+        let requested = with_default_extension(name, "tex");
+        let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
+        if name.extension().is_some_and(|extension| extension != "tex") {
+            for candidate in search_candidates(
+                &self.user_area,
+                &self.system_areas,
+                &append_extension(name, "tex"),
+            ) {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+        read_first_canonical(world, candidates)
+    }
+
+    pub(crate) fn read_exact_from_canonical_world(
+        &self,
+        world: &mut crate::CanonicalResourceWorld<'_>,
+        name: &str,
+    ) -> Result<FileContent, String> {
+        read_first_canonical(
+            world,
+            search_candidates(&self.user_area, &self.system_areas, Path::new(name)),
+        )
+    }
+
     /// Emulates pdfTeX's restricted `|kpsewhich NAME` pipe without launching
     /// a process. The existing deterministic search policy resolves `NAME`,
     /// and the generated input consists only of that resolved path.
@@ -95,6 +128,24 @@ impl TexInputSearchPath {
         }
         Some(
             self.read(input, requested)
+                .map(|content| format!("{}\n", content.path().display())),
+        )
+    }
+
+    pub(crate) fn read_restricted_pipe_from_canonical_world(
+        &self,
+        world: &mut crate::CanonicalResourceWorld<'_>,
+        name: &str,
+    ) -> Option<Result<String, String>> {
+        let command = name.trim();
+        let requested = command.strip_prefix("|kpsewhich ")?;
+        if requested.is_empty() || requested.chars().any(char::is_whitespace) {
+            return Some(Err(
+                "restricted kpsewhich pipe requires one TeX filename".to_owned()
+            ));
+        }
+        Some(
+            self.read_from_canonical_world(world, requested)
                 .map(|content| format!("{}\n", content.path().display())),
         )
     }
@@ -132,6 +183,18 @@ impl TexFontSearchPath {
         )
     }
 
+    pub(crate) fn read_from_canonical_world(
+        &self,
+        world: &mut crate::CanonicalResourceWorld<'_>,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        let requested = with_default_extension(path, "tfm");
+        read_first_canonical(
+            world,
+            font_candidates(&self.user_area, &self.system_areas, &requested),
+        )
+    }
+
     /// Resolves an output font program by its exact logical map name. Unlike
     /// metric lookup this never appends `.tfm`.
     pub fn read_program<C: InputReadState + ?Sized>(
@@ -158,6 +221,20 @@ impl TexFontSearchPath {
         }
         Err(failures.join("; "))
     }
+}
+
+fn read_first_canonical(
+    world: &mut crate::CanonicalResourceWorld<'_>,
+    candidates: Vec<PathBuf>,
+) -> Result<FileContent, String> {
+    let mut failures = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        match world.read_file(&candidate) {
+            Ok(content) => return Ok(content),
+            Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(failures.join("; "))
 }
 
 fn with_default_extension(path: &Path, extension: &str) -> PathBuf {

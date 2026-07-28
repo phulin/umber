@@ -483,6 +483,18 @@ impl CanonicalMainControl {
         }
     }
 
+    /// Creates INITEX command state for a profile whose primitive meanings
+    /// the composed driver has already installed in `stores`.
+    #[must_use]
+    pub fn prepared_initex(profile: CommandProfile) -> Self {
+        Self {
+            command: CommandState::new(profile),
+            next_alignment_identity: 1,
+            initex: true,
+            ..Self::default()
+        }
+    }
+
     /// Creates a fresh canonical TeX82 INITEX replay environment.
     ///
     /// The primitive definitions are installed from the engine's static TeX82
@@ -2483,10 +2495,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         );
-        if result.is_ok()
-            && self.initex
-            && matches!(scanned, ScannedStep::End { dump: true, .. })
-        {
+        if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
             self.dumped_format = true;
         }
         if result.is_ok() {

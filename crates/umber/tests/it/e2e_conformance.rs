@@ -10,16 +10,14 @@ use parity_harness::{
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_command::FontResource;
-use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecutionContext, FontResolver};
-use tex_expand::InputResolver;
-use tex_lex::{InputStack, WorldInput};
+use tex_exec::{CanonicalResourceNeed, EngineCheckpoint};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
-use tex_state::{InputReadState, JobClock, Universe, World};
+use tex_state::{JobClock, Universe, World};
 
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceWorld, CanonicalSessionError, EngineMode, EngineSession, dvi_from_page_plans,
+    CanonicalResourceWorld, CanonicalSessionError, EngineMode, dvi_from_page_plans,
 };
 
 #[path = "e2e_conformance/assets.rs"]
@@ -47,86 +45,6 @@ struct InProcessRun {
     format: Option<Vec<u8>>,
     provenance: ProvenanceStats,
     macro_provenance: MacroInvocationProvenanceStats,
-}
-
-struct InProcessInputResolver {
-    base_dir: PathBuf,
-}
-
-impl InputResolver for InProcessInputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-        let mut path = PathBuf::from(name);
-        if path.extension().is_none() {
-            path.set_extension("tex");
-        }
-        input
-            .read_input_file(&self.base_dir.join(&path))
-            .or_else(|_| input.read_input_file(&path))
-            .map(WorldInput::from_content)
-            .map(|source| {
-                tex_expand::ResourceLookup::Available(
-                    Box::new(source) as Box<dyn tex_lex::InputSource>
-                )
-            })
-            .map_err(|error| error.to_string())
-    }
-}
-
-struct InProcessFontResolver {
-    base_dir: PathBuf,
-}
-
-impl FontResolver for InProcessFontResolver {
-    fn open_font(
-        &mut self,
-        input: &mut dyn InputReadState,
-        path: &Path,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
-        let mut path = path.to_owned();
-        if path.extension().is_none() {
-            path.set_extension("tfm");
-        }
-        Ok(match input.read_input_file(&self.base_dir.join(&path)) {
-            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
-                metrics,
-                opentype: None,
-            }),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
-        })
-    }
-}
-
-struct InProcessResolvers {
-    input: InProcessInputResolver,
-    font: InProcessFontResolver,
-    job_name: String,
-}
-
-impl InProcessResolvers {
-    fn new(path: &Path) -> Self {
-        let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
-        Self {
-            input: InProcessInputResolver {
-                base_dir: base_dir.clone(),
-            },
-            font: InProcessFontResolver { base_dir },
-            job_name: path
-                .file_stem()
-                .and_then(std::ffi::OsStr::to_str)
-                .unwrap_or("texput")
-                .to_owned(),
-        }
-    }
-
-    fn context(&mut self) -> ExecutionContext<'_> {
-        ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
-    }
 }
 
 /// Canonicalizes a staged fixture directory's job path and loads every file
@@ -188,14 +106,27 @@ fn run_file_in_process(
         .world_mut()
         .read_file(&path)
         .map_err(|error| error.to_string())?;
-    let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut resolvers = InProcessResolvers::new(&path);
-    let context = resolvers
-        .context()
-        .with_expansion_fuel(tex_expand::DEFAULT_EXPANSION_FUEL);
-    let run = EngineSession::new(&mut input, &mut stores, context)
-        .execute()
-        .map_err(|error| error.format_with_provenance(&stores))?;
+    let base_dir = path
+        .parent()
+        .ok_or_else(|| format!("input has no parent: {}", path.display()))?
+        .to_owned();
+    let job_name = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("texput");
+    let mut session = if format.is_some() {
+        CanonicalEngineSession::new(&mut stores, engine.command_profile())
+    } else {
+        CanonicalEngineSession::prepared_initex(&mut stores, engine.command_profile())
+    };
+    session
+        .register_world_root(job_name, content)
+        .map_err(|error| error.to_string())?;
+    let mut host = StagedDirResourceHost { base_dir };
+    let run = session
+        .run(&mut host, &mut Vec::new())
+        .map_err(|error| canonical_error_message(&session, &error))?;
+    drop(session);
     for (index, committed) in run.committed_artifacts.iter().enumerate() {
         let page = tex_out::PageArtifact::from_bytes(committed.bytes())
             .map_err(|error| format!("decode page {} for HTML: {error}", index + 1))?;

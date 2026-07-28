@@ -535,6 +535,80 @@ impl FileSessionResolvers {
     }
 }
 
+impl CanonicalResourceHost for FileSessionResolvers {
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &tex_exec::CanonicalResourceNeed,
+    ) -> Option<CanonicalResourceFulfillment> {
+        match need {
+            tex_exec::CanonicalResourceNeed::Input { name } => {
+                if let Some(result) = self
+                    .input
+                    .0
+                    .read_restricted_pipe_from_canonical_world(world, name)
+                {
+                    return result.ok().map(|text| {
+                        CanonicalResourceFulfillment::input(
+                            name,
+                            RegisteredSourceKind::Generated,
+                            Arc::from(text.into_bytes()),
+                        )
+                    });
+                }
+                self.input
+                    .0
+                    .read_from_canonical_world(world, name)
+                    .ok()
+                    .map(|content| CanonicalResourceFulfillment::world_input(name, content))
+            }
+            tex_exec::CanonicalResourceNeed::Font { request } => {
+                let mut path = PathBuf::from(&request.name);
+                if path.extension().is_none() {
+                    path.set_extension("tfm");
+                }
+                self.font
+                    .0
+                    .read_from_canonical_world(world, &path)
+                    .ok()
+                    .map(|metrics| CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    })
+            }
+            tex_exec::CanonicalResourceNeed::PdfImage { request } => {
+                let content = self
+                    .image
+                    .0
+                    .read_exact_from_canonical_world(world, &request.name)
+                    .ok()?;
+                let legacy = LegacyPdfImageRequest {
+                    name: request.name.clone(),
+                    page: u32::try_from(request.page).unwrap_or_default(),
+                    page_box: match request.page_box {
+                        tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
+                        tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,
+                        tex_command::PdfImagePageBox::Bleed => tex_exec::PdfImagePageBox::Bleed,
+                        tex_command::PdfImagePageBox::Trim => tex_exec::PdfImagePageBox::Trim,
+                        tex_command::PdfImagePageBox::Art => tex_exec::PdfImagePageBox::Art,
+                    },
+                    resolution: 0,
+                };
+                let resource = virtual_compile::parse_image(&content, &legacy)
+                    .map(PdfImageResource::Available)
+                    .unwrap_or(PdfImageResource::Unavailable);
+                Some(CanonicalResourceFulfillment::PdfImage {
+                    request: request.clone(),
+                    resource: Box::new(resource),
+                })
+            }
+        }
+    }
+}
+
 pub(crate) fn provide_pdf_font_resources_at_dpi(
     stores: &mut Universe,
     driver_dpi: i32,
@@ -1733,7 +1807,7 @@ mod tests {
         DriverFile, EngineSession, FinalizationError, PlannedFinalization,
         dvi_from_committed_artifacts, dvi_from_page_plans, uncommitted_terminal_text,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tex_command::{PdfImageResource, RegisteredSourceKind};
     use tex_exec::{
@@ -1743,6 +1817,8 @@ mod tests {
     use tex_expand::install_expandable_primitives;
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{PrintSink, StreamSlot, Universe, World};
+
+    const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     #[test]
     fn canonical_bridge_registers_only_acquired_root_and_nested_sources() {
@@ -2315,6 +2391,69 @@ mod tests {
                 .expect("format-loaded canonical run");
 
             assert_eq!(fresh_run, loaded_run, "{}", mode.name());
+        }
+    }
+
+    #[test]
+    fn direct_file_host_retries_world_font_and_image_in_fresh_and_format_sessions() {
+        use crate::EngineMode;
+
+        let mode = EngineMode::PdfTex;
+        let mut format_stores = Universe::new_with_plain_catcodes();
+        mode.prepare_fresh(&mut format_stores);
+        let format = format_stores.dump_format().expect("base format dumps");
+        let mut png = vec![0_u8; 29];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&1_u32.to_be_bytes());
+        png[20..24].copy_from_slice(&1_u32.to_be_bytes());
+        png[24] = 8;
+        png[25] = 0;
+        let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage image.png\\end";
+
+        for loaded in [false, true] {
+            let mut world = World::memory();
+            world
+                .set_memory_file("/project/job.tex", root)
+                .expect("root is seeded");
+            world
+                .set_memory_file("/project/cmr10.tfm", CMR10)
+                .expect("font is seeded");
+            world
+                .set_memory_file("/project/image.png", png.clone())
+                .expect("image is seeded");
+            let mut stores = if loaded {
+                let mut stores = Universe::from_format(world, &format).expect("format restores");
+                mode.install_after_format(&mut stores);
+                stores
+            } else {
+                let mut stores = Universe::with_world(world);
+                mode.prepare_fresh(&mut stores);
+                stores
+            };
+            let selected_root = stores
+                .world_mut()
+                .read_file("/project/job.tex")
+                .expect("World selects the root");
+            let root_hash = selected_root.hash();
+            let mut session =
+                crate::CanonicalEngineSession::new(&mut stores, mode.command_profile());
+            session
+                .register_world_root("job", selected_root)
+                .expect("selected root registers unchanged");
+            let mut host =
+                crate::FileSessionResolvers::new(Path::new("/project/job.tex"), vec![], vec![]);
+            let run = session
+                .run(&mut host, &mut Vec::new())
+                .expect("typed retries complete");
+
+            assert!(!run.dumped_format);
+            assert!(session.stores().pdf_last_external_image().is_some());
+            let records = session.stores().world().input_records();
+            assert_eq!(records.len(), 3);
+            assert_eq!(records[0].hash(), root_hash);
+            assert_eq!(records[1].path(), Path::new("/project/cmr10.tfm"));
+            assert_eq!(records[2].path(), Path::new("/project/image.png"));
         }
     }
 

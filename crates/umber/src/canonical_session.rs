@@ -224,6 +224,21 @@ impl<'a> CanonicalEngineSession<'a> {
         }
     }
 
+    /// Creates an INITEX session after the composed engine mode has installed
+    /// its fresh primitive profile into `stores`.
+    #[must_use]
+    pub fn prepared_initex(stores: &'a mut Universe, profile: CommandProfile) -> Self {
+        Self {
+            artifact_cursor: stores.world().artifact_commits().len(),
+            effect_cursor: stores.world().effect_records().len(),
+            control: CanonicalMainControl::prepared_initex(profile),
+            stores,
+            root_registered: false,
+            started: false,
+            no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+        }
+    }
+
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
         self.control.command_profile()
