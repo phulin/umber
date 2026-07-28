@@ -145,7 +145,12 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     assert_eq!(wrapper.shift, sp(5));
     assert_eq!(wrapper.width, sp(11));
     let children = stores.nodes(wrapper.children).testing_decoded();
-    let [Node::Rule { width: Some(width), .. }] = children else {
+    let [
+        Node::Rule {
+            width: Some(width), ..
+        },
+    ] = children
+    else {
         panic!("the wrapper must hold the one running rule");
     };
     assert_eq!(*width, sp(11));
