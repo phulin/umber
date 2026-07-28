@@ -10,6 +10,10 @@ than only its layout. Follow the "Writing Markdown" rules in the repository-leve
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
+`build_cache_policy.md` records the measured checkout-local Cargo target costs,
+parallel-dispatch capacity floor, decision to preserve incremental compilation,
+and guarded opt-in reclamation contract.
+
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,

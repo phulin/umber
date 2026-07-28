@@ -23,6 +23,12 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   directory to name the gate that runs it instead, checks the number of test
   binaries that reported against the number the selected manifests declare, and
   ends in a `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
+- `build-cache-policy.py`: report-only parallel-build capacity preflight using
+  the measured per-worktree budget; its explicit `--reclaim` mode removes only
+  the current checkout's validated incremental and clippy cache paths and
+  refuses when Cargo-family processes are active there.
+- `test-build-cache-policy.py`: temporary-directory proof of exact-target
+  reclamation, report budgeting, process refusal, and symlink/traversal guards.
 - `native-test-assets.py`: copy-only bootstrap for the routine suite's exact
   gitignored conformance inputs; resolves the primary checkout through Git
   worktree metadata and accepts only SHA-256-pinned paths from

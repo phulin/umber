@@ -139,10 +139,21 @@ long-running epics integrate onto their own feature branch instead.
 
 ### Disk cost
 
-Each worktree carries its own `target/`, roughly 7 GB once built. Check free
-space before dispatching a wave (`df -h`) and do not start a new worktree job
-below about 8 GB free. Tear worktrees down promptly after merge; an abandoned
-wave can exhaust the disk and stall every running agent at once.
+Each worktree carries its own `target/`; Cargo does not share it with the
+primary checkout unless `CARGO_TARGET_DIR` is explicitly set. Measurements on
+2026-07-28 found 6.8 GiB after a representative built worktree, a historical
+9.6 GiB peak, and 12 GiB of incremental state in a long-lived primary
+checkout. Before dispatching a wave, run:
+
+```bash
+scripts/build-cache-policy.py --jobs N
+```
+
+The preflight budgets 12 GiB for each new job plus a 4 GiB filesystem reserve,
+so one job requires 16 GiB free and two require 28 GiB. Do not dispatch when it
+refuses. Keep incremental compilation enabled for human development. Cache
+reclamation is explicit and checkout-local; never remove caches belonging to a
+running job. Tear worktrees down promptly after merge.
 
 ## After Writeback Verification
 
