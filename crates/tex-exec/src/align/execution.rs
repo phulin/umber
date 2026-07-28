@@ -297,10 +297,7 @@ fn execute_cell(
 ) -> Result<CellResult, ExecError> {
     let kind = align_kind(nest, align_level)?;
     nest.push(cell_mode(kind));
-    if kind == AlignmentKind::VAlign {
-        nest.current_list_mut()
-            .set_prev_depth(crate::mode::ignored_depth(stores));
-    }
+    super::init_span_aux(nest, stores);
     let mut column = start.column;
     let mut span_count = 1u16;
     let mut first_token = start.first_token;

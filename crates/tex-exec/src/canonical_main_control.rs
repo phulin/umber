@@ -7818,7 +7818,7 @@ fn begin_next_replay_alignment_cell(
                     context: "alignment next-cell lifecycle",
                 })?;
             if delimiter == AlignmentCellDelimiter::Tab {
-                begin_replay_alignment_cell(active, modes)?;
+                begin_replay_alignment_cell(active, modes, stores)?;
             }
             active.next_cell_opening_pending = true;
         }
@@ -7880,6 +7880,7 @@ fn replay_alignment_cell_mode(kind: AlignmentKind) -> Mode {
 fn begin_replay_alignment_cell(
     active: &mut ActiveReplayAlignment,
     modes: &mut ModeNest,
+    stores: &mut Universe,
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind));
@@ -7897,6 +7898,7 @@ fn begin_replay_alignment_cell(
         });
     }
     modes.push(replay_alignment_cell_mode(active.kind));
+    crate::align::init_span_aux(modes, stores);
     active.cell_span = 1;
     active.cell_open = true;
     Ok(())
@@ -9812,7 +9814,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;
-            begin_replay_alignment_cell(active, modes)?;
+            begin_replay_alignment_cell(active, modes, stores)?;
             active.align_peek_pending = false;
             if omit {
                 command

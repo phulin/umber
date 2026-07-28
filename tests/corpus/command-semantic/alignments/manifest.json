@@ -24,14 +24,7 @@
         "count:0=1"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-hq8l",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "count:0=1",
-          "actual": "count:0=0"
-        }
+        "kind": "pass"
       }
     },
     {

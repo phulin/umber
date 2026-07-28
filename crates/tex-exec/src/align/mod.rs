@@ -20,9 +20,34 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::token::Token;
 use tex_state::token::TracedTokenWord;
 
-use crate::{ExecError, ModeNest};
+use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) use preamble::scan_preamble;
+
+/// TeX82 §787 `init_span`'s aux initialization for a freshly pushed span
+/// level.
+///
+/// `init_span` is the *one* place a column (or group of `\span`-joined
+/// columns) starts its own list, and it is reached from both §786 `init_row`
+/// and §791 `fin_col`. Its whole body after `push_nest` is
+/// `if mode=-hmode then space_factor:=1000 else begin prev_depth:=ignore_depth;
+/// normal_paragraph; end`, so a vertically-set entry (`\valign`'s columns, and
+/// `\halign`'s rows under `\valign`) begins with `\looseness`, `\hangindent`,
+/// `\hangafter`, and `\parshape` back at their defaults. Transcribing only the
+/// `prev_depth` half let a nondefault `\looseness`/`\hangafter`/`\hangindent`
+/// survive into an entry (`umber2-hq8l`).
+pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
+    if matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) {
+        nest.current_list_mut().set_space_factor(1000);
+    } else {
+        nest.current_list_mut()
+            .set_prev_depth(crate::mode::ignored_depth(stores));
+        crate::assignments::normal_paragraph(nest, stores);
+    }
+}
 
 #[cfg(feature = "profiling-stats")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
