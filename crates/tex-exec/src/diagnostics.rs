@@ -46,6 +46,56 @@ pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mod
 use crate::{ExecError, push_tokens, push_traced_tokens};
 use crate::{Mode, ModeNest};
 
+/// TeX82 §370's `Complain about an undefined macro` report.
+pub(crate) fn report_undefined_control_sequence(stores: &mut Universe) {
+    let mut report = stores.print_err("Undefined control sequence");
+    report.help(&[
+        "The control sequence at the end of the top line",
+        "of your error message was never \\def'ed. If you have",
+        "misspelled it (e.g., `\\hobx'), type `I' and the correct",
+        "spelling (e.g., `I\\hbox'). Otherwise just continue,",
+        "and I'll forget about whatever was undefined.",
+    ]);
+    report.error();
+}
+
+/// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
+pub(crate) fn report_misplaced_alignment_delimiter(stores: &mut Universe, token: Token) {
+    let delimiter = match token {
+        Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
+        Token::Char { ch, .. } => ch.to_string(),
+        _ => format!("{token:?}"),
+    };
+    let tab_mark = matches!(
+        token,
+        Token::Char {
+            cat: Catcode::AlignmentTab,
+            ..
+        }
+    );
+    let mut report = stores.print_err("Misplaced ");
+    report.print(&delimiter);
+    if tab_mark {
+        report.help(&[
+            "I can't figure out why you would want to use a tab mark",
+            "here. If you just want an ampersand, the remedy is",
+            "simple: Just type `I\\&' now. But if some right brace",
+            "up above has ended a previous alignment prematurely,",
+            "you're probably due for more error messages, and you",
+            "might try typing `S' now just to see what is salvageable.",
+        ]);
+    } else {
+        report.help(&[
+            "I can't figure out why you would want to use a tab mark",
+            "or \\cr or \\span just now. If something like a right brace",
+            "up above has ended a previous alignment prematurely,",
+            "you're probably due for more error messages, and you",
+            "might try typing `S' now just to see what is salvageable.",
+        ]);
+    }
+    report.error();
+}
+
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
     let token = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;

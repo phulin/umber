@@ -710,3 +710,43 @@ fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
         tex_state::InteractionMode::Scroll
     );
 }
+
+#[test]
+fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\nonstopmode\missing\count0=17\end");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.count(0), 17, "the following command remains live");
+    assert_eq!(stores.world().error_channel().error_count(), 1);
+    let output = terminal_text(&stores);
+    assert_eq!(
+        output.matches("! Undefined control sequence.").count(),
+        1,
+        "{output}"
+    );
+    assert!(
+        output.contains("The control sequence at the end of the top line"),
+        "{output}"
+    );
+    assert!(
+        output.contains("and I'll forget about whatever was undefined."),
+        "{output}"
+    );
+}
+
+#[test]
+fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\nonstopmode&\count0=19\end");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.count(0), 19, "the delimiter was not backed up");
+    assert_eq!(stores.world().error_channel().error_count(), 1);
+    let output = terminal_text(&stores);
+    assert_eq!(output.matches("! Misplaced &.").count(), 1, "{output}");
+    assert!(
+        output.contains("here. If you just want an ampersand, the remedy is"),
+        "{output}"
+    );
+}

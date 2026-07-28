@@ -2812,6 +2812,16 @@ struct MainControlParking {
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    /// TeX82 §370's undefined-control-sequence expansion error. The gullet
+    /// delivers this only because its ordinary expanded-command loop has not
+    /// yet claimed `Meaning::Undefined`; main control still preserves §370's
+    /// observable report and drop behavior explicitly.
+    UndefinedControlSequence,
+    /// TeX82 §1128's `abs(align_state)>2` recovery: report the delivered
+    /// delimiter and drop it without a backup or inserted brace.
+    MisplacedAlignmentDelimiter {
+        token: Token,
+    },
     /// TeX82 §342 has just run §789's
     /// ``@<Insert the ⟨v_j⟩ template and |goto restart|@>``.
     ///
@@ -6173,15 +6183,10 @@ fn scan_unclassified_meaning(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
-        // TeX82 §370's `@<Complain about an undefined macro@>`: `expand`
-        // reports "Undefined control sequence" and then does nothing at all,
-        // so proceeding without consuming anything is the specified
-        // *action*. Umber's gullet treats `Meaning::Undefined` as
-        // unexpandable and delivers it here instead, and no diagnostic is
-        // produced anywhere on the canonical path -- that missing §370
-        // report is tracked separately (umber2-johp.110), not silently
-        // accepted.
-        Meaning::Undefined => Ok(ScannedStep::Continue),
+        // TeX82 §370's `Complain about an undefined macro` reports and drops
+        // the token. Umber's gullet currently delivers this meaning to main
+        // control, which preserves that same observable transition here.
+        Meaning::Undefined => Ok(ScannedStep::UndefinedControlSequence),
         // A macro is expanded by `get_x_token` (§380) and `\noexpand` turns
         // one into a frozen relax (§358), so neither should ever be
         // delivered as an unexpandable command. `\endcsname` is the one
@@ -6275,18 +6280,16 @@ fn scan_unclassified_char_token(
 /// `abs(align_state)>2`) and backing it up behind an inserted brace, entirely
 /// from the command-owned `align_state`; main control only records whether the
 /// inserted brace opens a recovery simple group for §1131's `off_save`.
-///
-/// The diagnostic §1128 prints is not emitted on the canonical path yet, the
-/// same gap §370's undefined-control-sequence report has (umber2-johp.110).
 fn scan_align_error(
     processor: &mut CommandProcessor<'_>,
     command: tex_command::CurrentCommand,
 ) -> Result<ScannedStep, ExecError> {
+    let token = command.spelling().semantic_token();
     match processor
         .recover_align_error(command)
         .map_err(command_error)?
     {
-        None => Ok(ScannedStep::Continue),
+        None => Ok(ScannedStep::MisplacedAlignmentDelimiter { token }),
         Some(recovery) => Ok(ScannedStep::AlignmentRecovery {
             opens_simple_group: matches!(
                 recovery,
@@ -7478,6 +7481,7 @@ fn applied_mutation_observation(
         | ScannedStep::BeginAlignment { .. }
         | ScannedStep::AlignmentPreambleOpening { .. }
         | ScannedStep::AlignmentPreambleStart { .. }
+        | ScannedStep::MisplacedAlignmentDelimiter { .. }
         | ScannedStep::AlignmentCellOpening { .. }
         | ScannedStep::AlignmentCellFinish { .. }
         | ScannedStep::AlignmentFinish { .. }
@@ -7502,6 +7506,7 @@ fn applied_mutation_observation(
         | ScannedStep::NoAlignEndGroup { .. }
         | ScannedStep::BeginBox(..)
         | ScannedStep::BeginLeaderBox { .. }
+        | ScannedStep::UndefinedControlSequence
         | ScannedStep::BoxShift(..)
         | ScannedStep::IllegalBoxShift { .. }
         | ScannedStep::BeginInsert(..)
@@ -9558,9 +9563,17 @@ fn apply_scanned_step(
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::UndefinedControlSequence => {
+            crate::diagnostics::report_undefined_control_sequence(stores);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MisplacedAlignmentDelimiter { token } => {
+            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token);
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Mark(tokens) => {
-            // TeX82 §1101's `make_mark`: no mode check (`any_mode(mark)`) and
             // no `build_page` call afterward (unlike `\penalty`/`\insert`,
+            // TeX82 §1101's `make_mark`: no mode check (`any_mode(mark)`) and
             // which both invoke it in outer vertical mode). Plain `\mark`
             // always uses class 0; the e-TeX `\marks<n>` variant is not
             // wired here.
