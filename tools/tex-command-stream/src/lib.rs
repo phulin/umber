@@ -24,8 +24,9 @@ use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, DiagnosticEvent,
     DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, GeometryEvent, InputEvent,
-    InputReason, MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent,
-    ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation, StateTarget, TokenListEvent,
+    InputReason, MacroEvent, MutationEvent, Normalizer, ObservationHeader, ObservationStream,
+    OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent,
+    SchemaVersion, SourceLocation, StateTarget, Tex82ObserverProfile, TokenListEvent,
     TokenListTransition, validate_tex82_command_trace_suite, validate_tex82_geometry_trace_fixture,
 };
 use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
@@ -465,6 +466,18 @@ pub struct ObservedEvent {
 impl ObservedEvent {
     fn new(event: Event, context: String) -> Self {
         Self { event, context }
+    }
+
+    /// Portable semantic value, without host-only diagnostic context.
+    #[must_use]
+    pub fn semantic(&self) -> &Event {
+        &self.event
+    }
+
+    /// Source and delivery context retained for divergence reporting.
+    #[must_use]
+    pub fn context(&self) -> &str {
+        &self.context
     }
 }
 
@@ -965,7 +978,34 @@ fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
         })
 }
 
-struct Recorder {
+/// Immutable source material needed to translate command provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveSource {
+    pub name: String,
+    pub source: SourceId,
+    pub bytes: Arc<[u8]>,
+}
+
+/// Terminal state supplied by the host after normal engine execution returns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LiveSessionOutcome {
+    Completed,
+    Failed { diagnostic: String, detail: String },
+}
+
+/// Canonical full diagnostic stream and its stable TRIP-profile projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveSessionStreams {
+    pub diagnostic: Vec<u8>,
+    pub stable: Vec<u8>,
+}
+
+/// Host-side translation of captured normal-session observations.
+///
+/// This owns only detached oracle transport state. It neither drives nor
+/// mutates a `CanonicalEngineSession`; callers may hand it observations after
+/// the engine has returned, including after an early failure.
+pub struct LiveSessionTranslator {
     sources: Vec<ActiveSource>,
     registered_inputs: BTreeMap<String, Arc<[u8]>>,
     next_registered_source: u32,
@@ -973,6 +1013,8 @@ struct Recorder {
     events: Vec<ObservedEvent>,
     geometry: bool,
 }
+
+type Recorder = LiveSessionTranslator;
 
 struct ActiveSource {
     name: String,
@@ -987,7 +1029,7 @@ struct ActiveSource {
     line_starts: Arc<[usize]>,
 }
 
-impl Recorder {
+impl LiveSessionTranslator {
     fn new(
         source: impl Into<String>,
         registered_inputs: BTreeMap<String, Arc<[u8]>>,
@@ -1005,6 +1047,116 @@ impl Recorder {
             alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
             geometry: schema == SchemaVersion::V2,
+        }
+    }
+
+    /// Creates a translator for an already-open root source.
+    #[must_use]
+    pub fn for_root(
+        schema: SchemaVersion,
+        terminal_name: impl Into<String>,
+        root: LiveSource,
+        registered_inputs: BTreeMap<String, Arc<[u8]>>,
+    ) -> Self {
+        let next_registered_source = root.source.raw().saturating_add(1);
+        let mut translator = Self::new(terminal_name, registered_inputs, schema);
+        translator.next_registered_source = next_registered_source;
+        translator.activate_source(root.name, root.source, root.bytes);
+        translator
+    }
+
+    /// Translates a captured committed observation sequence exactly once.
+    pub fn translate_captured(
+        &mut self,
+        observations: impl IntoIterator<Item = CommandObservation>,
+    ) {
+        for observation in observations {
+            self.committed(observation);
+        }
+    }
+
+    /// Finalizes both the full diagnostic stream and the byte-identical stable
+    /// TRIP projection under the caller-supplied pinned stream header.
+    pub fn finish(
+        mut self,
+        header: ObservationHeader,
+        outcome: LiveSessionOutcome,
+    ) -> Result<LiveSessionStreams, String> {
+        let schema = SchemaVersion::try_from(header.schema)?;
+        if schema != SchemaVersion::V1 {
+            return Err("live diagnostic translation currently requires schema v1".into());
+        }
+        if let LiveSessionOutcome::Failed { diagnostic, detail } = outcome {
+            self.events.push(ObservedEvent::new(
+                Event::Diagnostic(DiagnosticEvent {
+                    severity: DiagnosticSeverity::Fatal,
+                    diagnostic,
+                    arguments: vec![CanonicalValue::Name(detail)],
+                }),
+                "source=host; terminal_outcome=failure".into(),
+            ));
+            self.ensure_terminated();
+        }
+        let diagnostic =
+            encode_observed_stream(&header, self.events.iter().map(|event| &event.event))?;
+        let stable_events = self.events.iter().filter_map(|event| match &event.event {
+            Event::Effect(effect)
+                if matches!(effect.kind, EffectKind::Shipout | EffectKind::Terminate) =>
+            {
+                Some(&event.event)
+            }
+            Event::Input(input)
+                if input.transition == tex_oracle::InputTransition::Stop
+                    && input.reason == InputReason::Source
+                    && input.name == "terminal" =>
+            {
+                Some(&event.event)
+            }
+            _ => None,
+        });
+        let stable = encode_observed_stream(&header, stable_events)?;
+        let decoded = ObservationStream::from_canonical_json_lines(&stable)
+            .map_err(|error| error.to_string())?;
+        Tex82ObserverProfile::Trip.validate(&decoded)?;
+        Ok(LiveSessionStreams { diagnostic, stable })
+    }
+
+    fn ensure_terminated(&mut self) {
+        let ends_in_stop = self.events.last().is_some_and(|event| {
+            matches!(
+                &event.event,
+                Event::Input(input)
+                    if input.transition == tex_oracle::InputTransition::Stop
+                        && input.reason == InputReason::Source
+                        && input.name == "terminal"
+            )
+        });
+        let ends_in_termination = self.events.last().is_some_and(|event| {
+            matches!(
+                &event.event,
+                Event::Effect(effect)
+                    if effect.kind == EffectKind::Terminate && effect.channel == "engine"
+            )
+        });
+        if !ends_in_stop && !ends_in_termination {
+            self.events.push(ObservedEvent::new(
+                Event::Input(InputEvent {
+                    transition: tex_oracle::InputTransition::Stop,
+                    reason: InputReason::Source,
+                    name: "terminal".into(),
+                }),
+                "source=terminal; terminal_outcome=failure".into(),
+            ));
+        }
+        if !ends_in_termination {
+            self.events.push(ObservedEvent::new(
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Terminate,
+                    channel: "engine".into(),
+                    value: CanonicalValue::None,
+                }),
+                "source=terminal; terminal_outcome=failure".into(),
+            ));
         }
     }
 
@@ -1052,6 +1204,24 @@ impl Recorder {
             self.sources.pop();
         }
     }
+}
+
+fn encode_observed_stream<'a>(
+    header: &ObservationHeader,
+    events: impl IntoIterator<Item = &'a Event>,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec(header).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    let mut normalizer = Normalizer::new();
+    for event in events {
+        bytes.extend_from_slice(
+            &serde_json::to_vec(&normalizer.normalize(event.clone()))
+                .map_err(|error| error.to_string())?,
+        );
+        bytes.push(b'\n');
+    }
+    ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 /// Recovers TeX82's `.tex`-defaulted display name for an `\input` target
