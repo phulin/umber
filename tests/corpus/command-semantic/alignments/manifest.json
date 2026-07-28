@@ -4,6 +4,67 @@
   "property_domain": "alignment-preambles-templates-and-lifecycle",
   "cases": [
     {
+      "id": "align-peek-crcr-restart",
+      "property_id": "tex82.align.row-lookahead-noalign-finish",
+      "source": "align-peek-crcr-restart.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          785
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "alignment"
+        ],
+        "alignment_transitions": [
+          "state_change"
+        ]
+      },
+      "expected": [
+        "alignment:state_change:1000000",
+        "alignment:state_change:1000000",
+        "alignment:state_change:0",
+        "alignment:state_change:1000000",
+        "alignment:state_change:1000000"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "align-peek-no-restart",
+      "property_id": "tex82.align.row-lookahead-noalign-finish",
+      "source": "align-peek-no-restart.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          785
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "alignment"
+        ],
+        "alignment_transitions": [
+          "state_change"
+        ]
+      },
+      "expected": [
+        "alignment:state_change:1000000",
+        "alignment:state_change:0",
+        "alignment:state_change:1000000",
+        "alignment:state_change:1000000"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
       "id": "span-start",
       "property_id": "tex82.align.span-start",
       "source": "span-start.tex",

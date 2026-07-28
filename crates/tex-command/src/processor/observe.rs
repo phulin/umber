@@ -104,9 +104,9 @@ impl CommandProcessor<'_> {
 
     /// Records TeX82 §37's `align_peek` sentinel assignment.
     ///
-    /// `announce` is false when the sentinel was already in place and the peek
-    /// did not follow `\noalign`, which is the one case TeX's trace leaves
-    /// silent.
+    /// TeX82 §785 executes the assignment at the `restart` label on every
+    /// pass, including after an ignored `\crcr`, so an idempotent assignment
+    /// remains a canonical transition.
     pub(crate) fn observe_alignment_peek_sentinel(&mut self, announce: bool) {
         if !announce {
             return;

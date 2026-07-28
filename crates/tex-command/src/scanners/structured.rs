@@ -2612,15 +2612,16 @@ impl CommandProcessor<'_> {
     /// Installs TeX82 §37's `align_peek` sentinel before its expanded
     /// lookahead.  The command processor owns this state because it is raw
     /// token-delivery state, not executor group state.
-    pub fn begin_alignment_peek(&mut self, after_noalign: bool) -> Result<(), CommandError> {
+    pub fn begin_alignment_peek(&mut self, restarting: bool) -> Result<(), CommandError> {
         let changed = self.command.alignment.align_state != 1_000_000;
         self.command
             .prepare_alignment_cell_lookahead()
             .map_err(|_| CommandError::input_invariant())?;
-        // TeX82 §37 assigns the `align_peek` sentinel before its first
-        // expanded lookahead.  Keep that transition command-owned and emit
-        // it before an exhausted backup is retired by `get_x_token`.
-        self.observe_alignment_peek_sentinel(changed || after_noalign);
+        // TeX82 §785's `restart` label assigns the sentinel on every pass.
+        // The initial pass is already represented when its caller changed
+        // the value; an ignored `\crcr` returns to the label and must publish
+        // the otherwise-idempotent assignment too.
+        self.observe_alignment_peek_sentinel(changed || restarting);
         Ok(())
     }
 

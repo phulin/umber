@@ -2901,6 +2901,9 @@ struct MainControlParking {
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    AlignPeekRestart {
+        alignment: AlignmentIdentity,
+    },
     /// TeX82 §370's undefined-control-sequence expansion error. The gullet
     /// delivers this only because its ordinary expanded-command loop has not
     /// yet claimed `Meaning::Undefined`; main control still preserves §370's
@@ -3678,10 +3681,10 @@ fn alignment_preamble(
 fn scan_alignment_peek(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
-    after_noalign: bool,
+    _after_noalign: bool,
 ) -> Result<ScannedStep, ExecError> {
     processor
-        .begin_alignment_peek(after_noalign)
+        .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
     let command = next_non_space(processor)?.ok_or(ExecError::MissingToken {
         context: "alignment lookahead",
@@ -3693,7 +3696,9 @@ fn scan_alignment_peek(
                 .map_err(command_error)?;
             Ok(ScannedStep::BeginNoAlign { alignment })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => Ok(ScannedStep::Continue),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
+            Ok(ScannedStep::AlignPeekRestart { alignment })
+        }
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
@@ -7519,6 +7524,7 @@ fn applied_mutation_observation(
         // `prefixed_command`, so the reference engine has
         // `umber_mutation_command` false throughout and emits nothing.
         ScannedStep::Continue
+        | ScannedStep::AlignPeekRestart { .. }
         | ScannedStep::AlignmentTemplateEntered
         | ScannedStep::MissingMathShift
         | ScannedStep::EndOfInput
@@ -8318,6 +8324,17 @@ fn apply_scanned_step(
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
+        ScannedStep::AlignPeekRestart { alignment } => {
+            let active = active_alignment
+                .as_mut()
+                .filter(|active| active.identity == alignment)
+                .ok_or(ExecError::MissingToken {
+                    context: "alignment restart lookahead",
+                })?;
+            active.align_peek_pending = true;
+            active.align_peek_after_noalign = true;
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::MissingMathShift => {
             // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
             // input recovery (backing up the offending command behind an

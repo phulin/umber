@@ -82,6 +82,8 @@ struct Projection {
     #[serde(default)]
     command_names: Vec<String>,
     #[serde(default)]
+    alignment_transitions: Vec<String>,
+    #[serde(default)]
     box_registers: Vec<u16>,
     node_depth: Option<u8>,
     #[serde(default)]
@@ -118,6 +120,7 @@ enum SessionProfile {
 enum ObservationKind {
     Command,
     Input,
+    Alignment,
     Recovery,
     ScannerStatus,
     Macro,
@@ -987,6 +990,19 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
                 };
                 Some(format!("input:{transition}:{reason}"))
             }
+            CommandObservation::Alignment(record)
+                if projection.kinds.contains(&ObservationKind::Alignment)
+                    && (projection.alignment_transitions.is_empty()
+                        || projection
+                            .alignment_transitions
+                            .iter()
+                            .any(|transition| transition == record.transition)) =>
+            {
+                Some(format!(
+                    "alignment:{}:{}",
+                    record.transition, record.align_state
+                ))
+            }
             CommandObservation::Recovery(record)
                 if projection.kinds.contains(&ObservationKind::Recovery) =>
             {
@@ -1410,6 +1426,7 @@ fn state_projection_emits_only_requested_final_counts() {
         kinds: Vec::new(),
         commands: Vec::new(),
         command_names: Vec::new(),
+        alignment_transitions: Vec::new(),
         box_registers: Vec::new(),
         node_depth: None,
         include_mode_transitions: false,
@@ -1439,6 +1456,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
         kinds: Vec::new(),
         commands: Vec::new(),
         command_names: Vec::new(),
+        alignment_transitions: Vec::new(),
         box_registers: Vec::new(),
         node_depth: None,
         include_mode_transitions: false,
