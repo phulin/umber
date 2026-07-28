@@ -5554,16 +5554,19 @@ fn scan_command(
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode),
         ) => {
-            let character = processor.scan_integer().map_err(command_error)?.value;
+            // TeX82 §1230 selects the table entry with §434's
+            // `scan_char_num`, including its out-of-range recovery to
+            // character zero. The assigned value has the table-specific
+            // bound below; it is a distinct operand and must not inherit the
+            // selector's recovery.
+            let character = processor
+                .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)
+                .map_err(command_error)?
+                .value;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
-            let character = u32::try_from(character)
-                .ok()
-                .and_then(char::from_u32)
-                .ok_or(ExecError::InvalidCode {
-                    context: "code-table character",
-                    value: character,
-                })?;
+            let character =
+                char::from_u32(character as u32).expect("scan_char_num returns a valid character");
             Ok(ScannedStep::CodeTable {
                 primitive,
                 character,

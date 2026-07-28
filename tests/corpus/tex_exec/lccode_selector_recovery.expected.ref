@@ -1,0 +1,12 @@
+success: false
+stdout:
+! Bad character code (256).
+<to be read again>
+L:3:2
+log:
+! Bad character code (256).
+<to be read again>
+A character number must be between 0 and 255.
+I changed this one to zero.
+
+L:3:2

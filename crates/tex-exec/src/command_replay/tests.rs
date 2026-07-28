@@ -6924,6 +6924,35 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
 }
 
 #[test]
+fn code_table_selector_uses_tex82_character_code_recovery() {
+    let reference =
+        include_str!("../../../../tests/corpus/tex_exec/lccode_selector_recovery.expected.ref");
+    assert!(
+        reference.contains("Bad character code (256)") && reference.contains("L:3:2"),
+        "the bounded TeX82 oracle must pin selector recovery and both boundaries: {reference}"
+    );
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        include_bytes!("../../../../tests/corpus/tex_exec/lccode_selector_recovery.tex"),
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.lccode('\0'), 3);
+    assert_eq!(universe.lccode('\u{ff}'), 2);
+    assert_eq!(universe.lccode('\u{100}'), 0);
+    let reported = terminal_text(&universe);
+    assert!(
+        reported.contains(
+            "! Bad character code (256).\nA character number must be between 0 and 255.\nI changed this one to zero."
+        ),
+        "{reported}"
+    );
+}
+
+#[test]
 fn canonical_prefixed_command_skips_relax_and_preserves_group_scope() {
     let source = include_bytes!("../../../../tests/corpus/tex_exec/prefixed_macro.tex");
     let mut universe = Universe::new_with_plain_catcodes();
