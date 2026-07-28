@@ -119,6 +119,48 @@ impl Default for RunOptions {
     }
 }
 
+/// Runs every committed TeX82 command fixture with no live-engine access,
+/// reporting up to `options.max_divergences` ordered divergences *per fixture*
+/// instead of only the first.
+///
+/// This is the routine native-test gate. It validates the committed fixture
+/// inventory before replaying it, so a missing or drifted microfixture is an
+/// error rather than an empty successful comparison. Generated full-document
+/// traces are deliberately outside this entry point; use [`run_repository`]
+/// for the explicit, potentially slow diagnostic that includes them.
+pub fn run_committed_repository(
+    repository: impl AsRef<Path>,
+    options: RunOptions,
+) -> Result<ComparisonReport, RunnerError> {
+    let repository = repository.as_ref();
+    let suite = validate_tex82_command_trace_suite(repository)
+        .map_err(|error| RunnerError::Suite(error.to_string()))?;
+    let mut report = ComparisonReport {
+        grouped: options.grouped,
+        max_divergences: options.max_divergences,
+        ..ComparisonReport::default()
+    };
+    for entry in suite.fixtures {
+        let fixture_directory =
+            repository
+                .join(FIXTURE_ROOT)
+                .join(entry.selector.strip_prefix("tex82/").ok_or_else(|| {
+                    RunnerError::Suite(format!("unsafe selector {}", entry.selector))
+                })?);
+        let fixture = CommittedFixture::load(&fixture_directory)
+            .map_err(|error| RunnerError::Fixture(entry.selector.clone(), error.to_string()))?;
+        collect_fixture_divergences(
+            &fixture_directory,
+            &fixture,
+            &ReplayResources::committed(),
+            options,
+            &mut report,
+        )?;
+    }
+
+    Ok(report)
+}
+
 /// Runs every registered TeX82 trace with no live-engine access, reporting up
 /// to `options.max_divergences` ordered divergences *per fixture* instead of
 /// only the first.
@@ -153,30 +195,7 @@ pub fn run_repository(
     options: RunOptions,
 ) -> Result<ComparisonReport, RunnerError> {
     let repository = repository.as_ref();
-    let suite = validate_tex82_command_trace_suite(repository)
-        .map_err(|error| RunnerError::Suite(error.to_string()))?;
-    let mut report = ComparisonReport {
-        grouped: options.grouped,
-        max_divergences: options.max_divergences,
-        ..ComparisonReport::default()
-    };
-    for entry in suite.fixtures {
-        let fixture_directory =
-            repository
-                .join(FIXTURE_ROOT)
-                .join(entry.selector.strip_prefix("tex82/").ok_or_else(|| {
-                    RunnerError::Suite(format!("unsafe selector {}", entry.selector))
-                })?);
-        let fixture = CommittedFixture::load(&fixture_directory)
-            .map_err(|error| RunnerError::Fixture(entry.selector.clone(), error.to_string()))?;
-        collect_fixture_divergences(
-            &fixture_directory,
-            &fixture,
-            &ReplayResources::committed(),
-            options,
-            &mut report,
-        )?;
-    }
+    let mut report = run_committed_repository(repository, options)?;
 
     let registry = documents::load_registry(repository)?;
     for name in &registry.skipped {

@@ -810,6 +810,14 @@ against the expected trace. It is fully hermetic (no external corpus,
 distribution, or live TeX tool required) and never invokes a reference
 engine.
 
+The native correctness suite runs this committed-microfixture comparison and
+requires `CLEAN`; its `committed_tex82_command_traces_are_clean` test uses the
+committed-only runner, which validates the fixture inventory before replaying
+it. An absent or drifted committed fixture therefore fails explicitly rather
+than making the gate look clean. It never loads the generated document-trace
+tree, so the routine suite does not replay Plain, Story, Gentle, TRIP, or any
+other full document.
+
 It reports a ranked WORKLIST, not just the first divergence:
 
 Every run that happened prints its report, ending with a `VERDICT:` line
@@ -1200,6 +1208,11 @@ The tracer replays two registries in this order.
 
 Both registries produce the same ordered worklist entries; document
 divergences follow committed-fixture divergences in the report.
+
+The full-document registry is a manual parity diagnostic only, not a native
+test-suite gate. Run the CLI above after generating document traces when
+investigating a document-level divergence; a fresh checkout reports absent
+generated traces as `PARTIAL` instead of silently treating them as clean.
 
 Once the document tier is present, run the tracer through the `test` profile
 (`opt-level = 1`) rather than the plain `dev` profile -- replaying hundreds of
