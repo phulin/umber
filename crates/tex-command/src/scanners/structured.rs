@@ -874,10 +874,26 @@ impl CommandProcessor<'_> {
         class: RestrictedIntegerClass,
         provisional_global: bool,
     ) -> Result<ScannedCharacterDefinition, CommandError> {
-        let target = self
+        let command = self
             .next_non_space_raw()?
-            .and_then(|command| command.control_sequence())
             .ok_or(CommandError::input_invariant())?;
+        let target = if let Some(target) = command.control_sequence() {
+            target
+        } else {
+            // TeX82 §1215's `get_r_token` backs up a non-control-sequence
+            // target and inserts the inaccessible control sequence. The
+            // rejected token consequently remains the first token seen by
+            // the optional-equals/value scan.
+            self.back_input(command)?;
+            let mut report = self.state.print_err("Missing control sequence inserted");
+            report.help(&[
+                "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+                "I've inserted an inaccessible control sequence so that your",
+                "definition will be completed without mixing me up too badly.",
+            ]);
+            report.error();
+            self.state.intern_control_sequence("inaccessible")
+        };
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         #[cfg(any(test, feature = "instrumentation"))]

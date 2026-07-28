@@ -235,6 +235,21 @@ fn canonical_character_definitions_scan_scope_and_recovery() {
     assert!(output.contains("Bad mathchar (32768)"));
 }
 
+#[test]
+fn canonical_character_definition_recovers_a_non_control_sequence_target() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\mathchardef A\/\end");
+    run_to_end(&mut control, &mut universe);
+    let output = terminal_text(&universe);
+    assert!(output.contains("Missing control sequence inserted"));
+    assert!(output.contains("Missing number, treated as zero"));
+    assert_eq!(
+        universe.meaning(universe.symbol("inaccessible").expect("recovery target")),
+        Meaning::MathCharGiven(0)
+    );
+}
+
 /// TeX82 §1224 reads `cur_val` only after §434's `scan_char_num` or §436's
 /// `scan_fifteen_bit_int` has already recovered it, so the `define` it
 /// performs -- and therefore every observation of that definition -- carries
