@@ -1234,7 +1234,7 @@ impl CanonicalMainControl {
             origin,
         }]);
         let empty = stores.freeze_node_list(&[]);
-        self.modes.current_list_mut().push(Node::Disc {
+        self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
             post: empty,
@@ -10584,8 +10584,9 @@ fn apply_scanned_step(
                         "So I've deleted the formulas that preceded this alignment.",
                     ]);
                     report.error();
-                    modes.current_list_mut().take_nodes();
-                    modes.current_list_mut().take_incomplete_fraction();
+                    let mut list = modes.current_list_mutation();
+                    list.take_nodes();
+                    list.take_incomplete_fraction();
                 }
             }
             if let Some(outer) = active_alignment.take() {
