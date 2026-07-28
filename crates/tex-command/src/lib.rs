@@ -12,6 +12,7 @@ mod input;
 mod macro_call;
 mod observation;
 mod primitives;
+pub use primitives::exceeds_max_non_prefixed_command;
 mod processor;
 mod profile;
 mod provenance;

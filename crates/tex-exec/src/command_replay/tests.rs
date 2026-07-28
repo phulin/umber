@@ -6234,13 +6234,18 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
     assert_eq!(universe.mathcode('x'), 0x7131);
     assert_eq!(universe.delcode('('), 123);
 
+    // TeX82 §1213 reports an irrelevant `\long`/`\outer` prefix and still
+    // performs the assignment; §1214 leaves `a` unadjusted on purpose.
     let mut invalid_universe = Universe::new_with_plain_catcodes();
     let mut invalid = CanonicalMainControl::tex82_initex(&mut invalid_universe);
-    register_source(&mut invalid, br"\long\count0=1");
-    assert!(matches!(
-        invalid.step(&mut invalid_universe),
-        Err(ExecError::PrefixWithNonDefinition { .. })
-    ));
+    register_source(&mut invalid, br"\long\count0=1\end");
+    run_to_end(&mut invalid, &mut invalid_universe);
+    assert_eq!(invalid_universe.count(0), 1);
+    let reported = terminal_text(&invalid_universe);
+    assert!(
+        reported.contains("! You can't use `\\long' or `\\outer' with `\\count'."),
+        "{reported}"
+    );
 }
 
 #[test]

@@ -101,16 +101,7 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=1", "count:1=2"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-o96f",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "count:0=1",
-          "actual": "main-control step: PrefixWithNonDefinition { origin: None }"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "redefinable-target",

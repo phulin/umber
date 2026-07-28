@@ -882,6 +882,7 @@ impl CanonicalMainControl {
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
         let job_is_all_over = crate::output::job_is_all_over(stores);
+        let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -898,8 +899,10 @@ impl CanonicalMainControl {
                 mode,
                 job_is_all_over,
                 main_loop_active,
+                &mut diagnostics,
             )?
         };
+        report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -1170,6 +1173,7 @@ impl CanonicalMainControl {
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
+        let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -1187,6 +1191,7 @@ impl CanonicalMainControl {
                     innermost_group,
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
+                    &mut diagnostics,
                 )?,
                 None => scan_replay_step(
                     &mut processor,
@@ -1197,9 +1202,11 @@ impl CanonicalMainControl {
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
                     self.main_loop_active,
+                    &mut diagnostics,
                 )?,
             }
         };
+        report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -2117,6 +2124,7 @@ impl CanonicalMainControl {
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
+        let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -2134,6 +2142,7 @@ impl CanonicalMainControl {
                     innermost_group,
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
+                    &mut diagnostics,
                 )?,
                 None => scan_replay_step(
                     &mut processor,
@@ -2144,9 +2153,11 @@ impl CanonicalMainControl {
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
                     self.main_loop_active,
+                    &mut diagnostics,
                 )?,
             }
         };
+        report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -3373,6 +3384,7 @@ fn scan_replay_step(
     job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
+    diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -3410,6 +3422,7 @@ fn scan_replay_step(
                 innermost_group,
                 mode,
                 job_is_all_over,
+                diagnostics,
             ),
             AlignmentPreamblePhase::CellDelivery => scan_alignment_delivery_step(
                 processor,
@@ -3419,6 +3432,7 @@ fn scan_replay_step(
                 mode,
                 job_is_all_over,
                 main_loop_active,
+                diagnostics,
             ),
         };
     }
@@ -3430,6 +3444,7 @@ fn scan_replay_step(
         job_is_all_over,
         display_eq_no,
         main_loop_active,
+        diagnostics,
     )
 }
 
@@ -3519,6 +3534,7 @@ fn scan_noalign_body(
     innermost_group: Option<GroupKind>,
     mode: Mode,
     job_is_all_over: bool,
+    diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
@@ -3543,6 +3559,7 @@ fn scan_noalign_body(
             innermost_group,
             job_is_all_over,
             false,
+            diagnostics,
         ),
     }
 }
@@ -3559,6 +3576,7 @@ fn scan_alignment_delivery_step(
     mode: Mode,
     job_is_all_over: bool,
     main_loop_active: bool,
+    diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     match processor
         .get_x_alignment_delivery(main_loop_active)
@@ -3614,6 +3632,7 @@ fn scan_alignment_delivery_step(
                 innermost_group,
                 job_is_all_over,
                 false,
+                diagnostics,
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
@@ -3647,6 +3666,7 @@ fn scan_step(
     job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
+    diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
@@ -3674,6 +3694,7 @@ fn scan_step(
         innermost_group,
         job_is_all_over,
         display_eq_no,
+        diagnostics,
     )
 }
 
@@ -3709,6 +3730,7 @@ fn dispatch_main_control_command(
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
+    diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
@@ -3733,6 +3755,37 @@ fn dispatch_main_control_command(
                 _ => break,
             }
             command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
+            // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
+            // erroneous prefixes and return>`: §209's partition, not a
+            // hand-listed set of assignment families.
+            if !tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
+                diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
+                    command.meaning(),
+                ));
+                // §1212's `back_error`: the substantive command is retained
+                // and re-delivered without the discarded prefixes.
+                processor.back_input(command).map_err(command_error)?;
+                return Ok(ScannedStep::Continue);
+            }
+        }
+        // §1213's `<Discard the prefixes \long and \outer if they are
+        // irrelevant>`. §1214 deliberately leaves `a` unadjusted, so the
+        // command still runs; only the report is owed. eTeX's `\protected`
+        // is prefix code 8, which §1213's `a mod 4<>0` excludes.
+        if flags.bits() & (MeaningFlags::LONG | MeaningFlags::OUTER).bits() != 0
+            && !matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Def
+                        | UnexpandablePrimitive::Edef
+                        | UnexpandablePrimitive::Gdef
+                        | UnexpandablePrimitive::Xdef
+                )
+            )
+        {
+            diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
+                command.meaning(),
+            ));
         }
         // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --
         // exactly `next_non_space` -- and the command it leaves in `cur_cmd`
@@ -4081,22 +4134,7 @@ fn scan_command(
             },
         )));
     }
-    // TeX82 permits \long/\outer only on macro definitions.  Keep this
-    // check beside prefix collection so every ordinary assignment family has
-    // the same legality rule and cannot silently discard a prefix.
-    if flags != MeaningFlags::EMPTY
-        && !matches!(
-            command.meaning(),
-            Meaning::UnexpandablePrimitive(
-                UnexpandablePrimitive::Def
-                    | UnexpandablePrimitive::Edef
-                    | UnexpandablePrimitive::Gdef
-                    | UnexpandablePrimitive::Xdef
-            )
-        )
-    {
-        return Err(ExecError::PrefixWithNonDefinition { origin: None });
-    }
+
     // A constructed leader payload has just completed its box group.  The
     // following glue command is still raw input, so consume it here before
     // replay turns the frozen payload into a glue node.
@@ -11118,6 +11156,67 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
         .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
         .collect();
     command.push_everymath(stores.finish_traced_token_list(&traced), display);
+}
+
+/// A tex.web recoverable-error report that scanning detects but only the
+/// stomach can print.
+///
+/// The command core owns no `World` text sink, so a scan that must diagnose
+/// *and still run its command* cannot print at the point of detection. This
+/// is the same split `report_restricted_integer_recovery` already makes for
+/// §§433-437; steps whose recovery is fully described by the step itself
+/// (`missing_to`, `recovered`, ...) keep carrying it there instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingDiagnostic {
+    /// tex.web §1212's `<Discard erroneous prefixes and return>`.
+    PrefixOnNonPrefixedCommand(Meaning),
+    /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
+    /// irrelevant>`.
+    IrrelevantLongOuterPrefix(Meaning),
+}
+
+/// tex.web §298's `print_cmd_chr` for the meanings the reports above name.
+fn printed_command(stores: &Universe, meaning: Meaning) -> String {
+    match meaning {
+        Meaning::CharToken { ch, .. } => ch.to_string(),
+        Meaning::CountRegister(index) => format!("\\count{index}"),
+        Meaning::DimenRegister(index) => format!("\\dimen{index}"),
+        Meaning::SkipRegister(index) => format!("\\skip{index}"),
+        Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
+        Meaning::ToksRegister(index) => format!("\\toks{index}"),
+        Meaning::Undefined => "undefined".into(),
+        meaning => stores
+            .primitive_name(meaning)
+            .map_or_else(|| "\\relax".into(), |name| format!("\\{name}")),
+    }
+}
+
+/// Prints each report a completed scan owes, in detection order.
+fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDiagnostic>) {
+    for diagnostic in diagnostics {
+        match diagnostic {
+            PendingDiagnostic::PrefixOnNonPrefixedCommand(meaning) => {
+                let command = printed_command(stores, meaning);
+                let mut report = stores.print_err("You can't use a prefix with `");
+                report.print(&command).print_char('\'');
+                report.help(&["I'll pretend you didn't say \\long or \\outer or \\global."]);
+                report.error();
+            }
+            PendingDiagnostic::IrrelevantLongOuterPrefix(meaning) => {
+                let command = printed_command(stores, meaning);
+                let mut report = stores.print_err("You can't use `");
+                report
+                    .print_esc("long")
+                    .print("' or `")
+                    .print_esc("outer")
+                    .print("' with `")
+                    .print(&command)
+                    .print_char('\'');
+                report.help(&["I'll pretend you didn't say \\long or \\outer here."]);
+                report.error();
+            }
+        }
+    }
 }
 
 /// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.

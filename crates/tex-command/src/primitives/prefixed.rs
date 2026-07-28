@@ -22,7 +22,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 /// them and `do_assignments` executes none of them. A caller that starts from
 /// a broader "is an assignment" notion and subtracts those by hand is
 /// re-deriving this predicate one exception at a time.
-pub(crate) fn is_prefixed_command(meaning: Meaning) -> bool {
+pub fn is_prefixed_command(meaning: Meaning) -> bool {
     match meaning {
         // `assign_toks` (72), `assign_int` (73), `assign_dimen` (74),
         // `assign_glue` (75), `assign_mu_glue` (76), `set_page_dimen` (81),

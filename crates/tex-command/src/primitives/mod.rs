@@ -10,3 +10,4 @@ mod prefixed;
 mod tex;
 
 pub(crate) use prefixed::is_prefixed_command;
+pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;
