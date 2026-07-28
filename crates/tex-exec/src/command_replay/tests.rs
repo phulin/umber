@@ -7691,6 +7691,105 @@ fn canonical_ignorespaces_reswitches_without_backing_the_next_command_up() {
 }
 
 #[test]
+fn canonical_ignorespaces_is_mode_complete_and_preserves_the_next_command() {
+    // TeX82 §1045 declares `any_mode(ignore_spaces)`. The first non-spacer
+    // command is dispatched by `reswitch` in the same step in all six Umber
+    // mode projections; it is not consumed as an operand or deferred.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\ignorespaces   \global\count0=17 ");
+        run_to_end(&mut control, &mut universe);
+
+        assert_eq!(universe.count(0), 17, "following assignment in {mode:?}");
+        assert!(
+            !terminal_text(&universe).contains("Unimplemented primitive"),
+            "{mode:?} reached the shared §1045 route"
+        );
+    }
+}
+
+#[test]
+fn canonical_ignorespaces_expands_macros_while_skipping_and_keeps_relax() {
+    // §§406/1045 use `get_x_token`: macro-produced spacer commands disappear
+    // across replacement-list retirement. `\relax` is the negative control
+    // distinguishing §406 from §404; it stops the scan and is dispatched as
+    // §1045's neighbouring no-op before the later assignment.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\spaces{   }\ignorespaces\spaces\relax\global\count0=23 ",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 23);
+    assert!(!terminal_text(&universe).contains('!'));
+}
+
+#[test]
+fn canonical_ignorespaces_crosses_nested_source_retirement() {
+    // §406's repeated `get_x_token` is oblivious to physical source levels:
+    // after a nested `\input` contributes only spacer commands and retires,
+    // the first non-spacer in the parent is still the command reswitched.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    install_input(&mut universe);
+    control.capabilities_mut().register_input(
+        "spaces",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"   ".as_slice()),
+        ),
+    );
+    register_source(
+        &mut control,
+        br"\ignorespaces\input spaces \global\count0=29 ",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 29);
+}
+
+#[test]
+fn canonical_ignorespaces_at_eof_ends_without_recovery() {
+    // §406 has no backup or missing-token recovery. If expanded delivery
+    // reaches terminal EOF while looking for a non-spacer, main control ends
+    // normally with no invented command.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\ignorespaces   ");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(!terminal_text(&universe).contains('!'));
+}
+
+#[test]
+fn prefix_before_ignorespaces_is_rejected_before_ignorespaces_runs() {
+    // `\ignorespaces` is `any_mode`, not a prefixed command. TeX82
+    // §§1211-1212 discard the erroneous `\global`, back up `\ignorespaces`,
+    // and only then let §1045 skip spaces. The following local assignment
+    // must therefore remain local and disappear at group exit.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"{\global\ignorespaces   \count0=31 }\relax");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 0);
+    assert!(terminal_text(&universe).contains("You can't use a prefix with `\\ignorespaces'."));
+}
+
+#[test]
 fn canonical_noboundary_in_vertical_mode_starts_a_paragraph() {
     // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
     // friends: `back_input; new_graf(true)`.

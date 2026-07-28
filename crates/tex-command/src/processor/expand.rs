@@ -230,6 +230,30 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §406's `<Get the next non-blank non-call token>`:
+    /// `repeat get_x_token until cur_cmd<>spacer`.
+    ///
+    /// Unlike §404's similarly named helper, this preserves `\relax`. The
+    /// returned command is the exact expanded delivery that stopped the
+    /// loop: callers such as §1045's `\ignorespaces` dispatch it in place
+    /// without backing it up or rebuilding its provenance.
+    pub fn next_non_blank_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok(None);
+            };
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                return Ok(Some(command));
+            }
+        }
+    }
+
     /// Delivers one expanded command or the completion of an executor-owned
     /// stored replay episode.
     ///

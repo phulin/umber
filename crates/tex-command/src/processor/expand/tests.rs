@@ -526,6 +526,94 @@ fn ordinary_loop_expands_macro_body_on_the_canonical_raw_path() {
 }
 
 #[test]
+fn next_non_blank_x_token_expands_across_levels_and_preserves_the_stopping_delivery() {
+    // TeX82 §§406/1045 require `get_x_token`, not raw delivery: spacer
+    // commands produced by a macro are skipped even after its replacement
+    // level retires. The first non-spacer remains the exact source-attributed
+    // delivery that stopped the loop; it is neither backed up nor rebuilt.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let macro_name = universe.intern("spaces").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&[
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+    ]);
+    let definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\spaces X".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let delivered = processor
+        .next_non_blank_x_token()
+        .expect("expanded scan succeeds")
+        .expect("source character remains");
+    assert_eq!(
+        delivered.spelling().semantic_token(),
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        }
+    );
+    assert!(
+        delivered.source_location().is_some(),
+        "the stopping source token retains its physical provenance"
+    );
+    assert_eq!(processor.command.expansion.cumulative_expansions, 1);
+}
+
+#[test]
+fn next_non_blank_x_token_does_not_skip_relax() {
+    // §406 differs deliberately from §404: only spacer commands are skipped.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"  \\relax X".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let delivered = processor
+        .next_non_blank_x_token()
+        .expect("expanded scan succeeds")
+        .expect("relax remains");
+    assert_eq!(delivered.meaning(), Meaning::Relax);
+    assert_eq!(delivered.spelling().semantic_token(), Token::Cs(relax));
+}
+
+#[test]
 fn completed_expansion_rolls_back_to_the_exact_scalar_input_state() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

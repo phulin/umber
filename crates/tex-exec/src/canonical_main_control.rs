@@ -3814,9 +3814,12 @@ fn scan_alignment_peek(
     processor
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
-    let command = next_non_space(processor)?.ok_or(ExecError::MissingToken {
-        context: "alignment lookahead",
-    })?;
+    let command = processor
+        .next_non_blank_x_token()
+        .map_err(command_error)?
+        .ok_or(ExecError::MissingToken {
+            context: "alignment lookahead",
+        })?;
     match command.meaning() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
             processor
@@ -4102,7 +4105,7 @@ fn dispatch_main_control_command(
             command.meaning(),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces)
         ) {
-            let Some(next) = next_non_space(processor)? else {
+            let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
                 return Ok(ScannedStep::EndOfInput);
             };
             command = next;
@@ -7151,25 +7154,6 @@ fn replay_openout_target(name: String) -> String {
         path.set_extension("tex");
     }
     path.to_string_lossy().into_owned()
-}
-
-fn next_non_space(
-    processor: &mut CommandProcessor<'_>,
-) -> Result<Option<tex_command::CurrentCommand>, ExecError> {
-    loop {
-        let Some(command) = processor.get_x_token().map_err(command_error)? else {
-            return Ok(None);
-        };
-        if !matches!(
-            command.meaning(),
-            Meaning::CharToken {
-                cat: tex_state::token::Catcode::Space,
-                ..
-            }
-        ) {
-            return Ok(Some(command));
-        }
-    }
 }
 
 /// A committed `eqtb` mutation captured for the command observer, together
