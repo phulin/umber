@@ -120,8 +120,8 @@ pdfrefximage|executor-backend|backend|tex-exec PDF image tests|image reference e
 pdfresettimer|command-core|state|phase-2 command-state matrix|timer-state write
 pdfrestore|executor-backend|backend|tex-exec PDF graphics tests|graphics-state execution
 pdfretval|command-core|state|phase-2 enquiry matrix|extension-result enquiry
-pdfrunninglinkoff|executor-backend|backend|tex-exec PDF link tests|link-state execution
-pdfrunninglinkon|executor-backend|backend|tex-exec PDF link tests|link-state execution
+pdfrunninglinkoff|command-core|state|state.tex|ordered running-link-off whatsit append
+pdfrunninglinkon|command-core|state|state.tex|ordered running-link-on whatsit append
 pdfsave|executor-backend|backend|tex-exec PDF graphics tests|graphics-state execution
 pdfsavepos|executor-backend|backend|tex-exec PDF position tests|position-node execution
 pdfsetmatrix|executor-backend|backend|tex-exec PDF graphics tests|matrix node execution

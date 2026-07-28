@@ -272,7 +272,9 @@ if state_kind=0 then write(umber_trace_file,'pdfresettimer')
 else if state_kind=1 then write(umber_trace_file,'pdfsetrandomseed')
 else if state_kind=2 then write(umber_trace_file,'pdfinterwordspaceon')
 else if state_kind=3 then write(umber_trace_file,'pdfinterwordspaceoff')
-else write(umber_trace_file,'pdffakespace');
+else if state_kind=4 then write(umber_trace_file,'pdffakespace')
+else if state_kind=5 then write(umber_trace_file,'pdfrunninglinkoff')
+else write(umber_trace_file,'pdfrunninglinkon');
 write(umber_trace_file,'"},"value":');
 if state_kind=0 then
   write(umber_trace_file,'{"type":"name","value":"reset"}')
@@ -282,6 +284,10 @@ else if state_kind=3 then
   write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-off"}')
 else if state_kind=4 then
   write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-fake"}')
+else if state_kind=5 then
+  write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-off"}')
+else if state_kind=6 then
+  write(umber_trace_file,'{"type":"name","value":"ordered-whatsit-on"}')
 else write(umber_trace_file,'{"type":"integer","value":',value:1,'}');
 write_ln(umber_trace_file,',"scope":"global"}}}');
 end;
@@ -295,7 +301,7 @@ write(umber_trace_file,
   '"key":{"type":"name","value":"pdfspacefont"},',
   '"value":{"type":"name","value":"');
 umber_trace_string_contents(value);
-write_ln(umber_trace_file,'"}}}');
+write_ln(umber_trace_file,'"},"scope":"global"}}}');
 end;
 @z
 

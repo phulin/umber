@@ -78,12 +78,16 @@ applicable.
 The backend-action row is partial because registration and retired-executor
 coverage do not establish canonical command-core coverage. The canonical
 `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, and
-`\pdfspacefont` are complete. pdftex.web §§1527 and 1594–1596 make the first
-three operand-free any-mode commands that append ordered whatsits, with their
-toggle or forced-space effect interpreted during shipout. Section 1599 makes
-`\pdfspacefont` an any-mode command that scans expanded general text and
-globally replaces the deferred fallback-font name. The remaining names must
-each reach the same canonical boundary before this row returns to done.
+`\pdfrunninglinkoff`, `\pdfrunninglinkon`, and `\pdfspacefont` are complete.
+pdftex.web §§1527 and 1594–1598 make the first five operand-free any-mode
+commands that append ordered whatsits, with their accessibility or
+continuation-link effect interpreted during shipout. The running-link policy
+starts enabled, persists across pages, and controls whether an open running
+link generates a continuation annotation when a matching nested hbox begins;
+the toggles neither open nor close links. Section 1599 makes `\pdfspacefont`
+an any-mode command that scans expanded general text and globally replaces
+the deferred fallback-font name. The remaining names must each reach the same
+canonical boundary before this row returns to done.
 
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in
