@@ -4131,6 +4131,11 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
             && inserted.transition == InputTransition::Recovery
             && inserted_recovery.kind == RecoveryKind::InsertedToken
     ));
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Missing } inserted.\n",
+        "TeX82 §1065 prints the terminal-and-log diagnostic exactly once before the inserted closer replays",
+    );
 
     observations.0.clear();
     assert_eq!(
@@ -4168,6 +4173,11 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
             && retirement.reason == InputReason::Recovery
             && diagnostic.diagnostic == "off_save_bottom_drop"
     ));
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Missing } inserted.\n\n! Extra \\endgroup.\n",
+        "TeX82 §§1065--1066 print one recovery diagnostic and one later bottom-level drop diagnostic",
+    );
 }
 
 #[test]

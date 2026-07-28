@@ -3286,7 +3286,6 @@ enum ScannedStep {
     EndSemiSimpleGroup,
     ExtraRightBrace,
     ExtraRightBraceEndsSemiSimpleGroup,
-    ExtraEndGroup,
     /// TeX82 §1186: the closing brace of a `math_group` opened by §1153's
     /// `push_math`, or §1174's `build_choices` closing a `math_choice_group`
     /// opened by §1172/§1174. Applying it only `unsave`s; the nested loop in
@@ -3703,26 +3702,7 @@ fn scan_alignment_delivery_step(
                 // A recovery-opened simple group is the bounded exception
                 // that TeX82 §1131 must close through `off_save` first.
                 if boxes.recovery_simple_group_open {
-                    let closer = match innermost_group {
-                        Some(GroupKind::MathShift) => tex_state::token::Token::Char {
-                            ch: '$',
-                            cat: Catcode::MathShift,
-                        },
-                        Some(GroupKind::SemiSimple) => {
-                            return Err(ExecError::MissingToken {
-                                context: "endgroup off_save replay",
-                            });
-                        }
-                        Some(_) => tex_state::token::Token::Char {
-                            ch: '}',
-                            cat: Catcode::EndGroup,
-                        },
-                        None => return Ok(ScannedStep::Continue),
-                    };
-                    processor
-                        .recover_endv_off_save(command, closer)
-                        .map_err(command_error)?;
-                    return Ok(ScannedStep::Continue);
+                    return scan_off_save(processor, command, innermost_group);
                 }
                 return Ok(ScannedStep::AlignmentCellFinish { alignment });
             }
@@ -4458,20 +4438,7 @@ fn scan_command(
             if !processor.has_control_sequence_spelling(&command, "endgroup") {
                 return Ok(ScannedStep::Continue);
             }
-            if innermost_group.is_none() {
-                processor.report_off_save_bottom_drop(&command);
-                return Ok(ScannedStep::ExtraEndGroup);
-            }
-            processor
-                .recover_off_save(
-                    command,
-                    &[Token::Char {
-                        ch: '}',
-                        cat: Catcode::EndGroup,
-                    }],
-                )
-                .map_err(command_error)?;
-            Ok(ScannedStep::Continue)
+            scan_off_save(processor, command, innermost_group)
         }
         // TeX82 §1094's `hmode+stop,...: head_for_vmode`. §1095's
         // unrestricted branch (`mode>0`) backs the stop up, then backs an
@@ -7493,7 +7460,6 @@ fn applied_mutation_observation(
         | ScannedStep::EndSemiSimpleGroup
         | ScannedStep::ExtraRightBrace
         | ScannedStep::ExtraRightBraceEndsSemiSimpleGroup
-        | ScannedStep::ExtraEndGroup
         | ScannedStep::OffSave(..)
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
@@ -9711,12 +9677,6 @@ fn apply_scanned_step(
                     context: "semi simple group right-brace recovery",
                 })?;
             schedule_aftergroup(command, stores, aftergroup)?;
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::ExtraEndGroup => {
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, "\n! Extra \\endgroup.\n");
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSave(message) => {
