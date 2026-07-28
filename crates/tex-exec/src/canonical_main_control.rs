@@ -5878,6 +5878,17 @@ fn scan_command(
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ScannedStep::Paragraph),
+        // TeX82 §1193 closes math only at `math_shift_group`; a `$` inside
+        // any nested math group first runs §1064's `off_save`, which inserts
+        // that group's required closer and retries this same shift.
+        Meaning::CharToken {
+            cat: Catcode::MathShift,
+            ..
+        } if matches!(mode, Mode::Math | Mode::DisplayMath)
+            && innermost_group != Some(GroupKind::MathShift) =>
+        {
+            scan_off_save(processor, command, innermost_group)
+        }
         Meaning::CharToken {
             cat: Catcode::MathShift,
             ..

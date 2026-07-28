@@ -8572,6 +8572,19 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 }
 
 #[test]
+fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\noindent${A$\end");
+    run_to_end(&mut control, &mut universe);
+    assert!(
+        terminal_text(&universe).contains("Missing } inserted"),
+        "the nested math group is closed before the shift is retried"
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+}
+
+#[test]
 fn canonical_interaction_mode_assignment_is_ungrouped() {
     // `interaction` is a plain global Pascal variable outside `eqtb`
     // (tex.web's globals), so `\batchmode` inside a group is never undone at
