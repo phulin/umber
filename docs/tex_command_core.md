@@ -569,6 +569,11 @@ that the processor already holds: its §73 `print_err` forwarding method opens
 the live `Universe` error report only for the duration of that report. Thus
 TeX82 scanner recovery text reaches the terminal/log channel without placing a
 host capability in command state, snapshots, formats, or summaries.
+Reports whose canonical `back_error` falls between message/help setup and
+§82's `error` may defer that report into an owned, selector-preserving value,
+perform the command-owned input backup, and resume it through the same
+`CommandContext`. This preserves §403's diagnostic/recovery ordering without
+retaining the live `Universe` borrow in command state.
 
 The integer scanner also owns TeX82 §442's backtick character-code form: its
 following token is delivered raw and interpreted from `cur_tok`, rather than

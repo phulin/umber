@@ -114,6 +114,26 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "missing-left-brace-recovery",
+      "property_id": "tex82.scanner.syntax",
+      "source": "missing-left-brace-recovery.tex",
+      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [403, 404] },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "Missing { inserted",
+          "A left brace was mandatory here, so I've put one in.",
+          "(If you're confused by all this, try typing `I}' now.)"
+        ]
+      },
+      "expected": [
+        "terminal-check:Missing { inserted=true",
+        "terminal-check:A left brace was mandatory here, so I've put one in.=true",
+        "terminal-check:(If you're confused by all this, try typing `I}' now.)=true"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "vacuous-dimension-units",
       "property_id": "tex82.scanner.dimension-prefix-fraction",
       "source": "vacuous-dimension-units.tex",

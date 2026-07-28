@@ -1416,8 +1416,8 @@ impl CommandProcessor<'_> {
                 // recovery are both observable.
                 _ => {
                     self.back_input(command)?;
-                    return Ok(match self.scan_left_brace(true) {
-                        Ok(opening) => MathFieldEpisode {
+                    return Ok(match self.scan_left_brace(true)? {
+                        crate::scan_toks::ScannedLeftBrace::Consumed(opening) => MathFieldEpisode {
                             body: MathFieldBody::OpenGroup,
                             provenance: StructuredProvenance {
                                 primary: opening.origin(),
@@ -1427,13 +1427,12 @@ impl CommandProcessor<'_> {
                         // left_brace`, so `push_math(math_group)` runs
                         // unconditionally; the rejected command is already
                         // backed up and opens the body.
-                        Err(CommandError::InputInvariant(_)) => MathFieldEpisode {
+                        crate::scan_toks::ScannedLeftBrace::Inserted => MathFieldEpisode {
                             body: MathFieldBody::OpenGroup,
                             provenance: StructuredProvenance {
                                 primary: OriginId::UNKNOWN,
                             },
                         },
-                        Err(error) => return Err(error),
                     });
                 }
             };
@@ -1458,11 +1457,10 @@ impl CommandProcessor<'_> {
     /// by `scan_left_brace` -- becomes the first thing the branch body
     /// reads. The returned flag reports only whether that recovery ran.
     pub fn scan_math_choice_group(&mut self) -> Result<bool, CommandError> {
-        match self.scan_left_brace(true) {
-            Ok(_) => Ok(false),
-            Err(CommandError::InputInvariant(_)) => Ok(true),
-            Err(error) => Err(error),
-        }
+        Ok(matches!(
+            self.scan_left_brace(true)?,
+            crate::scan_toks::ScannedLeftBrace::Inserted
+        ))
     }
 
     /// Completes a script marker and its field in one command-owned episode.
@@ -2359,11 +2357,8 @@ impl CommandProcessor<'_> {
     /// `scan_left_brace` has already performed that backup, so this returns
     /// on the same footing: the brace is accounted for either way.
     fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
-        match self.scan_left_brace(true) {
-            Ok(_) => Ok(()),
-            Err(CommandError::InputInvariant(_)) => Ok(()),
-            Err(error) => Err(error),
-        }
+        let _ = self.scan_left_brace(true)?;
+        Ok(())
     }
 
     /// Scans the `to`/`spread` clause of TeX82 §645's `scan_spec`.

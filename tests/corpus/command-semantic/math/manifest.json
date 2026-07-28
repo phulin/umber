@@ -47,7 +47,7 @@
         "command:mkern:99",
         "command:left_right:31",
         "command:left_right:31",
-        "artifact:706dd73ca4e7b38086cca0cf07a343fb27b5008b3b6fc86e4b847d1eddfd9f3c"
+        "artifact:2e05a78994d1d1eaecce5db40ff6d1d86d567435fe54cfa5eb7dffca12ad741b"
       ],
       "expectation": {
         "kind": "pass"
@@ -89,7 +89,7 @@
         "command:math_comp:18",
         "command:math_comp:18",
         "command:math_comp:19",
-        "artifact:680f703589d4043141353ef0924bb96ed22132b4a944e555e06edcf330c6ad99"
+        "artifact:d1acefb9f30e00bd64bf4b6acddf28b81c5c084123fcf52b7c178bb7cc14849c"
       ],
       "expectation": {
         "kind": "pass"
@@ -144,7 +144,7 @@
         "command:math_comp:17",
         "command:math_comp:17",
         "command:limit_switch:2",
-        "artifact:5e4e3c6398f55977d6c47b713b790f2f14c04af81255502cb937da8e28606999"
+        "artifact:08bbf6065058dfc0a71441c407300250e9e0c389b3c9de4634f7043d85daef7a"
       ],
       "expectation": {
         "kind": "pass"
@@ -179,7 +179,7 @@
         "command:math_comp:20",
         "command:math_comp:23",
         "command:math_comp:21",
-        "artifact:680f703589d4043141353ef0924bb96ed22132b4a944e555e06edcf330c6ad99"
+        "artifact:d1acefb9f30e00bd64bf4b6acddf28b81c5c084123fcf52b7c178bb7cc14849c"
       ],
       "expectation": {
         "kind": "pass"
@@ -320,7 +320,7 @@
         "command:math_style:4",
         "command:math_comp:17",
         "command:limit_switch:1",
-        "artifact:2a37a1229012706b3d22770ffcbea8370aebf92792df4b9961143727fd1231d1"
+        "artifact:7c487c427f25548b929d28323d6987a92b33d960e395e1b6cbf202dd7d26e925"
       ],
       "expectation": {
         "kind": "pass"
@@ -432,7 +432,7 @@
         "command:above:1",
         "command:mkern:99",
         "command:left_right:31",
-        "artifact:7197db6defb68d6bbf5a48fc002c8e2d608190297cd98fd146521b44714b0132"
+        "artifact:a532fc75454d9a66596fdf42b2d9bbfc6523ffc4e80bba575efc4a2050032f38"
       ],
       "expectation": {
         "kind": "pass"

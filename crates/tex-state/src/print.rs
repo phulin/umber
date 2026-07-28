@@ -246,6 +246,14 @@ pub struct ErrorReport<'a> {
     err_help: Option<String>,
 }
 
+/// An error report paused between tex.web's message/help setup and §82's
+/// `error`, allowing `back_error` to restore input in between.
+pub struct DeferredErrorReport {
+    selector: Selector,
+    help: Vec<String>,
+    err_help: Option<String>,
+}
+
 impl<'a> ErrorReport<'a> {
     fn begin(universe: &'a mut Universe, text: &str) -> Self {
         // tex.web §73: `print_nl("! "); print(#)`.
@@ -313,6 +321,17 @@ impl<'a> ErrorReport<'a> {
     pub fn use_err_help(&mut self, rendered: String) -> &mut Self {
         self.err_help = Some(rendered);
         self
+    }
+
+    /// Releases the live [`Universe`] borrow while retaining the report state
+    /// needed by §82's `error`.
+    #[must_use = "a deferred error report must be resumed and completed"]
+    pub fn defer(self) -> DeferredErrorReport {
+        DeferredErrorReport {
+            selector: self.printer.selector(),
+            help: self.help,
+            err_help: self.err_help,
+        }
     }
 
     /// tex.web §91's `int_error`.
@@ -536,6 +555,15 @@ impl Universe {
             printer: Printer::new(self, selector),
             help: Vec::new(),
             err_help: None,
+        }
+    }
+
+    /// Resumes a report paused by [`ErrorReport::defer`].
+    pub fn resume_error_report(&mut self, deferred: DeferredErrorReport) -> ErrorReport<'_> {
+        ErrorReport {
+            printer: Printer::new(self, deferred.selector),
+            help: deferred.help,
+            err_help: deferred.err_help,
         }
     }
 

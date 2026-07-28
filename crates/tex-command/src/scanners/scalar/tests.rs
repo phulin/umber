@@ -4140,6 +4140,8 @@ fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
 
     let mut universe = Universe::new();
     let macro_symbol = universe.intern("brace").symbol();
+    let relax = universe.intern("relax-before-brace").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
     let empty = universe.intern_token_list(&[]);
     let opening = Token::Char {
         ch: '{',
@@ -4152,40 +4154,56 @@ fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
     );
     let scanned = scan_with(
         &mut universe,
-        vec![char_token(' '), char_token(' '), Token::Cs(macro_symbol)],
+        vec![
+            char_token(' '),
+            Token::Cs(relax),
+            char_token(' '),
+            Token::Cs(macro_symbol),
+        ],
         |processor| {
             processor
                 .scan_left_brace(true)
                 .expect("expanded brace scans")
-                .meaning()
         },
     );
     assert!(matches!(
         scanned,
-        Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        }
+        crate::scan_toks::ScannedLeftBrace::Consumed(_)
     ));
 
     let mut universe = Universe::new();
-    let (recovered, following) = scan_with(&mut universe, vec![char_token('x')], |processor| {
-        let recovered = processor.scan_left_brace(true).is_err();
-        let following = processor
-            .get_x_token()
-            .expect("rejected token delivers")
-            .expect("rejected token remains")
-            .meaning();
-        (recovered, following)
-    });
+    let (recovered, following, align_state) =
+        scan_with(&mut universe, vec![char_token('x')], |processor| {
+            let recovered = matches!(
+                processor
+                    .scan_left_brace(true)
+                    .expect("missing brace recovers"),
+                crate::scan_toks::ScannedLeftBrace::Inserted
+            );
+            let following = processor
+                .get_x_token()
+                .expect("rejected token delivers")
+                .expect("rejected token remains")
+                .meaning();
+            (
+                recovered,
+                following,
+                processor.command.alignment.align_state,
+            )
+        });
     assert!(
         recovered,
         "the caller receives the mandatory-brace recovery boundary"
     );
     assert!(matches!(following, Meaning::CharToken { ch: 'x', .. }));
-
-    // TeX82's intervening `\relax` case remains owned by umber2-johp.209;
-    // do not make the current rejection into conformance evidence here.
+    assert_eq!(align_state, crate::processor::TOP_LEVEL_ALIGN_STATE + 1);
+    assert_eq!(
+        diagnostic_text(&universe),
+        "! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n\
+You might want to delete and/or insert some corrections\n\
+so that I will find a matching right brace soon.\n\
+(If you're confused by all this, try typing `I}' now.)\n\n"
+    );
 }
 
 #[test]

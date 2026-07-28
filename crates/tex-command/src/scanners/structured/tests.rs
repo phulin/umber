@@ -676,6 +676,10 @@ fn math_field_rejects_a_non_field_command_into_an_open_group() {
     };
 
     assert_eq!(field.body, MathFieldBody::OpenGroup);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+    );
     let next = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor

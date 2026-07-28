@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
+use tex_state::{EffectRecord, PrintSink, Universe};
 
 use super::*;
 use crate::input::{
@@ -49,6 +49,62 @@ fn push(command: &mut CommandState, tokens: Vec<Token>) {
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,
     );
+}
+
+fn diagnostic_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let scanned = processor
+        .scan_toks(ScanToksMode::General { expanded: false })
+        .expect("§403 recovery supplies the required opening brace");
+    assert_eq!(
+        processor
+            .state
+            .tokens(scanned.replacement_text.token_list()),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+    drop(processor);
+    assert!(diagnostic_text(&universe).starts_with("! Missing { inserted."));
 }
 
 #[test]
@@ -1002,19 +1058,19 @@ fn scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix() {
     );
     let mut missing_processor =
         processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-    assert!(
+    let recovered = missing_processor
+        .scan_toks(ScanToksMode::General { expanded: false })
+        .expect("§403 and runaway recovery complete the token list");
+    assert_eq!(
         missing_processor
-            .scan_toks(ScanToksMode::General { expanded: false })
-            .is_err()
+            .state
+            .tokens(recovered.replacement_text.token_list()),
+        &[Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        }],
+        "the backed-up offender is the first token of the inserted group"
     );
-    assert!(matches!(
-        missing_processor
-            .get_x_token()
-            .expect("missing-brace offender delivers")
-            .expect("missing-brace offender remains")
-            .meaning(),
-        Meaning::CharToken { ch: 'z', .. }
-    ));
 
     let the = install_expandable(&mut universe, "the-matrix", ExpandablePrimitive::The);
     let register = universe.intern("matrix-toks").symbol();

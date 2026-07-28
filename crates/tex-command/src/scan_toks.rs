@@ -50,6 +50,24 @@ pub(crate) struct ScannedToks {
     pub(crate) malformed_parameter: bool,
 }
 
+/// TeX82 §403's result after a mandatory left-brace scan.
+#[derive(Debug)]
+pub(crate) enum ScannedLeftBrace {
+    /// A real source or replay token supplied the brace.
+    Consumed(crate::CurrentCommand),
+    /// §403 inserted the brace after backing up the offending command.
+    Inserted,
+}
+
+impl ScannedLeftBrace {
+    fn origin(&self) -> OriginId {
+        match self {
+            Self::Consumed(command) => command.origin(),
+            Self::Inserted => OriginId::UNKNOWN,
+        }
+    }
+}
+
 struct ScannedParameterText {
     tokens: Vec<TracedTokenWord>,
     highest_parameter: u8,
@@ -194,10 +212,9 @@ impl CommandProcessor<'_> {
     }
 
     /// TeX82 §403's `scan_left_brace`, the one routine every mandatory
-    /// opening brace goes through.  On a non-brace it backs the rejected
-    /// command up, as §403's `back_error` does, and reports the failure so
-    /// the caller can apply §403's "behave as though a `{` had been read"
-    /// recovery where that recovery is observable.
+    /// opening brace goes through. On a non-brace it reports the exact §403
+    /// error, backs the rejected command up, installs the synthetic brace's
+    /// `align_state` contribution, and returns normally just as TeX does.
     ///
     /// §403 opens with §404's "Get the next non-blank non-relax non-call
     /// token" -- `repeat get_x_token until (cur_cmd<>spacer)and
@@ -209,7 +226,7 @@ impl CommandProcessor<'_> {
     pub(crate) fn scan_left_brace(
         &mut self,
         expanded: bool,
-    ) -> Result<crate::CurrentCommand, CommandError> {
+    ) -> Result<ScannedLeftBrace, CommandError> {
         loop {
             let command = if expanded {
                 self.get_x_token()?
@@ -226,10 +243,30 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
-                } => return Ok(command),
+                } => return Ok(ScannedLeftBrace::Consumed(command)),
                 _ => {
+                    let deferred = {
+                        let mut report = self.state.print_err("Missing { inserted");
+                        report.help(&[
+                            "A left brace was mandatory here, so I've put one in.",
+                            "You might want to delete and/or insert some corrections",
+                            "so that I will find a matching right brace soon.",
+                            "(If you're confused by all this, try typing `I}' now.)",
+                        ]);
+                        report.defer()
+                    };
+                    // §403's `back_error` is `back_input; error`: the message
+                    // and help are prepared above, then the rejected command
+                    // is restored before §82 appends the period and help.
                     self.back_input(command)?;
-                    return Err(CommandError::input_invariant());
+                    self.state.resume_error_report(deferred).error();
+                    // §403 assigns `cur_cmd=left_brace` and increments
+                    // `align_state` exactly as raw delivery of that synthetic
+                    // brace would have done. The token itself is not pushed:
+                    // the caller continues after it while the rejected command
+                    // remains first on the backed-up input level.
+                    self.command.alignment.align_state += 1;
+                    return Ok(ScannedLeftBrace::Inserted);
                 }
             }
         }

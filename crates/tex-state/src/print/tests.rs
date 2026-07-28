@@ -95,6 +95,26 @@ fn err_help_replaces_the_builtin_help_lines() {
 }
 
 #[test]
+fn deferred_error_report_preserves_message_selector_and_help() {
+    let mut universe = Universe::new();
+    universe.set_interaction_mode(InteractionMode::Nonstop);
+    let deferred = {
+        let mut report = universe.print_err("Missing { inserted");
+        report.help(&["brace help"]);
+        report.defer()
+    };
+    universe.printer().print("intervening recovery observation");
+    universe.resume_error_report(deferred).error();
+
+    let output = terminal_text(&universe);
+    assert!(
+        output.contains("! Missing { insertedintervening recovery observation."),
+        "{output}"
+    );
+    assert!(output.contains("brace help"), "{output}");
+}
+
+#[test]
 fn error_stop_mode_prompts_and_honors_the_scroll_answer() {
     let mut universe = Universe::new();
     universe

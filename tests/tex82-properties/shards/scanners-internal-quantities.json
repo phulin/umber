@@ -234,7 +234,7 @@
       ],
       "postconditions": [
         "Success consumes exactly the syntax accepted by the helper.",
-        "Failure leaves rejected input available in canonical replay order with align-state correction only for back_input."
+        "Missing-left-brace recovery leaves rejected input available in canonical replay order, emits the section 403 report, and accounts for the inserted brace in align_state."
       ],
       "equivalence_cases": [
         "Keyword letters with any character catcode and either ASCII case compare by character code.",
@@ -265,7 +265,33 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery"
+          "test": "scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery",
+          "cases": [
+            "spaces",
+            "macro call",
+            "valid-brace negative control",
+            "offender replay",
+            "inserted-brace align_state",
+            "exact diagnostic and help",
+            "umber2-johp.274"
+          ]
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
+          "test": "general_scan_toks_continues_after_section_403_inserted_left_brace"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/hyphenation/tests.rs",
+          "test": "hyphenation_data_continues_after_section_403_inserted_left_brace"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "math_field_rejects_a_non_field_command_into_an_open_group"
+        },
+        {
+          "path": "tests/corpus/command-semantic/scanners-internal-quantities/missing-left-brace-recovery.tex",
+          "test": "missing-left-brace-recovery",
+          "cases": ["bare INITEX other-category brace", "box group continuation", "terminal text"]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -284,15 +310,9 @@
           "test": "scanner_syntax_keyword_character_catcode_matrix_and_mu_error"
         }
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "scanner_syntax_mandatory_brace_skips_relax",
-          "cases": ["expanded relax", "unexpanded relax", "brace after relax", "umber2-johp.209"]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.209"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.internal-eqtb-token-sources",

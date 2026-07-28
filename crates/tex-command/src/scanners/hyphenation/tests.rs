@@ -90,6 +90,31 @@ fn hyphenation_data_scan_never_enters_absorbing() {
     );
 }
 
+#[test]
+fn hyphenation_data_continues_after_section_403_inserted_left_brace() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, "ab}");
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let scanned = processor
+        .scan_hyphenation_data(HyphenationDataKind::Exceptions)
+        .expect("inserted opener starts the exception list");
+
+    assert_eq!(words(&scanned), vec!["ab".to_owned()]);
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+}
+
 /// §961's `othercases` diagnoses a `left_brace` as "Bad \\patterns" and
 /// resumes the same loop, so the group has no nested levels: the next
 /// `right_brace` ends the scan even though a `{` was seen. Collecting this

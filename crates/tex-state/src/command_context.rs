@@ -40,6 +40,14 @@ impl CommandContext<'_> {
         self.universe.print_err(text)
     }
 
+    /// Resumes a scanner report around tex.web's intervening `back_error`.
+    pub fn resume_error_report(
+        &mut self,
+        deferred: crate::print::DeferredErrorReport,
+    ) -> crate::print::ErrorReport<'_> {
+        self.universe.resume_error_report(deferred)
+    }
+
     /// Registers immutable command input before its first source delivery.
     ///
     /// The command processor retains the backing and supplies the descriptor;
