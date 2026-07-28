@@ -1054,6 +1054,8 @@ fn identical_macro_definitions_get_distinct_definition_identity() {
             .macro_definition(first)
             .semantic_eq(stores.macro_definition(second))
     );
+    assert_eq!(stores.macro_definition_observation_operand(first), 249_985);
+    assert_eq!(stores.macro_definition_observation_operand(second), 249_983);
 }
 
 #[test]

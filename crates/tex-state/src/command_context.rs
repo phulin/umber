@@ -613,6 +613,13 @@ impl CommandContext<'_> {
         self.universe.macro_definition(definition)
     }
 
+    /// Returns TeX82's definition-head identity for detached observation.
+    #[must_use]
+    pub fn macro_definition_observation_operand(&self, definition: MacroDefinitionId) -> i64 {
+        self.universe
+            .macro_definition_observation_operand(definition)
+    }
+
     /// Reads the prevalidated parameter-marker layout for one macro definition.
     #[must_use]
     pub fn macro_definition_parameter_pattern(

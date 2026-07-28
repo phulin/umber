@@ -18,6 +18,7 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 pub struct CurrentCommand {
     spelling: TracedTokenWord,
     meaning: Meaning,
+    macro_observation_operand: Option<i64>,
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
@@ -210,9 +211,16 @@ impl CurrentCommand {
                     .unwrap_or(Meaning::Undefined),
             ),
         };
+        let macro_observation_operand = match meaning {
+            Meaning::Macro { definition, .. } => {
+                Some(state.macro_definition_observation_operand(definition))
+            }
+            _ => None,
+        };
         Self {
             spelling,
             meaning,
+            macro_observation_operand,
             identity: CommandIdentity::from_meaning(meaning),
             control_sequence,
             delivery,
@@ -280,6 +288,7 @@ impl CurrentCommand {
             ch: ' ',
             cat: Catcode::Space,
         };
+        self.macro_observation_operand = None;
         self.control_sequence = None;
         self.source_provenance = None;
         self.direct_source = false;
@@ -290,6 +299,7 @@ impl CurrentCommand {
     pub(crate) fn convert_to_end_template(&mut self) {
         self.meaning =
             Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate);
+        self.macro_observation_operand = None;
         self.control_sequence = None;
     }
 
@@ -303,6 +313,7 @@ impl CurrentCommand {
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
         self.meaning = Meaning::EndV;
+        self.macro_observation_operand = None;
         self.control_sequence = None;
         // The preceding tab/span/cr adjustment belongs to the intercepted
         // delimiter. TeX82 §343 replaces `cur_tok` with frozen end-v before
@@ -342,6 +353,11 @@ impl CurrentCommand {
     #[must_use]
     pub const fn meaning(&self) -> Meaning {
         self.meaning
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {
+        self.macro_observation_operand
     }
 
     /// Returns the control-sequence identity, if this spelling resolves via
@@ -406,6 +422,7 @@ impl CurrentCommand {
         Self {
             spelling: self.spelling,
             meaning: self.meaning,
+            macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,

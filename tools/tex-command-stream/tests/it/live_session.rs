@@ -200,3 +200,37 @@ fn command_source_location_and_provenance_are_retained() {
         })
     );
 }
+
+#[test]
+fn live_macro_command_retains_reference_operand() {
+    let mut translator = translator();
+    translator.translate_captured([CommandObservation::Command(CommandDeliveryRecord {
+        boundary: CommandDeliveryBoundary::Raw,
+        spelling: ObservedToken::ControlSequence("par".into()),
+        command: "outer_call".into(),
+        command_operand: Some(249_982),
+        provenance: CommandProvenance {
+            input_level: 1,
+            position: 0,
+            delivery_sequence: 0,
+            has_origin: true,
+            origin: OriginId::UNKNOWN,
+            source_range: None,
+            source_location: None,
+        },
+    })]);
+    let streams = translator
+        .finish(
+            header(),
+            LiveSessionOutcome::Failed {
+                diagnostic: "failure".into(),
+                detail: "after macro".into(),
+            },
+        )
+        .expect("stream");
+    let stream = ObservationStream::from_canonical_json_lines(&streams.diagnostic).expect("valid");
+    let Event::Command(command) = &stream.events[0].semantic else {
+        panic!("first event is command");
+    };
+    assert_eq!(command.command.operand, CanonicalValue::Integer(249_982));
+}

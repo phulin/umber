@@ -372,14 +372,6 @@ pub fn find_divergences(
 }
 
 /// Whether the two streams agree at one already-aligned position.
-///
-/// TeX82 records the `cur_chr` field for every raw command.  For a macro call
-/// that field is the mutable `def_ref` token-list address, rather than a
-/// semantic macro operand.  The command core intentionally replaces that
-/// allocator address with immutable macro-definition ownership, so the trace
-/// comparison projects this one reference-only field away.  Macro command
-/// kind and control-sequence spelling remain exact, and an observed macro
-/// call must likewise expose no operand.
 pub(crate) fn events_match(expected: Option<&Event>, actual: Option<&Event>) -> bool {
     match (expected, actual) {
         (Some(expected), Some(actual)) if macro_call_operand_is_reference(expected, actual) => true,
@@ -414,18 +406,13 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
         return false;
     };
 
-    is_macro_call_command(expected_command)
-        && expected_delivery == actual_delivery
+    matches!(
+        expected_command.as_str(),
+        "call" | "long_call" | "outer_call" | "long_outer_call"
+    ) && expected_delivery == actual_delivery
         && expected_command == actual_command
         && expected_control_sequence == actual_control_sequence
         && expected_location == actual_location
-}
-
-fn is_macro_call_command(command: &str) -> bool {
-    matches!(
-        command,
-        "call" | "long_call" | "outer_call" | "long_outer_call"
-    )
 }
 
 /// The identity half of an event: what makes two events *the same point* in the

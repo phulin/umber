@@ -2788,13 +2788,15 @@ implementation.
 
 The reference transport writes TeX's `cur_chr` for every command. For
 `call`, `long_call`, `outer_call`, and `long_outer_call`, that field is the
-mutable token-list reference (`def_ref`), not an operand in the macro
-meaning. The offline command-stream comparator therefore projects only that
-reference address to no operand: it still compares delivery boundary, call
-kind, control-sequence spelling, and location exactly. `tex-command` retains
-immutable macro definition identity and activation ownership instead of
-reintroducing a reference-engine allocation address; snapshots consequently
-remain allocation-independent.
+definition-head reference (`def_ref`). `tex-state` retains the corresponding
+definition-owned observation identity beside its immutable macro definition:
+`\let` aliases therefore expose the same operand, while separately scanned
+definitions expose distinct operands. The offline command-stream comparator
+retains its established reference-address projection because its isolated
+replay does not model unrelated TeX allocator traffic. The integrated TRIP
+observer does not apply that projection and compares the definition identity
+exactly. Runtime handles and snapshots remain independent of the detached
+observation value.
 
 The test-only stream adapter translates executor-committed meaning mutations
 using the assigned control-sequence key captured at that seam. It never

@@ -143,7 +143,7 @@
         "command:raw:cs:csname:cs_name:0",
         "command:raw:cs:endcsname:end_cs_name:0",
         "command:expanded:cs:endcsname:end_cs_name:0",
-        "command:raw:cs:made:call:-",
+        "command:raw:cs:made:call:249984",
         "macro:activate:made:0:"
       ],
       "expectation": {

@@ -650,6 +650,7 @@ fn decode_macros(
     let mut rows = Vec::with_capacity(count);
     let mut definitions = Vec::with_capacity(count);
     let mut patterns = Vec::with_capacity(count);
+    let mut observation_widths = Vec::with_capacity(count);
     for index in 0..count {
         let record = MACROS_HEADER + index * MACRO_RECORD;
         if bytes[record] & !0x0f != 0
@@ -681,10 +682,16 @@ fn decode_macros(
         patterns.push(MacroParameterPattern::from_tokens(
             tokens.get(parameter_text),
         ));
+        observation_widths.push(
+            u32::try_from(
+                1_usize + tokens.get(parameter_text).len() + tokens.get(replacement_text).len(),
+            )
+            .map_err(|_| StoreFormatError::Invalid("frozen macro observation width"))?,
+        );
         rows.push(row);
     }
-    let macros =
-        MacroStore::from_frozen(definitions, patterns).map_err(StoreFormatError::Invalid)?;
+    let macros = MacroStore::from_frozen(definitions, patterns, observation_widths)
+        .map_err(StoreFormatError::Invalid)?;
     Ok((macros, rows))
 }
 

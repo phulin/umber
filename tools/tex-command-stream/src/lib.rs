@@ -1012,6 +1012,7 @@ pub struct LiveSessionTranslator {
     alignment_nesting: AlignmentNesting,
     events: Vec<ObservedEvent>,
     geometry: bool,
+    preserve_macro_reference_operands: bool,
 }
 
 type Recorder = LiveSessionTranslator;
@@ -1047,6 +1048,7 @@ impl LiveSessionTranslator {
             alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
             geometry: schema == SchemaVersion::V2,
+            preserve_macro_reference_operands: false,
         }
     }
 
@@ -1060,6 +1062,7 @@ impl LiveSessionTranslator {
     ) -> Self {
         let next_registered_source = root.source.raw().saturating_add(1);
         let mut translator = Self::new(terminal_name, registered_inputs, schema);
+        translator.preserve_macro_reference_operands = true;
         translator.next_registered_source = next_registered_source;
         translator.activate_source(root.name, root.source, root.bytes);
         translator
@@ -1277,6 +1280,7 @@ impl CommandObserver for Recorder {
             Some(&source_line_starts),
             observation.clone(),
             &mut self.alignment_nesting,
+            self.preserve_macro_reference_operands,
         ));
         if let CommandObservation::Input(InputRecord {
             transition: InputTransition::Retire,
@@ -1296,6 +1300,7 @@ fn translate_observation(
     source_line_starts: Option<&[usize]>,
     observation: CommandObservation,
     alignment_nesting: &mut AlignmentNesting,
+    preserve_macro_reference_operands: bool,
 ) -> ObservedEvent {
     match observation {
         CommandObservation::Command(record) => {
@@ -1308,7 +1313,13 @@ fn translate_observation(
                 provenance.has_origin
             );
             let (mut operand, control_sequence) = command_token(&record.spelling);
-            if let Some(command_operand) = record.command_operand {
+            if let Some(command_operand) = record.command_operand
+                && (preserve_macro_reference_operands
+                    || !matches!(
+                        record.command.as_str(),
+                        "call" | "long_call" | "outer_call" | "long_outer_call"
+                    ))
+            {
                 operand = CanonicalValue::Integer(command_operand);
             }
             ObservedEvent::new(

@@ -622,8 +622,18 @@ impl Stores {
         }
         let parameter_pattern =
             MacroParameterPattern::from_tokens(self.tokens(macro_meaning.parameter_text()));
-        self.macros
-            .intern_with_provenance(macro_meaning, parameter_pattern, provenance)
+        let observation_width = u32::try_from(
+            1_usize
+                + self.tokens(macro_meaning.parameter_text()).len()
+                + self.tokens(macro_meaning.replacement_text()).len(),
+        )
+        .expect("macro token list length exceeds u32");
+        self.macros.intern_with_provenance(
+            macro_meaning,
+            parameter_pattern,
+            provenance,
+            observation_width,
+        )
     }
 
     /// Reads a live frozen macro definition.
@@ -631,6 +641,13 @@ impl Stores {
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.assert_live_macro_definition(id);
         self.macros.get(id)
+    }
+
+    /// Returns TeX82's definition-head identity for command observation.
+    #[must_use]
+    pub fn macro_definition_observation_operand(&self, id: MacroDefinitionId) -> i64 {
+        self.assert_live_macro_definition(id);
+        self.macros.observation_operand(id)
     }
 
     /// Reads the pre-parsed parameter structure for a live macro definition.

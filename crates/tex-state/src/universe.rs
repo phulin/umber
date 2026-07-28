@@ -4099,6 +4099,11 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn macro_definition_observation_operand(&self, id: MacroDefinitionId) -> i64 {
+        self.stores.macro_definition_observation_operand(id)
+    }
+
+    #[must_use]
     pub fn macro_definition_parameter_pattern(
         &self,
         id: MacroDefinitionId,

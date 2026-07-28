@@ -341,7 +341,9 @@ pub(crate) fn canonical_current_command_identity_for_profile(
 ) -> (String, Option<i64>) {
     match command.identity() {
         CommandIdentity::Ordinary => {
-            canonical_command_identity_for_profile(profile, command.meaning())
+            let (name, operand) =
+                canonical_command_identity_for_profile(profile, command.meaning());
+            (name, command.macro_observation_operand().or(operand))
         }
         // TeX82 §25 dispatches `\expandafter` through the dedicated
         // `expand_after` command with selector zero. The current command owns
@@ -772,6 +774,40 @@ mod tests {
             canonical_current_command_identity(&command),
             ("spacer".into(), Some(i64::from(u32::from(' '))))
         );
+    }
+
+    #[test]
+    fn macro_delivery_retains_definition_operand_across_aliases() {
+        let mut universe = tex_state::Universe::new();
+        let original = universe.intern("original").symbol();
+        let alias = universe.intern("alias").symbol();
+        let empty = universe.intern_token_list(&[]);
+        let definition = universe.intern_macro(tex_state::macro_store::MacroMeaning::new(
+            tex_state::meaning::MeaningFlags::OUTER,
+            empty,
+            empty,
+        ));
+        let meaning = Meaning::Macro {
+            flags: tex_state::meaning::MeaningFlags::OUTER,
+            definition,
+        };
+        universe.set_meaning(original, meaning);
+        universe.set_meaning(alias, meaning);
+
+        for symbol in [original, alias] {
+            let mut state = universe.command_context();
+            let command = CurrentCommand::resolve(
+                TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN),
+                DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            );
+            assert_eq!(
+                canonical_current_command_identity(&command),
+                ("outer_call".into(), Some(249_985))
+            );
+        }
     }
 
     #[test]

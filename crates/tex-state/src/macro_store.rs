@@ -190,6 +190,8 @@ pub struct MacroStore {
     definitions: Vec<MacroMeaning>,
     parameter_patterns: Vec<MacroParameterPattern>,
     provenance: Vec<Option<MacroDefinitionProvenance>>,
+    observation_operands: Vec<i64>,
+    observation_widths: Vec<u32>,
     identities: IdentityAllocator,
 }
 
@@ -199,6 +201,8 @@ impl Clone for MacroStore {
             definitions: self.definitions.clone(),
             parameter_patterns: self.parameter_patterns.clone(),
             provenance: self.provenance.clone(),
+            observation_operands: self.observation_operands.clone(),
+            observation_widths: self.observation_widths.clone(),
             identities: self.identities.fork(),
         }
     }
@@ -216,6 +220,8 @@ impl MacroStore {
             definitions: Vec::new(),
             parameter_patterns: Vec::new(),
             provenance: Vec::new(),
+            observation_operands: Vec::new(),
+            observation_widths: Vec::new(),
             identities: IdentityAllocator::new(0),
         }
     }
@@ -225,15 +231,21 @@ impl MacroStore {
     pub(crate) fn from_frozen(
         definitions: Vec<MacroMeaning>,
         parameter_patterns: Vec<MacroParameterPattern>,
+        observation_widths: Vec<u32>,
     ) -> Result<Self, &'static str> {
-        if definitions.len() != parameter_patterns.len() {
+        if definitions.len() != parameter_patterns.len()
+            || definitions.len() != observation_widths.len()
+        {
             return Err("frozen macro column length mismatch");
         }
         let count = u32::try_from(definitions.len()).map_err(|_| "frozen macro capacity")?;
+        let observation_operands = observation_operands(&observation_widths)?;
         Ok(Self {
             provenance: vec![None; definitions.len()],
             definitions,
             parameter_patterns,
+            observation_operands,
+            observation_widths,
             identities: IdentityAllocator::from_frozen_len(0, count),
         })
     }
@@ -243,6 +255,7 @@ impl MacroStore {
         meaning: MacroMeaning,
         parameter_pattern: MacroParameterPattern,
         provenance: Option<MacroDefinitionProvenance>,
+        observation_width: u32,
     ) -> MacroDefinitionId {
         let id = MacroDefinitionId::from_identity(
             self.identities
@@ -252,6 +265,20 @@ impl MacroStore {
         self.definitions.push(meaning);
         self.parameter_patterns.push(parameter_pattern);
         self.provenance.push(provenance);
+        // TeX82 §1221 installs §473's `def_ref` list head as the macro
+        // meaning's `equiv`, and §341 later exposes it as `cur_chr`. The
+        // instrumented TeX82 profile's first dynamic definition head is
+        // 249985; a frozen definition consumes its head plus its parameter
+        // and replacement tokens. Keep this detached compatibility identity
+        // beside the immutable definition so aliases share it without making
+        // a reference-engine address into a runtime handle.
+        let operand = self
+            .observation_operands
+            .last()
+            .zip(self.observation_widths.last())
+            .map_or(249_985, |(operand, width)| operand - i64::from(*width));
+        self.observation_operands.push(operand);
+        self.observation_widths.push(observation_width);
         id
     }
 
@@ -274,6 +301,12 @@ impl MacroStore {
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
         assert!(self.contains(id), "macro definition id is not live");
         self.provenance.get(id.raw() as usize).copied().flatten()
+    }
+
+    #[must_use]
+    pub(crate) fn observation_operand(&self, id: MacroDefinitionId) -> i64 {
+        assert!(self.contains(id), "macro definition id is not live");
+        self.observation_operands[id.raw() as usize]
     }
 
     #[must_use]
@@ -317,7 +350,21 @@ impl MacroStore {
         self.definitions.truncate(definitions);
         self.parameter_patterns.truncate(definitions);
         self.provenance.truncate(definitions);
+        self.observation_operands.truncate(definitions);
+        self.observation_widths.truncate(definitions);
     }
+}
+
+fn observation_operands(widths: &[u32]) -> Result<Vec<i64>, &'static str> {
+    let mut next = 249_985_i64;
+    let mut operands = Vec::with_capacity(widths.len());
+    for width in widths {
+        operands.push(next);
+        next = next
+            .checked_sub(i64::from(*width))
+            .ok_or("macro observation operand underflow")?;
+    }
+    Ok(operands)
 }
 
 fn u32_len(value: usize, message: &str) -> u32 {
