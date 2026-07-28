@@ -3468,6 +3468,12 @@ enum ScannedStep {
         )]
         mode: Mode,
     },
+    /// e-TeX 2.6 `etex.ch` [17.3623--3671]'s `\\showtokens`: command
+    /// processing has removed the compulsory braces and frozen the
+    /// unexpanded balanced interior. Replay owns only diagnostic rendering.
+    ShowTokens {
+        tokens: TracedTokenList,
+    },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
     BoxRegister {
@@ -5540,6 +5546,12 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowThe) => Ok(
             ScannedStep::DisplayDiagnostic(processor.scan_showthe().map_err(command_error)?),
         ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowTokens) => {
+            let text = processor.scan_showtokens().map_err(command_error)?;
+            Ok(ScannedStep::ShowTokens {
+                tokens: text.tokens,
+            })
+        }
         // TeX82 §1290's `any_mode(xray): show_whatever` puts every \show
         // family in every mode; §1293's `show_lists_code` case reads no
         // operand at all.
@@ -6175,6 +6187,7 @@ fn scan_unclassified_primitive(
         | P::ShowBox
         | P::ShowLists
         | P::ShowThe
+        | P::ShowTokens
         | P::SkewChar
         | P::Skip
         | P::SkipDef
@@ -6375,7 +6388,6 @@ fn scan_unclassified_primitive(
         | P::QuitVMode
         | P::ShowGroups
         | P::ShowIfs
-        | P::ShowTokens
         | P::SpaceFactor
         | P::SplitDiscards
         | P::VFil
@@ -7797,6 +7809,7 @@ fn applied_mutation_observation(
         | ScannedStep::DisplayDiagnostic(..)
         | ScannedStep::ShowBox { .. }
         | ScannedStep::ShowLists { .. }
+        | ScannedStep::ShowTokens { .. }
         | ScannedStep::VSplit(..)
         | ScannedStep::ImmediateExtension(..)
         | ScannedStep::BoxRegister { .. }
@@ -8005,6 +8018,18 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
             kind: "message",
             detail: replay_text(stores.tokens(tokens.token_list())),
             tokens: None,
+        }),
+        ScannedStep::ShowTokens { tokens } => Some(EffectRecord {
+            kind: "showtokens",
+            detail: message_text(stores, tokens.token_list()),
+            tokens: Some(
+                stores
+                    .tokens(tokens.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores))
+                    .collect(),
+            ),
         }),
         ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
             Some(EffectRecord {
@@ -9766,6 +9791,15 @@ fn apply_scanned_step(
         }
         ScannedStep::ShowLists { .. } => {
             crate::diagnostics::execute_showlists(stores, modes);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ShowTokens { tokens } => {
+            // e-TeX's odd xray modifier reaches `the_toks`, then TeX82
+            // §1297 prints `token_show(temp_head)` and takes the common
+            // `\show` completion path.
+            let text = message_text(stores, tokens.token_list());
+            stores.printer().print(&format!("\n> {text}"));
+            crate::diagnostics::complete_show(stores, false);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {

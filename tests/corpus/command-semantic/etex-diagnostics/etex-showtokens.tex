@@ -1,0 +1,6 @@
+\nonstopmode
+\catcode123=1 \catcode125=2 \catcode35=6
+\def\boom{\global\count7=99}
+\showtokens{A {B} \boom ##  x}
+\global\count0=1
+\end

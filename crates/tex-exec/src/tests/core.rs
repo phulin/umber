@@ -5049,6 +5049,69 @@ pub(super) fn run_canonical_tex82(source: &str) -> Universe {
     panic!("canonical source did not terminate");
 }
 
+fn run_canonical_etex(source: &str) -> Universe {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical e-TeX source");
+    for _ in 0..1024 {
+        if control.step(&mut stores).expect("canonical e-TeX step") == MainControlStep::End {
+            return stores;
+        }
+    }
+    panic!("canonical e-TeX source did not terminate");
+}
+
+#[test]
+fn canonical_showtokens_scans_unexpanded_balanced_general_text() {
+    // e-TeX 2.6 etex.ch [17.3623--3671] uses scan_general_text, then the
+    // TeX82 §1297 token_show/common-ending diagnostic path.
+    let stores = run_canonical_etex(
+        r"\nonstopmode
+          \def\boom{\global\count7=99}\def~{\global\count8=99}
+          \showtokens{A {B} \boom ~ ##  x}
+          \global\count0=1\end",
+    );
+    let terminal = terminal_effect_text(&stores);
+    assert!(terminal.contains("> A {B} \\boom ~ #### x."), "{terminal}");
+    assert_eq!(
+        stores.count(0),
+        1,
+        "execution continues after the diagnostic"
+    );
+    assert_eq!(stores.count(7), 0, "control sequences remain unexpanded");
+    assert_eq!(stores.count(8), 0, "active characters remain unexpanded");
+}
+
+#[test]
+fn canonical_showtokens_is_mode_independent_and_rejects_prefixes_without_mutation() {
+    let stores = run_canonical_etex(
+        r"\nonstopmode
+          \showtokens{V}
+          \setbox0=\hbox{\showtokens{H}}
+          $\showtokens{M}$
+          \global\showtokens{P}
+          \global\count0=1\end",
+    );
+    let terminal = terminal_effect_text(&stores);
+    for rendered in ["> V.", "> H.", "> M."] {
+        assert!(
+            terminal.contains(rendered),
+            "missing {rendered:?}: {terminal}"
+        );
+    }
+    assert!(
+        terminal.contains("You can't use a prefix with `\\showtokens'"),
+        "{terminal}"
+    );
+    assert_eq!(stores.count(0), 1);
+}
+
 #[test]
 fn canonical_named_register_aliases_match_primitive_assignments() {
     let stores = run_canonical_tex82(

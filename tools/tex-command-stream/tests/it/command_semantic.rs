@@ -113,6 +113,7 @@ enum ProjectionKind {
 enum SessionProfile {
     #[default]
     Initex,
+    EtexInitex,
     Production,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -628,6 +629,11 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     }
     let mut control = match case.profile {
         SessionProfile::Initex => CanonicalMainControl::tex82_initex(&mut universe),
+        SessionProfile::EtexInitex => {
+            let control = CanonicalMainControl::tex82_initex(&mut universe);
+            tex_exec::install_etex_unexpandable_primitives(&mut universe);
+            control
+        }
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
             CanonicalMainControl::new()

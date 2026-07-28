@@ -2262,6 +2262,15 @@ impl CommandProcessor<'_> {
         })
     }
 
+    /// Scans e-TeX 2.6 `etex.ch` [17.3623--3660]'s unexpanded general text
+    /// operand for `\\showtokens`.
+    ///
+    /// The compulsory braces are removed and the balanced interior is
+    /// retained verbatim; expansion is never entered.
+    pub fn scan_showtokens(&mut self) -> Result<ScannedBalancedText, CommandError> {
+        self.scan_balanced_text(false)
+    }
+
     /// TeX82 §46's expanded box-register scan for `\\showbox`.
     pub fn scan_showbox(&mut self) -> Result<(i32, StructuredProvenance), CommandError> {
         let index = self.scan_integer()?;
