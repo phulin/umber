@@ -2,7 +2,7 @@ use super::*;
 
 use std::sync::Arc;
 
-use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_command::{CommandObservation, CommandObserver, RegisteredSourceKind, SourceRegistration};
 use tex_out::{EffectSink, PageArtifact, PageEffect, PageNode};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, LeaderPayload, Node, Sign, Whatsit};
 use tex_state::scaled::{GlueSetRatio, Scaled};
@@ -37,6 +37,43 @@ fn run_source(source: &[u8]) -> Universe {
     register_source(&mut control, source);
     run_to_end(&mut control, &mut stores);
     stores
+}
+
+#[derive(Default)]
+struct ObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for ObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+fn observed_effects(source: &[u8]) -> Vec<(String, String)> {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut stores);
+    let mut observer = ObservationRecorder::default();
+    register_source(&mut control, source);
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observer)
+            .expect("observed effect command executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observer
+        .0
+        .into_iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Effect(effect)
+                if matches!(effect.kind, "open" | "close" | "shipout") =>
+            {
+                Some((effect.kind.into(), effect.detail))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn last_artifact(stores: &Universe) -> PageArtifact {
@@ -220,6 +257,54 @@ fn immediate_recognized_default_extension_and_unrecognized_backup_paths_match_te
             && text == "ready\n"
             && *close_slot == StreamSlot::new(2)
     ));
+}
+
+#[test]
+fn immediate_and_deferred_stream_effects_share_commit_order_and_identity() {
+    let immediate = observed_effects(br"\immediate\openout2=trace\immediate\closeout2");
+    assert_eq!(
+        immediate,
+        [
+            ("open".into(), "stream:2\0trace.tex".into()),
+            ("close".into(), "stream:2\0".into()),
+        ]
+    );
+
+    let deferred = observed_effects(br"\shipout\hbox{\openout2=trace\closeout2}");
+    assert_eq!(
+        deferred,
+        [
+            ("open".into(), "stream:2\0trace.tex".into()),
+            ("close".into(), "stream:2\0".into()),
+            ("shipout".into(), "dvi\0".to_owned() + "1"),
+        ]
+    );
+}
+
+#[test]
+fn closed_and_normalized_output_selectors_publish_no_close_effect() {
+    assert!(observed_effects(br"\immediate\closeout2").is_empty());
+    assert!(observed_effects(br"\immediate\closeout16\immediate\closeout17").is_empty());
+    assert_eq!(
+        observed_effects(br"\shipout\hbox{\closeout2\closeout16\closeout17}"),
+        [("shipout".into(), "dvi\0".to_owned() + "1")]
+    );
+}
+
+#[test]
+fn each_real_stream_transition_is_observed_exactly_once() {
+    assert_eq!(
+        observed_effects(
+            br"\immediate\openout3=first\immediate\closeout3\immediate\closeout3\shipout\hbox{\openout3=second\closeout3\closeout3}",
+        ),
+        [
+            ("open".into(), "stream:3\0first.tex".into()),
+            ("close".into(), "stream:3\0".into()),
+            ("open".into(), "stream:3\0second.tex".into()),
+            ("close".into(), "stream:3\0".into()),
+            ("shipout".into(), "dvi\0".to_owned() + "1"),
+        ]
+    );
 }
 
 #[test]

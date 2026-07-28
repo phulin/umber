@@ -1038,6 +1038,8 @@ impl CanonicalMainControl {
         &mut self,
         applied: Result<ReplayStep, ExecError>,
         artifact_count: usize,
+        _effect_count: usize,
+        _prepared_page_count: usize,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         let applied = match applied {
@@ -1071,6 +1073,16 @@ impl CanonicalMainControl {
                     committed_shipout_observations(artifact_count, stores)
                         .into_iter()
                         .map(CommandObservation::Effect),
+                );
+                records.extend(
+                    committed_stream_effect_observations(
+                        _effect_count,
+                        _prepared_page_count,
+                        stores,
+                        &self.prepared_dvi_pages,
+                    )
+                    .into_iter()
+                    .map(CommandObservation::Effect),
                 );
                 records.append(&mut self.page_output_observations);
                 self.observe_committed(records);
@@ -1256,9 +1268,17 @@ impl CanonicalMainControl {
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
+        let effect_count = stores.world().effect_records().len();
+        let prepared_page_count = self.prepared_dvi_pages.len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
-                return self.finish_host_owned_step(applied, artifact_count, stores);
+                return self.finish_host_owned_step(
+                    applied,
+                    artifact_count,
+                    effect_count,
+                    prepared_page_count,
+                    stores,
+                );
             }
             ControlFlow::Continue(scanned) => scanned,
         };
@@ -2260,9 +2280,17 @@ impl CanonicalMainControl {
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
+        let effect_count = stores.world().effect_records().len();
+        let prepared_page_count = self.prepared_dvi_pages.len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
-                return self.finish_host_owned_step(applied, artifact_count, stores);
+                return self.finish_host_owned_step(
+                    applied,
+                    artifact_count,
+                    effect_count,
+                    prepared_page_count,
+                    stores,
+                );
             }
             ControlFlow::Continue(scanned) => scanned,
         };
@@ -2353,6 +2381,12 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(CommandObservation::Input),
             );
+            let effects = committed_stream_effect_observations(
+                effect_count,
+                prepared_page_count,
+                stores,
+                &self.prepared_dvi_pages,
+            );
             let effect = applied_effect_observation(&scanned, stores);
             if suspends_alignment
                 && let Some(alignment) = self.command.alignment_suspend_observation()
@@ -2404,6 +2438,7 @@ impl CanonicalMainControl {
             if let Some(effect) = effect {
                 records.push(CommandObservation::Effect(effect));
             }
+            records.extend(effects.into_iter().map(CommandObservation::Effect));
             for shipout in committed_shipout_observations(artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
@@ -7650,6 +7685,49 @@ fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<Effec
         .collect()
 }
 
+/// TeX82 §1374 performs open/close effects in `out_what`, whether §1375
+/// reached it immediately or a whatsit reached it during later shipout.
+/// Observe the committed `tex_state::EffectRecord` delta, not the command
+/// spelling, so both entry paths publish the same ordered event exactly once.
+#[cfg(any(test, feature = "instrumentation"))]
+fn committed_stream_effect_observations(
+    before: usize,
+    prepared_before: usize,
+    stores: &Universe,
+    prepared_pages: &[crate::dispatch::PreparedDviPage],
+) -> Vec<EffectRecord> {
+    let shipped = &prepared_pages[prepared_before..];
+    let direct = stores
+        .world()
+        .effect_records()
+        .get(before..)
+        .unwrap_or_default();
+    let records: Box<dyn Iterator<Item = &tex_state::EffectRecord> + '_> = if shipped.is_empty() {
+        Box::new(direct.iter())
+    } else {
+        Box::new(
+            shipped
+                .iter()
+                .flat_map(|page| page.committed_effects.iter()),
+        )
+    };
+    records
+        .filter_map(|record| match record {
+            tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
+                kind: "open",
+                detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+                tokens: None,
+            }),
+            tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
+                kind: "close",
+                detail: format!("stream:{}\0", slot.raw()),
+                tokens: None,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
@@ -7678,36 +7756,6 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                         .collect(),
                 ),
             })
-        }
-        ScannedStep::ImmediateExtension(ImmediateExtension::OpenOut { .. }) => {
-            match stores.world().effect_records().last()? {
-                tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
-                    kind: "open",
-                    detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
-                    tokens: None,
-                }),
-                _ => None,
-            }
-        }
-        ScannedStep::ImmediateExtension(ImmediateExtension::CloseOut { .. }) => {
-            match stores.world().effect_records().last()? {
-                // The channel is the stream, exactly as `umber_trace_effect`
-                // reports it for every non-terminal, non-DVI effect kind; the
-                // `\0` separates channel from detail and must be present even
-                // when a close carries no detail (`umber2-johp.141`).
-                //
-                // A close carries no detail because TeX82 §1374 closes
-                // `write_file[j]` without naming it: only its open branch
-                // assigns `cur_name`/`cur_area`/`cur_ext`, and §1378 closes
-                // any surviving stream the same way. The stream number is the
-                // whole committed identity (`umber2-johp.189`).
-                tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
-                    kind: "close",
-                    detail: format!("stream:{}\0", slot.raw()),
-                    tokens: None,
-                }),
-                _ => None,
-            }
         }
         // TeX82 §1335's `final_cleanup` and §1333's
         // `close_files_and_terminate` run once `its_all_over` has returned

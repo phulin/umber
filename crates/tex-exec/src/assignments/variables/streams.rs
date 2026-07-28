@@ -83,7 +83,9 @@ pub(in crate::assignments) fn execute_immediate_stream_command(
             let name = scan_file_name(input, stores, execution, "\\openout")?;
             stores.world_mut().open_out(slot, openout_target(name));
         }
-        UnexpandablePrimitive::CloseOut => stores.world_mut().close_out(slot),
+        UnexpandablePrimitive::CloseOut => {
+            stores.world_mut().close_out(slot);
+        }
         _ => unreachable!("caller restricts immediate stream primitive"),
     }
     Ok(())

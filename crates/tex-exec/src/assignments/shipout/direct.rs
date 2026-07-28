@@ -994,9 +994,10 @@ fn anchor_for_whatsit(
 ) -> Result<Option<u32>, ExecError> {
     let anchored = match whatsit {
         Whatsit::Language { .. } | Whatsit::PdfReferenceObject { .. } => false,
-        Whatsit::OpenOut { .. } | Whatsit::CloseOut { .. } | Whatsit::DeferredWrite { .. } => {
-            !suppress_deferred_streams
-        }
+        Whatsit::CloseOut { slot: None } => false,
+        Whatsit::OpenOut { .. }
+        | Whatsit::CloseOut { slot: Some(_) }
+        | Whatsit::DeferredWrite { .. } => !suppress_deferred_streams,
         Whatsit::Special { .. }
         | Whatsit::PdfAccessibility(_)
         | Whatsit::PdfAnnotation { .. }

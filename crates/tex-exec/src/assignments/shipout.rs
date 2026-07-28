@@ -123,7 +123,11 @@ pub(crate) fn shipout_node_with_input_summary(
                     .bytes(),
             )
             .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-            return Ok(Some(PreparedDviPage { hash, plan }));
+            return Ok(Some(PreparedDviPage {
+                hash,
+                plan,
+                committed_effects: Box::new([]),
+            }));
         }
         stores.record_pure_memo_timing(
             PureMemoLayer::Shipout,
@@ -135,6 +139,9 @@ pub(crate) fn shipout_node_with_input_summary(
     let effect_start = stores.world().effect_records().len();
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(node, input_summary, &mut transaction, execution)?;
+    let committed_effects = transaction.world().effect_records()[effect_start..]
+        .to_vec()
+        .into_boxed_slice();
     let retained_diagnostics = staged.retained_diagnostics.clone();
     let memo_payload =
         (key.is_some() && !staged.artifact.has_deferred_render_origins()).then(|| {
@@ -174,7 +181,11 @@ pub(crate) fn shipout_node_with_input_summary(
             },
         );
     }
-    Ok(staged.dvi_plan.map(|plan| PreparedDviPage { hash, plan }))
+    Ok(staged.dvi_plan.map(|plan| PreparedDviPage {
+        hash,
+        plan,
+        committed_effects,
+    }))
 }
 
 pub(super) fn stage_pdf_form(

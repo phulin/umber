@@ -2498,10 +2498,19 @@ impl World {
         self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
-    pub fn close_out(&mut self, slot: StreamSlot) {
+    /// Closes an open numbered output stream.
+    ///
+    /// TeX82 §1374 tests `write_open[j]` before closing the file. A close of
+    /// a never-opened stream therefore has no host effect and records no
+    /// [`EffectRecord::StreamClose`].
+    pub fn close_out(&mut self, slot: StreamSlot) -> bool {
+        if self.stream_bufs().write_streams[slot.index()].is_none() {
+            return false;
+        }
         self.append_effect(EffectRecord::StreamClose { slot });
         self.stream_bufs_mut().write_streams[slot.index()] = None;
         self.stream_bufs_mut().partial_lines[slot.index()].clear();
+        true
     }
 
     /// Buffers routed output as a deferred effect record.

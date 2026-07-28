@@ -1651,6 +1651,25 @@
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "out_what_leader_suppression_and_open_retry_recovery_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "immediate_and_deferred_stream_effects_share_commit_order_and_identity"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "closed_and_normalized_output_selectors_publish_no_close_effect"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "each_real_stream_transition_is_observed_exactly_once"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "page-output/open-close-effect-observation"
+          ]
         }
       ],
       "status": "gap",

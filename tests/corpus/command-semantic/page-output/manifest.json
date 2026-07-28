@@ -24,6 +24,27 @@
         "box:0/0/0:whatsit"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "open-close-effect-observation",
+      "property_id": "tex82.effects.open-write-close-dispatch",
+      "source": "open-close-effect-observation.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1342, 1373, 1374, 1375]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["effect"]
+      },
+      "expected": [
+        "effect:open:stream:3\u0000deferred.tex",
+        "effect:close:stream:3\u0000",
+        "effect:shipout:dvi\u00001",
+        "effect:terminate:engine\u0000"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

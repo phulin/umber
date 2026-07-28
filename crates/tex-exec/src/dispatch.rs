@@ -40,6 +40,7 @@ pub enum DispatchAction {
 pub struct PreparedDviPage {
     pub(crate) hash: ContentHash,
     pub(crate) plan: DviPagePlan,
+    pub(crate) committed_effects: Box<[tex_state::EffectRecord]>,
 }
 
 impl PreparedDviPage {
