@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_oracle::ObservationStream;
+use tex_oracle::{
+    CanonicalCommand, CanonicalValue, CommandEvent, Event, NormalizedEvent, ObservationStream,
+};
 
 const ARTIFACT_NAME: &str = "trip-triage-v1.txt";
 const ARTIFACT_LIMIT: usize = 8 * 1024;
@@ -170,7 +172,7 @@ fn event_divergence(
                 .events
                 .iter()
                 .zip(&actual.events)
-                .position(|(left, right)| left != right);
+                .position(|(left, right)| !trip_events_match(channel, left, right));
             let index = index.or_else(|| {
                 (expected.events.len() != actual.events.len())
                     .then_some(expected.events.len().min(actual.events.len()))
@@ -185,6 +187,61 @@ fn event_divergence(
             }))
         }
     }
+}
+
+/// Compares canonical events after removing TeX's allocation-only macro
+/// operand.
+///
+/// TeX82 §382 installs `def_ref` as a macro's `equiv`, so `get_next` exposes
+/// that mutable token-list address as `cur_chr` on a `call`. Umber retains
+/// immutable macro-definition ownership instead and deliberately emits no
+/// allocator identity. The differential tracer applies this same projection;
+/// the integrated two-phase TRIP comparator must not invent a semantic
+/// mismatch from the reference engine's memory address.
+fn trip_events_match(channel: &str, expected: &NormalizedEvent, actual: &NormalizedEvent) -> bool {
+    expected == actual
+        || (channel == "command_events"
+            && expected.sequence == actual.sequence
+            && macro_call_operand_is_reference(&expected.semantic, &actual.semantic))
+}
+
+fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    let (
+        Event::Command(CommandEvent {
+            delivery: expected_delivery,
+            command:
+                CanonicalCommand {
+                    command: expected_command,
+                    operand: CanonicalValue::Integer(_),
+                    control_sequence: expected_control_sequence,
+                    location: expected_location,
+                },
+        }),
+        Event::Command(CommandEvent {
+            delivery: actual_delivery,
+            command:
+                CanonicalCommand {
+                    command: actual_command,
+                    operand: actual_operand,
+                    control_sequence: actual_control_sequence,
+                    location: actual_location,
+                },
+        }),
+    ) = (expected, actual)
+    else {
+        return false;
+    };
+
+    matches!(
+        actual_operand,
+        CanonicalValue::Integer(_) | CanonicalValue::None
+    ) && matches!(
+        expected_command.as_str(),
+        "call" | "long_call" | "outer_call" | "long_outer_call"
+    ) && expected_delivery == actual_delivery
+        && expected_command == actual_command
+        && expected_control_sequence == actual_control_sequence
+        && expected_location == actual_location
 }
 
 fn byte_divergence(channel: &'static str, expected: &[u8], actual: &[u8]) -> Option<Divergence> {
@@ -445,6 +502,27 @@ mod tests {
         out
     }
 
+    fn macro_command_events(operand: CanonicalValue) -> Vec<u8> {
+        let mut normalizer = Normalizer::new();
+        let event = Event::Command(CommandEvent {
+            delivery: tex_oracle::CommandDelivery::Raw,
+            command: CanonicalCommand {
+                command: "call".into(),
+                operand,
+                control_sequence: Some("probe".into()),
+                location: None,
+            },
+        });
+        let mut out = format!(
+            "{{\"schema\":{SCHEMA_VERSION},\"manifest\":\"{}\"}}\n",
+            "a".repeat(64)
+        )
+        .into_bytes();
+        out.extend_from_slice(&serde_json::to_vec(&normalizer.normalize(event)).expect("event"));
+        out.push(b'\n');
+        out
+    }
+
     fn dvi(comment: &[u8], body: &[u8]) -> Vec<u8> {
         let mut out = vec![247, 2];
         out.extend_from_slice(&25_400_000i32.to_be_bytes());
@@ -541,6 +619,35 @@ mod tests {
                 .is_none()
         );
         assert!(!temp.path().join("trip").join(ARTIFACT_NAME).exists());
+    }
+
+    #[test]
+    fn macro_call_def_ref_is_not_a_semantic_trip_divergence() {
+        // TeX82 §382 stores the allocator-owned `def_ref` address as the
+        // macro's `equiv`; Umber's immutable macro identity has no integer
+        // operand. Both still describe the same raw `call`.
+        let temp = tempfile::tempdir().expect("temp");
+        let reference = macro_command_events(CanonicalValue::Integer(249_985));
+        for operand in [CanonicalValue::Integer(249_984), CanonicalValue::None] {
+            let actual = macro_command_events(operand);
+            let expected = TripTriageChannels {
+                command_events: Some(&reference),
+                geometry_events: None,
+                transcript: b"same",
+                log: b"same",
+                dvi: None,
+            };
+            let actual = TripTriageChannels {
+                command_events: Some(&actual),
+                ..expected
+            };
+
+            assert!(
+                write_trip_triage_artifact(temp.path(), input(expected, actual))
+                    .expect("comparison")
+                    .is_none()
+            );
+        }
     }
 
     #[test]
