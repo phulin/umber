@@ -236,6 +236,66 @@ fn direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector() {
 }
 
 #[test]
+fn unexpanded_expands_scan_general_text_opener_before_copying_raw_body() {
+    // e-TeX 2.6 etex.ch [27.465] implements `\unexpanded` through
+    // `scan_general_text`. Its opener uses §403's expanded fetch, so the
+    // e-TRIP idiom `\unexpanded\expandafter{...}` reaches the brace before
+    // switching to raw balanced-text collection.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let unexpanded =
+        install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+    let expandafter = install_expandable(
+        &mut universe,
+        "expandafter",
+        ExpandablePrimitive::ExpandAfter,
+    );
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(unexpanded),
+            Token::Cs(expandafter),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let scanned = processor
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("expanded opener reaches the raw balanced text");
+    assert_eq!(
+        processor
+            .state
+            .tokens(scanned.replacement_text.token_list()),
+        &[Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
 fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

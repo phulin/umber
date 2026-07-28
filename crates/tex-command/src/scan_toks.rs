@@ -574,7 +574,12 @@ impl CommandProcessor<'_> {
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
     fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
-        let _ = self.scan_left_brace(false)?;
+        // e-TeX 2.6 etex.ch [27.465] routes `\unexpanded` through
+        // `scan_general_text`: its opening brace is fetched by §403's
+        // expanded nonblank/non-relax loop, even though the balanced text
+        // after that brace is copied raw. This distinction is what makes
+        // `\unexpanded\expandafter{...}` legal.
+        let _ = self.scan_left_brace(true)?;
         let raw = self.collect_replacement(false, None)?;
         output.extend(raw);
         self.command.expansion.cumulative_expansions =
