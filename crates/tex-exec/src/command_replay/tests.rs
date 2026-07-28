@@ -4349,23 +4349,27 @@ fn simple_group_ancestor_does_not_close_nested_output_box() {
 
 #[test]
 fn hrule_contributes_to_outer_page_before_final_shipout() {
-    // TeX82 §1095 puts a vertical-mode \hrule directly on the current page;
-    // it must not remain stranded on the mode-nest list until job cleanup.
+    // TeX82 §1056 puts a vertical-mode \hrule on the contribution list
+    // without calling build_page. It must remain there until a later explicit
+    // page-builder visit, then reach final shipout rather than staying
+    // stranded on the mode nest.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\hrule height1pt width2pt");
+    register_source(&mut control, br"\hrule height1pt width2pt\end");
 
     assert_eq!(
         control.step(&mut universe).expect("hrule executes"),
         ReplayStep::Continue
     );
     assert!(matches!(
-        universe.current_page_nodes().as_slice(),
-        [.., Node::Rule { width, height, depth }]
+        universe.page_contribution_front(),
+        Some(Node::Rule { width, height, depth })
             if *width == Some(Scaled::from_raw(2 * Scaled::UNITY))
                 && *height == Some(Scaled::from_raw(Scaled::UNITY))
                 && *depth == Some(Scaled::from_raw(0))
     ));
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(universe.world().artifact_commits().len(), 1);
 }
 
 #[test]
