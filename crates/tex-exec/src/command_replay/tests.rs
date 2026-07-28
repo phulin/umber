@@ -101,7 +101,7 @@ fn terminal_text(universe: &Universe) -> String {
 }
 
 fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
-    const CMR10: &[u8] = include_bytes!("../../../../third_party/trip/trip.tfm");
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     universe
         .world_mut()
         .set_memory_file("cmr10.tfm", CMR10.to_vec())
