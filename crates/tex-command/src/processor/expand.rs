@@ -356,7 +356,10 @@ impl CommandProcessor<'_> {
     #[cfg(any(test, feature = "instrumentation"))]
     pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
-            crate::observation::canonical_current_command_identity(command);
+            crate::observation::canonical_current_command_identity_for_profile(
+                self.command.profile(),
+                command,
+            );
         let spelling = self.observed_command_spelling(command);
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Expanded,

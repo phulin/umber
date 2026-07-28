@@ -11,6 +11,7 @@
 use tex_state::meaning::Meaning;
 
 use crate::command::{CommandIdentity, CurrentCommand};
+use crate::profile::CommandProfile;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceLocation, SourceNameClass, SourceProvenance, SourceRange};
@@ -20,6 +21,7 @@ mod primitive_identity;
 mod variable_identity;
 use canonical_names::character_command_name;
 use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
+pub use variable_identity::parameter_mutation_key_for_dialect;
 pub use variable_identity::{ParameterClass, parameter_mutation_key};
 
 /// An owned, allocation-independent spelling used by command observation.
@@ -139,6 +141,14 @@ pub struct CommandDeliveryRecord {
 /// applied to classification, the same remedy `primitive_identity` already
 /// applies beneath the two primitive arms.
 pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i64>) {
+    canonical_command_identity_for_profile(CommandProfile::TEX82, meaning)
+}
+
+pub(crate) fn canonical_command_identity_for_profile(
+    profile: CommandProfile,
+    meaning: Meaning,
+) -> (String, Option<i64>) {
+    let dialect = profile.dialect();
     match meaning {
         // TeX82 §23 can replace an offending outer control sequence's
         // `cur_cmd`/`cur_chr` with a space while the original control-sequence
@@ -193,7 +203,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // §33.2's dispatch-completeness invariant, applied to this
         // classifier): a variant added to the enum without a named arm there
         // is a build failure, not a silent generic fallback.
-        Meaning::ExpandablePrimitive(primitive) => expandable_primitive_identity(primitive),
+        Meaning::ExpandablePrimitive(primitive) => {
+            expandable_primitive_identity(dialect, primitive)
+        }
         // TeX82's named parameters and classical registers are variables
         // whose command selector is a real eqtb address. `variable_identity`
         // owns both the region bases and the translation from Umber's dense
@@ -201,13 +213,13 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // map: `\\fam` is Umber slot 59 and tex.web §236 code 44.
         Meaning::IntParam(slot) => (
             "assign_int".into(),
-            variable_identity::int_parameter_code(slot)
-                .map(|code| variable_identity::INT_BASE + code),
+            variable_identity::int_parameter_code(dialect, slot)
+                .map(|code| variable_identity::int_base(dialect) + code),
         ),
         Meaning::DimenParam(slot) => (
             "assign_dimen".into(),
             variable_identity::dimen_parameter_code(slot)
-                .map(|code| variable_identity::DIMEN_BASE + code),
+                .map(|code| variable_identity::dimen_base(dialect) + code),
         ),
         Meaning::GlueParam(slot) => (
             "assign_glue".into(),
@@ -224,7 +236,7 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         ),
         Meaning::TokParam(slot) => (
             "assign_toks".into(),
-            variable_identity::token_parameter_address(slot),
+            variable_identity::token_parameter_address(dialect, slot),
         ),
         // TeX82 §1224's `shorthand_def` gives a `\\countdef`/`\\dimendef`/
         // `\\skipdef`/`\\muskipdef`/`\\toksdef` control sequence the command
@@ -236,11 +248,11 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // assign through it.
         Meaning::CountRegister(index) => (
             "assign_int".into(),
-            Some(variable_identity::COUNT_BASE + i64::from(index)),
+            Some(variable_identity::count_base(dialect) + i64::from(index)),
         ),
         Meaning::DimenRegister(index) => (
             "assign_dimen".into(),
-            Some(variable_identity::SCALED_BASE + i64::from(index)),
+            Some(variable_identity::scaled_base(dialect) + i64::from(index)),
         ),
         Meaning::SkipRegister(index) => (
             "assign_glue".into(),
@@ -252,7 +264,7 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         ),
         Meaning::ToksRegister(index) => (
             "assign_toks".into(),
-            Some(variable_identity::TOKS_BASE + i64::from(index)),
+            Some(variable_identity::toks_base(dialect) + i64::from(index)),
         ),
         // TeX82 §982/§986 install the page-so-far quantities under
         // `set_page_dimen` and `set_page_int`, selected by their small
@@ -268,7 +280,7 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // extensions).
         Meaning::InternalInteger(integer) => (
             "last_item".into(),
-            variable_identity::internal_integer_code(integer),
+            variable_identity::internal_integer_code(dialect, integer),
         ),
         // TeX82 §1257's `new_font` defines a font identifier as
         // `define(u,set_font,null_font)` and then stores the internal font
@@ -280,7 +292,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // (`docs/tex_command_core.md` §33.2's dispatch-completeness invariant,
         // applied to this classifier): a variant added to the enum without a
         // named arm there is a build failure, not a silent generic fallback.
-        Meaning::UnexpandablePrimitive(primitive) => unexpandable_primitive_identity(primitive),
+        Meaning::UnexpandablePrimitive(primitive) => {
+            unexpandable_primitive_identity(dialect, primitive)
+        }
         // TeX82 §208 gives `\chardef` and `\mathchardef` constants their own
         // command codes, `char_given=68` and `math_given=69`, and §1224's
         // `shorthand_def` stores the scanned code as the `equiv`/`cur_chr` of
@@ -314,11 +328,21 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
 /// meaning but changes its current-character identity to `no_expand_flag`
 /// (257). Both distinctions are carried by `CurrentCommand`, so observation
 /// merely projects command state.
+#[cfg(test)]
 pub(crate) fn canonical_current_command_identity(
     command: &CurrentCommand,
 ) -> (String, Option<i64>) {
+    canonical_current_command_identity_for_profile(CommandProfile::TEX82, command)
+}
+
+pub(crate) fn canonical_current_command_identity_for_profile(
+    profile: CommandProfile,
+    command: &CurrentCommand,
+) -> (String, Option<i64>) {
     match command.identity() {
-        CommandIdentity::Ordinary => canonical_command_identity(command.meaning()),
+        CommandIdentity::Ordinary => {
+            canonical_command_identity_for_profile(profile, command.meaning())
+        }
         // TeX82 §25 dispatches `\expandafter` through the dedicated
         // `expand_after` command with selector zero. The current command owns
         // that identity before its two-token expansion lifecycle begins.
@@ -333,7 +357,16 @@ pub(crate) fn canonical_current_command_identity(
         // TeX82 §35 installs the six classic text conversions under the
         // shared `convert` command; §27's `conv_toks` uses the retained
         // selector to choose the existing scan/render lifecycle.
-        CommandIdentity::Convert(selector) => ("convert".into(), Some(selector.operand())),
+        CommandIdentity::Convert(selector) => {
+            let operand = match (profile.dialect(), selector) {
+                (crate::CommandDialect::Etex26, crate::command::ConvertSelector::JobName) => 6,
+                (crate::CommandDialect::Pdftex14027, crate::command::ConvertSelector::JobName) => {
+                    33
+                }
+                _ => selector.operand(),
+            };
+            ("convert".into(), Some(operand))
+        }
         // TeX82 §18 installs the classic diagnostic primitives under the
         // shared `xray` command. The selector remains with the delivery even
         // though the executor later dispatches each typed diagnostic action.
@@ -815,6 +848,30 @@ mod tests {
                 ("convert".into(), Some(operand))
             );
         }
+    }
+
+    #[test]
+    fn conversion_selectors_dispatch_by_profile() {
+        for (profile, job_name) in [
+            (CommandProfile::TEX82, 5),
+            (CommandProfile::ETEX26, 6),
+            (CommandProfile::PDFTEX14027, 33),
+        ] {
+            assert_eq!(
+                canonical_command_identity_for_profile(
+                    profile,
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName),
+                ),
+                ("convert".into(), Some(job_name))
+            );
+        }
+        assert_eq!(
+            canonical_command_identity_for_profile(
+                CommandProfile::PDFTEX14027,
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision),
+            ),
+            ("convert".into(), Some(7))
+        );
     }
 
     #[test]

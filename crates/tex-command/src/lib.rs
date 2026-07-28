@@ -49,6 +49,7 @@ pub use observation::{
     EffectRecord, GeometryRecord, InputReason, InputRecord, InputTransition, MacroRecord,
     MutationRecord, ObservedToken, ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord,
     ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
+    parameter_mutation_key_for_dialect,
 };
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,

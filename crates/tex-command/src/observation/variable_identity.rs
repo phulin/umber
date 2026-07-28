@@ -59,17 +59,17 @@
 //!
 //! ## Dialect
 //!
-//! TeX82 selectors are authoritative and verified as above. e-TeX selectors
-//! come from the pinned `etex.ch` and are correct for a pure e-TeX 2.6
-//! engine; pdfTeX renumbers the same quantities (it inserts its own
-//! parameter block below e-TeX's), which this classifier does not model per
-//! dialect, exactly as `primitive_identity` notes for `\jobname` and
-//! `\eTeXrevision`. A selector with no code in the TeX82/e-TeX dialect --
-//! every pdfTeX-only parameter, and Umber's own hidden cells -- is reported
-//! as `None` rather than as a fabricated ordinal: the command family stays
-//! exact and the missing selector is visible as a missing selector.
+//! The immutable command profile selects one complete layout. TeX82 follows
+//! tex.web §§224/230/236/247; e-TeX 2.6's `etex.ch` inserts `\everyeof`, four
+//! penalty-list cells, and its integer block; pdfTeX 1.40.27's
+//! `pdftexdir/pdftex.web` §§5406, 5714-5727, and 9804-9829 additionally
+//! inserts four pdf token parameters, 37 pdf integer parameters, and fourteen
+//! read-only integer selectors. Umber-only hidden cells return `None`; no
+//! selector from one dialect is reused as an approximation for another.
 
 use tex_state::meaning::InternalInteger;
+
+use crate::CommandDialect;
 
 /// tex.web §224 `glue_base`, the first named glue parameter (`\lineskip`).
 pub(crate) const GLUE_BASE: i64 = 24_527;
@@ -84,98 +84,137 @@ pub(crate) const LOCAL_BASE: i64 = MU_SKIP_BASE + 256;
 pub(crate) const OUTPUT_ROUTINE_LOC: i64 = LOCAL_BASE + 1;
 /// tex.web §230 `toks_base = local_base + 10`, the 256 `\toks` registers.
 ///
-/// e-TeX inserts `\everyeof` at this address and shifts `toks_base` up by
-/// one; the pinned TeX82 oracle keeps tex.web's layout.
+/// The TeX82 address; [`toks_base`] applies dialect insertions.
 pub(crate) const TOKS_BASE: i64 = LOCAL_BASE + 10;
 /// e-TeX `every_eof_loc = local_base + 10` (`etex.ch`'s `etex_toks_base`).
 pub(crate) const EVERY_EOF_LOC: i64 = LOCAL_BASE + 10;
 /// tex.web §236 `int_base`, the start of region 5, shifted by MLTeX's
 /// `char_sub_code` region in the pinned oracle build (see the module docs).
 pub(crate) const INT_BASE: i64 = 27_167;
-/// tex.web §236 `count_base = int_base + int_pars`, `int_pars = 62` in the
-/// pinned oracle build (see the module docs).
-pub(crate) const COUNT_BASE: i64 = INT_BASE + 62;
-/// tex.web §247 `dimen_base = del_code_base + 256 = count_base + 512`.
-pub(crate) const DIMEN_BASE: i64 = COUNT_BASE + 512;
-/// tex.web §247 `scaled_base = dimen_base + dimen_pars`, `dimen_pars = 21`.
-pub(crate) const SCALED_BASE: i64 = DIMEN_BASE + 21;
-
 /// Translates an Umber `IntParam` bank slot to tex.web's `int_par` code.
 ///
 /// TeX82 codes are tex.web §236's; e-TeX codes are `etex.ch`'s
 /// `etex_int_base = tex_int_pars = 55` block. `None` marks a slot Umber's
 /// dense bank owns that the TeX82/e-TeX dialect has no `assign_int` selector
 /// for (see the module documentation).
-pub(crate) fn int_parameter_code(slot: u16) -> Option<i64> {
+pub(crate) fn int_parameter_code(dialect: CommandDialect, slot: u16) -> Option<i64> {
     // The left column is `crates/tex-exec/src/assignments/primitives.rs`'s
     // `INT_PARAMS` (plus its e-TeX and pdfTeX tables); the right column is
     // tex.web §236 / `etex.ch`.
     Some(match slot {
-        0 => 0,   // \pretolerance
-        1 => 1,   // \tolerance
-        2 => 2,   // \linepenalty
-        3 => 3,   // \hyphenpenalty
-        4 => 4,   // \exhyphenpenalty
-        5 => 5,   // \clubpenalty
-        6 => 6,   // \widowpenalty
-        7 => 7,   // \displaywidowpenalty
-        8 => 8,   // \brokenpenalty
-        9 => 9,   // \binoppenalty
-        10 => 10, // \relpenalty
-        11 => 11, // \predisplaypenalty
-        12 => 12, // \postdisplaypenalty
-        13 => 13, // \interlinepenalty
-        14 => 14, // \doublehyphendemerits
-        15 => 15, // \finalhyphendemerits
-        16 => 16, // \adjdemerits
-        17 => 17, // \mag
-        18 => 18, // \delimiterfactor
-        19 => 19, // \looseness
-        20 => 20, // \time
-        21 => 21, // \day
-        22 => 22, // \month
-        23 => 23, // \year
-        24 => 24, // \showboxbreadth
-        25 => 25, // \showboxdepth
-        26 => 26, // \hbadness
-        27 => 27, // \vbadness
-        28 => 28, // \pausing
-        29 => 29, // \tracingonline
-        30 => 30, // \tracingmacros
-        31 => 31, // \tracingstats
-        32 => 43, // \globaldefs
-        33 => 32, // \tracingparagraphs
-        34 => 33, // \tracingpages
-        35 => 34, // \tracingoutput
-        36 => 35, // \tracinglostchars
-        37 => 36, // \tracingcommands
-        38 => 37, // \tracingrestores
-        39 => 38, // \uchyph
-        40 => 45, // \escapechar
-        41 => 46, // \defaulthyphenchar
-        42 => 47, // \defaultskewchar
-        48 => 48, // \endlinechar
-        49 => 49, // \newlinechar
-        50 => 50, // \language
-        51 => 51, // \lefthyphenmin
-        52 => 52, // \righthyphenmin
-        53 => 53, // \holdinginserts
-        54 => 54, // \errorcontextlines
-        55 => 39, // \outputpenalty
-        56 => 40, // \maxdeadcycles
-        57 => 41, // \hangafter
-        58 => 42, // \floatingpenalty
-        59 => 44, // \fam
-        61 => 58, // \tracingscantokens (e-TeX)
-        62 => 64, // \TeXXeTstate (e-TeX `eTeX_state_code`)
-        63 => 60, // \predisplaydirection (e-TeX)
-        64 => 55, // \tracingassigns (e-TeX)
-        65 => 56, // \tracinggroups (e-TeX)
-        66 => 57, // \tracingifs (e-TeX)
-        67 => 59, // \tracingnesting (e-TeX)
-        68 => 62, // \savingvdiscards (e-TeX)
-        69 => 61, // \lastlinefit (e-TeX)
-        70 => 63, // \savinghyphcodes (e-TeX)
+        0 => 0,                            // \pretolerance
+        1 => 1,                            // \tolerance
+        2 => 2,                            // \linepenalty
+        3 => 3,                            // \hyphenpenalty
+        4 => 4,                            // \exhyphenpenalty
+        5 => 5,                            // \clubpenalty
+        6 => 6,                            // \widowpenalty
+        7 => 7,                            // \displaywidowpenalty
+        8 => 8,                            // \brokenpenalty
+        9 => 9,                            // \binoppenalty
+        10 => 10,                          // \relpenalty
+        11 => 11,                          // \predisplaypenalty
+        12 => 12,                          // \postdisplaypenalty
+        13 => 13,                          // \interlinepenalty
+        14 => 14,                          // \doublehyphendemerits
+        15 => 15,                          // \finalhyphendemerits
+        16 => 16,                          // \adjdemerits
+        17 => 17,                          // \mag
+        18 => 18,                          // \delimiterfactor
+        19 => 19,                          // \looseness
+        20 => 20,                          // \time
+        21 => 21,                          // \day
+        22 => 22,                          // \month
+        23 => 23,                          // \year
+        24 => 24,                          // \showboxbreadth
+        25 => 25,                          // \showboxdepth
+        26 => 26,                          // \hbadness
+        27 => 27,                          // \vbadness
+        28 => 28,                          // \pausing
+        29 => 29,                          // \tracingonline
+        30 => 30,                          // \tracingmacros
+        31 => 31,                          // \tracingstats
+        32 => 43,                          // \globaldefs
+        33 => 32,                          // \tracingparagraphs
+        34 => 33,                          // \tracingpages
+        35 => 34,                          // \tracingoutput
+        36 => 35,                          // \tracinglostchars
+        37 => 36,                          // \tracingcommands
+        38 => 37,                          // \tracingrestores
+        39 => 38,                          // \uchyph
+        40 => 45,                          // \escapechar
+        41 => 46,                          // \defaulthyphenchar
+        42 => 47,                          // \defaultskewchar
+        48 => 48,                          // \endlinechar
+        49 => 49,                          // \newlinechar
+        50 => 50,                          // \language
+        51 => 51,                          // \lefthyphenmin
+        52 => 52,                          // \righthyphenmin
+        53 => 53,                          // \holdinginserts
+        54 => 54,                          // \errorcontextlines
+        55 => 39,                          // \outputpenalty
+        56 => 40,                          // \maxdeadcycles
+        57 => 41,                          // \hangafter
+        58 => 42,                          // \floatingpenalty
+        59 => 44,                          // \fam
+        61 => etex_int_base(dialect)? + 3, // \tracingscantokens
+        62 => {
+            etex_int_base(dialect)?
+                + if matches!(dialect, CommandDialect::Pdftex14027) {
+                    10
+                } else {
+                    9
+                }
+        }
+        63 => etex_int_base(dialect)? + 5, // \predisplaydirection
+        64 => etex_int_base(dialect)?,     // \tracingassigns
+        65 => etex_int_base(dialect)? + 1, // \tracinggroups
+        66 => etex_int_base(dialect)? + 2, // \tracingifs
+        67 => etex_int_base(dialect)? + 4, // \tracingnesting
+        68 => etex_int_base(dialect)? + 7, // \savingvdiscards
+        69 => etex_int_base(dialect)? + 6, // \lastlinefit
+        70 => etex_int_base(dialect)? + 8, // \savinghyphcodes
+        72..=109 if matches!(dialect, CommandDialect::Pdftex14027) => match slot {
+            72 => 55,   // \pdfoutput
+            73 => 56,   // \pdfcompresslevel
+            74 => 76,   // \pdfobjcompresslevel
+            75 => 57,   // \pdfdecimaldigits
+            76 => 58,   // \pdfmovechars
+            77 => 59,   // \pdfimageresolution
+            78 => 60,   // \pdfpkresolution
+            79 => 61,   // \pdfuniqueresname
+            80 => 65,   // \pdfminorversion
+            81 => 66,   // \pdfforcepagebox
+            82 => 67,   // \pdfpagebox
+            83 => 68,   // \pdfinclusionerrorlevel
+            84 => 64,   // \pdfmajorversion
+            85 => 69,   // \pdfgamma
+            86 => 70,   // \pdfimagegamma
+            87 => 71,   // \pdfimagehicolor
+            88 => 72,   // \pdfimageapplygamma
+            89 => 73,   // \pdfadjustspacing
+            90 => 74,   // \pdfprotrudechars
+            91 => 75,   // \pdftracingfonts
+            92 => 77,   // \pdfadjustinterwordglue
+            93 => 78,   // \pdfprependkern
+            94 => 79,   // \pdfappendkern
+            95 => 80,   // \pdfgentounicode
+            96 => 81,   // \pdfdraftmode
+            97 => 82,   // \pdfinclusioncopyfonts
+            98 => 83,   // \pdfsuppresswarningdupdest
+            99 => 84,   // \pdfsuppresswarningdupmap
+            100 => 85,  // \pdfsuppresswarningpagegroup
+            101 => 86,  // \pdfinfoomitdate
+            102 => 87,  // \pdfsuppressptexinfo
+            103 => 88,  // \pdfomitcharset
+            104 => 89,  // \pdfomitinfodict
+            105 => 90,  // \pdfomitprocset
+            106 => 91,  // \pdfptexuseunderscore
+            107 => 62,  // \pdfoptionalwaysusepdfpagebox
+            108 => 63,  // \pdfoptionpdfinclusionerrorlevel
+            109 => 101, // \ignoreprimitiveerror (`etex_int_base+9`)
+            _ => unreachable!(),
+        },
         // 43..=47 and 60 are dense-bank cells with no `assign_int`
         // primitive: 60 stores `\badness`, which is read through
         // `last_item`, and 43..=47 are unallocated. 71 is Umber's hidden
@@ -183,6 +222,49 @@ pub(crate) fn int_parameter_code(slot: u16) -> Option<i64> {
         // whose codes belong to pdfTeX's own renumbered block.
         _ => return None,
     })
+}
+
+const fn etex_int_base(dialect: CommandDialect) -> Option<i64> {
+    match dialect {
+        CommandDialect::Tex82 => None,
+        CommandDialect::Etex26 => Some(55),
+        CommandDialect::Pdftex14027 => Some(92),
+    }
+}
+
+pub(crate) const fn int_base(dialect: CommandDialect) -> i64 {
+    INT_BASE
+        + match dialect {
+            CommandDialect::Tex82 => 0,
+            CommandDialect::Etex26 => 5,
+            CommandDialect::Pdftex14027 => 9,
+        }
+}
+
+pub(crate) const fn count_base(dialect: CommandDialect) -> i64 {
+    int_base(dialect)
+        + match dialect {
+            CommandDialect::Tex82 => 62,
+            CommandDialect::Etex26 => 72,
+            CommandDialect::Pdftex14027 => 110,
+        }
+}
+
+pub(crate) const fn dimen_base(dialect: CommandDialect) -> i64 {
+    count_base(dialect) + 512
+}
+
+pub(crate) const fn scaled_base(dialect: CommandDialect) -> i64 {
+    dimen_base(dialect) + 21
+}
+
+pub(crate) const fn toks_base(dialect: CommandDialect) -> i64 {
+    TOKS_BASE
+        + match dialect {
+            CommandDialect::Tex82 => 0,
+            CommandDialect::Etex26 => 1,
+            CommandDialect::Pdftex14027 => 5,
+        }
 }
 
 /// Translates an Umber `DimenParam` bank slot to tex.web's `dimen_par` code.
@@ -211,10 +293,20 @@ pub(crate) fn glue_parameter_code(slot: u16) -> Option<i64> {
 /// starting at `output_routine_loc`. `\everyeof` is e-TeX's and lives at its
 /// own address; pdfTeX's four token parameters and Umber's five internal
 /// shape-storage cells have no TeX82/e-TeX selector.
-pub(crate) fn token_parameter_address(slot: u16) -> Option<i64> {
+pub(crate) fn token_parameter_address(dialect: CommandDialect, slot: u16) -> Option<i64> {
     match slot {
         0..=8 => Some(OUTPUT_ROUTINE_LOC + i64::from(slot)),
-        13 => Some(EVERY_EOF_LOC),
+        9..=12 if matches!(dialect, CommandDialect::Pdftex14027) => {
+            Some(LOCAL_BASE + 10 + i64::from(slot - 9))
+        }
+        13 if !matches!(dialect, CommandDialect::Tex82) => Some(
+            EVERY_EOF_LOC
+                + if matches!(dialect, CommandDialect::Pdftex14027) {
+                    4
+                } else {
+                    0
+                },
+        ),
         _ => None,
     }
 }
@@ -257,15 +349,23 @@ pub enum ParameterClass {
 /// a different parameter. The record is still emitted: dropping it would
 /// remove an event the oracle produces and desynchronize the whole trace.
 pub fn parameter_mutation_key(class: ParameterClass, slot: u16) -> String {
+    parameter_mutation_key_for_dialect(CommandDialect::Tex82, class, slot)
+}
+
+pub fn parameter_mutation_key_for_dialect(
+    dialect: CommandDialect,
+    class: ParameterClass,
+    slot: u16,
+) -> String {
     let (family, code) = match class {
-        ParameterClass::Integer => ("integer_parameter", int_parameter_code(slot)),
+        ParameterClass::Integer => ("integer_parameter", int_parameter_code(dialect, slot)),
         ParameterClass::Dimension => ("dimension_parameter", dimen_parameter_code(slot)),
         ParameterClass::Glue => ("glue_parameter", glue_parameter_code(slot)),
         ParameterClass::Token => (
             "token_parameter",
             // §230's token-list parameters are named by their offset from
             // `output_routine_loc`, the first one the instrumentation names.
-            token_parameter_address(slot).map(|address| address - OUTPUT_ROUTINE_LOC),
+            token_parameter_address(dialect, slot).map(|address| address - OUTPUT_ROUTINE_LOC),
         ),
     };
     match code {
@@ -283,33 +383,65 @@ pub fn parameter_mutation_key(class: ParameterClass, slot: u16) -> String {
 /// `last_item` arms. pdfTeX's read-only integers have no selector in that
 /// dialect (pdfTeX inserts its own block between `badness_code` and
 /// `eTeX_int`), so they report no selector rather than a fabricated one.
-pub(crate) fn internal_integer_code(integer: InternalInteger) -> Option<i64> {
+pub(crate) fn internal_integer_code(
+    dialect: CommandDialect,
+    integer: InternalInteger,
+) -> Option<i64> {
     use InternalInteger as I;
     Some(match integer {
-        I::LastNodeType => 3,
-        I::InputLineNumber => 4,
-        I::Badness => 5,
-        I::ETeXVersion => 6,
-        I::CurrentGroupLevel => 7,
-        I::CurrentGroupType => 8,
-        I::CurrentIfLevel => 9,
-        I::CurrentIfType => 10,
-        I::CurrentIfBranch => 11,
-        I::PdfTeXVersion
-        | I::PdfElapsedTime
-        | I::PdfRandomSeed
-        | I::PdfShellEscape
-        | I::PdfLastObject
-        | I::PdfLastAnnot
-        | I::PdfLastLink
-        | I::PdfLastXPos
-        | I::PdfLastYPos
-        | I::PdfLastXForm
-        | I::PdfLastXImage
-        | I::PdfReturnValue
-        | I::PdfLastXImagePages
-        | I::PdfLastXImageColorDepth => return None,
+        I::LastNodeType if !matches!(dialect, CommandDialect::Tex82) => 3,
+        I::LastNodeType => return None,
+        I::InputLineNumber => {
+            if matches!(dialect, CommandDialect::Tex82) {
+                3
+            } else {
+                4
+            }
+        }
+        I::Badness => {
+            if matches!(dialect, CommandDialect::Tex82) {
+                4
+            } else {
+                5
+            }
+        }
+        I::ETeXVersion => etex_last_item_base(dialect)?,
+        I::CurrentGroupLevel => etex_last_item_base(dialect)? + 1,
+        I::CurrentGroupType => etex_last_item_base(dialect)? + 2,
+        I::CurrentIfLevel => etex_last_item_base(dialect)? + 3,
+        I::CurrentIfType => etex_last_item_base(dialect)? + 4,
+        I::CurrentIfBranch => etex_last_item_base(dialect)? + 5,
+        I::PdfTeXVersion => pdf_last_item_base(dialect)?,
+        I::PdfLastObject => pdf_last_item_base(dialect)? + 1,
+        I::PdfLastXForm => pdf_last_item_base(dialect)? + 2,
+        I::PdfLastXImage => pdf_last_item_base(dialect)? + 3,
+        I::PdfLastXImagePages => pdf_last_item_base(dialect)? + 4,
+        I::PdfLastAnnot => pdf_last_item_base(dialect)? + 5,
+        I::PdfLastXPos => pdf_last_item_base(dialect)? + 6,
+        I::PdfLastYPos => pdf_last_item_base(dialect)? + 7,
+        I::PdfReturnValue => pdf_last_item_base(dialect)? + 8,
+        I::PdfLastXImageColorDepth => pdf_last_item_base(dialect)? + 9,
+        I::PdfElapsedTime => pdf_last_item_base(dialect)? + 10,
+        I::PdfShellEscape => pdf_last_item_base(dialect)? + 11,
+        I::PdfRandomSeed => pdf_last_item_base(dialect)? + 12,
+        I::PdfLastLink => pdf_last_item_base(dialect)? + 13,
     })
+}
+
+const fn pdf_last_item_base(dialect: CommandDialect) -> Option<i64> {
+    if matches!(dialect, CommandDialect::Pdftex14027) {
+        Some(6)
+    } else {
+        None
+    }
+}
+
+const fn etex_last_item_base(dialect: CommandDialect) -> Option<i64> {
+    match dialect {
+        CommandDialect::Tex82 => None,
+        CommandDialect::Etex26 => Some(6),
+        CommandDialect::Pdftex14027 => Some(20),
+    }
 }
 
 #[cfg(test)]
@@ -320,12 +452,12 @@ mod tests {
     fn region_bases_match_the_pinned_oracle_probes() {
         // Every value here is a selector the committed TeX82 document traces
         // record for a control sequence whose eqtb address plain.tex fixes.
-        assert_eq!(COUNT_BASE + 22, 27_251); // \m@ne, \countdef 22
-        assert_eq!(COUNT_BASE + 255, 27_484); // \count@, \countdef 255
-        assert_eq!(SCALED_BASE + 10, 27_772); // \maxdimen, \newdimen -> \dimen10
+        assert_eq!(count_base(CommandDialect::Tex82) + 22, 27_251); // \m@ne
+        assert_eq!(count_base(CommandDialect::Tex82) + 255, 27_484); // \count@
+        assert_eq!(scaled_base(CommandDialect::Tex82) + 10, 27_772); // \maxdimen
         assert_eq!(SKIP_BASE + 10, 24_555); // \hideskip, \newskip -> \skip10
         assert_eq!(TOKS_BASE + 10, 25_077); // \headline, \newtoks -> \toks10
-        assert_eq!(DIMEN_BASE, 27_741); // \parindent
+        assert_eq!(dimen_base(CommandDialect::Tex82), 27_741); // \parindent
         assert_eq!(OUTPUT_ROUTINE_LOC, 25_058); // \output
         assert_eq!(GLUE_BASE + 15, 24_542); // \thinmuskip
     }
@@ -345,7 +477,7 @@ mod tests {
             (59, 27_211),        // \fam
         ] {
             assert_eq!(
-                int_parameter_code(slot).map(|code| INT_BASE + code),
+                int_parameter_code(CommandDialect::Tex82, slot).map(|code| INT_BASE + code),
                 Some(selector),
                 "int parameter slot {slot}"
             );
@@ -401,7 +533,7 @@ mod tests {
     #[test]
     fn tex82_int_parameter_codes_are_a_bijection_onto_tex_web_int_pars() {
         let mut codes: Vec<i64> = (0..=59)
-            .filter_map(int_parameter_code)
+            .filter_map(|slot| int_parameter_code(CommandDialect::Tex82, slot))
             .filter(|code| *code < 55)
             .collect();
         codes.sort_unstable();
@@ -410,8 +542,110 @@ mod tests {
 
     #[test]
     fn etex_int_parameter_codes_are_distinct_and_above_tex82() {
-        let mut codes: Vec<i64> = (61..=70).filter_map(int_parameter_code).collect();
+        let mut codes: Vec<i64> = (61..=70)
+            .filter_map(|slot| int_parameter_code(CommandDialect::Etex26, slot))
+            .collect();
         codes.sort_unstable();
         assert_eq!(codes, (55..65).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn dialect_layouts_follow_the_pinned_eqtb_chains() {
+        for (dialect, expected) in [
+            (
+                CommandDialect::Tex82,
+                (25_067, 27_167, 27_229, 27_741, 27_762),
+            ),
+            (
+                CommandDialect::Etex26,
+                (25_068, 27_172, 27_244, 27_756, 27_777),
+            ),
+            (
+                CommandDialect::Pdftex14027,
+                (25_072, 27_176, 27_286, 27_798, 27_819),
+            ),
+        ] {
+            assert_eq!(
+                (
+                    toks_base(dialect),
+                    int_base(dialect),
+                    count_base(dialect),
+                    dimen_base(dialect),
+                    scaled_base(dialect),
+                ),
+                expected,
+                "{dialect:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn everyeof_and_pdf_token_parameters_have_dialect_addresses() {
+        assert_eq!(token_parameter_address(CommandDialect::Tex82, 13), None);
+        assert_eq!(
+            token_parameter_address(CommandDialect::Etex26, 13),
+            Some(25_067)
+        );
+        for (slot, address) in (9_u16..=12).zip(25_067_i64..=25_070) {
+            assert_eq!(
+                token_parameter_address(CommandDialect::Pdftex14027, slot),
+                Some(address)
+            );
+        }
+        assert_eq!(
+            token_parameter_address(CommandDialect::Pdftex14027, 13),
+            Some(25_071)
+        );
+    }
+
+    #[test]
+    fn every_pdf_integer_parameter_uses_its_pdftex_code() {
+        let mut codes: Vec<_> = (72_u16..=108)
+            .map(|slot| int_parameter_code(CommandDialect::Pdftex14027, slot))
+            .collect();
+        codes.sort_unstable();
+        assert_eq!(codes, (55_i64..=91).map(Some).collect::<Vec<_>>());
+        assert_eq!(int_parameter_code(CommandDialect::Etex26, 72), None);
+        assert_eq!(
+            int_parameter_code(CommandDialect::Pdftex14027, 109),
+            Some(101)
+        );
+    }
+
+    #[test]
+    fn last_item_integer_blocks_are_profile_exact() {
+        use InternalInteger as I;
+        for (integer, tex, etex, pdftex) in [
+            (I::LastNodeType, None, Some(3), Some(3)),
+            (I::InputLineNumber, Some(3), Some(4), Some(4)),
+            (I::Badness, Some(4), Some(5), Some(5)),
+            (I::ETeXVersion, None, Some(6), Some(20)),
+            (I::CurrentGroupLevel, None, Some(7), Some(21)),
+            (I::CurrentGroupType, None, Some(8), Some(22)),
+            (I::CurrentIfLevel, None, Some(9), Some(23)),
+            (I::CurrentIfType, None, Some(10), Some(24)),
+            (I::CurrentIfBranch, None, Some(11), Some(25)),
+            (I::PdfTeXVersion, None, None, Some(6)),
+            (I::PdfLastObject, None, None, Some(7)),
+            (I::PdfLastXForm, None, None, Some(8)),
+            (I::PdfLastXImage, None, None, Some(9)),
+            (I::PdfLastXImagePages, None, None, Some(10)),
+            (I::PdfLastAnnot, None, None, Some(11)),
+            (I::PdfLastXPos, None, None, Some(12)),
+            (I::PdfLastYPos, None, None, Some(13)),
+            (I::PdfReturnValue, None, None, Some(14)),
+            (I::PdfLastXImageColorDepth, None, None, Some(15)),
+            (I::PdfElapsedTime, None, None, Some(16)),
+            (I::PdfShellEscape, None, None, Some(17)),
+            (I::PdfRandomSeed, None, None, Some(18)),
+            (I::PdfLastLink, None, None, Some(19)),
+        ] {
+            assert_eq!(internal_integer_code(CommandDialect::Tex82, integer), tex);
+            assert_eq!(internal_integer_code(CommandDialect::Etex26, integer), etex);
+            assert_eq!(
+                internal_integer_code(CommandDialect::Pdftex14027, integer),
+                pdftex
+            );
+        }
     }
 }

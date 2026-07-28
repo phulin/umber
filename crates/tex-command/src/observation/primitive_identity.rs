@@ -50,6 +50,7 @@
 //! accepted outcome of exhaustiveness over precision for primitives no
 //! committed oracle exercises yet, not a defect in this change.
 
+use crate::CommandDialect;
 use tex_state::meaning::{ExpandablePrimitive, UnexpandablePrimitive};
 
 /// TeX82 `@d vmode=1` (`\prevdepth`'s `set_aux` selector).
@@ -68,6 +69,7 @@ const DEPTH_OFFSET: i64 = 2;
 /// `UnexpandablePrimitive`. See the module documentation for the ground
 /// truth each arm is based on.
 pub(crate) fn unexpandable_primitive_identity(
+    _dialect: CommandDialect,
     primitive: UnexpandablePrimitive,
 ) -> (String, Option<i64>) {
     use UnexpandablePrimitive as P;
@@ -439,6 +441,7 @@ pub(crate) fn unexpandable_primitive_identity(
 /// `ExpandablePrimitive`. See the module documentation for the ground truth
 /// each arm is based on.
 pub(crate) fn expandable_primitive_identity(
+    dialect: CommandDialect,
     primitive: ExpandablePrimitive,
 ) -> (String, Option<i64>) {
     use ExpandablePrimitive as P;
@@ -461,7 +464,14 @@ pub(crate) fn expandable_primitive_identity(
         P::String => ("convert".into(), Some(2)),
         P::Meaning => ("convert".into(), Some(3)),
         P::FontName => ("convert".into(), Some(4)),
-        P::JobName => ("convert".into(), Some(5)),
+        P::JobName => (
+            "convert".into(),
+            Some(match dialect {
+                CommandDialect::Tex82 => 5,
+                CommandDialect::Etex26 => 6,
+                CommandDialect::Pdftex14027 => 33,
+            }),
+        ),
         P::The => ("the".into(), Some(0)),
         P::Input => ("input".into(), Some(0)),
         // tex.web: `primitive("endinput",input,1)`.
@@ -531,7 +541,14 @@ pub(crate) fn expandable_primitive_identity(
         // `Meaning::InternalInteger`, not this variant (see
         // `crates/tex-expand/src/lib.rs`'s e-TeX table). Kept only for
         // exhaustiveness.
-        P::ETeXVersion => ("last_item".into(), None),
+        P::ETeXVersion => (
+            "last_item".into(),
+            Some(match dialect {
+                CommandDialect::Tex82 => return ("last_item".into(), None),
+                CommandDialect::Etex26 => 6,
+                CommandDialect::Pdftex14027 => 20,
+            }),
+        ),
         // pdfTeX's message-style expansion primitive: BEST-EFFORT, not
         // confirmed against a live pdfTeX reference (see the module
         // documentation).
@@ -539,24 +556,24 @@ pub(crate) fn expandable_primitive_identity(
         // Engine-neutral Umber/LaTeX-extension additions with no tex.web or
         // e-TeX analog; BEST-EFFORT placeholders in the `convert` family
         // they most resemble (each expands to text).
-        P::FileSize => ("convert".into(), Some(7)),
+        P::FileSize => ("convert".into(), Some(24)),
         P::StringCompare => ("convert".into(), Some(8)),
         P::ShellEscape => ("convert".into(), Some(9)),
-        P::CreationDate => ("convert".into(), Some(10)),
+        P::CreationDate => ("convert".into(), Some(22)),
         // BEST-EFFORT pdfTeX-only expandable primitives, none exercised by
         // any committed fixture; see the module documentation.
-        P::PdfTeXRevision => ("convert".into(), Some(11)),
-        P::PdfTeXBanner => ("convert".into(), Some(12)),
-        P::PdfFontSize => ("convert".into(), Some(13)),
-        P::LeftMarginKern => ("convert".into(), Some(14)),
-        P::RightMarginKern => ("convert".into(), Some(15)),
-        P::PdfFontName => ("convert".into(), Some(16)),
-        P::PdfFontObjectNumber => ("convert".into(), Some(17)),
-        P::PdfInsertHeight => ("convert".into(), Some(18)),
-        P::PdfXImageBBox => ("convert".into(), Some(19)),
-        P::PdfColorStackInit => ("convert".into(), Some(20)),
-        P::PdfXFormName => ("convert".into(), Some(21)),
-        P::PdfPageRef => ("convert".into(), Some(22)),
+        P::PdfTeXRevision => ("convert".into(), Some(7)),
+        P::PdfTeXBanner => ("convert".into(), Some(8)),
+        P::PdfFontName => ("convert".into(), Some(9)),
+        P::PdfFontObjectNumber => ("convert".into(), Some(10)),
+        P::PdfFontSize => ("convert".into(), Some(11)),
+        P::PdfPageRef => ("convert".into(), Some(12)),
+        P::PdfXFormName => ("convert".into(), Some(13)),
+        P::LeftMarginKern => ("convert".into(), Some(16)),
+        P::RightMarginKern => ("convert".into(), Some(17)),
+        P::PdfColorStackInit => ("convert".into(), Some(19)),
+        P::PdfInsertHeight => ("convert".into(), Some(31)),
+        P::PdfXImageBBox => ("convert".into(), Some(32)),
         // Resolves a control sequence's original (pre-`\let`) primitive
         // meaning before a nested expansion, similar in spirit to
         // `\expandafter`'s family.
@@ -564,16 +581,16 @@ pub(crate) fn expandable_primitive_identity(
         P::IfPdfPrimitive => ("if_test".into(), Some(21)),
         P::IfPdfAbsNum => ("if_test".into(), Some(22)),
         P::IfPdfAbsDim => ("if_test".into(), Some(23)),
-        P::PdfEscapeString => ("convert".into(), Some(23)),
-        P::PdfEscapeName => ("convert".into(), Some(24)),
-        P::PdfEscapeHex => ("convert".into(), Some(25)),
-        P::PdfUnescapeHex => ("convert".into(), Some(26)),
-        P::PdfFileModificationDate => ("convert".into(), Some(27)),
-        P::PdfMdFiveSum => ("convert".into(), Some(28)),
-        P::PdfFileDump => ("convert".into(), Some(29)),
-        P::PdfMatch => ("convert".into(), Some(30)),
-        P::PdfLastMatch => ("convert".into(), Some(31)),
-        P::PdfUniformDeviate => ("convert".into(), Some(32)),
-        P::PdfNormalDeviate => ("convert".into(), Some(33)),
+        P::PdfEscapeString => ("convert".into(), Some(14)),
+        P::PdfEscapeName => ("convert".into(), Some(15)),
+        P::PdfEscapeHex => ("convert".into(), Some(20)),
+        P::PdfUnescapeHex => ("convert".into(), Some(21)),
+        P::PdfFileModificationDate => ("convert".into(), Some(23)),
+        P::PdfMdFiveSum => ("convert".into(), Some(25)),
+        P::PdfFileDump => ("convert".into(), Some(26)),
+        P::PdfMatch => ("convert".into(), Some(27)),
+        P::PdfLastMatch => ("convert".into(), Some(28)),
+        P::PdfUniformDeviate => ("convert".into(), Some(29)),
+        P::PdfNormalDeviate => ("convert".into(), Some(30)),
     }
 }

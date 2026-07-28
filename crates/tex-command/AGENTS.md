@@ -147,6 +147,11 @@ print channel of its own.
   `tex_command::canonical_names` so producers in other crates and the
   differential tracer share one table rather than each keeping their own.
   See "Canonical observation vocabulary" below.
+  Command identity is selected through the immutable `CommandProfile`:
+  `variable_identity.rs` owns the TeX82/e-TeX 2.6/pdfTeX 1.40.27 eqtb and
+  `last_item` layouts, while `primitive_identity.rs` owns profile-dependent
+  conversion selectors. Never classify an observed command through a
+  profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
