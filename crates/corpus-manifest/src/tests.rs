@@ -40,7 +40,7 @@ notes another fixture
     assert_eq!(manifest.doc.len(), 2);
     assert_eq!(manifest.doc[0].name, "story.tex");
     assert_eq!(manifest.doc[0].notes, "fixture notes may contain spaces");
-    assert_eq!(manifest.doc[1].url, "http://example.com/gentle.tex");
+    assert_eq!(manifest.doc[1].urls, ["http://example.com/gentle.tex"]);
 }
 
 #[test]
@@ -72,9 +72,16 @@ notes fixture
 }
 
 #[test]
-fn rejects_duplicate_field() {
+fn accepts_ordered_locator_fallbacks() {
     let error = parse_manifest(&format!(
         r#"
+support plain.tex
+url https://example.com/plain.tex
+sha256 {HASH}
+license MIT
+redistributable true
+notes support
+
 doc story.tex
 url https://example.com/story.tex
 url https://example.com/other.tex
@@ -86,9 +93,38 @@ expected_ref_dvi_sha256 {HASH}
 notes fixture
 "#
     ))
-    .expect_err("duplicate field should fail");
+    .expect("multiple URL locators should parse");
+    assert_eq!(
+        error.doc[0].urls,
+        [
+            "https://example.com/story.tex",
+            "https://example.com/other.tex"
+        ]
+    );
+}
 
-    assert!(error.to_string().contains("duplicate manifest field: url"));
+#[test]
+fn rejects_duplicate_or_unsafe_locators_exactly() {
+    for (urls, expected) in [
+        (
+            "url https://example.com/story.tex\nurl https://example.com/story.tex",
+            "line 1: story.tex has duplicate URL: https://example.com/story.tex",
+        ),
+        (
+            "url file:///tmp/story.tex",
+            "line 1: story.tex has unsupported URL scheme: file:///tmp/story.tex",
+        ),
+    ] {
+        let text = format!(
+            "doc story.tex\n{urls}\nsha256 {HASH}\nlicense MIT\nredistributable true\nformat_source plain.tex\nexpected_ref_dvi_sha256 {HASH}\nnotes fixture\n"
+        );
+        assert_eq!(
+            parse_manifest(&text)
+                .expect_err("invalid locator should fail")
+                .to_string(),
+            expected
+        );
+    }
 }
 
 #[test]

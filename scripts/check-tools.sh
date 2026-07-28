@@ -46,8 +46,11 @@ tier_step parity-harness \
 # lockfile, so `--workspace` cannot reach them and `scripts/run-native-tests.py`
 # requires them to name a gate that does. This is that gate; the 23 tests here
 # ran nowhere at all before umber2-johp.211.
-tier_step corpus-sync \
-  cargo test -q --tests --manifest-path tools/corpus-sync/Cargo.toml
+check_corpus_sync() {
+  cargo test -q --tests --manifest-path tools/corpus-sync/Cargo.toml &&
+    scripts/test-fetch-conformance-inputs.sh
+}
+tier_step corpus-sync check_corpus_sync
 tier_step fixturegen \
   cargo test -q --tests --manifest-path tools/fixturegen/Cargo.toml
 tier_step texlive-wasm-publish \

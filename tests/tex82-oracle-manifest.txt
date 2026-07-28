@@ -3,7 +3,7 @@
 #   archive URL SHA-512
 #   source-sha256 PATH SHA-256
 #   repository-sha256 PATH SHA-256
-archive https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/texlive-20250308-source.tar.xz 0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702
+archive https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2025/texlive-20250308-source.tar.xz 0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702
 source-sha256 texk/web2c/tex.web c62ab513ef167e93f71a23bd34f311e243210afd7c7a0f9b779614b71e398324
 source-sha256 texk/web2c/tex.ch 9c4cb62a194e3fb8a8a855ddac56f686a487ce27cc983b7cfe78a84ae92405cf
 source-sha256 texk/web2c/enctexdir/enctex1.ch de10520fe2922f8cc3369b8da7f817928e4bdd724b134adde398611fb722e087

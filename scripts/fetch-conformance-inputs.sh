@@ -7,6 +7,7 @@ cd "$repo_root"
 trip_manifest="tests/trip-manifest.txt"
 trip_dir="third_party/trip"
 offline=0
+curl_bin="${CURL:-curl}"
 
 usage() {
   cat <<'EOF'
@@ -102,9 +103,21 @@ verify_hash() {
 }
 
 mkdir -p "$trip_dir"
-while read -r name url expected extra; do
+while read -r -a fields; do
+  name="${fields[0]:-}"
   [[ -z "${name:-}" || "$name" == \#* ]] && continue
-  [[ -z "${extra:-}" ]] || fail "malformed manifest line for $name"
+  (( ${#fields[@]} >= 3 )) || fail "malformed manifest line for $name: expected file SHA-256 and at least one URL"
+  expected="${fields[1]}"
+  urls=("${fields[@]:2}")
+  [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] ||
+    fail "invalid SHA-256 for $name: $expected"
+  seen_urls=" "
+  for url in "${urls[@]}"; do
+    [[ "$url" == https://* || "$url" == http://127.0.0.1:* || "$url" == http://localhost:* ]] ||
+      fail "unsafe URL for $name: $url"
+    [[ "$seen_urls" != *" $url "* ]] || fail "duplicate URL for $name: $url"
+    seen_urls+="$url "
+  done
 
   path="${trip_dir}/${name}"
   if [[ -f "$path" ]]; then
@@ -115,8 +128,27 @@ while read -r name url expected extra; do
 
   [[ "$offline" -eq 0 ]] || fail "missing $path while running --offline"
   tmp="${path}.tmp"
-  printf 'fetching %s\n' "$name" >&2
-  curl -fsSL "$url" -o "$tmp"
-  verify_hash "$tmp" "$expected" "$name"
-  mv "$tmp" "$path"
+  failures=()
+  fetched=0
+  for url in "${urls[@]}"; do
+    printf 'fetching %s from %s\n' "$name" "$url" >&2
+    if ! "$curl_bin" -fsSL "$url" -o "$tmp"; then
+      failures+=("$url: download failed")
+      continue
+    fi
+    actual="$(sha256_file "$tmp")"
+    if [[ "$actual" != "$expected" ]]; then
+      failures+=("$url: SHA-256 mismatch (expected $expected, got $actual)")
+      continue
+    fi
+    mv "$tmp" "$path"
+    fetched=1
+    break
+  done
+  if [[ "$fetched" -eq 0 ]]; then
+    rm -f "$tmp"
+    printf -v joined '%s; ' "${failures[@]}"
+    joined="${joined%; }"
+    fail "all ${#urls[@]} locators failed for $name: $joined; not writing $path"
+  fi
 done < "$trip_manifest"

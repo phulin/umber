@@ -57,10 +57,10 @@ pub fn sync_corpus(options: &SyncOptions) -> Result<SyncReport> {
 
     let mut documents = Vec::with_capacity(manifest.support.len() + manifest.doc.len());
     for file in manifest.support {
-        documents.push(sync_file(&file.name, &file.url, &file.sha256, options)?);
+        documents.push(sync_file(&file.name, &file.urls, &file.sha256, options)?);
     }
     for doc in manifest.doc {
-        documents.push(sync_file(&doc.name, &doc.url, &doc.sha256, options)?);
+        documents.push(sync_file(&doc.name, &doc.urls, &doc.sha256, options)?);
     }
 
     Ok(SyncReport { documents })
@@ -80,7 +80,7 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
 
 fn sync_file(
     name: &str,
-    url: &str,
+    urls: &[String],
     expected_sha256: &str,
     options: &SyncOptions,
 ) -> Result<DocumentStatus> {
@@ -101,23 +101,7 @@ fn sync_file(
         );
     }
 
-    let bytes = fetch_url(url).with_context(|| {
-        format!(
-            "failed to fetch corpus document {} from {}",
-            name, url
-        )
-    })?;
-    let actual = sha256_hex(&bytes);
-    if actual != expected_sha256 {
-        bail!(
-            "sha256 mismatch for fetched {} from {}: expected {}, got {}; not writing {}",
-            name,
-            url,
-            expected_sha256,
-            actual,
-            path.display()
-        );
-    }
+    let bytes = fetch_verified(name, urls, expected_sha256, &path)?;
 
     let tmp_path = path.with_extension("tmp");
     fs::write(&tmp_path, &bytes)
@@ -129,6 +113,31 @@ fn sync_file(
         name: name.to_string(),
         path,
     })
+}
+
+fn fetch_verified(name: &str, urls: &[String], expected_sha256: &str, path: &Path) -> Result<Vec<u8>> {
+    let mut failures = Vec::with_capacity(urls.len());
+    for url in urls {
+        match fetch_url(url) {
+            Ok(bytes) => {
+                let actual = sha256_hex(&bytes);
+                if actual == expected_sha256 {
+                    return Ok(bytes);
+                }
+                failures.push(format!(
+                    "{url}: sha256 mismatch (expected {expected_sha256}, got {actual})"
+                ));
+            }
+            Err(error) => failures.push(format!("{url}: {error:#}")),
+        }
+    }
+    bail!(
+        "all {} locators failed for corpus document {}: {}; not writing {}",
+        urls.len(),
+        name,
+        failures.join("; "),
+        path.display()
+    )
 }
 
 fn verify_existing(name: &str, expected_sha256: &str, path: &Path) -> Result<()> {
@@ -272,22 +281,93 @@ mod tests {
         })
         .expect_err("fetched drift should fail");
 
-        assert!(
-            error.to_string().contains("sha256 mismatch for fetched"),
-            "{error:#}"
+        let message = error.to_string();
+        assert!(message.contains("all 1 locators failed"), "{error:#}");
+        assert!(message.contains("sha256 mismatch"), "{error:#}");
+        assert!(!dest.join("sample.tex").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn falls_back_after_transport_failure() -> Result<()> {
+        let temp = TempDir::new()?;
+        let good = serve_once(b"from fallback")?;
+        let urls = [
+            "http://127.0.0.1:9/unavailable".to_string(),
+            good,
+        ];
+        let manifest = write_manifest_with_urls(temp.path(), &urls, b"from fallback")?;
+        let dest = temp.path().join("corpus");
+
+        sync_corpus(&SyncOptions {
+            manifest_path: manifest,
+            dest_dir: dest.clone(),
+            offline: false,
+        })?;
+        assert_eq!(fs::read(dest.join("sample.tex"))?, b"from fallback");
+        Ok(())
+    }
+
+    #[test]
+    fn falls_back_after_digest_mismatch() -> Result<()> {
+        let temp = TempDir::new()?;
+        let urls = [serve_once(b"wrong")?, serve_once(b"right")?];
+        let manifest = write_manifest_with_urls(temp.path(), &urls, b"right")?;
+        let dest = temp.path().join("corpus");
+
+        sync_corpus(&SyncOptions {
+            manifest_path: manifest,
+            dest_dir: dest.clone(),
+            offline: false,
+        })?;
+        assert_eq!(fs::read(dest.join("sample.tex"))?, b"right");
+        Ok(())
+    }
+
+    #[test]
+    fn reports_every_locator_failure_without_writing() -> Result<()> {
+        let temp = TempDir::new()?;
+        let urls = [serve_once(b"wrong-one")?, serve_once(b"wrong-two")?];
+        let manifest = write_manifest_with_urls(temp.path(), &urls, b"expected")?;
+        let dest = temp.path().join("corpus");
+        let error = sync_corpus(&SyncOptions {
+            manifest_path: manifest,
+            dest_dir: dest.clone(),
+            offline: false,
+        })
+        .expect_err("all digest mismatches must fail");
+
+        let expected = format!(
+            "all 2 locators failed for corpus document sample.tex: {}: sha256 mismatch (expected {}, got {}); {}: sha256 mismatch (expected {}, got {}); not writing {}",
+            urls[0],
+            sha256_hex(b"expected"),
+            sha256_hex(b"wrong-one"),
+            urls[1],
+            sha256_hex(b"expected"),
+            sha256_hex(b"wrong-two"),
+            dest.join("sample.tex").display()
         );
+        assert_eq!(error.to_string(), expected);
         assert!(!dest.join("sample.tex").exists());
         Ok(())
     }
 
     fn write_manifest(dir: &Path, url: &str, content: &str) -> Result<PathBuf> {
-        let sha = sha256_hex(content.as_bytes());
+        write_manifest_with_urls(dir, &[url.to_string()], content.as_bytes())
+    }
+
+    fn write_manifest_with_urls(dir: &Path, urls: &[String], content: &[u8]) -> Result<PathBuf> {
+        let sha = sha256_hex(content);
         let support = b"format source";
         let support_sha = sha256_hex(support);
         let corpus = dir.join("corpus");
         fs::create_dir_all(&corpus)?;
         fs::write(corpus.join("plain.tex"), support)?;
         let manifest = dir.join("manifest.txt");
+        let locator_lines = urls
+            .iter()
+            .map(|url| format!("url {url}\n"))
+            .collect::<String>();
         fs::write(
             &manifest,
             format!(
@@ -300,7 +380,7 @@ redistributable true
 notes test format source
 
 doc sample.tex
-url {url}
+{locator_lines}\
 sha256 {sha}
 license MIT
 redistributable true

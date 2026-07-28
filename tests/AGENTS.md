@@ -404,7 +404,9 @@ scripts/setup-conformance-tests.sh
 Setup builds `tools/corpus-sync`, writes exact fetched support
 inputs and documents to gitignored `third_party/corpus/`, verifies the manifest
 SHA-256 values, and fails clearly on cached or fetched hash drift. Manifest
-entries use `key value` lines. Support entries record provenance and licensing;
+entries use `key value` lines; repeated `url` fields are ordered locators, and
+each downloaded candidate must match the entry digest before acceptance.
+Support entries record provenance and licensing;
 document entries additionally select a `format_source` and record the reference
 DVI SHA-256 after the same banner-only normalization used by `tools/refexec`.
 Fixture regeneration pins `SOURCE_DATE_EPOCH=1783604160` and

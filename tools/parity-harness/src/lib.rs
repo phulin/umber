@@ -1064,7 +1064,7 @@ fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
     let diff = first_diff(&reference.normalized, &umber.normalized);
     let doc = Document {
         name: "self-test.tex".to_string(),
-        url: "https://example.invalid/self-test.tex".to_string(),
+        urls: vec!["https://example.invalid/self-test.tex".to_string()],
         sha256: sha256_hex(b"self-test"),
         license: "MIT".to_string(),
         redistributable: true,

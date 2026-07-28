@@ -1397,8 +1397,10 @@ scripts/regen-fixtures.sh --case e2e/etrip
 ```
 
 `scripts/fetch-conformance-inputs.sh` acquires the shared hyphenation and font
-inputs, reads `tests/trip-manifest.txt`, fetches exact official TRIP and e-TRIP
-bytes into gitignored `third_party/trip/`, and verifies every SHA-256. The tests
+inputs, reads `tests/trip-manifest.txt`, tries each entry's locators in declared
+order, fetches exact official TRIP and e-TRIP bytes into gitignored
+`third_party/trip/`, and verifies every candidate against the entry SHA-256
+before acceptance. The tests
 use the pinned canonical `trip.tfm`, then run the documented INITEX and
 format-loaded TRIP phases in process.
 

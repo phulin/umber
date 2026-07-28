@@ -54,9 +54,9 @@ affect the current DVI gate.
 ## Source Pins
 
 The source of record is the CTAN `systems/knuth/dist/tex` distribution. The
-manifest uses the University of Utah CTAN mirror as a concrete acquisition URL
-because the CTAN redirector can select mirrors with different availability.
-The byte identity is pinned by SHA-256:
+manifest records ordered concrete CTAN mirror locators so one unavailable
+mirror does not prevent acquisition. A locator never establishes identity:
+each candidate must match the entry SHA-256 before it is accepted.
 
 | File          | SHA-256                                                            |
 | ------------- | ------------------------------------------------------------------ |
@@ -70,7 +70,8 @@ The byte identity is pinned by SHA-256:
 | `tripos.tex`  | `ea7447c7a8f2de278d2f84474f22c48c9d8a0059d7e16edd578d0bbe7077b47f` |
 | `tripman.tex` | `a3e47254ad87fc3fdba210d61764c93b021740f56465971f5a41103405add48b` |
 
-The exact URLs live in `tests/trip-manifest.txt` beside the matching hashes.
+The exact ordered locators live in `tests/trip-manifest.txt` beside the matching
+hashes.
 
 The locally generated `tests/corpus/e2e/trip.expected.dvi` is not the official
 `trip.dvi` above. It is generated locally from the pinned `trip.tex` and

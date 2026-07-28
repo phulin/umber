@@ -15,7 +15,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SupportFile {
     pub name: String,
-    pub url: String,
+    pub urls: Vec<String>,
     pub sha256: String,
     pub license: String,
     pub redistributable: bool,
@@ -25,7 +25,7 @@ pub struct SupportFile {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Document {
     pub name: String,
-    pub url: String,
+    pub urls: Vec<String>,
     pub sha256: String,
     pub license: String,
     pub redistributable: bool,
@@ -211,7 +211,7 @@ struct SupportBuilder {
     name: String,
     start_line: usize,
     seen: BTreeSet<&'static str>,
-    url: Option<String>,
+    urls: Vec<String>,
     sha256: Option<String>,
     license: Option<String>,
     redistributable: Option<bool>,
@@ -224,7 +224,7 @@ impl SupportBuilder {
             name,
             start_line,
             seen: BTreeSet::new(),
-            url: None,
+            urls: Vec::new(),
             sha256: None,
             license: None,
             redistributable: None,
@@ -239,7 +239,7 @@ impl SupportBuilder {
         line_number: usize,
     ) -> Result<(), ManifestError> {
         let canonical = common_field(key, line_number)?;
-        if !self.seen.insert(canonical) {
+        if canonical != "url" && !self.seen.insert(canonical) {
             return Err(ManifestError::new(
                 Some(line_number),
                 format!("duplicate manifest field: {key}"),
@@ -249,7 +249,7 @@ impl SupportBuilder {
             canonical,
             value,
             line_number,
-            &mut self.url,
+            &mut self.urls,
             &mut self.sha256,
             &mut self.license,
             &mut self.redistributable,
@@ -260,7 +260,7 @@ impl SupportBuilder {
     fn finish(self) -> Result<SupportFile, ManifestError> {
         let file = SupportFile {
             name: self.name,
-            url: required(self.url, "url", self.start_line)?,
+            urls: required_urls(self.urls, self.start_line)?,
             sha256: required(self.sha256, "sha256", self.start_line)?,
             license: required(self.license, "license", self.start_line)?,
             redistributable: required(self.redistributable, "redistributable", self.start_line)?,
@@ -268,7 +268,7 @@ impl SupportBuilder {
         };
         validate_file(
             &file.name,
-            &file.url,
+            &file.urls,
             &file.sha256,
             &file.license,
             file.redistributable,
@@ -283,7 +283,7 @@ struct DocumentBuilder {
     name: String,
     start_line: usize,
     seen: BTreeSet<&'static str>,
-    url: Option<String>,
+    urls: Vec<String>,
     sha256: Option<String>,
     license: Option<String>,
     redistributable: Option<bool>,
@@ -298,7 +298,7 @@ impl DocumentBuilder {
             name,
             start_line,
             seen: BTreeSet::new(),
-            url: None,
+            urls: Vec::new(),
             sha256: None,
             license: None,
             redistributable: None,
@@ -329,7 +329,7 @@ impl DocumentBuilder {
                 ));
             }
         };
-        if !self.seen.insert(canonical) {
+        if canonical != "url" && !self.seen.insert(canonical) {
             return Err(ManifestError::new(
                 Some(line_number),
                 format!("duplicate manifest field: {key}"),
@@ -337,7 +337,7 @@ impl DocumentBuilder {
         }
 
         match canonical {
-            "url" => self.url = Some(value.to_string()),
+            "url" => self.urls.push(value.to_string()),
             "sha256" => self.sha256 = Some(value.to_string()),
             "license" => self.license = Some(value.to_string()),
             "redistributable" => {
@@ -356,7 +356,7 @@ impl DocumentBuilder {
     fn finish(self) -> Result<Document, ManifestError> {
         let doc = Document {
             name: self.name,
-            url: required(self.url, "url", self.start_line)?,
+            urls: required_urls(self.urls, self.start_line)?,
             sha256: required(self.sha256, "sha256", self.start_line)?,
             license: required(self.license, "license", self.start_line)?,
             redistributable: required(self.redistributable, "redistributable", self.start_line)?,
@@ -380,6 +380,16 @@ fn required<T>(value: Option<T>, field: &str, line_number: usize) -> Result<T, M
             format!("doc entry is missing required field: {field}"),
         )
     })
+}
+
+fn required_urls(urls: Vec<String>, line_number: usize) -> Result<Vec<String>, ManifestError> {
+    if urls.is_empty() {
+        return Err(ManifestError::new(
+            Some(line_number),
+            "doc entry is missing required field: url",
+        ));
+    }
+    Ok(urls)
 }
 
 fn parse_bool(value: &str, line_number: usize) -> Result<bool, ManifestError> {
@@ -412,14 +422,14 @@ fn set_common_field(
     key: &str,
     value: &str,
     line_number: usize,
-    url: &mut Option<String>,
+    urls: &mut Vec<String>,
     sha256: &mut Option<String>,
     license: &mut Option<String>,
     redistributable: &mut Option<bool>,
     notes: &mut Option<String>,
 ) -> Result<(), ManifestError> {
     match key {
-        "url" => *url = Some(value.to_string()),
+        "url" => urls.push(value.to_string()),
         "sha256" => *sha256 = Some(value.to_string()),
         "license" => *license = Some(value.to_string()),
         "redistributable" => *redistributable = Some(parse_bool(value, line_number)?),
@@ -432,7 +442,7 @@ fn set_common_field(
 fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestError> {
     validate_file(
         &doc.name,
-        &doc.url,
+        &doc.urls,
         &doc.sha256,
         &doc.license,
         doc.redistributable,
@@ -462,7 +472,7 @@ fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestE
 
 fn validate_file(
     name: &str,
-    url: &str,
+    urls: &[String],
     sha256: &str,
     license: &str,
     redistributable: bool,
@@ -475,11 +485,29 @@ fn validate_file(
             format!("invalid corpus file name: {name}"),
         ));
     }
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(ManifestError::new(
-            Some(line_number),
-            format!("{name} has unsupported URL scheme: {url}"),
-        ));
+    let mut unique_urls = BTreeSet::new();
+    for url in urls {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return Err(ManifestError::new(
+                Some(line_number),
+                format!("{name} has unsupported URL scheme: {url}"),
+            ));
+        }
+        if url
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+        {
+            return Err(ManifestError::new(
+                Some(line_number),
+                format!("{name} has unsafe URL: {url}"),
+            ));
+        }
+        if !unique_urls.insert(url) {
+            return Err(ManifestError::new(
+                Some(line_number),
+                format!("{name} has duplicate URL: {url}"),
+            ));
+        }
     }
     if !is_sha256(sha256) {
         return Err(ManifestError::new(

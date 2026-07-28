@@ -30,6 +30,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-native-test-assets.py`: temporary-Git-repository proof of bounded,
   idempotent, status-clean worktree provisioning and hard failures for missing,
   altered, or unsafe assets.
+- `test-fetch-conformance-inputs.sh`: hermetic ordered-locator, digest,
+  manifest-safety, and offline-cache contract for TRIP/e-TRIP acquisition.
 - `test-run-native-tests.py`: synthetic-input proof that each guard in
   `run-native-tests.py` fails when it should; the runner runs it before
   trusting its own verdict.
