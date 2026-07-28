@@ -20,6 +20,7 @@ mutation|pdfsetrandomseed|random-state replacement|state.tex|extension command c
 mutation|pdfresettimer|timer-state reset|state.tex|extension command commit|"value":"pdfresettimer"
 mutation|pdfinterwordspaceon|ordered shipout control|state.tex|extension whatsit append|"value":"pdfinterwordspaceon"},"value":{"type":"name","value":"ordered-whatsit-on"}
 mutation|pdfinterwordspaceoff|ordered shipout control|state.tex|extension whatsit append|"value":"pdfinterwordspaceoff"},"value":{"type":"name","value":"ordered-whatsit-off"}
+mutation|pdffakespace|forced accessible space|state.tex|extension whatsit append|"value":"pdffakespace"},"value":{"type":"name","value":"ordered-whatsit-fake"}
 scanner|leftmarginkern|left box margin enquiry|state.tex|conversion semantic result|"scanner":"pdf_left_margin_kern","result":{"type":"scaled","value":0}
 scanner|rightmarginkern|right box margin enquiry|state.tex|conversion semantic result|"scanner":"pdf_right_margin_kern","result":{"type":"scaled","value":0}
 scanner|pdffontname|font semantic-name enquiry|state.tex|font operand resolution|"scanner":"pdf_font_name","result":{"type":"name","value":"cmr10"}

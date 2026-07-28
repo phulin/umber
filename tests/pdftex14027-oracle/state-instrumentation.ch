@@ -286,3 +286,12 @@ end
     umber_trace_pdf_state(3,0);
 end
 @z
+
+@x [53a] Observe the ordered fake-space whatsit.
+    new_whatsit(pdf_fake_space_node, small_node_size);
+end
+@y
+    new_whatsit(pdf_fake_space_node, small_node_size);
+    umber_trace_pdf_state(4,0);
+end
+@z

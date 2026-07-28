@@ -77,10 +77,11 @@ applicable.
 
 The backend-action row is partial because registration and retired-executor
 coverage do not establish canonical command-core coverage. The canonical
-`\pdfinterwordspaceon` and `\pdfinterwordspaceoff` path is complete: pdftex.web
-§§1527 and 1594–1595 make both operand-free any-mode commands that append
-ordered whatsits, with state interpreted during shipout. The remaining names
-must each reach the same canonical boundary before this row returns to done.
+`\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, and `\pdffakespace` are
+complete: pdftex.web §§1527 and 1594–1596 make them operand-free any-mode
+commands that append ordered whatsits, with their toggle or forced-space
+effect interpreted during shipout. The remaining names must each reach the
+same canonical boundary before this row returns to done.
 
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in

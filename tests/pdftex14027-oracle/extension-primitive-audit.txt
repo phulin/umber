@@ -37,7 +37,7 @@ pdfendthread|executor-backend|backend|tex-exec PDF thread tests|thread node exec
 pdfescapehex|command-core|expansion|hex encoding conversion|conv_toks conversion return
 pdfescapename|command-core|expansion|escaped name conversion|conv_toks conversion return
 pdfescapestring|command-core|expansion|escaped string conversion|conv_toks conversion return
-pdffakespace|executor-backend|backend|tex-exec PDF text tests|text-node execution
+pdffakespace|command-core|state|state.tex|ordered fake-space whatsit append
 pdffiledump|command-core|expansion|file dump result|typed file enquiry return
 pdffilemoddate|command-core|expansion|file modification date result|typed file enquiry return
 pdffilesize|command-core|expansion|file size result|typed file enquiry return
