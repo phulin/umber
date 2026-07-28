@@ -292,7 +292,7 @@ pub struct PdfThreadRequest {
 /// before executor-owned box construction takes over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedSetBoxAssignment {
-    pub index: i32,
+    pub index: u16,
 }
 
 /// The completed command-owned prefix of a TeX82 box construction.
@@ -357,7 +357,7 @@ pub enum ScannedBoxShiftPayload {
     /// command has already been backed up for ordinary replay.
     Missing,
     BoxRegister {
-        index: i32,
+        index: u16,
         copy: bool,
     },
     LastBox,
@@ -376,12 +376,13 @@ pub struct ScannedBoxShift {
 
 /// The completed register operand of TeX82's `\\box` command.
 ///
-/// `make_box(box_code)` calls `scan_int` before main control can apply the
-/// resulting box-list operation. Keeping that scan here preserves the raw
-/// digit delivery and any integer-scanner backup entirely in command control.
+/// `make_box(box_code)` calls §433's `scan_eight_bit_int` before main control
+/// can apply the resulting box-list operation. Keeping that scan here
+/// preserves the raw digit delivery, bounded recovery, and integer-scanner
+/// backup entirely in command control.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedBoxRegister {
-    pub index: i32,
+    pub index: u16,
 }
 
 /// The complete command-owned operand of TeX82's `\\vsplit`.
@@ -390,7 +391,7 @@ pub struct ScannedBoxRegister {
 /// both the register and dimension have already been consumed canonically.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedVSplit {
-    pub index: i32,
+    pub index: u16,
     pub height: Scaled,
     pub missing_to: bool,
 }
@@ -411,7 +412,7 @@ pub struct ScannedDisplayDiagnostic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScannedLeaderPayload {
     Missing,
-    BoxRegister { index: i32, copy: bool },
+    BoxRegister { index: u16, copy: bool },
     Construction(ScannedBoxConstruction),
     Rule(ScannedRuleSpec),
 }
@@ -2138,11 +2139,11 @@ impl CommandProcessor<'_> {
 
     /// Scans the register number and optional equals sign of `\setbox`.
     ///
-    /// TeX.web's `prefixed_command` dispatches `set_box` to `scan_int` then
-    /// `scan_optional_equals`; the latter must retain its ordinary backup
-    /// transition when the equals sign is present.
+    /// TeX.web's `prefixed_command` dispatches `set_box` to §433's
+    /// `scan_eight_bit_int` then `scan_optional_equals`; the latter must
+    /// retain its ordinary backup transition when the equals sign is present.
     pub fn scan_setbox_assignment(&mut self) -> Result<ScannedSetBoxAssignment, CommandError> {
-        let index = self.scan_integer()?.value;
+        let index = self.scan_eight_bit_register_index()?;
         let _ = self.scan_optional_equals()?;
         Ok(ScannedSetBoxAssignment { index })
     }
@@ -2150,13 +2151,13 @@ impl CommandProcessor<'_> {
     /// Scans the register operand of TeX82 §1079's `make_box(box_code)`.
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
         Ok(ScannedBoxRegister {
-            index: self.scan_integer()?.value,
+            index: self.scan_eight_bit_register_index()?,
         })
     }
 
     /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
-        let index = self.scan_integer()?.value;
+        let index = self.scan_eight_bit_register_index()?;
         let missing_to = !self.scan_keyword("to")?.value;
         let height = self.scan_dimension()?.value;
         Ok(ScannedVSplit {
@@ -2240,13 +2241,13 @@ impl CommandProcessor<'_> {
         match command.meaning() {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: self.scan_integer()?.value,
+                    index: self.scan_eight_bit_register_index()?,
                     copy: false,
                 })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: self.scan_integer()?.value,
+                    index: self.scan_eight_bit_register_index()?,
                     copy: true,
                 })
             }

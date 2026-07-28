@@ -4127,19 +4127,32 @@ fn restricted_integer_all_five_classes_min_max_and_recovery_matrix() {
             ((maximum + 1).to_string(), 0, true),
         ] {
             let mut universe = Universe::new();
-            let scanned = scan_with(
+            let (scanned, recoveries) = scan_with(
                 &mut universe,
                 source.chars().map(char_token).collect(),
                 |processor| {
-                    processor
+                    let scanned = processor
                         .scan_restricted_integer(class)
-                        .expect("restricted scan")
+                        .expect("restricted scan");
+                    let recoveries = processor.take_restricted_integer_recoveries();
+                    (scanned, recoveries)
                 },
             );
             assert_eq!(
                 (scanned.value, scanned.recovered),
                 (value, recovered),
                 "{class:?} with {source}"
+            );
+            assert_eq!(
+                recoveries,
+                recovered
+                    .then_some(crate::RestrictedIntegerRecovery {
+                        class,
+                        scanned: source.parse().expect("matrix source is an integer"),
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "{class:?} report channel with {source}"
             );
         }
     }

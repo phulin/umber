@@ -231,6 +231,116 @@ fn out_of_range_character_definitions_observe_the_recovered_value() {
     }
 }
 
+#[test]
+fn restricted_math_operand_diagnostics_cover_every_primitive_variant() {
+    for (source, expected, count) in [
+        (br"$\mathchar32768$".as_slice(), "Bad mathchar (32768)", 1),
+        (
+            br"$\mathaccent32768 a$".as_slice(),
+            "Bad mathchar (32768)",
+            1,
+        ),
+        (
+            br"$\delimiter134217728$".as_slice(),
+            "Bad delimiter code (134217728)",
+            1,
+        ),
+        (
+            br"$\radical134217728 a$".as_slice(),
+            "Bad delimiter code (134217728)",
+            1,
+        ),
+        (
+            br"$\left\delimiter134217728 a\right.$".as_slice(),
+            "Bad delimiter code (134217728)",
+            1,
+        ),
+        (
+            br"$\left.a\right\delimiter134217728$".as_slice(),
+            "Bad delimiter code (134217728)",
+            1,
+        ),
+        (
+            br"$a\overwithdelims\delimiter134217728\delimiter134217728 b$".as_slice(),
+            "Bad delimiter code (134217728)",
+            2,
+        ),
+        (
+            br"$a\atopwithdelims\delimiter134217728\delimiter134217728 b$".as_slice(),
+            "Bad delimiter code (134217728)",
+            2,
+        ),
+        (
+            br"$a\abovewithdelims\delimiter134217728 \delimiter134217728 1pt b$".as_slice(),
+            "Bad delimiter code (134217728)",
+            2,
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut universe);
+        let text = terminal_text(&universe);
+        assert_eq!(
+            text.matches(expected).count(),
+            count,
+            "{}: {text}",
+            String::from_utf8_lossy(source)
+        );
+        assert!(text.contains("I changed this one to zero."), "{text}");
+    }
+}
+
+#[test]
+fn restricted_math_family_diagnostics_recover_locally_and_globally_to_family_zero() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"{\textfont16=\nullfont}\global\scriptfont-1=\nullfont
+           \scriptscriptfont16=\nullfont\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert_eq!(text.matches("Bad number (16)").count(), 2, "{text}");
+    assert_eq!(text.matches("Bad number (-1)").count(), 1, "{text}");
+    for size in [
+        tex_state::math::MathFontSize::Text,
+        tex_state::math::MathFontSize::Script,
+        tex_state::math::MathFontSize::ScriptScript,
+    ] {
+        assert_eq!(
+            universe.math_family_font(size, 0),
+            tex_state::font::NULL_FONT
+        );
+    }
+}
+
+#[test]
+fn restricted_register_diagnostics_cover_all_six_register_families() {
+    for source in [
+        br"\count256=11".as_slice(),
+        br"\dimen256=12pt".as_slice(),
+        br"\skip256=13pt".as_slice(),
+        br"\muskip256=14mu".as_slice(),
+        br"\toks256={zero}".as_slice(),
+        br"\setbox256=\hbox{}".as_slice(),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut universe);
+        let text = terminal_text(&universe);
+        assert_eq!(
+            text.matches("Bad register code (256)").count(),
+            1,
+            "{}: {text}",
+            String::from_utf8_lossy(source)
+        );
+    }
+}
+
 /// TeX82 keeps `char_given` and `char_num` interchangeable everywhere they
 /// typeset: §1034's `main_loop` (`hmode+char_given`), §1090's
 /// `vmode+char_given`, §1154's `mmode+char_given`, and even §1038's ligature

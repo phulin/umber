@@ -87,6 +87,11 @@ pub struct CommandProcessor<'a> {
     /// `\\par` terminates the failed match, but must not become a visible
     /// §394 `back_error` replay token.
     pub(crate) eof_recovered_while_matching: bool,
+    /// Ordered §§433-§437 reports detected during this bounded operation.
+    ///
+    /// This is processor-local rather than snapshot state: the executor
+    /// claims it before ending the borrow and prints through `Universe`.
+    pub(crate) restricted_integer_recoveries: Vec<crate::RestrictedIntegerRecovery>,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -114,7 +119,13 @@ impl<'a> CommandProcessor<'a> {
             read_line_ended: false,
             outer_recovered_while_matching: false,
             eof_recovered_while_matching: false,
+            restricted_integer_recoveries: Vec::new(),
         }
+    }
+
+    /// Claims restricted-integer reports in their scan-detection order.
+    pub fn take_restricted_integer_recoveries(&mut self) -> Vec<crate::RestrictedIntegerRecovery> {
+        std::mem::take(&mut self.restricted_integer_recoveries)
     }
 
     /// Reads a live integer parameter while main control selects an

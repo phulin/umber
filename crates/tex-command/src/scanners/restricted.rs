@@ -95,6 +95,18 @@ pub struct RestrictedInteger {
     pub provenance: ScalarProvenance,
 }
 
+/// A TeX82 §§433-§437 restricted scan whose rejected value must be reported.
+///
+/// The command core owns detection and ordering, while the executor owns the
+/// terminal/log sink. Keeping the class and unrecovered `scan_int` value
+/// together prevents consumers from reconstructing either after `cur_val`
+/// has already become zero.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RestrictedIntegerRecovery {
+    pub class: RestrictedIntegerClass,
+    pub scanned: i32,
+}
+
 impl CommandProcessor<'_> {
     /// Performs TeX82 §433-§437's restricted integer scan.
     ///
@@ -107,10 +119,18 @@ impl CommandProcessor<'_> {
     ) -> Result<RestrictedInteger, CommandError> {
         let scanned = self.scan_integer()?;
         let accepted = class.accepts(self.command.profile(), scanned.value);
+        let recovered = !accepted;
+        if recovered {
+            self.restricted_integer_recoveries
+                .push(RestrictedIntegerRecovery {
+                    class,
+                    scanned: scanned.value,
+                });
+        }
         Ok(RestrictedInteger {
             value: if accepted { scanned.value } else { 0 },
             scanned: scanned.value,
-            recovered: !accepted,
+            recovered,
             provenance: scanned.provenance,
         })
     }

@@ -920,7 +920,7 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            scan_alignment_delivery_step(
+            let scanned = scan_alignment_delivery_step(
                 &mut processor,
                 alignment,
                 &ReplayBoxes::default(),
@@ -929,7 +929,14 @@ impl CanonicalMainControl {
                 job_is_all_over,
                 main_loop_active,
                 &mut diagnostics,
-            )?
+            )?;
+            diagnostics.extend(
+                processor
+                    .take_restricted_integer_recoveries()
+                    .into_iter()
+                    .map(PendingDiagnostic::RestrictedInteger),
+            );
+            scanned
         };
         report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -1212,7 +1219,7 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            match redispatch {
+            let scanned = match redispatch {
                 Some(command) => dispatch_main_control_command(
                     &mut processor,
                     command,
@@ -1234,7 +1241,14 @@ impl CanonicalMainControl {
                     self.main_loop_active,
                     &mut diagnostics,
                 )?,
-            }
+            };
+            diagnostics.extend(
+                processor
+                    .take_restricted_integer_recoveries()
+                    .into_iter()
+                    .map(PendingDiagnostic::RestrictedInteger),
+            );
+            scanned
         };
         report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -2213,7 +2227,7 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            match redispatch {
+            let scanned = match redispatch {
                 Some(command) => dispatch_main_control_command(
                     &mut processor,
                     command,
@@ -2235,7 +2249,14 @@ impl CanonicalMainControl {
                     self.main_loop_active,
                     &mut diagnostics,
                 )?,
-            }
+            };
+            diagnostics.extend(
+                processor
+                    .take_restricted_integer_recoveries()
+                    .into_iter()
+                    .map(PendingDiagnostic::RestrictedInteger),
+            );
+            scanned
         };
         report_pending_diagnostics(stores, diagnostics);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -3157,14 +3178,8 @@ enum ScannedStep {
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
-        /// The restricted class §1224 selects for `primitive`.
-        class: RestrictedIntegerClass,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
-        /// The unrecovered `scan_int` result, which `int_error` reports.
-        scanned: i32,
-        /// Whether the scan performed §434/§436's recovery.
-        recovered: bool,
         global: bool,
     },
     /// TeX82 §1252's `hyph_data` command: `\patterns` (`chr_code=1`) installs
@@ -3974,8 +3989,6 @@ fn scan_leaders_step(
         // replay time.  Keep the command scanner's completed glue read, then
         // use the regular typed box read path to obtain the node.
         ScannedLeaderPayload::BoxRegister { index, copy } => {
-            let index =
-                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             let glue_command =
                 processor
                     .get_x_token()
@@ -5111,10 +5124,7 @@ fn scan_command(
             Ok(ScannedStep::CharacterDefinition {
                 primitive,
                 target: definition.target,
-                class: definition.class,
                 value: definition.value,
-                scanned: definition.scanned,
-                recovered: definition.recovered,
                 global,
             })
         }
@@ -5254,9 +5264,10 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
             let assignment = processor.scan_setbox_assignment().map_err(command_error)?;
-            let index = u16::try_from(assignment.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
-            Ok(ScannedStep::SetBox(SetBoxTarget { index, global }))
+            Ok(ScannedStep::SetBox(SetBoxTarget {
+                index: assignment.index,
+                global,
+            }))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ScannedStep::VSplit(
             processor.scan_vsplit().map_err(command_error)?,
@@ -5269,10 +5280,8 @@ fn scan_command(
             primitive @ (UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy),
         ) => {
             let register = processor.scan_box_register().map_err(command_error)?;
-            let index = u16::try_from(register.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
             Ok(ScannedStep::BoxRegister {
-                index,
+                index: register.index,
                 copy: primitive == UnexpandablePrimitive::Copy,
                 ships_out: boxes.pending_shipout,
             })
@@ -5288,9 +5297,10 @@ fn scan_command(
             | UnexpandablePrimitive::UnVCopy),
         ) => {
             let register = processor.scan_box_register().map_err(command_error)?;
-            let index = u16::try_from(register.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
-            Ok(ScannedStep::Unbox { primitive, index })
+            Ok(ScannedStep::Unbox {
+                primitive,
+                index: register.index,
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => Ok(ScannedStep::LastBox),
         // TeX82's main-control dispatch on `abs(mode)+cur_cmd` (tex.web
@@ -8892,26 +8902,6 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::InputStream { request, resource } => {
-            let (scanned, recovered) = match &request {
-                InputStreamRequest::Open {
-                    scanned, recovered, ..
-                }
-                | InputStreamRequest::Close {
-                    scanned, recovered, ..
-                }
-                | InputStreamRequest::Read {
-                    scanned, recovered, ..
-                } => (*scanned, *recovered),
-            };
-            // TeX82 §435 finishes `scan_four_bit_int` (including `int_error`
-            // and `cur_val:=0`) before §§1225/1275 consume the selector.
-            if recovered {
-                report_restricted_integer_recovery(
-                    stores,
-                    RestrictedIntegerClass::FourBit,
-                    scanned,
-                );
-            }
             match request {
                 InputStreamRequest::Open {
                     stream, file_name, ..
@@ -9235,18 +9225,10 @@ fn apply_scanned_step(
         ScannedStep::CharacterDefinition {
             primitive,
             target,
-            class,
             value,
-            scanned,
-            recovered,
             global,
+            ..
         } => {
-            // §434/§436 already recovered `cur_val`; only `print_err`'s
-            // terminal report is left, and it needs `int_error`'s original
-            // value rather than the recovered zero.
-            if recovered {
-                report_restricted_integer_recovery(stores, class, scanned);
-            }
             let meaning = match primitive {
                 UnexpandablePrimitive::CharDef => Meaning::CharGiven(
                     char::from_u32(value as u32)
@@ -9421,9 +9403,7 @@ fn apply_scanned_step(
                     "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
                 );
             }
-            let index = u16::try_from(split.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(split.index))?;
-            let node = crate::assignments::split_vbox_register(stores, index, split.height)?;
+            let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages)?;
             Ok(ReplayStep::Continue)
@@ -10689,8 +10669,6 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            let index =
-                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             let id = if copy {
                 stores.box_reg(index)
             } else {
@@ -10715,9 +10693,7 @@ fn apply_box_shift(
                     "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
                 );
             }
-            let index = u16::try_from(split.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(split.index))?;
-            let node = crate::assignments::split_vbox_register(stores, index, split.height)?;
+            let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             append_shifted_box(modes, stores, node, shift.delta)?;
             Ok(ReplayStep::Continue)
         }
@@ -11307,6 +11283,8 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// (`missing_to`, `recovered`, ...) keep carrying it there instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
+    /// TeX82 §§433-§437's shared `print_err`/`help2`/`int_error`.
+    RestrictedInteger(tex_command::RestrictedIntegerRecovery),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
     PrefixOnNonPrefixedCommand(Meaning),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
@@ -11334,6 +11312,9 @@ fn printed_command(stores: &Universe, meaning: Meaning) -> String {
 fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDiagnostic>) {
     for diagnostic in diagnostics {
         match diagnostic {
+            PendingDiagnostic::RestrictedInteger(recovery) => {
+                report_restricted_integer_recovery(stores, recovery.class, recovery.scanned);
+            }
             PendingDiagnostic::PrefixOnNonPrefixedCommand(meaning) => {
                 let command = printed_command(stores, meaning);
                 let mut report = stores.print_err("You can't use a prefix with `");
