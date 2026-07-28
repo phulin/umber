@@ -4774,6 +4774,112 @@ fn canonical_vertical_accent_backs_up_before_scanning_its_number() {
     assert!(scanned(&number, "integer", "23"), "{number:?}");
 }
 
+/// TeX82 §1123's `make_accent` runs §1270's `do_assignments` between
+/// `scan_char_num` and §1124's base-character classification. §1270 executes
+/// each assignment *in place*: §404 fetches it and `prefixed_command` runs it,
+/// with no `back_input` anywhere in the loop.
+///
+/// The regression this pins is the extra replay round. Stopping the accent
+/// scan on the assignment and backing it up pushed a `backed_up` input level,
+/// committed a recovery record, delivered the assignment a second time and
+/// retired the level -- five records tex.web never produces -- and, worse,
+/// ended the accent scan with no base at all, so the accent was appended
+/// alone and the character that follows it was typeset as an unrelated
+/// letter (`umber2-johp.264`).
+#[test]
+fn canonical_accent_runs_do_assignments_in_place_and_keeps_its_base() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f\setbox0=\hbox{\accent23 \global\count0=7 A}",
+    );
+
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(
+        universe.count(0),
+        7,
+        "§1270's `prefixed_command` must run the assignment the accent scan stopped on"
+    );
+
+    let stored = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("setbox0 stores an hbox");
+    let Node::HList(stored) = stored else {
+        panic!("setbox0 contains an hbox");
+    };
+    // §1123's `link(tail):=p` after §1125's two `acc_kern`s: the accent (in
+    // its own shifted box, because its x-height differs from the base's
+    // height), then the base character. A dropped base would leave the accent
+    // alone, with no kerns and no `A` attached to it.
+    let children: Vec<Node> = universe
+        .nodes(stored.children)
+        .iter()
+        .map(|node| node.to_owned())
+        .collect();
+    let [
+        Node::Kern {
+            kind: KernKind::Accent,
+            ..
+        },
+        accent,
+        Node::Kern {
+            kind: KernKind::Accent,
+            ..
+        },
+        Node::Char { ch: 'A', .. },
+    ] = children.as_slice()
+    else {
+        panic!("§1124 must read its base character from after `do_assignments`: {children:?}")
+    };
+    let accent_children = match accent {
+        Node::Char { ch, .. } => vec![*ch],
+        Node::HList(boxed) => universe
+            .nodes(boxed.children)
+            .iter()
+            .filter_map(|node| match node.to_owned() {
+                Node::Char { ch, .. } => Some(ch),
+                _ => None,
+            })
+            .collect(),
+        other => panic!("the accent is a character or a shifted box holding one: {other:?}"),
+    };
+    assert_eq!(accent_children, vec![char::from(23u8)]);
+
+    // The rest of the source backs up freely -- §415's font identifier,
+    // §404's optional `=`, `scan_left_brace` -- so the proof is specific:
+    // §1270 never replays the assignment it stopped on, so neither prefix nor
+    // register token can appear in a `backed_up` level's recovery record.
+    let replayed_assignment = observations.0.iter().find(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Recovery(record)
+                if record.kind == RecoveryKind::Backup
+                    && record.tokens.iter().any(|token| matches!(
+                        token,
+                        ObservedToken::ControlSequence(name)
+                            if name == "global" || name == "count"
+                    ))
+        )
+    });
+    assert!(
+        replayed_assignment.is_none(),
+        "§1270 runs each assignment in place: {replayed_assignment:?}"
+    );
+}
+
 // `\hfil`, `\hfill`, `\hss`, and `\hfilneg` share tex.web's `hskip` command
 // code (§1058), and `\ ` is `ex_space` (§265); neither scans an operand, so
 // the proof for these is the backup itself.

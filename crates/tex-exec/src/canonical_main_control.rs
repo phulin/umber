@@ -16,11 +16,11 @@ use tex_command::{
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
-    PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionary,
-    ScannedDisplayDiagnostic, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit, SourceRegistration,
-    SourceRegistrationError,
+    PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -936,6 +936,10 @@ impl CanonicalMainControl {
             ScannedStep::Discretionary(discretionary) => {
                 self.apply_discretionary(discretionary, stores)
             }
+            // TeX82 §1123's `make_accent` runs §1270's `do_assignments`
+            // between the accent code and §1124's base character, so it
+            // executes whole commands of its own before it can finish.
+            ScannedStep::Accent(accent) => self.apply_accent(accent, stores),
             scanned => return ControlFlow::Continue(scanned),
         };
         self.main_loop_active = false;
@@ -1045,7 +1049,7 @@ impl CanonicalMainControl {
         let episode = self.command.push_discretionary_episode(tokens);
         self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
-            let _ = self.nested_step_once(stores)?;
+            let _ = self.nested_step_once(stores, None)?;
         }
         self.main_loop_active = false;
         crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
@@ -1072,7 +1076,7 @@ impl CanonicalMainControl {
     /// fresh command processor; no delivered `CurrentCommand` is retained.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<CanonicalStepResult, ExecError> {
         let snapshot = self.snapshot_step(stores);
-        match self.step_once(stores) {
+        match self.step_once(stores, None) {
             Ok(step) => Ok(CanonicalStepResult::Progress(step)),
             Err(error) => {
                 self.rollback_step(snapshot, stores);
@@ -1115,7 +1119,11 @@ impl CanonicalMainControl {
         }
     }
 
-    fn step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+    fn step_once(
+        &mut self,
+        stores: &mut Universe,
+        redispatch: Option<tex_command::CurrentCommand>,
+    ) -> Result<ReplayStep, ExecError> {
         self.enter_main_control(stores);
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
@@ -1131,16 +1139,27 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            scan_replay_step(
-                &mut processor,
-                mode,
-                &self.boxes,
-                alignment_preamble,
-                innermost_group,
-                job_is_all_over,
-                self.modes.current_list().display_eq_no().is_some(),
-                self.main_loop_active,
-            )?
+            match redispatch {
+                Some(command) => dispatch_main_control_command(
+                    &mut processor,
+                    command,
+                    mode,
+                    &self.boxes,
+                    innermost_group,
+                    job_is_all_over,
+                    self.modes.current_list().display_eq_no().is_some(),
+                )?,
+                None => scan_replay_step(
+                    &mut processor,
+                    mode,
+                    &self.boxes,
+                    alignment_preamble,
+                    innermost_group,
+                    job_is_all_over,
+                    self.modes.current_list().display_eq_no().is_some(),
+                    self.main_loop_active,
+                )?,
+            }
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -1197,12 +1216,115 @@ impl CanonicalMainControl {
     /// discretionary field. If the enclosing operation is observed, route
     /// the nested command through the same executor-observation seam so its
     /// committed `word_define` is not reduced to command/scanner records.
-    fn nested_step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+    fn nested_step_once(
+        &mut self,
+        stores: &mut Universe,
+        redispatch: Option<tex_command::CurrentCommand>,
+    ) -> Result<ReplayStep, ExecError> {
         #[cfg(any(test, feature = "instrumentation"))]
         if self.operation_observations.is_some() {
-            return self.step_with_observer_once(stores);
+            return self.step_with_observer_once(stores, redispatch);
         }
-        self.step_once(stores)
+        self.step_once(stores, redispatch)
+    }
+
+    /// TeX82 §1123's `make_accent`.
+    ///
+    /// The accent's font is `cur_font` *before* §1270's `do_assignments`, and
+    /// §1124 re-reads `cur_font` for the base character. That is the whole
+    /// point of plain.tex's `\t`
+    /// (``\def\t#1{{\edef\next{\the\font}\the\textfont1\accent"7F\next#1}}``):
+    /// the tie accent comes from the math italic font `\the\textfont1`
+    /// selected, and the base character from the text font `\next` restores.
+    ///
+    /// This is a host-owned step because §1270's loop body is
+    /// `prefixed_command` -- it executes whole commands between the two
+    /// scans -- and because tex.web executes each of them *in place*. A
+    /// scanner that stopped on the assignment and backed it up instead would
+    /// push a backup level, emit a recovery record and deliver the command
+    /// twice (`umber2-johp.196`, `umber2-johp.264`).
+    fn apply_accent(
+        &mut self,
+        scanned: ScannedAccent,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        if matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) {
+            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+        }
+        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
+            context: "\\accent",
+            value: scanned.accent,
+        })?;
+        let accent_font = stores.current_font();
+        // §1123's `p:=new_character(f,cur_val); if p<>null then`: a missing
+        // accent character skips `do_assignments` and the base lookahead
+        // entirely, so nothing after this point runs.
+        let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
+            report_missing_character(stores, accent_font, char::from(accent));
+            return Ok(ReplayStep::Continue);
+        };
+        let base = self.do_assignments_then_accent_base(stores)?;
+        apply_accent_nodes(
+            &mut self.modes,
+            stores,
+            AccentPlacement {
+                accent,
+                accent_font,
+                accent_metrics,
+                accent_origin: scanned.accent_provenance.primary,
+                base,
+            },
+        )
+    }
+
+    /// TeX82 §1270's `do_assignments` followed by §1124's classification of
+    /// the token it stops on.
+    ///
+    /// §1270 is `loop begin <Get the next non-blank non-relax non-call token>;
+    /// if cur_cmd<=max_non_prefixed_command then return; ...prefixed_command...
+    /// end`, and §1124 then reads that same `cur_cmd`/`cur_chr` -- there is no
+    /// second fetch and no `back_input` between them. Only §1124's own `else`
+    /// branch backs a command up.
+    fn do_assignments_then_accent_base(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
+        // None of §1270's assignments is a §1030 `main_loop` entry.
+        self.main_loop_active = false;
+        loop {
+            let outcome = {
+                let mut processor = command_processor(
+                    &mut self.command,
+                    &mut self.runtime,
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    stores,
+                );
+                processor.scan_accent_base().map_err(command_error)?
+            };
+            match outcome {
+                ScannedAccentBase::Character {
+                    character,
+                    provenance,
+                } => return Ok(Some((character, provenance.primary))),
+                ScannedAccentBase::Missing => return Ok(None),
+                ScannedAccentBase::Assignment(command) => {
+                    // §1211's `prefixed_command` is exactly what main
+                    // control's big case routes every code above
+                    // `max_non_prefixed_command` to, so this dispatches the
+                    // delivered command in place rather than re-fetching it.
+                    match self.nested_step_once(stores, Some(command))? {
+                        ReplayStep::Continue => {}
+                        ReplayStep::End | ReplayStep::EndOfInput => return Ok(None),
+                    }
+                    self.main_loop_active = false;
+                }
+            }
+        }
     }
 
     /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
@@ -1286,7 +1408,7 @@ impl CanonicalMainControl {
         // already-established pattern in `execute_discretionary_part`.
         self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
-            match self.nested_step_once(stores)? {
+            match self.nested_step_once(stores, None)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math replay episode",
@@ -1325,7 +1447,7 @@ impl CanonicalMainControl {
         self.modes.push(Mode::Math);
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
-            match self.nested_step_once(stores)? {
+            match self.nested_step_once(stores, None)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math group closing brace",
@@ -1895,7 +2017,7 @@ impl CanonicalMainControl {
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
         self.operation_observations = Some(ObservationBuffer::default());
-        let stepped = self.step_with_observer_once(stores);
+        let stepped = self.step_with_observer_once(stores, None);
         let pending = self.operation_observations.take().unwrap_or_default();
         match stepped {
             Ok(step) => {
@@ -1921,7 +2043,11 @@ impl CanonicalMainControl {
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
-    fn step_with_observer_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+    fn step_with_observer_once(
+        &mut self,
+        stores: &mut Universe,
+        redispatch: Option<tex_command::CurrentCommand>,
+    ) -> Result<ReplayStep, ExecError> {
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
@@ -1951,16 +2077,27 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            scan_replay_step(
-                &mut processor,
-                mode,
-                &self.boxes,
-                alignment_preamble,
-                innermost_group,
-                job_is_all_over,
-                self.modes.current_list().display_eq_no().is_some(),
-                self.main_loop_active,
-            )?
+            match redispatch {
+                Some(command) => dispatch_main_control_command(
+                    &mut processor,
+                    command,
+                    mode,
+                    &self.boxes,
+                    innermost_group,
+                    job_is_all_over,
+                    self.modes.current_list().display_eq_no().is_some(),
+                )?,
+                None => scan_replay_step(
+                    &mut processor,
+                    mode,
+                    &self.boxes,
+                    alignment_preamble,
+                    innermost_group,
+                    job_is_all_over,
+                    self.modes.current_list().display_eq_no().is_some(),
+                    self.main_loop_active,
+                )?,
+            }
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -7224,8 +7361,7 @@ fn applied_mutation_observation(
         | ScannedStep::Mark(..)
         | ScannedStep::Paragraph
         | ScannedStep::ParagraphStart
-        | ScannedStep::Character { .. }
-        | ScannedStep::Accent(..) => return None,
+        | ScannedStep::Character { .. } => return None,
         // -- Applied by `CanonicalMainControl::apply_host_owned_step` before
         // this classifier runs, either because the step is applied through its
         // own typed request path or because it ends the replay episode
@@ -7234,7 +7370,8 @@ fn applied_mutation_observation(
         | ScannedStep::Math(..)
         | ScannedStep::MathDelimiter(..)
         | ScannedStep::MathShift { .. }
-        | ScannedStep::Discretionary(..) => {
+        | ScannedStep::Discretionary(..)
+        | ScannedStep::Accent(..) => {
             unreachable!("apply_host_owned_step applies this step before classifying mutations")
         }
     };
@@ -9796,20 +9933,14 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Accent(accent) => {
-            if matches!(
-                modes.current_mode(),
-                Mode::Vertical | Mode::InternalVertical
-            ) {
-                start_canonical_paragraph(command.state, modes, stores, true)?;
-            }
-            apply_scanned_accent(modes, stores, accent)
-        }
-        // `step_once` consumes the three command-owned episodes while its
-        // aggregate snapshot is live. Observed replay is not an alternate
-        // production execution path, so reaching this arm is an invariant.
+        // `step_once` consumes the command-owned episodes while its aggregate
+        // snapshot is live. Observed replay is not an alternate production
+        // execution path, so reaching these arms is an invariant.
         ScannedStep::Discretionary(_) => {
             unreachable!("discretionary is applied by CanonicalMainControl")
+        }
+        ScannedStep::Accent(_) => {
+            unreachable!("accent is applied by CanonicalMainControl")
         }
     }
 }
@@ -10359,37 +10490,47 @@ fn apply_scanned_rule(
     Ok(ReplayStep::Continue)
 }
 
-fn apply_scanned_accent(
+/// TeX82 §1123's list-building tail, with §1125's kerns.
+struct AccentPlacement {
+    accent: u8,
+    accent_font: tex_state::ids::FontId,
+    accent_metrics: tex_state::font::CharMetrics,
+    accent_origin: tex_state::token::OriginId,
+    /// §1124's `q`: the base character and its origin, or `null`.
+    base: Option<(u8, tex_state::token::OriginId)>,
+}
+
+/// Appends §1123's `link(tail):=p; tail:=p; space_factor:=1000`, preceded by
+/// §1125's accent kerns when §1124 produced a base character.
+fn apply_accent_nodes(
     modes: &mut ModeNest,
     stores: &mut Universe,
-    scanned: ScannedAccent,
+    placement: AccentPlacement,
 ) -> Result<ReplayStep, ExecError> {
-    crate::assignments::flush_pending_hchars(modes, stores)?;
-    let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
-        context: "\\accent",
-        value: scanned.accent,
-    })?;
-    let accent_font = stores.current_font();
-    let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
-        report_missing_character(stores, accent_font, char::from(accent));
-        return Ok(ReplayStep::Continue);
+    let AccentPlacement {
+        accent,
+        accent_font,
+        accent_metrics,
+        accent_origin,
+        base,
+    } = placement;
+    let accent_node = Node::Char {
+        font: accent_font,
+        ch: char::from(accent),
+        origin: accent_origin,
     };
-    let Some(base) = scanned.base else {
-        modes.current_list_mut().push(Node::Char {
-            font: accent_font,
-            ch: char::from(accent),
-            origin: scanned.accent_provenance.primary,
-        });
-        return Ok(ReplayStep::Continue);
-    };
+    // §1124's `f:=cur_font` is re-read *after* `do_assignments`, so the base
+    // character is set in whatever font those assignments left selected.
     let base_font = stores.current_font();
-    let Some(base_metrics) = stores.font_char_metrics(base_font, base.character) else {
-        report_missing_character(stores, base_font, char::from(base.character));
-        modes.current_list_mut().push(Node::Char {
-            font: accent_font,
-            ch: char::from(accent),
-            origin: scanned.accent_provenance.primary,
-        });
+    let base = base.and_then(|(character, origin)| {
+        let Some(metrics) = stores.font_char_metrics(base_font, character) else {
+            report_missing_character(stores, base_font, char::from(character));
+            return None;
+        };
+        Some((character, origin, metrics))
+    });
+    let Some((character, base_origin, base_metrics)) = base else {
+        modes.current_list_mut().push(accent_node);
         modes.current_list_mut().set_space_factor(1000);
         return Ok(ReplayStep::Continue);
     };
@@ -10408,11 +10549,6 @@ fn apply_scanned_accent(
         amount: delta,
         kind: KernKind::Accent,
     });
-    let accent_node = Node::Char {
-        font: accent_font,
-        ch: char::from(accent),
-        origin: scanned.accent_provenance.primary,
-    };
     if base_metrics.height == accent_x_height {
         modes.current_list_mut().push(accent_node);
     } else {
@@ -10430,8 +10566,8 @@ fn apply_scanned_accent(
     });
     modes.current_list_mut().push(Node::Char {
         font: base_font,
-        ch: char::from(base.character),
-        origin: base.provenance.primary,
+        ch: char::from(character),
+        origin: base_origin,
     });
     modes.current_list_mut().set_space_factor(1000);
     Ok(ReplayStep::Continue)

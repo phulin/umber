@@ -51,11 +51,25 @@ Private state-machine modules must not be widened for compatibility with
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
   classification loops rather than `scan_toks` collections and so must never
   enter the `absorbing` scanner status or track a brace depth.
+  `structured.rs`'s `scan_accent_base` is deliberately a one-command step
+  rather than a loop: TeX82 §1123 runs §1270's `do_assignments` between the
+  accent code and §1124's base character, and executing an assignment is the
+  executor's, not the scanner's. It replays only §1124's own `else
+  back_input`, inside the delivery episode that fetched the command; a
+  prefixed command is handed back still delivered, because §1270 executes it
+  in place and a backup level here would deliver it twice.
   `restricted.rs` owns TeX82 §433-§437's five restricted integer classes as a
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the
   recover-to-zero belongs to the scan, never to the command consuming it.
 - `src/primitives/`: private static TeX82, e-TeX, and pdfTeX dispatch families.
+  `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
+  single test §1211's `prefixed_command`, §1270's `do_assignments`, and the
+  `\global` prefix all make. It is narrower than "this command assigns
+  something": `\begingroup`, `\endgroup`, `\aftergroup`, `\afterassignment`,
+  `\openin`/`\closein`, and every `extension` primitive are excluded, so a
+  caller that starts from a broader notion and subtracts them by hand is
+  re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, invocation/argument activation ownership, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine.

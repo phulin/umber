@@ -21,7 +21,8 @@ use crate::processor::status::{
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
-    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, InternalValue,
+    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, CurrentCommand,
+    InternalValue,
     processor::{meaning_text, render_the_value, string_text},
 };
 
@@ -415,29 +416,36 @@ pub struct ScannedRuleSpec {
     pub depth: Option<Scaled>,
 }
 
-/// The character selected as the base of a completed TeX82 `\accent` scan.
+/// One step of TeX82 §1123's post-`scan_char_num` lookahead for `\accent`.
 ///
-/// A missing base is deliberately represented explicitly: TeX82 backs the
-/// first non-character command up, then inserts the accent by itself.  The
-/// command processor owns that backup, so the executor never needs the
-/// rejected command or an input cursor to implement this case.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedAccentBase {
-    pub character: u8,
-    pub provenance: StructuredProvenance,
+/// §1123's `make_accent` does not classify the base character directly after
+/// the accent code: it runs §1270's `do_assignments` in between, and §1270's
+/// loop body is `prefixed_command` -- executor state, not scanner state. The
+/// lookahead is therefore delivered one command at a time.
+#[derive(Debug, Eq, PartialEq)]
+pub enum ScannedAccentBase {
+    /// §1124's `letter`, `other_char`, `char_given`, or `char_num` base.
+    Character {
+        character: u8,
+        provenance: StructuredProvenance,
+    },
+    /// §1270's `prefixed_command`: the delivered assignment the executor must
+    /// run before the lookahead continues.
+    Assignment(CurrentCommand),
+    /// §1124's `else back_input`, already performed, or end of input. Either
+    /// way §1123 appends the accent by itself.
+    Missing,
 }
 
-/// Completed command-owned operands for TeX82's text `\accent`.
+/// Completed command-owned operands for TeX82 §1123's text `\accent`.
 ///
-/// The accent code is scanned as an integer, and the following expanded
-/// character (including `\char`'s integer operand) is consumed here.  If the
-/// next expanded command is not a character, it has already been replayed by
-/// the command processor and `base` is `None`.
+/// Only `scan_char_num`'s accent code is command-owned. The base character
+/// arrives through [`CommandProcessor::scan_accent_base`], one §1270
+/// `do_assignments` iteration at a time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedAccent {
     pub accent: i32,
     pub accent_provenance: StructuredProvenance,
-    pub base: Option<ScannedAccentBase>,
 }
 
 /// Completed command-owned group material for TeX82's `\discretionary`.
@@ -1752,65 +1760,76 @@ impl CommandProcessor<'_> {
             attr,
         })
     }
-    /// Scans TeX82 §1124's text-accent operands through command-owned input.
+    /// Scans TeX82 §1123's `make_accent` accent code.
     ///
-    /// Assignment execution between the accent code and base character is an
-    /// executor lifecycle concern; this bounded scanner intentionally owns
-    /// only expanded delivery, `\char`'s scalar operand, and the canonical
-    /// replay of a non-character lookahead.
+    /// §1123 is `scan_char_num; f:=cur_font; p:=new_character(f,cur_val)` and
+    /// only then `do_assignments`, so the accent code is the whole of what the
+    /// command layer owns before the executor takes over.
     pub fn scan_accent(&mut self) -> Result<ScannedAccent, CommandError> {
         let accent = self.scan_integer()?;
-        let base = loop {
-            let Some(command) = self.get_x_token()? else {
-                break None;
-            };
-            match command.meaning() {
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }
-                | Meaning::Relax => continue,
-                Meaning::CharToken {
-                    ch,
-                    cat: Catcode::Letter | Catcode::Other,
-                }
-                | Meaning::CharGiven(ch)
-                | Meaning::CharToken {
-                    ch,
-                    cat: Catcode::Active,
-                } => {
-                    let character =
-                        u8::try_from(ch as u32).map_err(|_| CommandError::input_invariant())?;
-                    break Some(ScannedAccentBase {
-                        character,
-                        provenance: StructuredProvenance {
-                            primary: command.origin(),
-                        },
-                    });
-                }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-                    let character = u8::try_from(self.scan_integer()?.value)
-                        .map_err(|_| CommandError::input_invariant())?;
-                    break Some(ScannedAccentBase {
-                        character,
-                        provenance: StructuredProvenance {
-                            primary: command.origin(),
-                        },
-                    });
-                }
-                _ => {
-                    self.back_input(command)?;
-                    break None;
-                }
-            }
-        };
         Ok(ScannedAccent {
             accent: accent.value,
             accent_provenance: StructuredProvenance {
                 primary: accent.provenance.primary,
             },
-            base,
         })
+    }
+
+    /// Delivers one step of TeX82 §1123's post-`scan_char_num` lookahead.
+    ///
+    /// §404's `<Get the next non-blank non-relax non-call token>` is shared by
+    /// §1270's `do_assignments` and §1124's base-character classification --
+    /// §1270 leaves the token it stops on in `cur_cmd`, and §1124 classifies
+    /// exactly that token. This therefore performs the fetch and §1124's
+    /// classification, and hands any other command back to the executor.
+    ///
+    /// A `prefixed_command` must not be replayed. §1270 executes it in place,
+    /// with no `back_input` at all, so backing it up would push a backup
+    /// level, emit a recovery record and deliver the command a second time,
+    /// none of which tex.web does (`umber2-johp.196`, `umber2-johp.264`). It
+    /// is handed to the executor still delivered; only §1124's own `else`
+    /// branch replays, and it does so here, inside the delivery episode that
+    /// owns the command.
+    pub fn scan_accent_base(&mut self) -> Result<ScannedAccentBase, CommandError> {
+        let Some(command) = self.next_non_blank_non_relax_x_token()? else {
+            return Ok(ScannedAccentBase::Missing);
+        };
+        let provenance = StructuredProvenance {
+            primary: command.origin(),
+        };
+        match command.meaning() {
+            Meaning::CharToken {
+                ch,
+                cat: Catcode::Letter | Catcode::Other,
+            }
+            | Meaning::CharGiven(ch)
+            | Meaning::CharToken {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let character =
+                    u8::try_from(ch as u32).map_err(|_| CommandError::input_invariant())?;
+                Ok(ScannedAccentBase::Character {
+                    character,
+                    provenance,
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                let character = u8::try_from(self.scan_integer()?.value)
+                    .map_err(|_| CommandError::input_invariant())?;
+                Ok(ScannedAccentBase::Character {
+                    character,
+                    provenance,
+                })
+            }
+            meaning if crate::primitives::is_prefixed_command(meaning) => {
+                Ok(ScannedAccentBase::Assignment(command))
+            }
+            _ => {
+                self.back_input(command)?;
+                Ok(ScannedAccentBase::Missing)
+            }
+        }
     }
 
     /// Collects all three TeX82 `\discretionary` groups as immutable traced

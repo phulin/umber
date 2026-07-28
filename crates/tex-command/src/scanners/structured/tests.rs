@@ -1115,7 +1115,7 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
 }
 
 #[test]
-fn accent_scanner_returns_completed_operands_and_replays_noncharacter_base() {
+fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
     let mut command = CommandState::default();
     push(
         &mut command,
@@ -1149,7 +1149,16 @@ fn accent_scanner_returns_completed_operands_and_replays_noncharacter_base() {
         .scan_accent()
         .expect("accent operands scan");
     assert_eq!(accent.accent, 18);
-    assert_eq!(accent.base.expect("base character").character, b'A');
+    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_accent_base()
+        .expect("base lookahead scans");
+    assert!(matches!(
+        base,
+        ScannedAccentBase::Character {
+            character: b'A',
+            ..
+        }
+    ));
 
     let punctuation = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .get_x_token()
@@ -1159,6 +1168,86 @@ fn accent_scanner_returns_completed_operands_and_replays_noncharacter_base() {
         punctuation.meaning(),
         Meaning::CharToken { ch: '!', .. }
     ));
+}
+
+/// TeX82 §1123 reaches §1124 through §1270's `do_assignments`, whose
+/// `prefixed_command` executes the command §404 stopped on *in place*. The
+/// base lookahead therefore hands a prefixed command back still delivered
+/// rather than replaying it: a `back_input` here would push a backup level,
+/// emit a recovery record and deliver the command a second time, none of
+/// which tex.web does (`umber2-johp.264`).
+#[test]
+fn accent_base_lookahead_hands_a_prefixed_command_back_unreplayed() {
+    let mut command = CommandState::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let target = universe.intern("advance").symbol();
+    universe.set_meaning(
+        target,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Advance),
+    );
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(target),
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_accent_base()
+        .expect("base lookahead scans");
+
+    let ScannedAccentBase::Assignment(handed_back) = base else {
+        panic!("a prefixed command is handed back, not classified as a base");
+    };
+    assert_eq!(
+        handed_back.meaning(),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Advance)
+    );
+    assert!(
+        !recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Recovery(_) | CommandObservation::Input(_)
+        )),
+        "handing the command back must push no input level and record no recovery: {:?}",
+        recorder.0
+    );
+}
+
+/// The other half of §1124: a command that is neither a base character nor a
+/// prefixed command takes tex.web's `else back_input`, and that replay stays
+/// inside the delivery episode that fetched it.
+#[test]
+fn accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment() {
+    let mut command = CommandState::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let target = universe.intern("hbox").symbol();
+    universe.set_meaning(
+        target,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox),
+    );
+    push(&mut command, [Token::Cs(target)]);
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_accent_base()
+        .expect("base lookahead scans");
+    assert!(matches!(base, ScannedAccentBase::Missing));
+
+    let replayed = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .get_x_token()
+        .expect("replayed command delivers")
+        .expect("replayed command exists");
+    assert_eq!(
+        replayed.meaning(),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox)
+    );
 }
 
 #[test]
