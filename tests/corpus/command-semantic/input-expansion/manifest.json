@@ -66,16 +66,7 @@
       "expected": [
         "effect:activities:mode=vertical"
       ],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.242",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "effect:activities:mode=vertical",
-          "actual": "main-control step: UnimplementedPrimitive { primitive: ShowLists, mode: Vertical, origin: OriginId(..) }"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "input-control-sequences",

@@ -234,16 +234,7 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=2000000000", "count:1=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-sb8t",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "count:0=2000000000",
-          "actual": "main-control step: ArithmeticOverflow"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "setbox-request",
@@ -469,17 +460,8 @@
         "sections": [1290, 1291, 1292, 1293]
       },
       "projection": { "kind": "observations", "kinds": ["effect"], "count_registers": [0] },
-      "expected": ["effect:activities:mode=vertical", "count:0=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-abvi",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "effect:activities:mode=vertical",
-          "actual": "main-control step: UnimplementedPrimitive { primitive: ShowLists, mode: Vertical, origin: OriginId(..) }"
-        }
-      }
+      "expected": ["effect:activities:mode=vertical", "effect:terminate:engine\u0000", "count:0=1"],
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "show-meaning",

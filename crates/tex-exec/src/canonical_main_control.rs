@@ -3115,6 +3115,12 @@ enum ScannedStep {
     ShowBox {
         index: u16,
     },
+    /// TeX82 §1293's `show_lists_code` branch of `show_whatever`, which takes
+    /// no operand: `begin_diagnostic; show_activities`. The mode is carried
+    /// so the committed effect can name the nest it reported.
+    ShowLists {
+        mode: Mode,
+    },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
     BoxRegister {
@@ -3814,6 +3820,19 @@ fn dispatch_main_control_command(
             job_is_all_over,
             display_eq_no,
         );
+    }
+}
+
+/// The canonical hyphenated name of one mode, as committed observations and
+/// the semantic corpus spell it.
+fn canonical_mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Vertical => "vertical",
+        Mode::Horizontal => "horizontal",
+        Mode::DisplayMath => "display-math",
+        Mode::InternalVertical => "internal-vertical",
+        Mode::RestrictedHorizontal => "restricted-horizontal",
+        Mode::Math => "math",
     }
 }
 
@@ -5117,6 +5136,12 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowThe) => Ok(
             ScannedStep::DisplayDiagnostic(processor.scan_showthe().map_err(command_error)?),
         ),
+        // TeX82 §1290's `any_mode(xray): show_whatever` puts every \show
+        // family in every mode; §1293's `show_lists_code` case reads no
+        // operand at all.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowLists) => {
+            Ok(ScannedStep::ShowLists { mode })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowBox) => {
             let (index, _) = processor.scan_showbox().map_err(command_error)?;
             Ok(ScannedStep::ShowBox {
@@ -5716,6 +5741,7 @@ fn scan_unclassified_primitive(
         | P::Shipout
         | P::Show
         | P::ShowBox
+        | P::ShowLists
         | P::ShowThe
         | P::SkewChar
         | P::Skip
@@ -5919,7 +5945,6 @@ fn scan_unclassified_primitive(
         | P::QuitVMode
         | P::ShowGroups
         | P::ShowIfs
-        | P::ShowLists
         | P::ShowTokens
         | P::SpaceFactor
         | P::SplitDiscards
@@ -7472,6 +7497,7 @@ fn applied_mutation_observation(
         | ScannedStep::Message { .. }
         | ScannedStep::DisplayDiagnostic(..)
         | ScannedStep::ShowBox { .. }
+        | ScannedStep::ShowLists { .. }
         | ScannedStep::VSplit(..)
         | ScannedStep::ImmediateExtension(..)
         | ScannedStep::BoxRegister { .. }
@@ -7625,6 +7651,13 @@ fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<Effec
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
+        // TeX82 §1293's `show_activities` reports the whole mode nest; the
+        // committed effect names the innermost mode it was shown from.
+        ScannedStep::ShowLists { mode } => Some(EffectRecord {
+            kind: "activities",
+            detail: format!("mode={}", canonical_mode_name(*mode)),
+            tokens: None,
+        }),
         ScannedStep::Message { tokens, .. } => Some(EffectRecord {
             kind: "message",
             detail: replay_text(stores.tokens(tokens.token_list())),
@@ -9062,13 +9095,28 @@ fn apply_scanned_step(
             operand,
             global,
         } => {
-            apply_arithmetic(
+            // TeX82 §1236 sets `arith_error` and, when it is set, reports
+            // "Arithmetic overflow" and `return`s *before* `word_define`, so
+            // the target keeps its old value and the job continues. Every
+            // arm of `apply_arithmetic` computes its value before writing it,
+            // so the target is provably unwritten on this path.
+            match apply_arithmetic(
                 primitive,
                 target,
                 operand,
                 assignment_global(global, stores),
                 stores,
-            )?;
+            ) {
+                Err(ExecError::ArithmeticOverflow) => {
+                    let mut report = stores.print_err("Arithmetic overflow");
+                    report.help(&[
+                        "I can't carry out that multiplication or division,",
+                        "since the result is out of range.",
+                    ]);
+                    report.error();
+                }
+                other => other?,
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MacroDefinition {
@@ -9241,6 +9289,10 @@ fn apply_scanned_step(
         }
         ScannedStep::ShowBox { index } => {
             crate::diagnostics::execute_showbox(stores, index);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ShowLists { .. } => {
+            crate::diagnostics::execute_showlists(stores, modes);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
