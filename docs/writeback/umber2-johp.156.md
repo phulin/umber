@@ -26,8 +26,14 @@ Verification:
 - `scripts/run-native-tests.py`: `VERDICT: FAIL - 33 packages, 44/48 test
   binaries, 3886 passed, 5 failed, 941 ignored; TeX82 property catalogue: 938
   reviewed, 442 deferred; 100 covered, 51 gap; deferred tiers: 0 of 6 passed
-  on this tree`. All five failures were the pre-existing absent local
-  conformance inputs and gitignored DVI oracles for `etrip`, `gentle`, `story`,
-  `story_canonical`, and `trip`; this task did not fetch or regenerate the
-  excluded Gentle/DVI assets.
+  on this tree`. All five initial failures were absent local conformance
+  inputs and gitignored DVI oracles for `etrip`, `gentle`, `story`,
+  `story_canonical`, and `trip`.
+- After copying only those ignored inputs and oracles plus the 47
+  `CORPUS_TFMS` declared by the parity harness from the primary checkout, the
+  authoritative rerun reported `VERDICT: PASS - 33 packages, 48/48 test
+  binaries, 3967 passed, 0 failed, 941 ignored; TeX82 property catalogue: 938
+  reviewed, 442 deferred; 100 covered, 51 gap; deferred tiers: 0 of 6 passed
+  on this tree`. The copied conformance assets remain gitignored and
+  uncommitted.
 - `scripts/check.sh`: `check.sh: all 4 gates passed.`
