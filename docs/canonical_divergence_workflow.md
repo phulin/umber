@@ -57,12 +57,15 @@ away from.
    divergence against committed fixtures:
 
    ```bash
-   cargo run -q -p tex-command-stream -- --repository . --max-divergences 100000
+   cargo run-dev -q -p tex-command-stream -- --repository . --max-divergences 100000
    ```
 
    Run this from the repository root. It is hermetic (no corpus,
    distribution, or live TeX tool required) and never invokes a reference
-   engine.
+   engine. `cargo run-dev` selects the repository's optimized test profile;
+   do not substitute `cargo run`, whose target/debug replay is prohibitively
+   slow for full-document traces. Full-document tracing remains a manual
+   diagnostic tier and must not be added to automated correctness gates.
    Every run that happened prints its report and ends with a `VERDICT:` line
    naming the outcome and the status carrying it. Read the status before the
    totals; only two of the four mean the totals are exact.
