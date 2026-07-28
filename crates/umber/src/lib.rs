@@ -1390,7 +1390,6 @@ mod primitive_mode_tests {
             ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
             ("ifdefined", ExpandablePrimitive::IfDefined),
             ("ifcsname", ExpandablePrimitive::IfCsName),
-            ("ifincsname", ExpandablePrimitive::IfInCsName),
             ("iffontchar", ExpandablePrimitive::IfFontChar),
         ] {
             let symbol = extended.intern(name);
@@ -1399,6 +1398,8 @@ mod primitive_mode_tests {
                 Meaning::ExpandablePrimitive(primitive)
             );
         }
+        let ifincsname = extended.intern("ifincsname");
+        assert_eq!(extended.meaning(ifincsname), Meaning::Undefined);
         for (name, primitive) in [
             ("fontcharwd", UnexpandablePrimitive::FontCharWd),
             ("fontcharht", UnexpandablePrimitive::FontCharHt),

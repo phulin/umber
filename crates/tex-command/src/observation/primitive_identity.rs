@@ -513,8 +513,7 @@ pub(crate) fn expandable_primitive_identity(
         P::IfDefined => ("if_test".into(), Some(17)),
         P::IfCsName => ("if_test".into(), Some(18)),
         P::IfFontChar => ("if_test".into(), Some(19)),
-        // BEST-EFFORT: e-TeX's own if_test extension order is not confirmed
-        // past if_font_char_code; kept sequential and distinguishable.
+        // pdftex.web §1934: if_in_csname_code=20.
         P::IfInCsName => ("if_test".into(), Some(20)),
         // `fi_or_else`: fi_code=2, else_code=3, or_code=4.
         P::Fi => ("fi_or_else".into(), Some(2)),
@@ -549,9 +548,7 @@ pub(crate) fn expandable_primitive_identity(
                 CommandDialect::Pdftex14027 => 20,
             }),
         ),
-        // pdfTeX's message-style expansion primitive: BEST-EFFORT, not
-        // confirmed against a live pdfTeX reference (see the module
-        // documentation).
+        // pdftex.web §583: expanded_code=etex_convert_codes=6.
         P::Expanded => ("convert".into(), Some(6)),
         // Engine-neutral Umber/LaTeX-extension additions with no tex.web or
         // e-TeX analog; BEST-EFFORT placeholders in the `convert` family

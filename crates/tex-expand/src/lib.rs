@@ -215,10 +215,6 @@ fn configure_etex_expandable_primitives(stores: &mut Universe, install: bool) {
             tex_state::meaning::ExpandablePrimitive::IfCsName,
         ),
         (
-            "ifincsname",
-            tex_state::meaning::ExpandablePrimitive::IfInCsName,
-        ),
-        (
             "iffontchar",
             tex_state::meaning::ExpandablePrimitive::IfFontChar,
         ),
@@ -341,6 +337,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
         (
             "expanded",
             tex_state::meaning::ExpandablePrimitive::Expanded,
+        ),
+        (
+            "ifincsname",
+            tex_state::meaning::ExpandablePrimitive::IfInCsName,
         ),
         (
             "pdftexrevision",

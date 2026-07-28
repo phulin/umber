@@ -39,11 +39,11 @@ In addition to `\expanded` and `\ifincsname`, the completed layer implements
 the parameter banks, enquiries and conversions, font and microtype controls,
 graphics and navigation actions, external images, and the detached PDF output
 backend.
-There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
-`\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
-inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
-all 158 names in pdfTeX mode and isolates the other 156 from earlier modes,
-without changing either established contract.
+The supported LaTeX-DVI compatibility layer intentionally keeps `\expanded`.
+Plain e-TeX 2.6 defines neither `\expanded` nor `\ifincsname`; both are
+installed at their source-derived pdfTeX 1.40.27 command and operand in
+pdfTeX mode. The source-set gate therefore requires all 158 names in pdfTeX
+mode and isolates the other 157 from earlier modes.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
 `\shellescape`, and `\strcmp`; these are implementation reuse candidates for
 the corresponding `\pdf...` aliases, not exact-name coverage.

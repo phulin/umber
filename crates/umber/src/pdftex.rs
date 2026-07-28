@@ -317,10 +317,6 @@ const PDFTEX_TOK_PARAMETERS: &[(&str, TokParam)] = &[
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
     for &name in PDFTEX_PRIMITIVE_NAMES {
-        if name == "ifincsname" {
-            // pdfTeX inherits this exact primitive from its e-TeX layer.
-            continue;
-        }
         let symbol = stores.intern(name);
         stores.set_meaning(
             symbol,
@@ -1434,13 +1430,10 @@ mod tests {
     fn pdftex_layer_is_visible_only_in_pdftex_mode() {
         for (prepare, intentional_overlaps) in [
             (prepare_run_stores as fn(&mut Universe), &[][..]),
-            (
-                prepare_etex_run_stores as fn(&mut Universe),
-                &["ifincsname"][..],
-            ),
+            (prepare_etex_run_stores as fn(&mut Universe), &[][..]),
             (
                 prepare_latex_run_stores as fn(&mut Universe),
-                &["expanded", "ifincsname"][..],
+                &["expanded"][..],
             ),
         ] {
             let mut stores = Universe::default();
@@ -1470,6 +1463,46 @@ mod tests {
             stores.meaning(revision),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision),
         );
+    }
+
+    #[test]
+    fn late_expansion_primitives_have_source_derived_profile_ownership() {
+        for (prepare, expected) in [
+            (
+                prepare_run_stores as fn(&mut Universe),
+                [Meaning::Undefined, Meaning::Undefined],
+            ),
+            (
+                prepare_etex_run_stores as fn(&mut Universe),
+                [Meaning::Undefined, Meaning::Undefined],
+            ),
+            (
+                prepare_pdftex_run_stores as fn(&mut Universe),
+                [
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName),
+                ],
+            ),
+        ] {
+            let mut stores = Universe::default();
+            prepare(&mut stores);
+            for ((name, primitive), expected) in [
+                ("expanded", ExpandablePrimitive::Expanded),
+                ("ifincsname", ExpandablePrimitive::IfInCsName),
+            ]
+            .into_iter()
+            .zip(expected)
+            {
+                let symbol = stores.intern(name);
+                assert_eq!(stores.meaning(symbol), expected, "{name}");
+                assert_eq!(
+                    stores.primitive_meaning(name),
+                    (expected != Meaning::Undefined)
+                        .then_some(Meaning::ExpandablePrimitive(primitive,)),
+                    "{name}",
+                );
+            }
+        }
     }
 
     #[test]

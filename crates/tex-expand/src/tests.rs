@@ -1416,6 +1416,35 @@ fn expanded_is_installed_only_in_the_latex_extension_layer() {
 }
 
 #[test]
+fn late_pdftex_primitives_are_absent_from_tex82_and_etex_installers() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    install_expandable_primitives(&mut stores);
+    for name in ["expanded", "ifincsname"] {
+        let symbol = stores.intern(name);
+        assert_eq!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+        assert_eq!(stores.primitive_meaning(name), None, "{name}");
+    }
+
+    crate::install_etex_expandable_primitives(&mut stores);
+    for name in ["expanded", "ifincsname"] {
+        let symbol = stores.intern(name);
+        assert_eq!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+        assert_eq!(stores.primitive_meaning(name), None, "{name}");
+    }
+
+    crate::install_pdftex_expandable_primitives(&mut stores);
+    for (name, primitive) in [
+        ("expanded", ExpandablePrimitive::Expanded),
+        ("ifincsname", ExpandablePrimitive::IfInCsName),
+    ] {
+        let meaning = Meaning::ExpandablePrimitive(primitive);
+        let symbol = stores.intern(name);
+        assert_eq!(stores.meaning(symbol), meaning, "{name}");
+        assert_eq!(stores.primitive_meaning(name), Some(meaning), "{name}");
+    }
+}
+
+#[test]
 fn shellescape_reports_the_disabled_world_policy() {
     let mut stores = Universe::new_with_plain_catcodes();
     crate::install_latex_expandable_primitives(&mut stores);
@@ -2226,6 +2255,7 @@ fn ifincsname_tracks_only_live_csname_scans() {
     let mut stores = Universe::new_with_plain_catcodes();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_pdftex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\ifincsname A\\else B\\fi\
          \\csname a\\ifincsname T\\else F\\fi b\\endcsname\

@@ -872,6 +872,20 @@ mod tests {
             ),
             ("convert".into(), Some(7))
         );
+        assert_eq!(
+            canonical_command_identity_for_profile(
+                CommandProfile::PDFTEX14027,
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+            ),
+            ("convert".into(), Some(6))
+        );
+        assert_eq!(
+            canonical_command_identity_for_profile(
+                CommandProfile::PDFTEX14027,
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName),
+            ),
+            ("if_test".into(), Some(20))
+        );
     }
 
     #[test]

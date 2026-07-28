@@ -40,7 +40,9 @@ for every primitive and parameter in the family.
 ## Environmental and conditional enquiries (manual section 3.3)
 
 `\eTeXversion`, `\eTeXrevision`, `\ifdefined`, non-creating `\ifcsname`, and
-live-name-scan enquiry `\ifincsname` are implemented with focused V2 tests. `\currentgrouplevel`,
+`\iffontchar` are implemented with focused V2 tests. The later live-name-scan
+enquiry `\ifincsname` is a pdfTeX 1.40.27 primitive and remains undefined in
+the e-TeX 2.6 profile. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`, and
 `\currentifbranch` read exact resumable group/conditional state.
 `\lastnodetype` is implemented from the effective current-list/page tail with
