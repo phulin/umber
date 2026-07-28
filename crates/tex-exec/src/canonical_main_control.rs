@@ -289,6 +289,47 @@ struct CanonicalStepSnapshot {
     universe: tex_state::Snapshot,
 }
 
+impl CanonicalStepSnapshot {
+    fn capture(control: &CanonicalMainControl, stores: &mut Universe) -> Self {
+        Self {
+            command: control.command.snapshot(),
+            modes: control.modes.clone(),
+            next_alignment_identity: control.next_alignment_identity,
+            active_alignment: control.active_alignment.clone(),
+            boxes: control.boxes.clone(),
+            main_loop_active: control.main_loop_active,
+            completed_replay_episode: control.completed_replay_episode,
+            prepared_dvi_pages: control.prepared_dvi_pages.clone(),
+            completed_boundaries: control.completed_boundaries.clone(),
+            universe: stores.snapshot(),
+        }
+    }
+
+    fn rollback(self, control: &mut CanonicalMainControl, stores: &mut Universe) {
+        // Roll the aggregate owner back before reinstalling command roots that
+        // may contain OriginIds allocated from that owner. No intermediate
+        // state with a restored command and a newer provenance timeline is
+        // observable outside this method.
+        stores.rollback(&self.universe);
+        control
+            .command
+            .rollback(self.command)
+            .expect("canonical step snapshot keeps its command profile");
+        // CommandRuntime is deliberately non-cloneable: its caches and
+        // profiling cannot become semantic or durable state. Its fresh value
+        // is therefore the canonical retry restoration form.
+        control.runtime = CommandRuntime::default();
+        control.modes = self.modes;
+        control.next_alignment_identity = self.next_alignment_identity;
+        control.active_alignment = self.active_alignment;
+        control.boxes = self.boxes;
+        control.main_loop_active = self.main_loop_active;
+        control.completed_replay_episode = self.completed_replay_episode;
+        control.prepared_dvi_pages = self.prepared_dvi_pages;
+        control.completed_boundaries = self.completed_boundaries;
+    }
+}
+
 /// Where one command-processor episode publishes its committed records.
 ///
 /// Outside instrumented builds there is no observer to install, so the slot
@@ -674,18 +715,7 @@ impl CanonicalMainControl {
     }
 
     fn snapshot_step(&self, stores: &mut Universe) -> CanonicalStepSnapshot {
-        CanonicalStepSnapshot {
-            command: self.command.snapshot(),
-            modes: self.modes.clone(),
-            next_alignment_identity: self.next_alignment_identity,
-            active_alignment: self.active_alignment.clone(),
-            boxes: self.boxes.clone(),
-            main_loop_active: self.main_loop_active,
-            completed_replay_episode: self.completed_replay_episode,
-            prepared_dvi_pages: self.prepared_dvi_pages.clone(),
-            completed_boundaries: self.completed_boundaries.clone(),
-            universe: stores.snapshot(),
-        }
+        CanonicalStepSnapshot::capture(self, stores)
     }
 
     /// Lends the whole command machine at once, for helpers that build their
@@ -748,25 +778,7 @@ impl CanonicalMainControl {
     }
 
     fn rollback_step(&mut self, snapshot: CanonicalStepSnapshot, stores: &mut Universe) {
-        // This snapshot was created by this command state immediately before
-        // the operation, so a profile mismatch would be an internal invariant
-        // failure rather than a recoverable host condition.
-        self.command
-            .rollback(snapshot.command)
-            .expect("canonical step snapshot keeps its command profile");
-        // CommandRuntime is deliberately non-cloneable: its caches and
-        // profiling cannot become semantic or durable state. Its fresh value
-        // is therefore the canonical retry restoration form.
-        self.runtime = CommandRuntime::default();
-        self.modes = snapshot.modes;
-        self.next_alignment_identity = snapshot.next_alignment_identity;
-        self.active_alignment = snapshot.active_alignment;
-        self.boxes = snapshot.boxes;
-        self.main_loop_active = snapshot.main_loop_active;
-        self.completed_replay_episode = snapshot.completed_replay_episode;
-        self.prepared_dvi_pages = snapshot.prepared_dvi_pages;
-        self.completed_boundaries = snapshot.completed_boundaries;
-        stores.rollback(&snapshot.universe);
+        snapshot.rollback(self, stores);
     }
 
     /// Drains committed canonical shipout receipts in artifact order.

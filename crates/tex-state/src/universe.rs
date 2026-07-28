@@ -4398,6 +4398,18 @@ impl Universe {
         self.stores.macro_invocation_provenance_stats()
     }
 
+    /// Returns live macro-invocation origins in allocation order for
+    /// rollback and replay tests.
+    ///
+    /// This is a test-only timeline inspection escape hatch, not an engine
+    /// capability. Production code must resolve provenance from tokens and
+    /// diagnostics rather than enumerate the arena.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn macro_invocation_origins_for_testing(&self) -> Vec<OriginId> {
+        self.stores.macro_invocation_origins()
+    }
+
     /// Registers a source backing after validating any World identity.
     pub fn register_source(
         &mut self,

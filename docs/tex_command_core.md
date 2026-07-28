@@ -1131,6 +1131,14 @@ This is the command half of an executor savepoint. It is never independently
 committed from the paired `Universe`, mode nest, execution state, effects,
 generated writes, and output state.
 
+The canonical executor enforces that rule with one private
+`CanonicalStepSnapshot`: capture records `CommandState` and the aggregate
+`Universe` watermark together, and rollback restores both before returning to
+the host. In particular, a resource suspension after nested macro expansion
+cannot retain either the activation/argument ranges or the invocation records
+created by that attempt. A retry starts from the same semantic input and
+aggregate provenance prefix.
+
 ### 8.1 Input state
 
 `InputState` owns actual input levels and source-id allocation. It does not own
@@ -2585,6 +2593,17 @@ history shares sealed chunks and resolves editor fragments against the current
 layout lazily. Deleted fragments resolve as deleted, never as a different live
 position.
 
+Packed arena origin keys are process-global, monotonic diagnostic identities.
+Rollback truncates their records but deliberately does not reuse their keys:
+an `OriginId` retained by a detached error can therefore never alias a
+different record after retry. Restoring a retained aggregate snapshot
+preserves every origin and record committed before its watermark exactly;
+allocations replayed after that watermark receive fresh ids whose record graph
+is structurally equivalent and whose macro-parent edges name the fresh
+replayed invocation. This diagnostic identity difference is excluded from all
+semantic equality listed below. Repeated failed retries retain no live records
+and reuse bounded arena capacity.
+
 ### 26.6 Semantic independence
 
 These must remain identical with complete, degraded, or unknown origins:
@@ -2650,6 +2669,14 @@ It is paired atomically with:
 - generated-file stage;
 - statistics; and
 - checkpoint publication state.
+
+The pairing includes provenance even though provenance is excluded from the
+semantic state hash. Named checkpoint restoration therefore preserves the
+exact committed origin prefix, removes every later record, and restores the
+command continuation that can reference only that live prefix. Durable command
+summaries do not serialize a second provenance arena or raw provenance
+watermark; the owning `Universe` snapshot is the sole serialized/snapshot
+owner.
 
 ### 28.2 Durable summary
 

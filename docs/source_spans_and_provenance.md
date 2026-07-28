@@ -508,6 +508,16 @@ replay-frame pop, not across provenance rollback. Any diagnostic that must
 outlive rollback past its origin/source-map watermark is rendered to owned text
 before rollback.
 
+Canonical executor operations pair their `CommandState` snapshot with this
+aggregate watermark in one private rollback value. Rollback removes all
+invocation records created by a failed macro scan or a resource-suspended
+nested expansion at the same time that it restores macro activations and
+shared argument ranges. Keys for removed arena records remain retired rather
+than being reused, so a detached stale `OriginId` cannot alias a retry record.
+A retained aggregate checkpoint, by contrast, restores the identical committed
+origin prefix and records. Retried allocations after that prefix receive fresh
+ids with the same source relationships and fresh parent links.
+
 ## 9. Capacity and format constraints
 
 The tagged representation preserves and tests:

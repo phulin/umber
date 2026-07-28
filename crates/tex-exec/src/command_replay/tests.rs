@@ -7,8 +7,10 @@ use tex_command::{
 };
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::ids::TokenListId;
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::macro_store::MacroMeaning;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::Node;
+use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::{EffectRecord, InputOpenState, StreamSlot, Universe};
 
@@ -5862,6 +5864,155 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
     assert_eq!(failed_universe.count(3), fresh_universe.count(3));
     assert_eq!(failed.current_mode(), fresh.current_mode());
     assert_eq!(failed_observations.0, fresh_observations.0);
+}
+
+#[test]
+fn macro_retry_rolls_back_command_and_provenance_as_one_timeline() {
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&b"\\global\\advance\\count3 by1"[..]),
+    );
+    let mut universe = Universe::new_with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut universe);
+    install_input(&mut universe);
+    let mut control = CommandReplayControl::default();
+    register_source(
+        &mut control,
+        br"\def\outer#1{\inner{#1}}\def\inner#1{\input #1}\outer{child}\outer{child}\end",
+    );
+
+    for label in ["outer definition", "inner definition"] {
+        assert_eq!(
+            control.advance(&mut universe).expect(label),
+            CanonicalStepResult::Progress(ReplayStep::Continue)
+        );
+    }
+    let baseline = universe.provenance_stats();
+    let mut retained_after_first_retry = None;
+    for retry in 0..32 {
+        assert!(matches!(
+            control.advance(&mut universe).expect("missing nested input"),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+                if name == "child"
+        ));
+        assert_eq!(
+            universe.provenance_stats(),
+            baseline,
+            "retry {retry} restores every live provenance watermark"
+        );
+        assert!(
+            universe.macro_invocation_origins_for_testing().is_empty(),
+            "retry {retry} leaves no invocation record from either nested call"
+        );
+        let retained = universe.provenance_stats().retained_bytes();
+        if let Some(first) = retained_after_first_retry {
+            assert_eq!(
+                retained, first,
+                "rollback reuses bounded arena capacity instead of retaining retry history"
+            );
+        } else {
+            retained_after_first_retry = Some(retained);
+        }
+    }
+
+    control.capabilities_mut().register_input("child", child);
+    assert_eq!(
+        control
+            .advance(&mut universe)
+            .expect("nested retry commits"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    );
+    assert_eq!(
+        universe.count(3),
+        1,
+        "the shared argument range names child"
+    );
+    let first_commit = universe.macro_invocation_origins_for_testing();
+    assert_eq!(first_commit.len(), 4);
+    let parents: Vec<_> = first_commit
+        .iter()
+        .map(|origin| match universe.origin(*origin) {
+            OriginRecord::MacroInvocation(invocation) => invocation.parent_invocation(),
+            _ => panic!("enumerated invocation origin has an invocation record"),
+        })
+        .collect();
+    assert_eq!(parents[0], tex_state::token::OriginId::UNKNOWN);
+    assert!(
+        parents
+            .iter()
+            .all(|parent| *parent == tex_state::token::OriginId::UNKNOWN),
+        "the exhausted outer activation retires before the callee is invoked"
+    );
+
+    let empty = universe.intern_token_list(&[]);
+    let checkpoint_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut universe,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("quiescent command state serializes into a named checkpoint");
+    let added_outer = universe.macro_invocation_origin(
+        checkpoint_definition,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    universe.macro_invocation_origin(
+        checkpoint_definition,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+        added_outer,
+    );
+    let second_commit = universe.macro_invocation_origins_for_testing();
+    assert_eq!(second_commit.len(), 6);
+
+    control
+        .restore_checkpoint(&checkpoint, &mut universe)
+        .expect("named checkpoint restores command and aggregate provenance");
+    assert_eq!(universe.count(3), 1);
+    assert_eq!(
+        universe.macro_invocation_origins_for_testing(),
+        first_commit,
+        "snapshot restoration preserves committed origin identity"
+    );
+    for stale in &second_commit[4..] {
+        assert!(
+            universe.origin_if_live(*stale).is_none(),
+            "rolled-back origin identities never alias retained records"
+        );
+    }
+
+    let replayed_outer = universe.macro_invocation_origin(
+        checkpoint_definition,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    universe.macro_invocation_origin(
+        checkpoint_definition,
+        tex_state::token::OriginId::UNKNOWN,
+        tex_state::token::OriginId::UNKNOWN,
+        replayed_outer,
+    );
+    let replayed = universe.macro_invocation_origins_for_testing();
+    assert_eq!(replayed.len(), 6);
+    assert_ne!(
+        &replayed[4..],
+        &second_commit[4..],
+        "replayed allocations receive fresh non-aliasing diagnostic identities"
+    );
+    let OriginRecord::MacroInvocation(replayed_inner) = universe.origin(replayed[5]) else {
+        panic!("replayed child invocation remains live");
+    };
+    assert_eq!(replayed_inner.parent_invocation(), replayed[4]);
+    assert_eq!(
+        universe.macro_invocation_provenance_stats().invocations(),
+        6,
+        "only committed invocation pairs contribute to aggregate bounds"
+    );
 }
 
 #[test]

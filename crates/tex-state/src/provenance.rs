@@ -73,6 +73,19 @@ impl OriginRecordArchive {
             .count()
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    fn macro_invocation_origins(&self) -> Vec<OriginId> {
+        self.sealed
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .chain(self.tail.iter())
+            .filter(|(_, record)| matches!(record, OriginRecord::MacroInvocation(_)))
+            .map(|(key, _)| {
+                OriginId::arena(*key).expect("stored provenance key remains representable")
+            })
+            .collect()
+    }
+
     fn get_slot(&self, slot: usize) -> Option<OriginRecord> {
         let chunk = slot / ORIGIN_RECORD_ARCHIVE_CHUNK;
         let offset = slot % ORIGIN_RECORD_ARCHIVE_CHUNK;
@@ -1244,6 +1257,11 @@ impl ProvenanceStore {
             invocations,
             retained_bytes,
         }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn macro_invocation_origins(&self) -> Vec<OriginId> {
+        self.records.macro_invocation_origins()
     }
 
     /// Takes a rollback watermark for aggregate snapshots.

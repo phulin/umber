@@ -1183,6 +1183,11 @@ impl Stores {
         self.provenance.macro_invocation_stats()
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn macro_invocation_origins(&self) -> Vec<OriginId> {
+        self.provenance.macro_invocation_origins()
+    }
+
     /// Registers immutable source backing on this aggregate timeline.
     pub(crate) fn register_source(
         &mut self,
