@@ -2461,10 +2461,21 @@ impl CanonicalMainControl {
             if let Some(mutation) = mutation {
                 records.push(CommandObservation::Mutation(mutation.resolve(stores)));
             }
-            if let Some(effect) = effect {
-                records.push(CommandObservation::Effect(effect));
+            // §1378's live-file closes are part of termination and precede
+            // the replay driver's synthetic terminal marker. Other command
+            // effects retain their established command-before-host-delta
+            // ordering.
+            if matches!(scanned, ScannedStep::End { .. }) {
+                records.extend(effects.into_iter().map(CommandObservation::Effect));
+                if let Some(effect) = effect {
+                    records.push(CommandObservation::Effect(effect));
+                }
+            } else {
+                if let Some(effect) = effect {
+                    records.push(CommandObservation::Effect(effect));
+                }
+                records.extend(effects.into_iter().map(CommandObservation::Effect));
             }
-            records.extend(effects.into_iter().map(CommandObservation::Effect));
             for shipout in committed_shipout_observations(artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
@@ -8439,6 +8450,14 @@ fn apply_scanned_step(
                 stores
                     .printer()
                     .print_nl("(\\dump is performed only by INITEX)");
+            }
+            // TeX82 §1378 closes every still-open numbered output file after
+            // `final_cleanup`. The two normalized fallback selectors are not
+            // file slots (§1342), so the state boundary exposes only 0..15
+            // here. `close_out` preserves §1378's `if write_open[k]` guard:
+            // never-opened and already-closed slots produce no close effect.
+            for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
+                stores.world_mut().close_out(StreamSlot::new(raw));
             }
             Ok(ReplayStep::End)
         }

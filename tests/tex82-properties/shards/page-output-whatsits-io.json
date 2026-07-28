@@ -1335,12 +1335,7 @@
       "stimulus": [
         "Initialize all selector states and finalize sparse open/closed stream tables in the structured Phase 2 units below."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "output_stream_final_cleanup_closes_only_live_numbered_files"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Selectors 0–17 begin closed; final cleanup closes only open files 0–15."
       ],
@@ -1359,10 +1354,13 @@
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "output_stream_table_initializes_numbered_and_fallback_selectors_closed"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "output_stream_final_cleanup_closes_only_live_numbered_files"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-j7yu"
+      "status": "covered"
     },
     {
       "id": "tex82.whatsits.primitive-and-dispatch",

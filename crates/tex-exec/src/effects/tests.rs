@@ -127,6 +127,84 @@ fn output_stream_table_initializes_numbered_and_fallback_selectors_closed() {
 }
 
 #[test]
+fn output_stream_final_cleanup_closes_only_live_numbered_files() {
+    let source = br"\immediate\openout15=last
+           \immediate\openout2=already-closed
+           \immediate\closeout2
+           \immediate\openout0=first
+           \immediate\write-1{log fallback}
+           \immediate\write16{terminal fallback}
+           \end";
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut stores);
+    let mut observer = ObservationRecorder::default();
+    register_source(&mut control, source);
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observer)
+            .expect("observed cleanup command executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert!(matches!(
+        stores.world().effect_records(),
+        [
+            EffectRecord::StreamOpen { slot: last, target: last_target },
+            EffectRecord::StreamOpen { slot: closed, target: closed_target },
+            EffectRecord::StreamClose { slot: explicitly_closed },
+            EffectRecord::StreamOpen { slot: first, target: first_target },
+            EffectRecord::StreamWrite { sink: PrintSink::Log, text: log },
+            EffectRecord::StreamWrite {
+                sink: PrintSink::TerminalAndLog,
+                text: terminal,
+            },
+            EffectRecord::StreamClose { slot: cleanup_first },
+            EffectRecord::StreamClose { slot: cleanup_last },
+        ] if *last == StreamSlot::new(15)
+            && last_target.path() == std::path::Path::new("last.tex")
+            && *closed == StreamSlot::new(2)
+            && closed_target.path() == std::path::Path::new("already-closed.tex")
+            && *explicitly_closed == StreamSlot::new(2)
+            && *first == StreamSlot::new(0)
+            && first_target.path() == std::path::Path::new("first.tex")
+            && log == "log fallback\n"
+            && terminal == "terminal fallback\n"
+            && *cleanup_first == StreamSlot::new(0)
+            && *cleanup_last == StreamSlot::new(15)
+    ));
+    let observed_effects: Vec<_> = observer
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Effect(effect) => Some((effect.kind, effect.detail.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        &observed_effects[observed_effects.len() - 3..],
+        [
+            ("close", "stream:0\0"),
+            ("close", "stream:15\0"),
+            ("terminate", "engine\0"),
+        ],
+        "§1378 cleanup closes precede the terminal engine observation"
+    );
+    for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
+        assert!(
+            stores
+                .world()
+                .stream_bufs()
+                .write_stream_target(StreamSlot::new(raw))
+                .is_none(),
+            "numbered stream {raw} survived final cleanup"
+        );
+    }
+}
+
+#[test]
 fn special_out_synchronizes_position_and_preserves_stored_payload_bytes() {
     let stores = run_source(br"\shipout\hbox{\kern10sp\special{abc}}\end");
     let artifact = last_artifact(&stores);
