@@ -148,6 +148,272 @@ fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
 }
 
 #[test]
+fn integer_numeric_tokens_follow_tex82_category_matrix() {
+    // TeX82 §445 defines zero_token, octal_token, hex_token, and alpha_token
+    // from other_token. §444 therefore admits category-12 decimal digits and
+    // introducers only. Its sole digit-category exception is hexadecimal
+    // A..F: §445 defines both letter-category A_token and other_A_token.
+    let cases = [
+        (
+            vec![Token::Char {
+                ch: '7',
+                cat: Catcode::Other,
+            }],
+            7,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![Token::Char {
+                ch: '7',
+                cat: Catcode::Letter,
+            }],
+            0,
+            ScalarRecovery::InsertedZero,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '\'',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '7',
+                    cat: Catcode::Other,
+                },
+            ],
+            7,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![Token::Char {
+                ch: '\'',
+                cat: Catcode::Letter,
+            }],
+            0,
+            ScalarRecovery::InsertedZero,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '"',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+            ],
+            10,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '"',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'F',
+                    cat: Catcode::Other,
+                },
+            ],
+            15,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '"',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                },
+            ],
+            0,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '"',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+            ],
+            0,
+            ScalarRecovery::InsertedZero,
+        ),
+        (
+            vec![
+                Token::Char {
+                    ch: '`',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+            ],
+            65,
+            ScalarRecovery::None,
+        ),
+        (
+            vec![Token::Char {
+                ch: '`',
+                cat: Catcode::Letter,
+            }],
+            0,
+            ScalarRecovery::InsertedZero,
+        ),
+    ];
+
+    for (tokens, expected, recovery) in cases {
+        let mut command = CommandState::default();
+        push(&mut command, tokens);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let scanned = processor.scan_integer().expect("integer scans");
+        assert_eq!(scanned.value, expected);
+        assert_eq!(scanned.recovery, recovery);
+    }
+}
+
+#[test]
+fn integer_and_fraction_tails_reject_recategorized_decimal_digits() {
+    // Both §444 and §452 compare cur_tok with category-12 digit-token
+    // constants. A character that looks numeric but has another category
+    // terminates the scan and is backed up for the caller.
+    let recategorized = Token::Char {
+        ch: '2',
+        cat: Catcode::Letter,
+    };
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![char_token('1'), recategorized, char_token('p'), char_token('t')],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    assert_eq!(processor.scan_integer().expect("integer scans").value, 1);
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("terminator replays")
+            .expect("terminator exists")
+            .meaning(),
+        Meaning::CharToken {
+            ch: '2',
+            cat: Catcode::Letter
+        }
+    ));
+
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![
+            char_token('.'),
+            char_token('5'),
+            recategorized,
+            char_token('p'),
+            char_token('t'),
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("dimension scans with assumed pt")
+            .value
+            .raw(),
+        Scaled::UNITY / 2
+    );
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("fraction terminator replays")
+            .expect("fraction terminator exists")
+            .meaning(),
+        Meaning::CharToken {
+            ch: '2',
+            cat: Catcode::Letter
+        }
+    ));
+}
+
+#[test]
+fn vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order() {
+    // §448 does not exit after §444's vacuous scan_int recovery. A legal unit
+    // is consumed after "Missing number"; an illegal one additionally reaches
+    // §459 before the completed zero dimension is published.
+    for (source, illegal) in [("pt 7", false), ("x pt 7", true)] {
+        let mut command = CommandState::default();
+        push(&mut command, scanner_tokens(source));
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            let scanned = processor.scan_dimension().expect("dimension recovers");
+            assert_eq!(scanned.value.raw(), 0);
+            assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+            if !illegal {
+                assert_eq!(
+                    processor
+                        .scan_integer()
+                        .expect("legal unit and optional space are consumed")
+                        .value,
+                    7
+                );
+            }
+        }
+        let diagnostics = diagnostic_text(&universe);
+        let missing = diagnostics
+            .find("Missing number, treated as zero")
+            .expect("scan_int diagnostic is present");
+        if illegal {
+            let unit = diagnostics
+                .find("Illegal unit of measure (pt inserted)")
+                .expect("unit diagnostic is present");
+            assert!(missing < unit, "scan_int reports before the unit scan");
+        } else {
+            assert!(!diagnostics.contains("Illegal unit of measure"));
+        }
+    }
+}
+
+#[test]
 fn integer_scanner_accepts_chardef_values() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
@@ -4379,7 +4645,9 @@ fn integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries() {
         ("42", 42),
         ("'52", 42),
         ("\"2A", 42),
-        ("\"2a", 42),
+        // §445's hexadecimal exception names uppercase A_token and
+        // other_A_token only; lowercase `a` terminates the constant.
+        ("\"2a", 2),
         ("2147483647", i32::MAX),
         ("999999999999999999999", i32::MAX),
         ("-999999999999999999999", -i32::MAX),

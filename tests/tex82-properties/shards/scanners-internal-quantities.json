@@ -641,12 +641,12 @@
         "The exact-byte profile supplies TeX82 character codes and integer bounds."
       ],
       "stimulus": [
-        "Scan empty input, multiple mixed signs, internal quantities, backtick character/control-sequence constants, every radix introducer, valid and invalid digits, letters A-F/a-f, boundary magnitudes, and trailing space/nonspace tokens."
+        "Scan empty input, multiple mixed signs, internal quantities, backtick character/control-sequence constants, every radix introducer and category variant, valid and invalid digits, category-letter/category-other A-F, lowercase terminators, boundary magnitudes, and trailing space/nonspace tokens."
       ],
       "expected_observations": [
         "Signs toggle negativity while spaces are ignored until the first operand.",
         "Backtick constants consume one raw token and at most one following space.",
-        "Radix and accepted digits use expanded delivery; the first invalid terminator is backed up unless it is the one optional space.",
+        "Category-other radix introducers and digits use expanded delivery; hexadecimal A-F alone also admit category-letter tokens; the first invalid terminator is backed up unless it is the one optional space.",
         "A completed integer observation reports the signed canonical result and radix-dependent overflow recovery."
       ],
       "postconditions": [
@@ -654,7 +654,7 @@
         "Only tokens explicitly consumed by the grammar are absent from subsequent input."
       ],
       "equivalence_cases": [
-        "Upper/lower hexadecimal digits and equivalent decimal/octal/hex values produce equal integers.",
+        "Category-letter and category-other uppercase hexadecimal A-F produce equal integers; lowercase letters and recategorized decimal digits terminate the constant.",
         "A direct character token and a one-character control sequence after backtick yield the same eight-bit code when canonically equivalent."
       ],
       "recovery_cases": [
@@ -668,6 +668,14 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "integer_radix_prefixes_deliver_digits_before_scanner_completion"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_numeric_tokens_follow_tex82_category_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "integer_and_fraction_tails_reject_recategorized_decimal_digits"
         },
         { "path": "crates/tex-command/src/scanners/scalar/tests.rs", "test": "integer_scanner_accepts_chardef_values" },
         {
@@ -700,6 +708,10 @@
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery",
           "cases": ["signed hexadecimal operands", "conditional selection", "ordinary-source continuation"]
+        },
+        {
+          "path": "tests/corpus/command-semantic/scanners-internal-quantities/manifest.json",
+          "test": "numeric-token-categories"
         }
       ],
       "status": "covered"
@@ -717,7 +729,7 @@
       ],
       "expected_observations": [
         "A leading category-other point or comma bypasses scan_int and is redelivered raw exactly once.",
-        "Only radix-ten numeric prefixes attach a fraction; internal dimensions bypass numeric replay; fraction rounding feeds the exact scaled prefix."
+        "Only radix-ten numeric prefixes attach a fraction, and only category-other digits extend it; internal dimensions bypass numeric replay; fraction rounding feeds the exact scaled prefix."
       ],
       "postconditions": [
         "The prefix yields an integral/fraction pair or a complete signed internal dimension for unit processing.",
@@ -729,7 +741,7 @@
         "Equivalent decimal, radix, alphabetic, and internal integer whole prefixes agree before unit attachment."
       ],
       "recovery_cases": [
-        "A missing numeric prefix follows scan_int's inserted-zero recovery while preserving the rejected token for unit handling.",
+        "A missing numeric prefix follows scan_int's inserted-zero recovery while preserving the rejected token, then still performs unit recognition and optional-space scanning in canonical diagnostic order.",
         "Fraction digits beyond seventeen are consumed but do not alter round_decimals input.",
         "Prefix arithmetic overflow is retained for final dimension-range recovery rather than wrapping."
       ],
@@ -759,6 +771,14 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order"
+        },
+        {
+          "path": "tests/corpus/command-semantic/scanners-internal-quantities/manifest.json",
+          "test": "vacuous-dimension-units"
         }
       ],
       "planned_coverage": [],

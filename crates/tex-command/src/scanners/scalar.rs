@@ -486,8 +486,11 @@ impl CommandProcessor<'_> {
                     unreachable!("TeX82 §429 lowers an int_val request to an integer")
                 }
                 InternalScan::NotInternal => match first.meaning() {
-                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => (
-                        self.scan_radix_tail(ch, DECIMAL_RADIX)?,
+                    Meaning::CharToken {
+                        ch,
+                        cat: Catcode::Other,
+                    } if ch.is_ascii_digit() => (
+                        self.scan_radix_tail(ch as u8 - b'0', DECIMAL_RADIX)?,
                         DECIMAL_RADIX,
                         ScalarRecovery::None,
                     ),
@@ -495,18 +498,27 @@ impl CommandProcessor<'_> {
                     // an octal or hexadecimal introducer. The following digits
                     // still travel through `get_x_token`, so their deliveries are
                     // observable before the completed scanner result.
-                    Meaning::CharToken { ch: '\'', .. } => {
-                        (self.scan_radix_tail('0', 8)?, 8, ScalarRecovery::None)
+                    Meaning::CharToken {
+                        ch: '\'',
+                        cat: Catcode::Other,
+                    } => {
+                        (self.scan_radix_tail(0, 8)?, 8, ScalarRecovery::None)
                     }
-                    Meaning::CharToken { ch: '"', .. } => {
-                        (self.scan_radix_tail('0', 16)?, 16, ScalarRecovery::None)
+                    Meaning::CharToken {
+                        ch: '"',
+                        cat: Catcode::Other,
+                    } => {
+                        (self.scan_radix_tail(0, 16)?, 16, ScalarRecovery::None)
                     }
                     // TeX's `\` character-code form consumes its following token
                     // through raw delivery: that token supplies a character code,
                     // rather than participating in ordinary expansion.  The
                     // optional following space remains an expanded scanner token.
                     // §442 never enters §444, so `radix` stays zero.
-                    Meaning::CharToken { ch: '`', .. } => {
+                    Meaning::CharToken {
+                        ch: '`',
+                        cat: Catcode::Other,
+                    } => {
                         let (value, recovery) = self.scan_character_code()?;
                         (value, NO_RADIX, recovery)
                     }
@@ -514,6 +526,7 @@ impl CommandProcessor<'_> {
                         // §444's `vacuous` case. `radix:=10` is assigned before
                         // the accumulation loop, so it survives §446's recovery.
                         self.back_input(first)?;
+                        self.missing_number_error();
                         return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
                     }
                 },
@@ -641,23 +654,10 @@ impl CommandProcessor<'_> {
                 // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
                 // numeric part, and the unit scan always follows.
                 InternalScan::NotInternal => {
-                    match self.scan_dimension_constant(first, allow_infinite, mu, provenance)? {
-                        Some((units, flip)) => {
-                            negative ^= flip;
-                            (
-                                units.value,
-                                units.order,
-                                units.attach_sign,
-                                ScalarRecovery::None,
-                            )
-                        }
-                        None => (
-                            Scaled::from_raw(0),
-                            Order::Normal,
-                            true,
-                            ScalarRecovery::InsertedZero,
-                        ),
-                    }
+                    let (units, flip, recovery) =
+                        self.scan_dimension_constant(first, allow_infinite, mu, provenance)?;
+                    negative ^= flip;
+                    (units.value, units.order, units.attach_sign, recovery)
                 }
             },
             None => (
@@ -720,10 +720,12 @@ impl CommandProcessor<'_> {
     /// a real backup/replay cycle rather than passing the already-delivered
     /// command straight through.
     ///
-    /// `None` is §444's `vacuous` case, and `scan_int` itself is what reports
-    /// it: no number was there, so §446's "Express astonishment that no
+    /// §444's `vacuous` case is reported by `scan_int` itself: no number was
+    /// there, so §446's "Express astonishment that no
     /// number was here" has already backed the offending token up a second
-    /// time (`back_error`) and committed zero. Asking `scan_int` instead of
+    /// time (`back_error`) and committed zero. It still proceeds through
+    /// §448's unit scan and optional-space scan; only the recovery marker is
+    /// carried into the completed dimension. Asking `scan_int` instead of
     /// pre-testing the token for an ASCII digit is what keeps §444's octal
     /// (`'`) and hexadecimal (`"`) introducers and §442's alphabetic constant
     /// out of the vacuous bucket -- all three are legal dimension prefixes,
@@ -739,7 +741,7 @@ impl CommandProcessor<'_> {
         allow_infinite: bool,
         mu: bool,
         provenance: ScalarProvenance,
-    ) -> Result<Option<(ScannedUnits, bool)>, CommandError> {
+    ) -> Result<(ScannedUnits, bool, ScalarRecovery), CommandError> {
         let leading_point = is_point_token(&first);
         self.back_input(first)?;
         // TeX82 `scan_dimen` delegates the integral prefix to `scan_int`.
@@ -749,20 +751,17 @@ impl CommandProcessor<'_> {
         // fractional digits. Keep that hand-off inside the command scanner
         // rather than collapsing it into a private decimal parser.
         self.last_integer_terminator = None;
-        let (integer, decimal) = if leading_point {
-            (0, true)
+        let (integer, decimal, recovery) = if leading_point {
+            (0, true, ScalarRecovery::None)
         } else {
             let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let (scanned, radix) = self.complete_integer(replayed, false, provenance.primary)?;
-            if scanned.recovery == ScalarRecovery::InsertedZero {
-                return Ok(None);
-            }
             let decimal = radix == DECIMAL_RADIX
                 && self
                     .last_integer_terminator
                     .as_ref()
                     .is_some_and(is_point_token);
-            (scanned.value, decimal)
+            (scanned.value, decimal, scanned.recovery)
         };
         if decimal {
             // §452: "|point_token| is being re-scanned". It is `get_token`,
@@ -774,8 +773,9 @@ impl CommandProcessor<'_> {
             // can only ever be the point this branch just backed up.
             let _ = self.get_token()?;
         }
-        self.scan_units_after_integer(integer, decimal, allow_infinite, mu)
-            .map(Some)
+        let (units, flip) =
+            self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
+        Ok((units, flip, recovery))
     }
 
     /// Classifies §413's committed value for TeX82 §449's two exits,
@@ -1072,19 +1072,17 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_radix_tail(&mut self, first: char, radix: u8) -> Result<i32, CommandError> {
-        let mut value = i32::from(Self::radix_digit(first).expect("radix introducer is valid"));
+    fn scan_radix_tail(&mut self, first: u8, radix: u8) -> Result<i32, CommandError> {
+        let mut value = i32::from(first);
         loop {
             let Some(command) = self.get_x_token()? else {
                 break;
             };
-            match command.meaning() {
-                Meaning::CharToken { ch, .. }
-                    if Self::radix_digit(ch).is_some_and(|digit| digit < radix) =>
-                {
+            match Self::radix_digit(&command) {
+                Some(digit) if digit < radix => {
                     value = value
                         .saturating_mul(i32::from(radix))
-                        .saturating_add(i32::from(Self::radix_digit(ch).expect("digit checked")))
+                        .saturating_add(i32::from(digit))
                 }
                 // §444's `else if cur_cmd<>spacer then back_input`: a numeric
                 // constant absorbs one terminating space, so replay must not
@@ -1101,11 +1099,16 @@ impl CommandProcessor<'_> {
         Ok(value)
     }
 
-    fn radix_digit(ch: char) -> Option<u8> {
-        match ch {
-            '0'..='9' => Some(ch as u8 - b'0'),
-            'a'..='f' => Some(ch as u8 - b'a' + 10),
-            'A'..='F' => Some(ch as u8 - b'A' + 10),
+    fn radix_digit(command: &CurrentCommand) -> Option<u8> {
+        match command.meaning() {
+            Meaning::CharToken {
+                ch: ch @ '0'..='9',
+                cat: Catcode::Other,
+            } => Some(ch as u8 - b'0'),
+            Meaning::CharToken {
+                ch: ch @ 'A'..='F',
+                cat: Catcode::Letter | Catcode::Other,
+            } => Some(ch as u8 - b'A' + 10),
             _ => None,
         }
     }
@@ -1159,7 +1162,10 @@ impl CommandProcessor<'_> {
                     break;
                 };
                 match command.meaning() {
-                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => fraction.push(ch),
+                    Meaning::CharToken {
+                        ch,
+                        cat: Catcode::Other,
+                    } if ch.is_ascii_digit() => fraction.push(ch),
                     // §452's closing `if cur_cmd<>spacer then back_input`: a
                     // fraction absorbs the space that ends it exactly as
                     // §444's integer constant does, so `.5 in` reaches the
