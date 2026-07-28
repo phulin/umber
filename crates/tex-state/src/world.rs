@@ -2259,6 +2259,23 @@ impl World {
         Ok(Some(line))
     }
 
+    /// Whether the terminal can answer a prompt.
+    ///
+    /// tex.web §71's `term_input` responds to a terminal at end of file with
+    /// `fatal_error("End of file on the terminal!")`, ending the job. Umber's
+    /// error channel cannot end the job, so it asks this first and skips
+    /// §83's dialog entirely rather than printing a prompt nothing can
+    /// answer. A real backend always reports true: blocking on an
+    /// interactive terminal is exactly what tex.web does.
+    #[must_use]
+    pub fn terminal_line_available(&self) -> bool {
+        self.terminal_inputs
+            .len()
+            .checked_sub(self.stream_bufs.terminal_input_next)
+            .is_some_and(|remaining| remaining > 0)
+            || matches!(self.backend, WorldBackend::Real { .. })
+    }
+
     /// Reads one normalized physical line from the terminal input source.
     pub fn read_terminal_line(&mut self) -> Result<Option<String>, WorldError> {
         let line = if let Some(line) = self

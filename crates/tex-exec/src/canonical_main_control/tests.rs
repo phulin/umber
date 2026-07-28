@@ -623,7 +623,11 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     assert_eq!(stores.count(1), 7);
     assert_eq!(stores.count(2), 1);
     let output = terminal_text(&stores);
-    assert_eq!(output.matches("! Arithmetic overflow.").count(), 2, "{output}");
+    assert_eq!(
+        output.matches("! Arithmetic overflow.").count(),
+        2,
+        "{output}"
+    );
 }
 
 #[test]
@@ -635,7 +639,11 @@ fn message_spacing_follows_the_texweb_1280_offset_rule() {
     register_source(&mut control, br"\message{a}\message{b}\end");
     run_to_end(&mut control, &mut stores);
 
-    assert!(terminal_text(&stores).contains("a b"), "{}", terminal_text(&stores));
+    assert!(
+        terminal_text(&stores).contains("a b"),
+        "{}",
+        terminal_text(&stores)
+    );
 }
 
 #[test]

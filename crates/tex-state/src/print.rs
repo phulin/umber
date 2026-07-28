@@ -29,7 +29,9 @@
 //!   note are absent.
 //! - **`jump_out` is not representable.** §82's 100-error abort and §84's
 //!   `X` option therefore return from `error` instead of terminating the
-//!   job.
+//!   job. §71's `fatal_error("End of file on the terminal!")` is the same
+//!   case: §83's dialog is skipped when the terminal cannot answer, rather
+//!   than printing a prompt and then failing to end the job.
 //! - **`deletions_allowed` is effectively false** and §87's `I` insertion is
 //!   unavailable, because §84's digit and `I` options both drive the input
 //!   stack. Both fall to §84's `othercases do_nothing`, which is exactly
@@ -323,7 +325,14 @@ impl<'a> ErrorReport<'a> {
     pub fn error(mut self) {
         self.printer.print_char('.');
         // §82's `show_context` is not modeled; see the module documentation.
-        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop {
+        //
+        // A terminal that cannot answer takes the scrolled tail rather than
+        // §83's dialog: §75's `error_stop_mode` presumes an interactive
+        // terminal, and §71's response to one at end of file is `fatal_error`,
+        // which this layer cannot perform.
+        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop
+            && self.printer.universe.world().terminal_line_available()
+        {
             self.users_advice();
             return;
         }
@@ -362,6 +371,12 @@ impl<'a> ErrorReport<'a> {
     fn users_advice(&mut self) {
         loop {
             if self.printer.universe.interaction_mode() != InteractionMode::ErrorStop {
+                return;
+            }
+            // §71's `term_input` ends the job with `fatal_error` at end of
+            // terminal input; a terminal that has stopped answering ends the
+            // dialog instead.
+            if !self.printer.state().world().terminal_line_available() {
                 return;
             }
             // §330's `clear_for_error_prompt` flushes pending terminal input,

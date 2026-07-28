@@ -62,8 +62,7 @@ pub use profile::{
 pub use scanners::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
     FontLoadRequest, FontSizeRecovery, HyphenationDataKind, ImmediateExtension, InputStreamRequest,
-    InternalValue,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
+    InternalValue, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
     MathFieldEpisode, MathFractionKind, MathLimitKind, MathScriptAttachment, MathScriptKind,
     MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
     PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,

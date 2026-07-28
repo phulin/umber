@@ -612,7 +612,9 @@ mod tests {
             .run(&mut WorldHost, &mut Vec::new())
             .expect("world-backed input completes");
 
-        assert_eq!(run.terminal_text, "oncechild");
+        // TeX82 §1280 separates the two messages with one space, because
+        // the first left `term_offset` nonzero.
+        assert_eq!(run.terminal_text, "once child");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));

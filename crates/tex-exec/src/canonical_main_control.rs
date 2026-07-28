@@ -3616,6 +3616,7 @@ fn scan_noalign_body(
 /// boundary.  This remains separate from preamble and opener scans because a
 /// completed scanner (such as a rule specification) can leave a backed-up
 /// delimiter ready for the next main-control step.
+#[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn scan_alignment_delivery_step(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,

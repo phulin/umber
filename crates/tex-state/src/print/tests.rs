@@ -72,8 +72,7 @@ fn int_error_appends_texweb_91_parenthesized_value() {
         .int_error(0);
 
     assert!(
-        terminal_text(&universe)
-            .contains("! Illegal magnification has been changed to 1000 (0)."),
+        terminal_text(&universe).contains("! Illegal magnification has been changed to 1000 (0)."),
         "{}",
         terminal_text(&universe)
     );
@@ -111,10 +110,14 @@ fn error_stop_mode_prompts_and_honors_the_scroll_answer() {
 }
 
 #[test]
-fn error_stop_mode_returns_when_the_terminal_supplies_no_more_lines() {
+fn error_stop_mode_skips_the_dialog_when_the_terminal_cannot_answer() {
+    // tex.web §71 would `fatal_error` here; Umber cannot end the job, so it
+    // asks nothing rather than printing an unanswerable prompt.
     let mut universe = Universe::new();
     universe.print_err("Something anomalous").error();
-    assert!(terminal_text(&universe).contains("? "));
+    let output = terminal_text(&universe);
+    assert!(output.contains("! Something anomalous."), "{output}");
+    assert!(!output.contains("? "), "{output}");
     assert_eq!(universe.interaction_mode(), InteractionMode::ErrorStop);
 }
 

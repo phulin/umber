@@ -6330,13 +6330,17 @@ fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
     // Every character reaches the World through the §54 selector's sink, so
     // the report is a run of `StreamWrite` effects rather than one.
     assert!(
-        universe.world().effect_records().iter().any(|effect| matches!(
-            effect,
-            EffectRecord::StreamWrite {
-                sink: tex_state::PrintSink::TerminalAndLog,
-                ..
-            }
-        )),
+        universe
+            .world()
+            .effect_records()
+            .iter()
+            .any(|effect| matches!(
+                effect,
+                EffectRecord::StreamWrite {
+                    sink: tex_state::PrintSink::TerminalAndLog,
+                    ..
+                }
+            )),
         "diagnostic must be a World output effect"
     );
 

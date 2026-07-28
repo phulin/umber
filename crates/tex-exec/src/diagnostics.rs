@@ -240,7 +240,23 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
         text.push_str("void\n");
     }
     write_diagnostic(stores, &text);
+    end_show_diagnostic(stores);
     complete_show(stores, true);
+}
+
+/// TeX82 §1298's leading `end_diagnostic(true)`, closing the partial line the
+/// dump left and adding §245's blank separator line.
+///
+/// The dump itself is still written straight to the terminal and transcript
+/// rather than through §245's `begin_diagnostic` redirection, so `\showbox`
+/// and `\showlists` output remains visible on the terminal with
+/// `\tracingonline` at zero. Routing them through the redirection is a
+/// separate change to committed diagnostic corpora, not part of §1293's
+/// completion bookkeeping.
+fn end_show_diagnostic(stores: &mut Universe) {
+    let mut printer = stores.printer();
+    printer.print_nl("");
+    printer.print_ln();
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -258,15 +274,13 @@ pub(crate) fn complete_show(stores: &mut Universe, long: bool) {
         stores.world_mut().error_channel_mut().clear_error_count();
     }
     let mut report = if long {
-        let mut report = stores.print_err("OK");
-        // §1298: the transcript already holds the long dump, so the terminal
-        // is told where to look instead of repeating it.
-        if report.selector() == tex_state::print::Selector::TermAndLog && tracing_online <= 0 {
-            report.set_selector(tex_state::print::Selector::TermOnly);
-            report.print(" (see the transcript file)");
-            report.set_selector(tex_state::print::Selector::TermAndLog);
-        }
-        report
+        // §1298's remaining half, `if selector=term_and_log then if
+        // tracing_online<=0 then ... print(" (see the transcript file)")`,
+        // tells the terminal where to find a dump it did not receive. Umber's
+        // dump is not redirected (see `end_show_diagnostic`), so the terminal
+        // already has it and the note would be false; the note belongs with
+        // that redirection, not with this bookkeeping.
+        stores.print_err("OK")
     } else {
         stores.error_report()
     };
@@ -391,6 +405,7 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
         }
     }
     write_diagnostic(stores, &text);
+    end_show_diagnostic(stores);
     complete_show(stores, true);
 }
 
