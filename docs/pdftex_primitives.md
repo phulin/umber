@@ -263,6 +263,14 @@ rounding exactly. `\pdfshellescape` reports 0, 1, or 2 for disabled,
 unrestricted, or restricted policy. Snapshots and semantic hashes include the
 live timer and generator state; format images intentionally do not, so a
 loaded format receives the new session's `World` inputs.
+The canonical command path scans `\pdfsetrandomseed` through the ordinary
+integer scanner, silently normalizes a negative operand, and commits one typed
+ungrouped job-state replacement. It therefore preserves scanner recovery and
+the following token, rejects TeX assignment prefixes, and resets the exact
+stream subsequently consumed by both random-deviate conversions. Focused
+pdfTeX 1.40.27 oracle cases pin the sequence, grouping, overflow recovery, and
+prefix replay; World tests pin checkpoint rollback and format-session
+replacement.
 Creation time comes from the immutable job clock. File size, modification
 date, byte dump, and file-mode MD5 enquiries resolve immutable content through
 the same driver input policy as `\input`; expansion code never reads the host

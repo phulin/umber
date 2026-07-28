@@ -62,6 +62,103 @@ fn macro_tokens<'a>(stores: &'a Universe, name: &str) -> &'a [Token] {
     stores.tokens(meaning.replacement_text())
 }
 
+fn pdftex_random_control(stores: &mut Universe) -> CanonicalMainControl {
+    let set_seed = stores.intern("pdfsetrandomseed");
+    stores.set_meaning(
+        set_seed,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed),
+    );
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+fn step_until_pdf_seed(control: &mut CanonicalMainControl, stores: &mut Universe, expected: i32) {
+    for _ in 0..4 {
+        control.step(stores).expect("canonical random command");
+        if stores.world().pdf_random_seed() == expected {
+            return;
+        }
+    }
+    panic!("pdfTeX random seed did not become {expected}");
+}
+
+#[test]
+fn pdfsetrandomseed_is_an_ungrouped_signed_job_state_replacement() {
+    let mut stores = Universe::default();
+    let mut control = pdftex_random_control(&mut stores);
+    register_source(
+        &mut control,
+        br"{\pdfsetrandomseed -1 }\pdfsetrandomseed 23 ",
+    );
+
+    step_until_pdf_seed(&mut control, &mut stores, 1);
+    assert_eq!(stores.world().pdf_random_seed(), 1);
+    assert_eq!(stores.world_mut().pdf_uniform_deviate(10), 7);
+
+    assert_eq!(
+        control.step(&mut stores).expect("end group"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        stores.world().pdf_random_seed(),
+        1,
+        "the extension state is not restored when a TeX group closes"
+    );
+    step_until_pdf_seed(&mut control, &mut stores, 23);
+    assert_eq!(stores.world().pdf_random_seed(), 23);
+}
+
+#[test]
+fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() {
+    let mut stores = Universe::default();
+    let mut control = pdftex_random_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\pdfsetrandomseed 999999999999\pdfsetrandomseed 6 ",
+    );
+
+    assert_eq!(
+        control.step(&mut stores).expect("bounded seed scan"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_random_seed(), i32::MAX);
+
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("backed-up following command"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_random_seed(), 6);
+}
+
+#[test]
+fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
+    let mut stores = Universe::default();
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_random_control(&mut stores);
+    register_source(&mut control, br"\global\pdfsetrandomseed 9 ");
+
+    assert_eq!(
+        control.step(&mut stores).expect("reject prefix"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_random_seed(), 0);
+    assert!(
+        terminal_text(&stores).contains("You can't use a prefix with"),
+        "the extension is below max_non_prefixed_command"
+    );
+
+    assert_eq!(
+        control.step(&mut stores).expect("replayed seed command"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_random_seed(), 9);
+}
+
 #[test]
 fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
     struct Case {

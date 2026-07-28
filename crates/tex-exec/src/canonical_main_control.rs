@@ -3336,6 +3336,12 @@ enum ScannedStep {
     PdfRefXImage {
         object: i32,
     },
+    /// pdftex.web §1585's `\pdfsetrandomseed`: the command scanner has
+    /// consumed one ordinary integer and normalized its sign; application
+    /// replaces the ungrouped job RNG state atomically.
+    PdfSetRandomSeed {
+        seed: i32,
+    },
     PdfGraphics(PdfGraphicsRequest),
     PdfObject(PdfObjectRequest),
     PdfReferenceObject(PdfReferenceObjectRequest),
@@ -5228,6 +5234,12 @@ fn scan_command(
                 object: processor.scan_integer().map_err(command_error)?.value,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
+            let seed = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::PdfSetRandomSeed {
+                seed: seed.saturating_abs(),
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
             ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
         ),
@@ -6136,6 +6148,7 @@ fn scan_unclassified_primitive(
         | P::PdfRestore
         | P::PdfSave
         | P::PdfSavePos
+        | P::PdfSetRandomSeed
         | P::PdfSetMatrix
         | P::PdfStartLink
         | P::PdfStartThread
@@ -6351,7 +6364,6 @@ fn scan_unclassified_primitive(
         | P::PdfRpCode
         | P::PdfRunningLinkOff
         | P::PdfRunningLinkOn
-        | P::PdfSetRandomSeed
         | P::PdfShbsCode
         | P::PdfSnapRefPoint
         | P::PdfSnapY
@@ -7765,6 +7777,7 @@ fn applied_mutation_observation(
         | ScannedStep::ParagraphIndent { .. }
         | ScannedStep::PdfXImage { .. }
         | ScannedStep::PdfRefXImage { .. }
+        | ScannedStep::PdfSetRandomSeed { .. }
         | ScannedStep::PdfGraphics(..)
         | ScannedStep::PdfObject(..)
         | ScannedStep::PdfReferenceObject(..)
@@ -9374,6 +9387,10 @@ fn apply_scanned_step(
                     height: dimensions.height,
                     depth: dimensions.depth,
                 }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfSetRandomSeed { seed } => {
+            stores.world_mut().set_pdf_random_seed(seed);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
