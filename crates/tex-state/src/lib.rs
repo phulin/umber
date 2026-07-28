@@ -66,6 +66,7 @@ pub mod memo;
 pub mod node;
 pub mod node_arena;
 pub mod page;
+pub mod print;
 mod pdf;
 pub mod provenance;
 mod provenance_resolver;

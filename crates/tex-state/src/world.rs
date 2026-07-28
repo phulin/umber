@@ -1487,6 +1487,7 @@ pub struct World {
     verified_artifacts: BTreeSet<ContentHash>,
     effect_commit_poison: Option<WorldError>,
     commit_mode: WorldCommitMode,
+    error_channel: crate::print::ErrorChannel,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
     #[cfg(test)]
@@ -1528,6 +1529,7 @@ impl Clone for World {
             verified_artifacts: self.verified_artifacts.clone(),
             effect_commit_poison: self.effect_commit_poison.clone(),
             commit_mode: self.commit_mode,
+            error_channel: self.error_channel.clone(),
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
             #[cfg(test)]
@@ -1738,6 +1740,7 @@ impl World {
             verified_artifacts: BTreeSet::new(),
             effect_commit_poison: None,
             commit_mode: WorldCommitMode::Eager,
+            error_channel: crate::print::ErrorChannel::default(),
             execution_tracing: false,
             execution_trace: Vec::new(),
             #[cfg(test)]
@@ -1745,6 +1748,18 @@ impl World {
             #[cfg(test)]
             publish_rename_fault: None,
         }
+    }
+
+    /// tex.web §76's error-channel state: `error_count` and §1281's
+    /// `long_help_seen`, which persist across recoverable errors.
+    pub const fn error_channel_mut(&mut self) -> &mut crate::print::ErrorChannel {
+        &mut self.error_channel
+    }
+
+    /// Read access to the same state.
+    #[must_use]
+    pub const fn error_channel(&self) -> &crate::print::ErrorChannel {
+        &self.error_channel
     }
 
     /// Enables or disables non-semantic execution tracing.
