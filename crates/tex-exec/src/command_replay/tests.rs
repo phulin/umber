@@ -8640,6 +8640,71 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
 }
 
 #[test]
+fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
+    // e-TeX 2.6 etex.ch [45.999] saves discarded vertical nodes, while
+    // TeX82 §1335 releases the page builder's transient `last_glue` before
+    // `store_fmt_file`; neither saved-discard list belongs to the format.
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut universe);
+    tex_expand::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\bgroup\savingvdiscards=1
+           \vfill\penalty1234
+           \setbox0=\vbox{\vbox to10pt{}\vskip5pt\penalty-4321}
+           \setbox1=\vsplit0 to10pt
+           \egroup\dump",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("saved-discard microfixture executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert!(control.dumped_format());
+    assert!(
+        universe.page_contributions().is_empty(),
+        "live contributions: {:?}",
+        universe.page_contributions()
+    );
+    assert!(
+        universe.current_page_nodes().is_empty(),
+        "current page: {:?}",
+        universe.current_page_nodes()
+    );
+    assert!(!universe.page_discards().is_empty());
+    assert!(!universe.split_discards().is_empty());
+    let delivered = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record) => match &record.spelling {
+                ObservedToken::ControlSequence(name) => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for command in ["vfill", "penalty", "vsplit", "dump"] {
+        assert!(
+            delivered.contains(&command),
+            "bounded semantic stream omitted {command}: {delivered:?}"
+        );
+    }
+    universe
+        .dump_format()
+        .expect("saved vertical discards are not format state");
+}
+
+#[test]
 fn canonical_the_and_showthe_recover_invalid_trip_operand_as_zero() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

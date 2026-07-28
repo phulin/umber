@@ -8800,6 +8800,19 @@ fn apply_scanned_step(
             incomplete_conditions,
         } => {
             report_incomplete_conditions(stores, incomplete_conditions);
+            // TeX82 §1335's INITEX tail releases `last_glue` before
+            // `store_fmt_file`; e-TeX 2.6's [45.999] change may meanwhile
+            // have retained top-of-page glue, kerns, and penalties in
+            // `page_discards`, which are deliberately absent from the
+            // format. `its_all_over` (§1054) already proved that the page and
+            // contribution lists contain no live material. Normalize the
+            // remaining page-builder scalars while preserving both e-TeX
+            // discard lists, so the host-side format encoder still rejects
+            // genuine page material instead of mistaking `last_penalty` or
+            // `last_node_type` for it.
+            if dump && command.initex && crate::output::job_is_all_over(stores) {
+                stores.start_new_page();
+            }
             // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
             // production binary keeps only the `print_nl` that says so. `\end`
             // reaches neither.
