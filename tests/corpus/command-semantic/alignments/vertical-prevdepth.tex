@@ -1,0 +1,6 @@
+\catcode`{=1 \catcode`}=2 \catcode`\#=6
+\count0=0
+\setbox0=\vbox{\prevdepth=3pt
+  \everycr{\noalign{\global\dimen0=\prevdepth \global\count0=1
+      \global\everycr={}}}\halign{#\cr x\cr}}
+\end

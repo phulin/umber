@@ -1903,13 +1903,24 @@ fn display_halign_carries_last_row_depth_into_following_baseline_glue() {
 
 #[test]
 fn display_halign_exposes_enclosing_prevdepth_to_initial_everycr() {
-    let stores = run_alignment_source(
-        "\\dimen0=1pt \\setbox0=\\vbox{\\hsize=50pt \\noindent before\\par \
+    let stores = super::core::run_canonical_tex82(
+        "\\dimen0=1pt \\setbox0=\\vbox{\\hsize=50pt \\noindent\\vrule depth2pt \
          $$\\everycr{\\noalign{\\global\\dimen0=\\prevdepth \
-         \\global\\everycr={}}}\\halign{#\\cr x\\cr}$$\\par}",
+         \\global\\everycr={}}}\\halign{#\\cr\\cr}$$}\\end",
     );
 
-    assert_eq!(stores.dimen(0).raw(), 0);
+    assert_eq!(stores.dimen(0), sp(2));
+}
+
+#[test]
+fn vertical_halign_keeps_current_prevdepth_for_initial_everycr() {
+    let stores = super::core::run_canonical_tex82(
+        "\\dimen0=1pt \\setbox0=\\vbox{\\prevdepth=3pt \
+         \\everycr{\\noalign{\\global\\dimen0=\\prevdepth \
+         \\global\\everycr={}}}\\halign{#\\cr\\cr}}\\end",
+    );
+
+    assert_eq!(stores.dimen(0), sp(3));
 }
 
 #[test]

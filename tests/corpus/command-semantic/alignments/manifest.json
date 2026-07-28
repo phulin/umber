@@ -4,6 +4,55 @@
   "property_domain": "alignment-preambles-templates-and-lifecycle",
   "cases": [
     {
+      "id": "display-prevdepth",
+      "property_id": "tex82.align.initialize-spec-and-mode",
+      "source": "display-prevdepth.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          774
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "vertical-prevdepth",
+      "property_id": "tex82.align.initialize-spec-and-mode",
+      "source": "vertical-prevdepth.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          216,
+          774
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
       "id": "preamble-tabskip",
       "property_id": "tex82.align.preamble-tabskip-and-delimiters",
       "source": "preamble-tabskip.tex",
@@ -257,6 +306,7 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
+          774,
           805,
           806
         ]
@@ -279,13 +329,14 @@
         "box:0/0/2:glue",
         "box:0/0/3:glue",
         "box:0/0/4:hlist",
-        "box:0/0/4/0:hlist",
-        "box:0/0/4/0/0:glue",
-        "box:0/0/4/0/1:hlist",
-        "box:0/0/4/0/1/0:kern",
-        "box:0/0/4/0/2:glue",
+        "box:0/0/4/0:glue",
         "box:0/0/4/1:hlist",
-        "box:0/0/4/1/0:rule",
+        "box:0/0/4/1/0:glue",
+        "box:0/0/4/1/1:hlist",
+        "box:0/0/4/1/1/0:kern",
+        "box:0/0/4/1/2:glue",
+        "box:0/0/4/2:hlist",
+        "box:0/0/4/2/0:rule",
         "box:0/0/5:penalty",
         "box:0/0/6:glue"
       ],

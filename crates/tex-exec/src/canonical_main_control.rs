@@ -10181,14 +10181,18 @@ fn apply_scanned_step(
                 cell_open: false,
             });
             // TeX82 §774's `init_align` runs `push_nest` and then only
-            // *negates* the mode, so the alignment's own list inherits the
-            // enclosing list's `aux` (its `prev_depth`) -- §216's `push_nest`
-            // copies `cur_list` wholesale and resets only `head`/`tail`/
-            // `prev_graf`/`mode_line`. Umber's `ModeNest::push` starts every
-            // level at `ignore_depth` instead, so the inheritance has to be
-            // restated here; without it §799's `append_to_vlist` suppresses
-            // the interline glue before the alignment's first row.
-            let enclosing_prev_depth = modes.current_list().prev_depth();
+            // *negates* an ordinary vertical mode, so the alignment's own
+            // list inherits that list's `aux` (`prev_depth`). Display math is
+            // the deliberate exception: its `aux` is `incompleat_noad`, so
+            // §774 reaches through it to `nest[nest_ptr-2].aux_field.sc`, the
+            // enclosing vertical list's `prev_depth`. Umber's independent
+            // mode levels do not copy either value on push, so select the
+            // canonical source explicitly before opening the alignment.
+            let enclosing_prev_depth = if modes.current_mode() == Mode::DisplayMath {
+                modes.enclosing_vertical_prev_depth()
+            } else {
+                modes.current_list().prev_depth()
+            };
             modes.push(replay_alignment_mode(if vertical {
                 AlignmentKind::VAlign
             } else {

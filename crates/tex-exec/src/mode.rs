@@ -933,6 +933,12 @@ impl ModeNest {
         self.levels[index].list().prev_graf()
     }
 
+    #[must_use]
+    pub fn enclosing_vertical_prev_depth(&self) -> Option<Scaled> {
+        let index = self.enclosing_vertical_index();
+        self.levels[index].list().prev_depth()
+    }
+
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
         let index = self.enclosing_vertical_index();
         Arc::make_mut(&mut self.levels)[index]
