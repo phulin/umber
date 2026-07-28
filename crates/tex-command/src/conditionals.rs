@@ -424,9 +424,13 @@ impl CommandProcessor<'_> {
                 crate::ConditionalMode::Math
             )),
             ConditionalKind::IfInner => Ok(self.host.conditional_state().is_inner()),
+            // TeX.web §505: `scan_eight_bit_int; p:=box(cur_val)`. The
+            // selector is §433's restricted class, not an ordinary
+            // `scan_int`: an index outside `0..=255` reports "Bad register
+            // code" and recovers as register zero, so the predicate still
+            // reads a real register and still answers.
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let index = self.scan_integer()?.value;
-                let index = u16::try_from(index).map_err(|_| CommandError::input_invariant())?;
+                let index = self.scan_eight_bit_register_index()?;
                 let box_kind = self.state.box_kind(index);
                 Ok(match kind {
                     ConditionalKind::IfVoid => box_kind.is_none(),

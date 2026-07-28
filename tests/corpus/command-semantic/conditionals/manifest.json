@@ -222,16 +222,7 @@
         "predicate:ifhbox:integer=256:true",
         "count:0=1"
       ],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.246",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "predicate:ifhbox:integer=256:true",
-          "actual": "predicate:ifhbox:integer=256:false"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "token-predicates",

@@ -1737,37 +1737,46 @@ fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
     let hbox_nonempty = box_with_content(&mut universe, false, true);
     let vbox_empty = box_with_content(&mut universe, true, false);
     let vbox_nonempty = box_with_content(&mut universe, true, true);
+    // Register zero holds an hbox so that TeX82 §433's recover-to-zero is
+    // observable: an out-of-range selector must answer for register zero,
+    // not for the absent register the digits spelled.
+    let hbox_recovered = box_with_content(&mut universe, false, true);
+    universe.set_box_reg(0, hbox_recovered);
     universe.set_box_reg(1, hbox_empty);
     universe.set_box_reg(2, hbox_nonempty);
     universe.set_box_reg(3, vbox_empty);
     universe.set_box_reg(4, vbox_nonempty);
 
+    // The last two selectors are §433's two out-of-range directions, which
+    // §505 reaches through `scan_eight_bit_int`: both report "Bad register
+    // code" and continue with register zero.
+    let selectors = ["5", "1", "2", "3", "4", "256", "-1"];
     let mut tokens = Vec::new();
     let mut expected = Vec::new();
     for (primitive, prefix, truths) in [
         (
             ExpandablePrimitive::IfVoid,
             "ifvoid",
-            [true, false, false, false, false],
+            [true, false, false, false, false, false, false],
         ),
         (
             ExpandablePrimitive::IfHBox,
             "ifhbox",
-            [false, true, true, false, false],
+            [false, true, true, false, false, true, true],
         ),
         (
             ExpandablePrimitive::IfVBox,
             "ifvbox",
-            [false, false, false, true, true],
+            [false, false, false, true, true, false, false],
         ),
     ] {
-        for (offset, register) in [5_u16, 1, 2, 3, 4].into_iter().enumerate() {
+        for (offset, register) in selectors.into_iter().enumerate() {
             append_boolean_case(
                 &mut universe,
                 &mut tokens,
                 &format!("{prefix}-{register}"),
                 primitive,
-                chars(&register.to_string()),
+                chars(register),
             );
             expected.push(if truths[offset] { 't' } else { 'f' });
         }

@@ -1945,8 +1945,10 @@ impl CommandProcessor<'_> {
     /// Scans TeX82 §433's `scan_eight_bit_int` register index.
     ///
     /// `scan_something_internal` uses this bounded scan for `\count`,
-    /// `\dimen`, `\skip`, and `\muskip`; an out-of-range value recovers as
-    /// register zero rather than truncating or addressing an extended bank.
+    /// `\dimen`, `\skip`, and `\muskip`, §505's box predicates use it for
+    /// `\ifvoid`/`\ifhbox`/`\ifvbox`, and §1079/§1110/§1241 use it for the
+    /// box-valued commands; an out-of-range value recovers as register zero
+    /// rather than truncating or addressing an extended bank.
     pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
         Ok(scanned.value as u16)
