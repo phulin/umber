@@ -75,6 +75,13 @@ Private state-machine modules must not be widened for compatibility with
   space inside §341's `get_next`.
   `filename/tests.rs` owns focused expanded filename scanning, termination,
   replay, and registered-source retry tests.
+  `structured.rs`'s `scan_math_field_episode` is TeX82 §1151's `scan_math`,
+  a classification and not an absorption: every scalar case ends holding one
+  math code, so the field pushes no input level, backs up no token, and never
+  redelivers the command that selected it, and `othercases` is the whole
+  remaining vocabulary reaching §1153's `back_input; scan_left_brace`. A
+  frozen-spelling replay level here delivers each field twice
+  (`umber2-johp.265`).
   `restricted.rs` owns TeX82 §433-§437's five restricted integer classes as a
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the

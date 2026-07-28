@@ -997,20 +997,19 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     // TeX82's `scan_dimen` (§455) reads one token past a unit like `pt` to
     // check for an optional trailing space, backing it up when absent
     // (§448's `scan_keyword`/optional-space handling). When that lookahead
-    // happens to land on the very last token of a command-owned math field
-    // episode -- `{\kern1pt}` as a braced nucleus, say -- retiring the
-    // stored replay level is discovered deep inside `scan_dimension`, not at
-    // `execute_math_episode`'s own top-level command fetch. TeX82's
-    // `get_x_token` deliberately "retains TeX82's uninterrupted behavior by
-    // consuming this boundary internally" here (docs/tex_command_core.md
-    // §2.1's description of scalar lookahead crossing a stored episode), so
-    // `execute_math_episode` must detect the field's end by polling
-    // `CommandState::replay_episode_is_active` rather than by waiting for
-    // its own `ScannedStep::ReplayCompleted` event, which this exact
-    // lookahead never produces. Before that fix this source would loop past
-    // the field into `Z` and beyond, eventually hitting an EOF-driven
-    // `ExecError::MissingToken`; the fix keeps `Z` a sibling ordinary math
-    // character noad instead of folding it into the kern field's sub-mlist.
+    // lands on the very last token of a bounded body -- `{\kern1pt}` as a
+    // braced nucleus, say -- the body's boundary is crossed deep inside
+    // `scan_dimension`, not at the driving loop's own top-level command
+    // fetch, because TeX82's `get_x_token` deliberately "retains TeX82's
+    // uninterrupted behavior by consuming this boundary internally"
+    // (docs/tex_command_core.md §2.1). A loop that waits for its own
+    // completion event therefore runs past the end: this source used to
+    // consume `Z` and beyond into the kern field's sub-mlist and then hit an
+    // EOF-driven `ExecError::MissingToken`. §1153's braced field is now a
+    // live `math_group` closed by group depth (`execute_live_math_group`),
+    // and `execute_discretionary_part` polls
+    // `CommandState::replay_episode_is_active`; both decide the end from
+    // state rather than from an event the lookahead never produces.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.push(Mode::Math);
