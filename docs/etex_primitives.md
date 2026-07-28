@@ -66,8 +66,10 @@ components while changing the unit type. `\fontcharwd`, `\fontcharht`, `\fontcha
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)
 
 `\interactionmode` is implemented as a globally assigned read/write view of
-the checkpointed interaction state. `\showtokens` displays the manual-defined
-decomposition of unexpanded balanced text. `\showgroups` and `\showifs` walk
+the checkpointed interaction state. `\showtokens` uses `etex.ch`
+[17.3623--3671]'s command-owned, unexpanded balanced general-text scan, removes
+the compulsory braces, and emits a detached token-bearing diagnostic effect
+before the ordinary terminal/transcript rendering. `\showgroups` and `\showifs` walk
 the live checkpointed group and conditional stacks. `\tracingassigns`,
 `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
 are implemented as group-scoped integer parameters. Exact diagnostic trace

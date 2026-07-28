@@ -102,6 +102,10 @@ the exact same files.
 
 `tests/corpus/command-semantic` contains the versioned schema and independently owned domain manifests for tiny property-scoped semantic inputs. Every case's `expected` is the canonical projection: it is derived from the pinned instrumented reference engine, never from Umber's own output, so a case that cannot be reached by canonical execution is a defect in the case rather than a permanent xfail. `alignments/` projects alignment lifecycle and packing boundaries, `conditionals/` projects conditional observations, `input-expansion/` projects filtered input and command observations with hermetic host responses, `math/` projects selected command, mode, final-box, and committed shipout boundaries, and `page-output/` projects the focused setlanguage-to-whatsit replay boundary. The generic runner in `tools/tex-command-stream/tests/it/command_semantic.rs` discovers every domain without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, and strict xfail fingerprints, then compares concise canonical-main-control projections. Cargo tests invoke no live TeX and never read the long-document trace registry.
 
+The `etex-diagnostics/` domain owns bounded e-TeX-only diagnostic command
+microfixtures. Its sessions explicitly install the e-TeX INITEX profile and
+project detached effects plus selected unchanged state.
+
 The `input-expansion` domain owns the twelve audited input and expansion semantic tiers: nine exact passes plus three strict xfails linked to their existing canonical defect beads.
 
 `tests/corpus/command` contains committed canonical command-core fixtures.
