@@ -27,7 +27,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/slug" },
         "property_id": { "type": "string", "minLength": 1 },
-        "profile": { "enum": ["initex", "production"] },
+        "profile": { "enum": ["initex", "production", "etex-initex"] },
         "font_inputs": {
           "type": "object",
           "propertyNames": { "type": "string", "minLength": 1 },

@@ -135,7 +135,7 @@ pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
-pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
+pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 #[doc(hidden)]
 pub use survivor::{DeferredNodeOriginCursor, DeferredNodeOrigins};
 pub use universe::{

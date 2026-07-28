@@ -49,6 +49,29 @@ pub enum GroupKind {
     MathLeft,
 }
 
+/// Detached identity of one live TeX save-stack boundary.
+///
+/// e-TeX 2.6 [49.1292] traverses these records for `\showgroups` without
+/// changing the live save stack. Keeping the entry line beside the boundary
+/// makes that observation independent of the journal representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupFrame {
+    kind: GroupKind,
+    entered_line: u32,
+}
+
+impl GroupFrame {
+    #[must_use]
+    pub const fn kind(self) -> GroupKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn entered_line(self) -> u32 {
+        self.entered_line
+    }
+}
+
 /// Cached location and payload metadata for one live journal group marker.
 ///
 /// This stack is rollback-coupled to the journal and makes current-group
@@ -59,6 +82,7 @@ pub(super) struct GroupBoundary {
     box_undo_len: u32,
     aftergroup_start: u32,
     kind: GroupKind,
+    entered_line: u32,
     lineage: u64,
 }
 
@@ -280,6 +304,14 @@ impl Env {
         self.group_boundaries.iter().map(|boundary| boundary.kind)
     }
 
+    #[must_use]
+    pub(crate) fn group_frames(&self) -> impl DoubleEndedIterator<Item = GroupFrame> + '_ {
+        self.group_boundaries.iter().map(|boundary| GroupFrame {
+            kind: boundary.kind,
+            entered_line: boundary.entered_line,
+        })
+    }
+
     /// Enters a TeX group.
     pub(crate) fn enter_group(&mut self) {
         self.enter_group_with_kind(GroupKind::Simple);
@@ -287,6 +319,11 @@ impl Env {
 
     /// Enters a TeX group with an explicit boundary kind.
     pub(crate) fn enter_group_with_kind(&mut self, kind: GroupKind) {
+        self.enter_group_with_kind_at_line(kind, 0);
+    }
+
+    /// Enters a TeX group and records e-TeX's `saved(-1)` source line.
+    pub(crate) fn enter_group_with_kind_at_line(&mut self, kind: GroupKind, entered_line: u32) {
         let aftergroup_start = u32_len(
             self.aftergroup.len(),
             "aftergroup payload list exceeds u32 entries",
@@ -307,6 +344,7 @@ impl Env {
             box_undo_len,
             aftergroup_start,
             kind,
+            entered_line,
             lineage,
         });
         self.group_depth = self

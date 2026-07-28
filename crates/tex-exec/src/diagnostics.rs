@@ -207,6 +207,78 @@ pub(crate) fn execute_showgroups(stores: &mut Universe) {
     write_diagnostic(stores, &text);
 }
 
+/// Detached e-TeX [49.1292] rendering record for one save level.
+///
+/// The command core resolves each level's mode/list relationship before
+/// opening the diagnostic channel. Rendering therefore cannot mutate either
+/// the save stack or the executor-owned semantic nest, unlike WEB's temporary
+/// reassignment of `save_ptr`, `cur_level`, and `cur_group`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ShowGroupFrame {
+    pub(crate) kind: tex_state::GroupKind,
+    pub(crate) level: usize,
+    pub(crate) entered_line: u32,
+    pub(crate) context: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ShowGroupsDiagnostic {
+    pub(crate) frames: Vec<ShowGroupFrame>,
+}
+
+#[cfg_attr(
+    not(any(test, feature = "instrumentation")),
+    allow(dead_code, reason = "used only by semantic effect observation")
+)]
+pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
+    let mut text = String::from("\n");
+    for frame in diagnostic.frames.iter().rev() {
+        text.push_str("\n### ");
+        text.push_str(group_kind_text(frame.kind));
+        text.push_str(" (level ");
+        text.push_str(&frame.level.to_string());
+        text.push(')');
+        if frame.entered_line != 0 {
+            text.push_str(" entered at line ");
+            text.push_str(&frame.entered_line.to_string());
+        }
+        text.push_str(" (");
+        text.push_str(&frame.context);
+        text.push(')');
+    }
+    text.push_str("\n### bottom level");
+    text
+}
+
+/// Emits e-TeX 2.6 [49.1292]'s `show_save_groups` display through the shared
+/// §245 diagnostic selector, followed by §1293's ordinary show completion.
+pub(crate) fn execute_canonical_showgroups(
+    stores: &mut Universe,
+    diagnostic: &ShowGroupsDiagnostic,
+) {
+    {
+        let mut output = stores.begin_diagnostic();
+        output.print_nl("").print_ln();
+        for frame in diagnostic.frames.iter().rev() {
+            output
+                .print_nl("### ")
+                .print(group_kind_text(frame.kind))
+                .print(" (level ")
+                .print_int(i32::try_from(frame.level).unwrap_or(i32::MAX))
+                .print_char(')');
+            if frame.entered_line != 0 {
+                output
+                    .print(" entered at line ")
+                    .print_int(i32::try_from(frame.entered_line).unwrap_or(i32::MAX));
+            }
+            output.print(" (").print(&frame.context).print_char(')');
+        }
+        output.print_nl("### bottom level");
+        output.end(true);
+    }
+    complete_show(stores, true);
+}
+
 pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
     let conditions = input.conditions().collect::<Vec<_>>();
     let mut text = String::new();
@@ -225,7 +297,7 @@ pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
     write_diagnostic(stores, &text);
 }
 
-fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
+pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
     match kind {
         tex_state::GroupKind::Simple => "simple group",
         tex_state::GroupKind::HBox => "hbox group",

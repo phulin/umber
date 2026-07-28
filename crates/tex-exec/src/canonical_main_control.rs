@@ -154,6 +154,7 @@ struct ActiveReplayBox {
     target: Option<SetBoxTarget>,
     ships_out: bool,
     kind: ReplayBoxKind,
+    group_kind: GroupKind,
     packing: PackSpec,
     leader_kind: Option<GlueKind>,
     /// TeX82 §1073's `shift_amount`, already sign-adjusted at scan time, for
@@ -1248,7 +1249,10 @@ impl CanonicalMainControl {
         tokens: TracedTokenList,
         stores: &mut Universe,
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
-        stores.enter_group_with_kind(GroupKind::Disc);
+        stores.enter_group_with_kind_at_line(
+            GroupKind::Disc,
+            self.command.current_file_line_number(),
+        );
         self.modes.push(Mode::RestrictedHorizontal);
         let episode = self.command.push_discretionary_episode(tokens);
         self.main_loop_active = false;
@@ -1625,7 +1629,10 @@ impl CanonicalMainControl {
                         self.page_output_observations.extend(deferred.0);
                     }
                     opened?;
-                    stores.enter_group_with_kind(GroupKind::Output);
+                    stores.enter_group_with_kind_at_line(
+                        GroupKind::Output,
+                        self.command.current_file_line_number(),
+                    );
                     self.modes.push(Mode::InternalVertical);
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
@@ -1658,7 +1665,7 @@ impl CanonicalMainControl {
         // subformula opens another `math_group`, and any brace group inside
         // the body opens a `simple_group`.
         let enclosing_depth = stores.group_depth();
-        stores.enter_group_with_kind(kind);
+        stores.enter_group_with_kind_at_line(kind, self.command.current_file_line_number());
         self.modes.push(Mode::Math);
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
@@ -1871,7 +1878,10 @@ impl CanonicalMainControl {
                     );
                 } else {
                     let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                    stores.enter_group_with_kind(GroupKind::MathShift);
+                    stores.enter_group_with_kind_at_line(
+                        GroupKind::MathShift,
+                        self.command.current_file_line_number(),
+                    );
                     stores.set_int_param(IntParam::FAM, -1);
                     self.modes.push(Mode::Math);
                     self.modes.current_list_mutation().set_display_eq_no(
@@ -1942,7 +1952,10 @@ impl CanonicalMainControl {
     }
 
     fn enter_canonical_math(&mut self, display: bool, stores: &mut Universe) {
-        stores.enter_group_with_kind(GroupKind::MathShift);
+        stores.enter_group_with_kind_at_line(
+            GroupKind::MathShift,
+            self.command.current_file_line_number(),
+        );
         stores.set_int_param(IntParam::FAM, -1);
         self.modes.push(if display {
             Mode::DisplayMath
@@ -2157,7 +2170,10 @@ impl CanonicalMainControl {
                 // mode level and a save-stack level. Keeping those owners
                 // paired lets §1193 route a premature `$` through §1027's
                 // `off_save`, which inserts `\right.` before retrying it.
-                stores.enter_group_with_kind(GroupKind::MathLeft);
+                stores.enter_group_with_kind_at_line(
+                    GroupKind::MathLeft,
+                    self.command.current_file_line_number(),
+                );
                 self.modes.push(Mode::Math);
                 self.modes
                     .current_list_mutation()
@@ -2486,6 +2502,17 @@ impl CanonicalMainControl {
                 );
             }
             ControlFlow::Continue(scanned) => scanned,
+        };
+        let scanned = match scanned {
+            ScannedStep::ShowGroups { diagnostic: None } => ScannedStep::ShowGroups {
+                diagnostic: Some(detached_showgroups(
+                    stores,
+                    &self.modes,
+                    &self.active_alignment,
+                    &self.boxes,
+                )),
+            },
+            scanned => scanned,
         };
         let mutation = applied_mutation_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
@@ -3570,6 +3597,10 @@ enum ScannedStep {
     /// diagnostic, detached in innermost-to-outermost traversal order.
     ShowIfs {
         conditions: Vec<tex_command::ActiveCondition>,
+    },
+    /// e-TeX 2.6 [49.1292]'s operand-free, any-mode `\showgroups`.
+    ShowGroups {
+        diagnostic: Option<crate::diagnostics::ShowGroupsDiagnostic>,
     },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
@@ -4788,7 +4819,7 @@ fn scan_command(
     // `unsave`, losing both the nested group's local restores and the
     // `\aftergroup` tokens §282 backs up when it pops.
     if let Some(box_state) = boxes.active_boxes.last()
-        && innermost_group == Some(box_state.kind.group_kind())
+        && innermost_group == Some(box_state.group_kind)
         && matches!(
             command.meaning(),
             Meaning::CharToken {
@@ -5686,6 +5717,9 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowLists) => {
             Ok(ScannedStep::ShowLists { mode })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowGroups) => {
+            Ok(ScannedStep::ShowGroups { diagnostic: None })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowBox) => {
             let (index, _) = processor.scan_showbox().map_err(command_error)?;
             Ok(ScannedStep::ShowBox {
@@ -6340,6 +6374,7 @@ fn scan_unclassified_primitive(
         | P::Shipout
         | P::Show
         | P::ShowBox
+        | P::ShowGroups
         | P::ShowLists
         | P::ShowThe
         | P::ShowTokens
@@ -6538,7 +6573,6 @@ fn scan_unclassified_primitive(
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
         | P::QuitVMode
-        | P::ShowGroups
         | P::SpaceFactor
         | P::SplitDiscards
         | P::VFil
@@ -7965,6 +7999,7 @@ fn applied_mutation_observation(
         | ScannedStep::ShowLists { .. }
         | ScannedStep::ShowTokens { .. }
         | ScannedStep::ShowIfs { .. }
+        | ScannedStep::ShowGroups { .. }
         | ScannedStep::VSplit(..)
         | ScannedStep::ImmediateExtension(..)
         | ScannedStep::BoxRegister { .. }
@@ -8192,6 +8227,14 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
             detail: render_showifs(conditions),
             tokens: None,
         }),
+        ScannedStep::ShowGroups {
+            diagnostic: Some(diagnostic),
+        } => Some(EffectRecord {
+            kind: "showgroups",
+            detail: crate::diagnostics::render_showgroups(diagnostic),
+            tokens: None,
+        }),
+        ScannedStep::ShowGroups { diagnostic: None } => None,
         ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
             Some(EffectRecord {
                 kind: "write",
@@ -8550,7 +8593,7 @@ fn replace_alignment_entry_save_level(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
-    stores.enter_group_with_kind(GroupKind::Align);
+    enter_canonical_group(stores, command.state, GroupKind::Align);
     schedule_aftergroup(command, stores, aftergroup)
 }
 
@@ -8777,6 +8820,160 @@ fn finish_replay_alignment(
     }
     crate::vertical::build_page_if_outer_vertical(modes, stores)?;
     Ok(())
+}
+
+/// Resolves e-TeX 2.6 [49.1292]'s coupled save-stack/mode-nest traversal into
+/// an immutable diagnostic value. Unrestricted horizontal levels do not own
+/// groups and are skipped by the WEB traversal; the remaining contexts are
+/// paired outermost-first without changing either live stack.
+fn detached_showgroups(
+    stores: &Universe,
+    modes: &ModeNest,
+    active_alignment: &Option<ActiveReplayAlignment>,
+    boxes: &ReplayBoxes,
+) -> crate::diagnostics::ShowGroupsDiagnostic {
+    use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
+
+    let frames = stores.group_frames().collect::<Vec<_>>();
+    let summary = modes.summary();
+    let semantic_modes = summary
+        .levels()
+        .iter()
+        .filter_map(|level| (level.mode() != Mode::Horizontal).then_some(level.mode()))
+        .collect::<Vec<_>>();
+    let mut mode_index = 1usize;
+    let mut align_level = 0usize;
+    let mut box_index = 0usize;
+    let align_kind = active_alignment.as_ref().map(|active| active.kind);
+    let mut rendered = Vec::with_capacity(frames.len());
+    for (index, frame) in frames.into_iter().enumerate() {
+        let kind = frame.kind();
+        let mode = semantic_modes.get(mode_index).copied();
+        let context = match kind {
+            GroupKind::Simple | GroupKind::Math => "{".to_owned(),
+            GroupKind::SemiSimple => "\\begingroup".to_owned(),
+            GroupKind::HBox
+            | GroupKind::AdjustedHBox
+            | GroupKind::VBox
+            | GroupKind::VTop
+            | GroupKind::VCenter
+            | GroupKind::Insert => {
+                let context = boxes
+                    .active_boxes
+                    .get(box_index)
+                    .map_or_else(|| fallback_group_context(kind).to_owned(), show_box_context);
+                box_index = box_index.saturating_add(1);
+                context
+            }
+            GroupKind::Output => "\\output{".to_owned(),
+            GroupKind::Disc => "\\discretionary{".to_owned(),
+            GroupKind::MathChoice => "\\mathchoice{".to_owned(),
+            GroupKind::MathShift => match mode {
+                Some(Mode::DisplayMath) => "$$".to_owned(),
+                _ => "$".to_owned(),
+            },
+            GroupKind::MathLeft => "\\left".to_owned(),
+            GroupKind::NoAlign => "\\noalign{".to_owned(),
+            GroupKind::Align => {
+                let context = if align_level == 0 {
+                    match align_kind {
+                        Some(AlignmentKind::VAlign) => "\\valign{",
+                        _ => "\\halign{",
+                    }
+                } else {
+                    "align entry"
+                };
+                align_level = align_level.saturating_add(1);
+                context.to_owned()
+            }
+        };
+        if matches!(
+            kind,
+            GroupKind::HBox
+                | GroupKind::AdjustedHBox
+                | GroupKind::VBox
+                | GroupKind::VTop
+                | GroupKind::Output
+                | GroupKind::Math
+                | GroupKind::Disc
+                | GroupKind::Insert
+                | GroupKind::VCenter
+                | GroupKind::MathChoice
+                | GroupKind::MathShift
+                | GroupKind::MathLeft
+        ) {
+            mode_index = mode_index.saturating_add(1);
+        }
+        rendered.push(ShowGroupFrame {
+            kind,
+            level: index + 1,
+            entered_line: frame.entered_line(),
+            context,
+        });
+    }
+    ShowGroupsDiagnostic { frames: rendered }
+}
+
+fn fallback_group_context(kind: GroupKind) -> &'static str {
+    match kind {
+        GroupKind::HBox | GroupKind::AdjustedHBox => "\\hbox{",
+        GroupKind::VBox => "\\vbox{",
+        GroupKind::VTop => "\\vtop{",
+        GroupKind::VCenter => "\\vcenter{",
+        GroupKind::Insert => "\\insert{",
+        _ => "{",
+    }
+}
+
+fn show_box_context(active: &ActiveReplayBox) -> String {
+    let mut context = String::new();
+    if let Some(target) = active.target {
+        if target.global {
+            context.push_str("\\global");
+        }
+        context.push_str("\\setbox");
+        context.push_str(&target.index.to_string());
+        context.push('=');
+    } else if active.ships_out {
+        context.push_str("\\shipout");
+    } else if let Some(kind) = active.leader_kind {
+        context.push_str(match kind {
+            GlueKind::Leaders => "\\leaders",
+            GlueKind::Cleaders => "\\cleaders",
+            GlueKind::Xleaders => "\\xleaders",
+            _ => "\\leaders",
+        });
+    }
+    match active.kind {
+        ReplayBoxKind::HBox => context.push_str("\\hbox"),
+        ReplayBoxKind::VBox => context.push_str("\\vbox"),
+        ReplayBoxKind::VTop => context.push_str("\\vtop"),
+        ReplayBoxKind::VCenter => context.push_str("\\vcenter"),
+        ReplayBoxKind::Insert(255) => context.push_str("\\vadjust"),
+        ReplayBoxKind::Insert(class) => {
+            context.push_str("\\insert");
+            context.push_str(&class.to_string());
+        }
+    }
+    match active.packing {
+        PackSpec::Natural => {}
+        PackSpec::Exactly(size) => {
+            context.push_str(" to");
+            context.push_str(&crate::node_dump::format_scaled_for_diagnostics(size));
+            context.push_str("pt");
+        }
+        PackSpec::Spread(size) => {
+            context.push_str(" spread");
+            context.push_str(&crate::node_dump::format_scaled_for_diagnostics(size));
+            context.push_str("pt");
+        }
+    }
+    context.push('{');
+    context
+}
+
+fn enter_canonical_group(stores: &mut Universe, command: &CommandState, kind: GroupKind) {
+    stores.enter_group_with_kind_at_line(kind, command.current_file_line_number());
 }
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
@@ -10021,6 +10218,17 @@ fn apply_scanned_step(
             crate::diagnostics::complete_show(stores, true);
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::ShowGroups {
+            diagnostic: Some(diagnostic),
+        } => {
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ShowGroups { diagnostic: None } => {
+            let diagnostic = detached_showgroups(stores, modes, active_alignment, boxes);
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic);
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::ImmediateExtension(extension) => {
             match extension {
                 ImmediateExtension::Continue => {}
@@ -10187,7 +10395,12 @@ fn apply_scanned_step(
             if kind == ReplayBoxKind::VCenter {
                 crate::assignments::normal_paragraph(modes, stores);
             }
-            stores.enter_group_with_kind(kind.group_kind());
+            let group_kind = if kind == ReplayBoxKind::HBox && target.is_none() && !ships_out {
+                GroupKind::AdjustedHBox
+            } else {
+                kind.group_kind()
+            };
+            enter_canonical_group(stores, command.state, group_kind);
             modes.push(if kind.horizontal() {
                 Mode::RestrictedHorizontal
             } else {
@@ -10197,6 +10410,7 @@ fn apply_scanned_step(
                 target,
                 ships_out,
                 kind,
+                group_kind,
                 packing,
                 leader_kind: None,
                 shift: None,
@@ -10228,7 +10442,7 @@ fn apply_scanned_step(
                 }
             }
             let class = class as u16;
-            stores.enter_group_with_kind(GroupKind::Insert);
+            enter_canonical_group(stores, command.state, GroupKind::Insert);
             modes.push(Mode::InternalVertical);
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
@@ -10238,6 +10452,7 @@ fn apply_scanned_step(
                 target: None,
                 ships_out: false,
                 kind: ReplayBoxKind::Insert(class),
+                group_kind: GroupKind::Insert,
                 packing: PackSpec::Natural,
                 leader_kind: None,
                 shift: None,
@@ -10293,7 +10508,7 @@ fn apply_scanned_step(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            stores.enter_group_with_kind(kind.group_kind());
+            enter_canonical_group(stores, command.state, kind.group_kind());
             modes.push(if kind.horizontal() {
                 Mode::RestrictedHorizontal
             } else {
@@ -10303,6 +10518,7 @@ fn apply_scanned_step(
                 target: None,
                 ships_out: false,
                 kind,
+                group_kind: kind.group_kind(),
                 packing,
                 leader_kind: Some(leader_kind),
                 shift: None,
@@ -10316,7 +10532,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
-            stores.enter_group_with_kind(GroupKind::Simple);
+            enter_canonical_group(stores, command.state, GroupKind::Simple);
             boxes.recovery_simple_group_pending = false;
             boxes.recovery_simple_group_open = true;
             Ok(ReplayStep::Continue)
@@ -10379,12 +10595,12 @@ fn apply_scanned_step(
             // is therefore a real text boundary on both entry and exit:
             // `{f}i` must not form `fi` across the closing brace.
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            stores.enter_group_with_kind(GroupKind::Simple);
+            enter_canonical_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            stores.enter_group_with_kind(GroupKind::SemiSimple);
+            enter_canonical_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndSemiSimpleGroup => {
@@ -10551,7 +10767,7 @@ fn apply_scanned_step(
             };
             let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
             stores
-                .leave_group_with_kind(box_state.kind.group_kind())
+                .leave_group_with_kind(box_state.group_kind)
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
@@ -10731,7 +10947,7 @@ fn apply_scanned_step(
             // `scan_spec(align_group,false)`, whose `new_save_level(c)` opens
             // the save level that brackets the alignment as a whole. §800's
             // `fin_align` removes it with the second of its two `unsave`s.
-            stores.enter_group_with_kind(GroupKind::Align);
+            enter_canonical_group(stores, command.state, GroupKind::Align);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleStart { alignment } => {
@@ -10780,7 +10996,7 @@ fn apply_scanned_step(
             // cell -- `\\bf`, `\\tt`, a `\\fam`, any local register -- is
             // restored before the next entry begins. §800's first `unsave`
             // removes the last one.
-            stores.enter_group_with_kind(GroupKind::Align);
+            enter_canonical_group(stores, command.state, GroupKind::Align);
             // §774 then runs
             // `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`
             // before its own `align_peek`, exactly as §799 does at every later
@@ -10798,7 +11014,7 @@ fn apply_scanned_step(
                 })?;
             active.align_peek_pending = false;
             active.noalign_depth = Some(1);
-            stores.enter_group_with_kind(GroupKind::NoAlign);
+            enter_canonical_group(stores, command.state, GroupKind::NoAlign);
             if matches!(
                 modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
@@ -11425,7 +11641,12 @@ fn apply_box_shift(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            stores.enter_group_with_kind(kind.group_kind());
+            let group_kind = if kind == ReplayBoxKind::HBox {
+                GroupKind::AdjustedHBox
+            } else {
+                kind.group_kind()
+            };
+            enter_canonical_group(stores, command, group_kind);
             modes.push(if kind.horizontal() {
                 Mode::RestrictedHorizontal
             } else {
@@ -11435,6 +11656,7 @@ fn apply_box_shift(
                 target: None,
                 ships_out: false,
                 kind,
+                group_kind,
                 packing,
                 leader_kind: None,
                 shift: Some(shift.delta),

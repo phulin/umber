@@ -5197,6 +5197,11 @@ impl Universe {
         self.stores.group_kinds()
     }
 
+    #[must_use]
+    pub fn group_frames(&self) -> impl DoubleEndedIterator<Item = crate::GroupFrame> + '_ {
+        self.stores.group_frames()
+    }
+
     /// Number of open groups, TeX82's `cur_level-level_one` (§271).
     ///
     /// A nested construction that must run until *its own* group closes
@@ -5218,6 +5223,15 @@ impl Universe {
 
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
         self.stores.enter_group_with_kind(kind);
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
+    }
+
+    pub fn enter_group_with_kind_at_line(&mut self, kind: GroupKind, entered_line: u32) {
+        self.stores
+            .enter_group_with_kind_at_line(kind, entered_line);
         self.dependencies
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
         self.dependencies

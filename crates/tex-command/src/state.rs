@@ -74,6 +74,15 @@ pub enum CommandReplayDelivery {
 }
 
 impl CommandState {
+    /// Current TeX82 `line`, or zero for token-list and `\read` input.
+    ///
+    /// Save-level owners use this only to preserve e-TeX's `saved(-1)`
+    /// diagnostic metadata; it is not part of command semantics.
+    #[must_use]
+    pub fn current_file_line_number(&self) -> u32 {
+        u32::try_from(self.input.current_file_line_number()).unwrap_or(0)
+    }
+
     /// Schedules one completed `\\discretionary` part for canonical replay.
     ///
     /// This is deliberately a stored command level, not an executor-owned

@@ -90,7 +90,7 @@ pub(crate) use format::{
     testing_take_transitional_format_work,
 };
 
-pub use crate::env::group::{GroupKind, GroupMismatch};
+pub use crate::env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;
 
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -332,6 +332,10 @@ impl Stores {
 
     pub(crate) fn group_kinds(&self) -> impl DoubleEndedIterator<Item = GroupKind> + '_ {
         self.env.group_kinds()
+    }
+
+    pub(crate) fn group_frames(&self) -> impl DoubleEndedIterator<Item = GroupFrame> + '_ {
+        self.env.group_frames()
     }
     /// Creates an empty state-store tuple.
     #[must_use]
@@ -2110,6 +2114,11 @@ impl Stores {
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
         self.code_tables.enter_group();
         self.env.enter_group_with_kind(kind);
+    }
+
+    pub fn enter_group_with_kind_at_line(&mut self, kind: GroupKind, entered_line: u32) {
+        self.code_tables.enter_group();
+        self.env.enter_group_with_kind_at_line(kind, entered_line);
     }
 
     /// Pushes an `\aftergroup` token for the current group.

@@ -55,6 +55,72 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
+#[test]
+fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
+    let mut stores = Universe::new();
+    let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::with_profile(tex_command::CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\n\\tracingonline=1\n\\showgroups\n\\begingroup\\showgroups\\endgroup\n\\global\\showgroups\\count0=7\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let mut modes = ModeNest::new();
+    let mut boxes = ReplayBoxes::default();
+    stores.enter_group_with_kind_at_line(GroupKind::AdjustedHBox, 6);
+    modes.push(Mode::RestrictedHorizontal);
+    boxes.active_boxes.push(ActiveReplayBox {
+        target: None,
+        ships_out: false,
+        kind: ReplayBoxKind::HBox,
+        group_kind: GroupKind::AdjustedHBox,
+        packing: PackSpec::Exactly(Scaled::from_raw(20 * 65_536)),
+        leader_kind: None,
+        shift: None,
+    });
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+
+    stores.enter_group_with_kind_at_line(GroupKind::MathShift, 7);
+    modes.push(Mode::Math);
+    stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
+    modes.push(Mode::Math);
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+
+    stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
+    stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
+    stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+
+    let output = terminal_text(&stores);
+    for expected in [
+        "### bottom level",
+        "### semi simple group (level 1) entered at line 4 (\\begingroup)",
+        "### adjusted hbox group (level 1) entered at line 6 (\\hbox to20.0pt{)",
+        "### math group (level 3) entered at line 7 ({)",
+        "### math shift group (level 2) entered at line 7 ($)",
+        "### no align group (level 6) entered at line 8 (\\noalign{)",
+        "### align group (level 5) entered at line 8 (align entry)",
+        "### align group (level 4) entered at line 8 (\\halign{)",
+    ] {
+        assert!(
+            output.contains(expected),
+            "missing {expected:?} in {output:?}"
+        );
+    }
+    assert_eq!(
+        stores.count(0),
+        7,
+        "prefix recovery consumed following input"
+    );
+    assert_eq!(stores.group_depth(), 6, "diagnostic mutated the save stack");
+}
+
 fn macro_tokens<'a>(stores: &'a Universe, name: &str) -> &'a [Token] {
     let meaning = stores
         .macro_meaning(stores.symbol(name).expect("macro target"))
