@@ -1092,6 +1092,9 @@ impl CanonicalMainControl {
             ScannedStep::Discretionary(discretionary) => {
                 self.apply_discretionary(discretionary, stores)
             }
+            ScannedStep::DiscretionaryHyphen { origin } => {
+                self.apply_discretionary_hyphen(origin, stores)
+            }
             // TeX82 §1123's `make_accent` runs §1270's `do_assignments`
             // between the accent code and §1124's base character, so it
             // executes whole commands of its own before it can finish.
@@ -1203,6 +1206,39 @@ impl CanonicalMainControl {
             pre,
             post,
             replace,
+        });
+        Ok(ReplayStep::Continue)
+    }
+
+    /// Executes TeX82 §1113's `append_discretionary` shorthand for `\-`.
+    fn apply_discretionary_hyphen(
+        &mut self,
+        origin: tex_state::token::OriginId,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        if matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) {
+            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+        }
+        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        let font = stores.current_font();
+        let hyphen = u8::try_from(stores.font_hyphen_char(font))
+            .ok()
+            .map(char::from)
+            .unwrap_or('-');
+        let pre = stores.freeze_node_list(&[Node::Char {
+            font,
+            ch: hyphen,
+            origin,
+        }]);
+        let empty = stores.freeze_node_list(&[]);
+        self.modes.current_list_mut().push(Node::Disc {
+            kind: DiscKind::ExplicitHyphen,
+            pre,
+            post: empty,
+            replace: empty,
         });
         Ok(ReplayStep::Continue)
     }
@@ -3696,6 +3732,9 @@ enum ScannedStep {
     },
     Accent(ScannedAccent),
     Discretionary(ScannedDiscretionary),
+    DiscretionaryHyphen {
+        origin: tex_state::token::OriginId,
+    },
 }
 
 impl ScannedStep {
@@ -5063,6 +5102,11 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Discretionary) => Ok(
             ScannedStep::Discretionary(processor.scan_discretionary().map_err(command_error)?),
         ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DiscretionaryHyphen) => {
+            Ok(ScannedStep::DiscretionaryHyphen {
+                origin: command.origin(),
+            })
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HFil
             | UnexpandablePrimitive::HFill
@@ -7916,6 +7960,7 @@ fn applied_mutation_observation(
         | ScannedStep::MathDelimiter(..)
         | ScannedStep::MathShift { .. }
         | ScannedStep::Discretionary(..)
+        | ScannedStep::DiscretionaryHyphen { .. }
         | ScannedStep::Accent(..) => {
             unreachable!("apply_host_owned_step applies this step before classifying mutations")
         }
@@ -10886,6 +10931,9 @@ fn apply_scanned_step(
         // execution path, so reaching these arms is an invariant.
         ScannedStep::Discretionary(_) => {
             unreachable!("discretionary is applied by CanonicalMainControl")
+        }
+        ScannedStep::DiscretionaryHyphen { .. } => {
+            unreachable!("discretionary hyphen is applied by CanonicalMainControl")
         }
         ScannedStep::Accent(_) => {
             unreachable!("accent is applied by CanonicalMainControl")

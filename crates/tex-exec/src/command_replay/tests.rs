@@ -2522,6 +2522,41 @@ fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
 }
 
 #[test]
+fn canonical_discretionary_hyphen_appends_an_explicit_hyphen_node() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\noindent\-\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph start"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("explicit hyphen"),
+        MainControlStep::Continue
+    );
+    let expected_hyphen = u8::try_from(universe.font_hyphen_char(universe.current_font()))
+        .ok()
+        .map(char::from)
+        .unwrap_or('-');
+    let Some(Node::Disc {
+        kind: tex_state::node::DiscKind::ExplicitHyphen,
+        pre,
+        post,
+        replace,
+    }) = control.modes.current_list().nodes().last()
+    else {
+        panic!("canonical replay appended an explicit discretionary hyphen");
+    };
+    assert!(matches!(
+        universe.nodes(*pre).first(),
+        Some(tex_state::node_arena::NodeRef::Char { ch, .. }) if ch == expected_hyphen
+    ));
+    assert!(universe.nodes(*post).is_empty());
+    assert!(universe.nodes(*replace).is_empty());
+}
+
+#[test]
 fn production_driver_enters_and_packs_hbox_without_legacy_dispatch() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
