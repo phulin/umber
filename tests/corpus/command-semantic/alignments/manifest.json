@@ -67,6 +67,10 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
+          647,
+          651,
+          655,
+          796,
           799
         ]
       },
