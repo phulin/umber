@@ -1,7 +1,9 @@
 #![allow(clippy::disallowed_methods)] // Host-side parity runner and triage writer.
 
+mod trip_observer;
 mod trip_triage;
 
+pub use trip_observer::{TripGeometryObserver, TripObservers, TripProfileObserver};
 pub use trip_triage::{
     TripTriageChannels, TripTriageInput, TripTriageSource, write_trip_triage_artifact,
 };

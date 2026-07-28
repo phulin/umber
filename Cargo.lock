@@ -678,6 +678,7 @@ dependencies = [
  "similar",
  "tempfile",
  "test-support",
+ "tex-command",
  "tex-oracle",
  "tex-out",
 ]

@@ -23,6 +23,7 @@ similar.workspace = true
 tempfile.workspace = true
 test-support = { path = "../../crates/test-support" }
 tex-oracle = { path = "../../crates/tex-oracle" }
+tex-command = { path = "../../crates/tex-command", features = ["instrumentation"] }
 tex-out = { path = "../../crates/tex-out" }
 
 [dev-dependencies]

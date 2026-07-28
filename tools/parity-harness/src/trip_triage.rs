@@ -31,9 +31,12 @@ pub struct TripTriageSource<'a> {
 pub struct TripTriageChannels<'a> {
     /// Canonical schema-v1 JSONL. `None` is itself a meaningful mismatch.
     pub command_events: Option<&'a [u8]>,
+    /// Canonical schema-v2 geometry JSONL, kept identity-separate from v1.
+    pub geometry_events: Option<&'a [u8]>,
     pub transcript: &'a [u8],
     pub log: &'a [u8],
-    pub dvi: &'a [u8],
+    /// DVI is absent during INITEX format creation and present after loading.
+    pub dvi: Option<&'a [u8]>,
 }
 
 /// Inputs to the deterministic TRIP triage writer.
@@ -56,9 +59,17 @@ pub fn write_trip_triage_artifact(
     input: TripTriageInput<'_>,
 ) -> Result<Option<PathBuf>> {
     let artifact = root.join(safe_component(input.label)).join(ARTIFACT_NAME);
-    let expected_dvi = normalized_dvi_for_comparison(input.expected.dvi)?;
-    let actual_dvi = normalized_dvi_for_comparison(input.actual.dvi)?;
-    let divergence = first_divergence(input, &expected_dvi, &actual_dvi)?;
+    let expected_dvi = input
+        .expected
+        .dvi
+        .map(normalized_dvi_for_comparison)
+        .transpose()?;
+    let actual_dvi = input
+        .actual
+        .dvi
+        .map(normalized_dvi_for_comparison)
+        .transpose()?;
+    let divergence = first_divergence(input, expected_dvi.as_deref(), actual_dvi.as_deref())?;
     let Some(divergence) = divergence else {
         if artifact.exists() {
             fs::remove_file(&artifact)
@@ -69,7 +80,12 @@ pub fn write_trip_triage_artifact(
 
     let parent = artifact.parent().expect("artifact has a parent");
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let report = report_text(input, &expected_dvi, &actual_dvi, &divergence);
+    let report = report_text(
+        input,
+        expected_dvi.as_deref(),
+        actual_dvi.as_deref(),
+        &divergence,
+    );
     fs::write(&artifact, report)
         .with_context(|| format!("failed to write {}", artifact.display()))?;
     Ok(Some(artifact))
@@ -77,12 +93,21 @@ pub fn write_trip_triage_artifact(
 
 fn first_divergence(
     input: TripTriageInput<'_>,
-    expected_dvi: &[u8],
-    actual_dvi: &[u8],
+    expected_dvi: Option<&[u8]>,
+    actual_dvi: Option<&[u8]>,
 ) -> Result<Option<Divergence>> {
-    if let Some(divergence) =
-        event_divergence(input.expected.command_events, input.actual.command_events)?
-    {
+    if let Some(divergence) = event_divergence(
+        "command_events",
+        input.expected.command_events,
+        input.actual.command_events,
+    )? {
+        return Ok(Some(divergence));
+    }
+    if let Some(divergence) = event_divergence(
+        "geometry_events",
+        input.expected.geometry_events,
+        input.actual.geometry_events,
+    )? {
         return Ok(Some(divergence));
     }
     if let Some(divergence) = byte_divergence(
@@ -95,20 +120,48 @@ fn first_divergence(
     if let Some(divergence) = byte_divergence("log", input.expected.log, input.actual.log) {
         return Ok(Some(divergence));
     }
-    Ok(byte_divergence("normalized_dvi", expected_dvi, actual_dvi))
+    Ok(optional_byte_divergence(
+        "normalized_dvi",
+        expected_dvi,
+        actual_dvi,
+    ))
 }
 
-fn event_divergence(expected: Option<&[u8]>, actual: Option<&[u8]>) -> Result<Option<Divergence>> {
+fn optional_byte_divergence(
+    channel: &'static str,
+    expected: Option<&[u8]>,
+    actual: Option<&[u8]>,
+) -> Option<Divergence> {
+    match (expected, actual) {
+        (None, None) => None,
+        (Some(_), None) | (None, Some(_)) => Some(Divergence::presence(channel)),
+        (Some(expected), Some(actual)) => byte_divergence(channel, expected, actual),
+    }
+}
+
+fn event_divergence(
+    channel: &'static str,
+    expected: Option<&[u8]>,
+    actual: Option<&[u8]>,
+) -> Result<Option<Divergence>> {
     match (expected, actual) {
         (None, None) => Ok(None),
-        (Some(_), None) | (None, Some(_)) => Ok(Some(Divergence::presence("command_events"))),
+        (Some(_), None) | (None, Some(_)) => Ok(Some(Divergence::presence(channel))),
         (Some(expected), Some(actual)) => {
             let expected = ObservationStream::from_canonical_json_lines(expected)
                 .context("expected TRIP command-event stream is not canonical schema-v1 JSONL")?;
             let actual = ObservationStream::from_canonical_json_lines(actual)
                 .context("actual TRIP command-event stream is not canonical schema-v1 JSONL")?;
+            let expected_schema = if channel == "command_events" { 1 } else { 2 };
+            if expected.header.schema != expected_schema || actual.header.schema != expected_schema
+            {
+                anyhow::bail!(
+                    "{channel} must use canonical schema-v{expected_schema} on both sides"
+                );
+            }
             if expected.header != actual.header {
                 return Ok(Some(Divergence::event_header(
+                    channel,
                     &expected.header.manifest,
                     &actual.header.manifest,
                 )));
@@ -123,7 +176,12 @@ fn event_divergence(expected: Option<&[u8]>, actual: Option<&[u8]>) -> Result<Op
                     .then_some(expected.events.len().min(actual.events.len()))
             });
             Ok(index.map(|index| {
-                Divergence::event(index, expected.events.get(index), actual.events.get(index))
+                Divergence::event(
+                    channel,
+                    index,
+                    expected.events.get(index),
+                    actual.events.get(index),
+                )
             }))
         }
     }
@@ -156,9 +214,9 @@ impl Divergence {
         }
     }
 
-    fn event_header(expected: &str, actual: &str) -> Self {
+    fn event_header(channel: &'static str, expected: &str, actual: &str) -> Self {
         Self {
-            channel: "command_events",
+            channel,
             position: "header.manifest".into(),
             expected: bounded(expected, EVENT_LIMIT),
             actual: bounded(actual, EVENT_LIMIT),
@@ -166,12 +224,13 @@ impl Divergence {
     }
 
     fn event(
+        channel: &'static str,
         index: usize,
         expected: Option<&tex_oracle::NormalizedEvent>,
         actual: Option<&tex_oracle::NormalizedEvent>,
     ) -> Self {
         Self {
-            channel: "command_events",
+            channel,
             position: format!("event[{index}]"),
             expected: event_text(expected),
             actual: event_text(actual),
@@ -190,8 +249,8 @@ impl Divergence {
 
 fn report_text(
     input: TripTriageInput<'_>,
-    expected_dvi: &[u8],
-    actual_dvi: &[u8],
+    expected_dvi: Option<&[u8]>,
+    actual_dvi: Option<&[u8]>,
     divergence: &Divergence,
 ) -> String {
     let mut out = String::new();
@@ -222,14 +281,22 @@ fn report_text(
             option_hash(input.actual.command_events),
         ),
         (
+            "expected.geometry_events.sha256",
+            option_hash(input.expected.geometry_events),
+        ),
+        (
+            "actual.geometry_events.sha256",
+            option_hash(input.actual.geometry_events),
+        ),
+        (
             "expected.transcript.sha256",
             sha256(input.expected.transcript),
         ),
         ("actual.transcript.sha256", sha256(input.actual.transcript)),
         ("expected.log.sha256", sha256(input.expected.log)),
         ("actual.log.sha256", sha256(input.actual.log)),
-        ("expected.normalized_dvi.sha256", sha256(expected_dvi)),
-        ("actual.normalized_dvi.sha256", sha256(actual_dvi)),
+        ("expected.normalized_dvi.sha256", option_hash(expected_dvi)),
+        ("actual.normalized_dvi.sha256", option_hash(actual_dvi)),
         ("earliest.channel", divergence.channel.to_string()),
         ("earliest.position", divergence.position.clone()),
         ("earliest.expected", divergence.expected.clone()),
@@ -362,6 +429,22 @@ mod tests {
         out
     }
 
+    fn geometry_events(count0: i32) -> Vec<u8> {
+        let mut normalizer = Normalizer::new();
+        let mut counts = [0; 10];
+        counts[0] = count0;
+        let event = Event::Geometry(tex_oracle::GeometryEvent::Shipout {
+            page_width_sp: 10,
+            page_height_sp: 20,
+            counts,
+        });
+        let mut out =
+            format!("{{\"schema\":2,\"manifest\":\"{}\"}}\n", "b".repeat(64)).into_bytes();
+        out.extend_from_slice(&serde_json::to_vec(&normalizer.normalize(event)).expect("event"));
+        out.push(b'\n');
+        out
+    }
+
     fn dvi(comment: &[u8], body: &[u8]) -> Vec<u8> {
         let mut out = vec![247, 2];
         out.extend_from_slice(&25_400_000i32.to_be_bytes());
@@ -402,9 +485,10 @@ mod tests {
         let actual_dvi = dvi(b"other", &[141]);
         let base = TripTriageChannels {
             command_events: Some(&reference_events),
+            geometry_events: None,
             transcript: b"alpha",
             log: b"log",
-            dvi: &reference_dvi,
+            dvi: Some(&reference_dvi),
         };
         let event_mismatch = TripTriageChannels {
             command_events: Some(&actual_events),
@@ -428,7 +512,7 @@ mod tests {
             ),
             (
                 TripTriageChannels {
-                    dvi: &actual_dvi,
+                    dvi: Some(&actual_dvi),
                     ..base
                 },
                 "normalized_dvi",
@@ -467,9 +551,10 @@ mod tests {
         let long_log = vec![b'x'; ARTIFACT_LIMIT * 4];
         let expected = TripTriageChannels {
             command_events: Some(&events),
+            geometry_events: None,
             transcript: b"same",
             log: &long_log,
-            dvi: &dvi,
+            dvi: Some(&dvi),
         };
         let actual = TripTriageChannels {
             log: b"different",
@@ -484,5 +569,64 @@ mod tests {
             .expect("artifact");
         assert_eq!(first, fs::read(artifact).expect("second report"));
         assert!(first.len() <= ARTIFACT_LIMIT);
+    }
+
+    #[test]
+    fn command_events_precede_geometry_and_geometry_precedes_output_channels() {
+        let temp = tempfile::tempdir().expect("temp");
+        let command = events(1);
+        let changed_command = events(2);
+        let geometry = geometry_events(117);
+        let changed_geometry = geometry_events(118);
+        let dvi = dvi(b"ref", &[140]);
+        let base = TripTriageChannels {
+            command_events: Some(&command),
+            geometry_events: Some(&geometry),
+            transcript: b"same",
+            log: b"same",
+            dvi: Some(&dvi),
+        };
+        let artifact = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                base,
+                TripTriageChannels {
+                    command_events: Some(&changed_command),
+                    geometry_events: Some(&changed_geometry),
+                    transcript: b"different",
+                    ..base
+                },
+            ),
+        )
+        .expect("command comparison")
+        .expect("command mismatch");
+        let report = fs::read_to_string(&artifact).expect("command report");
+        assert!(
+            report.contains("earliest.channel: command_events"),
+            "{report}"
+        );
+
+        let artifact = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                base,
+                TripTriageChannels {
+                    geometry_events: Some(&changed_geometry),
+                    transcript: b"different",
+                    ..base
+                },
+            ),
+        )
+        .expect("geometry comparison")
+        .expect("geometry mismatch");
+        let report = fs::read_to_string(artifact).expect("geometry report");
+        assert!(
+            report.contains("earliest.channel: geometry_events"),
+            "{report}"
+        );
+        assert!(
+            report.contains("\"counts\":[118,0,0,0,0,0,0,0,0,0]"),
+            "{report}"
+        );
     }
 }

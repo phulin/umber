@@ -541,15 +541,17 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
             },
             expected: TripTriageChannels {
                 command_events: None,
+                geometry_events: None,
                 transcript: b"",
                 log: b"",
-                dvi: &expected_dvi,
+                dvi: Some(&expected_dvi),
             },
             actual: TripTriageChannels {
                 command_events: None,
+                geometry_events: None,
                 transcript: b"",
                 log: b"",
-                dvi: &actual_dvi,
+                dvi: Some(&actual_dvi),
             },
         },
     )
