@@ -198,15 +198,21 @@ pub(crate) struct RegisteredSource {
     pub(crate) kind: RegisteredSourceKind,
     pub(crate) mode: CharacterMode,
     pub(crate) bytes: Arc<[u8]>,
-    pub(crate) world_record: Option<InputRecordId>,
-    descriptor: SourceDescriptor,
+    descriptor: Arc<SourceDescriptor>,
 }
 
 impl RegisteredSource {
     /// Returns the immutable backing descriptor used to register source
     /// coordinates with the aggregate source map.
     pub(crate) fn source_descriptor(&self) -> SourceDescriptor {
-        self.descriptor.clone()
+        (*self.descriptor).clone()
+    }
+
+    fn world_record(&self) -> Option<InputRecordId> {
+        match self.descriptor.as_ref() {
+            SourceDescriptor::World { input_record, .. } => Some(*input_record),
+            SourceDescriptor::Generated(_) => None,
+        }
     }
 
     pub(crate) fn register(
@@ -249,8 +255,7 @@ impl RegisteredSource {
             kind: registration.kind,
             mode,
             bytes: registration.bytes,
-            world_record: registration.world_record,
-            descriptor,
+            descriptor: Arc::new(descriptor),
         })
     }
 }
@@ -263,7 +268,7 @@ impl fmt::Debug for RegisteredSource {
             .field("kind", &self.kind)
             .field("mode", &self.mode)
             .field("bytes", &self.bytes)
-            .field("world_record", &self.world_record)
+            .field("world_record", &self.world_record())
             .finish()
     }
 }
@@ -274,7 +279,7 @@ impl PartialEq for RegisteredSource {
             && self.kind == other.kind
             && self.mode == other.mode
             && self.bytes == other.bytes
-            && self.world_record == other.world_record
+            && self.world_record() == other.world_record()
     }
 }
 
@@ -286,7 +291,7 @@ impl Hash for RegisteredSource {
         self.kind.hash(state);
         self.mode.hash(state);
         self.bytes.hash(state);
-        self.world_record.hash(state);
+        self.world_record().hash(state);
     }
 }
 
