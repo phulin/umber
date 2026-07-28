@@ -3430,6 +3430,10 @@ enum ScannedStep {
     /// atomically rebases the ungrouped job timer to the deterministic
     /// monotonic sample already held by `World`.
     PdfResetTimer,
+    /// pdftex.web §§1594–1595's operand-free interword-space controls.
+    /// Application appends an ordered whatsit after flushing any pending
+    /// horizontal character run; shipout traversal owns the toggle state.
+    PdfInterwordSpace(tex_state::node::PdfAccessibilityControl),
     PdfGraphics(PdfGraphicsRequest),
     PdfObject(PdfObjectRequest),
     PdfReferenceObject(PdfReferenceObjectRequest),
@@ -5355,6 +5359,16 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer) => {
             Ok(ScannedStep::PdfResetTimer)
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfInterwordSpaceOn) => {
+            Ok(ScannedStep::PdfInterwordSpace(
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
+            ))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfInterwordSpaceOff) => {
+            Ok(ScannedStep::PdfInterwordSpace(
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
+            ))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
             ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
         ),
@@ -6292,6 +6306,8 @@ fn scan_unclassified_primitive(
         | P::PdfLiteral
         | P::PdfNames
         | P::PdfObject
+        | P::PdfInterwordSpaceOff
+        | P::PdfInterwordSpaceOn
         | P::PdfRefXForm
         | P::PdfRefXImage
         | P::PdfReferenceObject
@@ -6501,8 +6517,6 @@ fn scan_unclassified_primitive(
         | P::PdfFontExpand
         | P::PdfGlyphToUnicode
         | P::PdfIncludeChars
-        | P::PdfInterwordSpaceOff
-        | P::PdfInterwordSpaceOn
         | P::PdfKnacCode
         | P::PdfKnbcCode
         | P::PdfKnbsCode
@@ -7929,6 +7943,7 @@ fn applied_mutation_observation(
         | ScannedStep::PdfRefXImage { .. }
         | ScannedStep::PdfSetRandomSeed { .. }
         | ScannedStep::PdfResetTimer
+        | ScannedStep::PdfInterwordSpace(..)
         | ScannedStep::PdfGraphics(..)
         | ScannedStep::PdfObject(..)
         | ScannedStep::PdfReferenceObject(..)
@@ -9593,6 +9608,27 @@ fn apply_scanned_step(
         }
         ScannedStep::PdfResetTimer => {
             stores.world_mut().reset_pdf_timer();
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfInterwordSpace(control) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                let name = match control {
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOn => {
+                        "pdfinterwordspaceon"
+                    }
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOff => {
+                        "pdfinterwordspaceoff"
+                    }
+                    tex_state::node::PdfAccessibilityControl::FakeSpace => {
+                        unreachable!("fake-space dispatch is not part of this step")
+                    }
+                };
+                return Err(ExecError::PdfExtensionInDviMode(name));
+            }
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            modes
+                .current_list_mutation()
+                .push(Node::Whatsit(Whatsit::PdfAccessibility(control)));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),

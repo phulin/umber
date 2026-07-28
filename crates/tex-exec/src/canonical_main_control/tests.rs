@@ -80,6 +80,23 @@ fn pdftex_timer_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        (
+            "pdfinterwordspaceon",
+            UnexpandablePrimitive::PdfInterwordSpaceOn,
+        ),
+        (
+            "pdfinterwordspaceoff",
+            UnexpandablePrimitive::PdfInterwordSpaceOff,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
 fn step_until_pdf_seed(control: &mut CanonicalMainControl, stores: &mut Universe, expected: i32) {
     for _ in 0..4 {
         control.step(stores).expect("canonical random command");
@@ -220,6 +237,148 @@ fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
         MainControlStep::Continue
     );
     assert_eq!(stores.world().pdf_elapsed_time(), 0);
+}
+
+#[test]
+fn pdfinterwordspace_toggles_are_operand_free_any_mode_ordered_whatsits() {
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_interword_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\pdfinterwordspaceon\pdfinterwordspaceoff");
+        run_to_end(&mut control, &mut stores);
+
+        let controls: Vec<_> = control
+            .modes
+            .current_list()
+            .nodes()
+            .iter()
+            .filter_map(|node| match node {
+                Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            controls,
+            [
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
+            ],
+            "mode {mode:?}: the controls remain ordered and consume no operand"
+        );
+    }
+
+    let mut grouped_stores = Universe::new_with_plain_catcodes();
+    grouped_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut grouped = pdftex_interword_control(&mut grouped_stores);
+    register_source(&mut grouped, br"{\pdfinterwordspaceon}");
+    run_to_end(&mut grouped, &mut grouped_stores);
+    assert!(matches!(
+        grouped.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfAccessibility(
+            tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
+        ))]
+    ));
+}
+
+#[test]
+fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\global\pdfinterwordspaceon");
+
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert!(control.modes.current_list().nodes().is_empty());
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control.step(&mut stores).expect("replayed extension"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfAccessibility(
+            tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
+        ))]
+    ));
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+    register_source(&mut dvi_control, br"\pdfinterwordspaceoff");
+    assert!(matches!(
+        dvi_control.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfinterwordspaceoff"))
+    ));
+    assert!(dvi_control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\pdfinterwordspaceon\pdfinterwordspaceoff");
+
+    assert_eq!(
+        control.step(&mut stores).expect("first toggle"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("quiescent toggle state checkpoints");
+    assert_eq!(
+        control.step(&mut stores).expect("second toggle"),
+        MainControlStep::Continue
+    );
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("toggle state restores");
+    assert_eq!(
+        control.step(&mut stores).expect("second toggle retries"),
+        MainControlStep::Continue
+    );
+
+    let controls: Vec<_> = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Whatsit(Whatsit::PdfAccessibility(control)) => Some(*control),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        controls,
+        [
+            tex_state::node::PdfAccessibilityControl::InterwordSpaceOn,
+            tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
+        ]
+    );
 }
 
 #[test]
