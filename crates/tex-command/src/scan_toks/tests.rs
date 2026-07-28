@@ -1505,7 +1505,10 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
     // §486: the stream closes and one empty line is appended. §483 still
     // tokenizes it, and an empty line in `state=new_line` is §351's `\par`.
     let par = processor.state.intern_control_sequence("par");
-    assert_eq!(processor.state.tokens(second.token_list()), [Token::Cs(par)]);
+    assert_eq!(
+        processor.state.tokens(second.token_list()),
+        [Token::Cs(par)]
+    );
     assert!(processor.state.read_stream_at_eof(slot));
 }
 
@@ -1553,7 +1556,9 @@ fn read_toks_disables_alignment_delimiters_and_restores_scanner_state() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
     let target = processor.state.intern_control_sequence("line");
 
-    let list = processor.read_toks(1, target, false).expect("read collects");
+    let list = processor
+        .read_toks(1, target, false)
+        .expect("read collects");
 
     assert_eq!(read_text(&processor, &list), "a&b ");
     assert_eq!(

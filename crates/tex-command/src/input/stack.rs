@@ -466,9 +466,7 @@ pub(crate) fn input_level_identity(level: &InputLevel) -> InputLevelId {
 mod tests;
 
 /// Names the canonical effect of exhausting one source level (tex.web §360).
-const fn source_retirement_action(
-    retirement: super::SourceRetirement,
-) -> InputRetirementAction {
+const fn source_retirement_action(retirement: super::SourceRetirement) -> InputRetirementAction {
     match retirement {
         super::SourceRetirement::Pop => InputRetirementAction::SourcePopped,
         super::SourceRetirement::EndReadLine => InputRetirementAction::ReadLineEnded,

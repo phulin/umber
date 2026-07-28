@@ -11,8 +11,7 @@ mod tokenizer;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
     SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceRetirement, StoredReplayReason,
-    TokenBehavior,
-    TokenCursor, TokenPayload,
+    TokenBehavior, TokenCursor, TokenPayload,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
@@ -30,8 +29,8 @@ pub use source::{
     SourceRegistrationError,
 };
 pub use tokenizer::{
-    CatcodeQueries, InvalidSourceCharacter, LexerState, SourceControlSequenceKind, SourceStepQueries,
-    SourceToken, SourceTokenizationStep,
+    CatcodeQueries, InvalidSourceCharacter, LexerState, SourceControlSequenceKind,
+    SourceStepQueries, SourceToken, SourceTokenizationStep,
 };
 
 /// Persistent input-stack ownership.

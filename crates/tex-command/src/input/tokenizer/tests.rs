@@ -432,7 +432,8 @@ fn every_exact_byte_value_survives_source_token_construction() {
                 Catcode::Other
             }
         };
-        let (actual, actual_catcode, _, _) = character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode)));
+        let (actual, actual_catcode, _, _) =
+            character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode)));
         assert_eq!(actual, expected);
         assert_eq!(actual_catcode, Catcode::Other);
     }
@@ -488,7 +489,10 @@ fn snapshots_restore_the_lexer_state_and_exact_source_cursor() {
     assert_eq!(character(expected.clone()), (b' ', Catcode::Space, 1, 1));
 
     state.rollback(snapshot).expect("same-profile snapshot");
-    assert_eq!(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode)), expected);
+    assert_eq!(
+        state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode)),
+        expected
+    );
 }
 
 #[test]

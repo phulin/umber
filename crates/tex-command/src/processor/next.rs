@@ -21,11 +21,11 @@ use crate::input::{
 use crate::input::SourceNameClass;
 use crate::input::{RegisteredSourceKind, SourceRegistration};
 use crate::profile::{CharacterCode, CharacterMode};
-use tex_state::CommandLineSource;
 use crate::{
     AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
     SourceProvenance, SourceToken, SourceTokenizationStep,
 };
+use tex_state::CommandLineSource;
 
 use super::CommandProcessor;
 use super::expand::ExpandedFetch;

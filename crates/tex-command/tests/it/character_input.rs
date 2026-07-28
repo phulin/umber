@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use tex_command::{
-    Catcode, CatcodeQueries, CharacterCode, CommandDialect, CommandHostCapabilities, CommandHostContext,
-    CommandProcessor, CommandProfile, CommandRuntime, CommandState, RegisteredSourceKind,
-    SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
+    Catcode, CatcodeQueries, CharacterCode, CommandDialect, CommandHostCapabilities,
+    CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
+    RegisteredSourceKind, SourceControlSequenceKind, SourceRegistration, SourceToken,
+    SourceTokenizationStep,
 };
 use tex_state::Universe;
 use tex_state::token::Token;
