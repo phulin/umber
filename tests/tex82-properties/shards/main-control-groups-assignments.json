@@ -1237,7 +1237,7 @@
       "claim": "Afterassignment stores one unexpanded token, overwrites the slot on repetition, and inserts it after the next successful assignment before aftergroup or outer input.",
       "preconditions": ["No assignment is mid-commit."],
       "stimulus": [
-        "Phase 2 white-box unit `afterassignment_slot_overwrites_and_fires_once_after_successful_assignment` covers pending aftergroup and failed assignments."
+        "White-box units cover pending aftergroup, failed assignments, and the complete ScannedStep assignment catalogue; committed microfixtures cover successful §325 replay and the no-token path."
       ],
       "expected_observations": ["Only the newest token fires once after effects and before aftergroup."],
       "postconditions": ["The slot clears and the token retains inserted provenance."],
@@ -1251,6 +1251,10 @@
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "afterassignment_slot_overwrites_and_fires_once_after_successful_assignment"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "every_non_eqtb_assignment_family_fires_afterassignment_once"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

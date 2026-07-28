@@ -862,6 +862,85 @@ fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
 }
 
 #[test]
+fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
+    // TeX82 §§1211/1214 resolve the assignment scope before §1224/§1257
+    // install their provisional meanings. §§277-279 then expose that same
+    // resolved choice for both provisional and final definitions.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"{\globaldefs=1\chardef\forcedchar=65\countdef\forcedregister=2}{\globaldefs=-1\global\chardef\localchar=66\global\countdef\localregister=3}\globaldefs=0\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        if matches!(
+            control
+                .step_with_observer(&mut stores, &mut observations)
+                .expect("scope matrix executes"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    for (name, expected_global) in [
+        ("forcedchar", true),
+        ("forcedregister", true),
+        ("localchar", false),
+        ("localregister", false),
+    ] {
+        let scopes: Vec<_> = observations
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Mutation(record) if record.key.as_deref() == Some(name) => {
+                    Some(record.global)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(!scopes.is_empty(), "{name} has an observed mutation");
+        assert!(
+            scopes.iter().all(|scope| *scope == expected_global),
+            "{name} used one effective scope across provisional and final mutations: {scopes:?}"
+        );
+    }
+
+    for name in ["forcedchar", "forcedregister"] {
+        assert_ne!(
+            stores.meaning(stores.symbol(name).expect("symbol was scanned")),
+            Meaning::Undefined,
+            "{name} survived its group"
+        );
+    }
+    for name in ["localchar", "localregister"] {
+        assert_eq!(
+            stores.meaning(stores.symbol(name).expect("symbol was scanned")),
+            Meaning::Undefined,
+            "{name} was restored at group end"
+        );
+    }
+}
+
+#[test]
+fn every_non_eqtb_assignment_family_fires_afterassignment_once() {
+    // TeX82 §1210 includes all ten families below in prefixed_command, and
+    // §1269 reaches `done` after each completed assignment. The saved token
+    // must enter through ordinary §325 back_input exactly once.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\mark{\global\advance\count0 by1}\afterassignment\mark\nullfont\afterassignment\mark\textfont0=\nullfont\afterassignment\mark\setbox0=\hbox{}\afterassignment\mark\prevdepth=0pt x\afterassignment\mark\spacefactor=1000\par\afterassignment\mark\prevgraf=0\afterassignment\mark\pagegoal=1pt\afterassignment\mark\deadcycles=0\afterassignment\mark\hyphenation{word}\afterassignment\mark\nonstopmode\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 10);
+    assert_eq!(stores.take_afterassignment(), None);
+}
+
+#[test]
 fn openin_supplies_the_default_tex_extension() {
     // TeX82 §1275's `if cur_ext="" then cur_ext:=".tex"; pack_cur_name`.
     let mut stores = Universe::new_with_plain_catcodes();

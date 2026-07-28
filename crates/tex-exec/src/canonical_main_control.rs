@@ -3557,6 +3557,16 @@ impl ScannedStep {
                 | Self::RegisterDefinition { .. }
                 | Self::Let { .. }
                 | Self::ParagraphShape { .. }
+                | Self::FontSelect { .. }
+                | Self::MathFamily { .. }
+                | Self::SetBox(..)
+                | Self::PrevDepth { .. }
+                | Self::SpaceFactor { .. }
+                | Self::PrevGraf { .. }
+                | Self::PageDimension { .. }
+                | Self::PageInteger { .. }
+                | Self::HyphenationData { .. }
+                | Self::SetInteractionMode(..)
         )
     }
 
@@ -4021,6 +4031,21 @@ fn dispatch_main_control_command(
             command = next;
             continue;
         }
+        // TeX82 §1214 resolves `\globaldefs` exactly once, before entering
+        // §1211's assignment case. Every scanner-time provisional
+        // definition, committed application, and mutation observation below
+        // therefore receives the same effective value rather than
+        // independently consulting live state at a later seam.
+        let global = effective_global(
+            processor.int_param(IntParam::GLOBAL_DEFS),
+            global
+                || matches!(
+                    command.meaning(),
+                    Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
+                    )
+                ),
+        );
         return scan_command(
             processor,
             command,
@@ -4995,10 +5020,9 @@ fn scan_command(
         ) => {
             // §1214 fixes the effective scope before §1225 calls
             // `read_toks`; carry that scope across the typed apply seam.
-            let read_global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             Ok(ScannedStep::InputStream {
                 request: processor
-                    .scan_input_stream_request(primitive, read_global)
+                    .scan_input_stream_request(primitive, global)
                     .map_err(command_error)?,
                 resource: None,
             })
@@ -5008,10 +5032,8 @@ fn scan_command(
             // name scan, so like §1224's provisional `\relax` it takes the
             // scope the eventual definition would take, `\globaldefs`
             // included.
-            let provisional_global =
-                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             let request = processor
-                .scan_font_definition(provisional_global)
+                .scan_font_definition(global)
                 .map_err(command_error)?;
             Ok(ScannedStep::FontDefinition {
                 request,
@@ -5210,11 +5232,7 @@ fn scan_command(
             Ok(ScannedStep::MacroDefinition {
                 target: definition.target,
                 flags,
-                global: global
-                    || matches!(
-                        primitive,
-                        UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-                    ),
+                global,
                 parameter_text: definition.parameter_text,
                 replacement_text: definition.replacement_text,
                 definition_origin: definition.provenance.primary,
@@ -5229,8 +5247,6 @@ fn scan_command(
             // definition, including `\globaldefs`. This remains main-control
             // scope policy; the command processor only receives the selected
             // provisional scope while it owns raw operand delivery.
-            let provisional_global =
-                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             // §1224's case: `char_def_code` scans §434's `scan_char_num` and
             // `math_char_def_code` scans §436's `scan_fifteen_bit_int`.
             let class = match primitive {
@@ -5241,7 +5257,7 @@ fn scan_command(
                 }
             };
             let definition = processor
-                .scan_character_definition(class, provisional_global)
+                .scan_character_definition(class, global)
                 .map_err(command_error)?;
             Ok(ScannedStep::CharacterDefinition {
                 primitive,
@@ -5257,10 +5273,8 @@ fn scan_command(
             | UnexpandablePrimitive::MuskipDef
             | UnexpandablePrimitive::ToksDef),
         ) => {
-            let provisional_global =
-                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             let definition = processor
-                .scan_register_definition(provisional_global)
+                .scan_register_definition(global)
                 .map_err(command_error)?;
             Ok(ScannedStep::RegisterDefinition {
                 primitive,
@@ -8408,7 +8422,7 @@ fn apply_scanned_step(
                 MathFontSize::from(family.size),
                 family.family,
                 font,
-                assignment_global(global, stores),
+                global,
             );
             Ok(ReplayStep::Continue)
         }
@@ -8433,7 +8447,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             if global {
                 stores.set_count_global(index, value);
             } else {
@@ -8446,7 +8459,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             if global {
                 stores.set_dimen_global(index, value);
             } else {
@@ -8464,7 +8476,7 @@ fn apply_scanned_step(
             // §1055's `alter_box_dimen` mutates the visible box node
             // directly rather than through the save stack, so the assignment
             // prefix does not change which binding level is affected.
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_box_dimension_global(index, dimension, value);
             } else {
                 stores.set_box_dimension(index, dimension, value);
@@ -8476,7 +8488,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             let value = stores.intern_glue(value);
             if global {
                 stores.set_skip_global(index, value);
@@ -8491,7 +8502,7 @@ fn apply_scanned_step(
             global,
         } => {
             let value = stores.intern_glue(value);
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_muskip_global(index, value);
             } else {
                 stores.set_muskip(index, value);
@@ -8828,7 +8839,7 @@ fn apply_scanned_step(
             // straight through and silently ignored a nonzero
             // `\globaldefs`; it was missed by both earlier sweeps because
             // `set_shape` belongs to neither definition family.
-            stores.set_paragraph_shape(&lines, assignment_global(global, stores));
+            stores.set_paragraph_shape(&lines, global);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {
@@ -8836,7 +8847,6 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let global = assignment_global(global, stores);
             if global {
                 stores.set_toks_global(index, tokens.token_list());
             } else {
@@ -8849,7 +8859,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             let parameter = IntParam::new(index);
             if global {
                 stores.set_int_param_global(parameter, value);
@@ -8864,7 +8873,7 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = DimenParam::new(index);
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_dimen_param_global(parameter, value);
             } else {
                 stores.set_dimen_param(parameter, value);
@@ -8876,7 +8885,6 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let global = assignment_global(global, stores);
             let parameter = TokParam::new(index);
             if global {
                 stores.set_tok_param_global(parameter, tokens.token_list());
@@ -8890,7 +8898,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             let parameter = GlueParam::new(index);
             let value = stores.intern_glue(value);
             if global {
@@ -8906,7 +8913,6 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let global = assignment_global(global, stores);
             match primitive {
                 UnexpandablePrimitive::CatCode => {
                     let value = match value {
@@ -9009,7 +9015,7 @@ fn apply_scanned_step(
             selector,
             global,
         } => {
-            if assignment_global(global, stores) {
+            if global {
                 if let Some(selector) = selector {
                     stores.set_current_font_selector_global(selector, font);
                 } else {
@@ -9037,7 +9043,7 @@ fn apply_scanned_step(
             let resource =
                 (*resource).expect("font resource is resolved after the processor borrow");
             if matches!(resource, FontResource::Unavailable) {
-                if assignment_global(global, stores) {
+                if global {
                     stores.set_meaning_global(
                         request.target,
                         Meaning::Font(tex_state::font::NULL_FONT),
@@ -9049,7 +9055,7 @@ fn apply_scanned_step(
             }
             let loaded = load_canonical_font(&request, resource)?;
             let id = stores.try_intern_font_with_identifier(loaded, request.target)?;
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_meaning_global(request.target, Meaning::Font(id));
             } else {
                 stores.set_meaning(request.target, Meaning::Font(id));
@@ -9311,13 +9317,7 @@ fn apply_scanned_step(
             // the target keeps its old value and the job continues. Every
             // arm of `apply_arithmetic` computes its value before writing it,
             // so the target is provably unwritten on this path.
-            match apply_arithmetic(
-                primitive,
-                target,
-                operand,
-                assignment_global(global, stores),
-                stores,
-            ) {
+            match apply_arithmetic(primitive, target, operand, global, stores) {
                 Err(ExecError::ArithmeticOverflow) => {
                     let mut report = stores.print_err("Arithmetic overflow");
                     report.help(&[
@@ -9357,13 +9357,12 @@ fn apply_scanned_step(
             );
             // TeX82 §1221's generic `prefixed_command` global-scope
             // resolution (the same `\globaldefs` override every other
-            // assignment consults via `assignment_global`) applies to
+            // assignment receives from §1214) applies to
             // `\def`/`\edef`/`\gdef`/`\xdef` exactly like any other
             // assignment; `global` here already folds in `\gdef`/`\xdef`'s
             // own forced-global chr_code (see the scan arm above), and
-            // `assignment_global` resolves the final effective bit against
-            // the live `\globaldefs` value.
-            if assignment_global(global, stores) {
+            // `global` already is the final effective bit.
+            if global {
                 stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
             } else {
                 stores.set_macro_meaning_with_provenance(target, meaning, provenance);
@@ -9385,7 +9384,7 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_meaning_global(target, meaning);
             } else {
                 stores.set_meaning(target, meaning);
@@ -9406,7 +9405,7 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
                 _ => unreachable!("register-definition step carries only §1221 primitives"),
             };
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_meaning_global(target, meaning);
             } else {
                 stores.set_meaning(target, meaning);
@@ -9472,11 +9471,11 @@ fn apply_scanned_step(
             // TeX82 `\let`/`\futurelet` are ordinary `prefixed_command`
             // assignments too (§1221), so `\globaldefs` must override their
             // scope exactly like every other assignment kind's
-            // `assignment_global` call above -- this was the second (with
+            // effective-scope resolution above -- this was the second (with
             // `\def`/`\edef`/`\gdef`/`\xdef`) canonical apply arm that used
             // the raw `\global` prefix bit directly and silently ignored a
             // nonzero `\globaldefs`.
-            if assignment_global(global, stores) {
+            if global {
                 stores.set_meaning_global(target, meaning);
             } else {
                 stores.set_meaning(target, meaning);
@@ -9566,13 +9565,12 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::SetBox(mut target) => {
+        ScannedStep::SetBox(target) => {
             // §1214's `<Adjust for the setting of \globaldefs>` runs inside
             // `prefixed_command`, before §1241 scans the box, so `global` in
             // §1241's `if global then n:=256+cur_val` is the *effective*
             // scope. Resolving it at `box_end` instead would read
             // `\globaldefs` as the box body left it.
-            target.global = assignment_global(target.global, stores);
             boxes.pending_setbox = Some(target);
             Ok(ReplayStep::Continue)
         }
@@ -10617,10 +10615,6 @@ fn schedule_afterassignment(
     command_processor(command, runtime, capabilities, observations, stores)
         .back_input_token(tex_state::token::TracedTokenWord::pack(token, origin))
         .map_err(command_error)
-}
-
-fn assignment_global(explicit_global: bool, stores: &Universe) -> bool {
-    effective_global(stores.int_param(IntParam::GLOBAL_DEFS), explicit_global)
 }
 
 /// Applies TeX82 §1214's `\globaldefs` override to a prefixed assignment's
