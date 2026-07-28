@@ -66,6 +66,21 @@ no samples in `source_line_starts`. The exhaustive report signature this path
 must preserve is 61 divergences in 24 root sites: transitions, Plain, and Story
 clean; Gentle's first divergence at event 476410; `DIVERGED` exit 1.
 
+Issue `umber2-johp.295` profiled the exhaustive comparison again after that
+source-registration fix. A symbolized `perf record -F 199 --call-graph fp`
+capture collected 10K cycles samples with none lost. The next dominant symbol
+was the cross-crate `ContentIdentity::for_domain` at 33.51% self samples,
+followed by the engine-owned `DviPagePlan::clone` at 19.06% inclusive and
+7.92% self. The largest `tex-command-stream`-owned kernels were
+`events_match` at 0.25% self and `translate_observation` at 0.23% self.
+
+Those tool-owned ceilings are too small to support a credible end-to-end
+optimization, so no tracer change was promoted. Follow-up `umber2-johp.296`
+owns profiling and reducing the repeated content hashing without changing
+content identity semantics. On the measured base, the current exhaustive
+signature was 23 divergences in 9 root sites with `DIVERGED` exit 1; this
+supersedes older event totals only for comparisons based on that commit.
+
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:
 
