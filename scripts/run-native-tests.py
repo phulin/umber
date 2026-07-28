@@ -114,10 +114,26 @@ RESULT_LINE = re.compile(
     r"^test result: (?P<outcome>\w+)\. (?P<passed>\d+) passed; (?P<failed>\d+) failed; "
     r"(?P<ignored>\d+) ignored"
 )
+CATALOGUE_CENSUS_LINE = re.compile(
+    r"^tex82-property-catalogue: CENSUS: (?P<reviewed>\d+) reviewed, "
+    r"(?P<deferred>\d+) deferred; (?P<covered>\d+) covered, (?P<gap>\d+) gap$",
+    re.MULTILINE,
+)
 
 
 class CoverageError(Exception):
     """The exclusion declaration and the workspace disagree."""
+
+
+@dataclasses.dataclass(frozen=True)
+class CatalogueCensus:
+    reviewed: int
+    deferred: int
+    covered: int
+    gap: int
+
+    def report(self) -> str:
+        return ("TeX82 property catalogue: " f"{self.reviewed} reviewed, {self.deferred} deferred; " f"{self.covered} covered, {self.gap} gap")
 
 
 def workspace_members() -> dict[str, list[dict]]:
@@ -235,6 +251,24 @@ def run_cargo(extra_args: list[str]) -> tuple[int, list[re.Match[str]]]:
     return process.wait(), results
 
 
+def parse_catalogue_census(output: str) -> CatalogueCensus:
+    matches = CATALOGUE_CENSUS_LINE.findall(output)
+    if len(matches) != 1:
+        raise CoverageError("the TeX82 property-catalogue gate did not emit exactly one census")
+    return CatalogueCensus(*(int(value) for value in matches[0]))
+
+
+def catalogue_census() -> CatalogueCensus:
+    command = ["cargo", "test", "--quiet", "-p", "test-support", "--test", "tex82_catalogue", "committed_tex82_property_catalogue_is_complete_and_resolvable", "--", "--exact", "--nocapture"]
+    print(f"run-native-tests: {' '.join(command)}", flush=True)
+    process = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True)
+    sys.stdout.write(process.stdout)
+    sys.stderr.write(process.stderr)
+    if process.returncode != 0:
+        raise CoverageError("the TeX82 property-catalogue census gate did not pass")
+    return parse_catalogue_census(process.stdout)
+
+
 def verdict(
     status: int,
     results: list[re.Match[str]],
@@ -300,6 +334,12 @@ def main(argv: list[str]) -> int:
         print(f"\nrun-native-tests: VERDICT: COVERAGE - {error}", file=sys.stderr)
         return EXIT_COVERAGE
 
+    try:
+        catalogue = catalogue_census()
+    except CoverageError as error:
+        print(f"\nrun-native-tests: VERDICT: COVERAGE - {error}", file=sys.stderr)
+        return EXIT_COVERAGE
+
     status, results = run_cargo(argv)
 
     if EXCLUDED_PACKAGES:
@@ -320,7 +360,10 @@ def main(argv: list[str]) -> int:
         f"deferred tiers: {satisfied} of {len(tier_reports)} passed on this tree"
     )
 
-    code, line = verdict(status, results, len(selected), expected_binaries, deferred)
+    code, line = verdict(
+        status, results, len(selected), expected_binaries,
+        f"{catalogue.report()}; {deferred}",
+    )
     print(f"\n{line}", file=sys.stdout if code == EXIT_PASS else sys.stderr)
     return code
 

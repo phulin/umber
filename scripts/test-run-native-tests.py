@@ -183,6 +183,22 @@ expect(
     "the passing verdict does not state what ran",
 )
 
+# The catalogue census is emitted by the Rust gate and parsed exactly once.
+catalogue = runner.parse_catalogue_census(
+    "tex82-property-catalogue: CENSUS: 3 reviewed, 1 deferred; 2 covered, 4 gap\n"
+)
+expect(catalogue == runner.CatalogueCensus(3, 1, 2, 4), "the catalogue census parser misreads a valid census")
+for malformed in ("", "tex82-property-catalogue: CENSUS: 3 reviewed, one deferred; 2 covered, 4 gap\n"):
+    try:
+        runner.parse_catalogue_census(malformed)
+    except runner.CoverageError:
+        pass
+    else:
+        failures.append("the catalogue census parser accepted malformed output")
+
+_, line = runner.verdict(0, ok, 2, 2, "TeX82 property catalogue: 3 reviewed, 1 deferred; 2 covered, 4 gap")
+expect(line.endswith("; TeX82 property catalogue: 3 reviewed, 1 deferred; 2 covered, 4 gap"), "the verdict does not carry the TeX82 property-catalogue census")
+
 # A PASS must never read as a statement about the tiers this suite defers to.
 _, line = runner.verdict(0, ok, 2, 2, "deferred tiers: 0 of 3 passed on this tree")
 expect(

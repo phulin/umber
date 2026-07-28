@@ -97,3 +97,10 @@ Focused negative tests exercise overlapping disposition ownership, overlapping
 section claims, conflicting property ownership, and an unclassified module.
 The gate proves structural completeness and honest bookkeeping; humans remain
 responsible for reviewing each canonical paraphrase.
+
+On a successful resolvability check, the gate also prints a computed census of
+reviewed and deferred modules plus covered and gap properties. The routine
+native suite reruns this small gate with output visible and carries that census
+in its final `VERDICT:` line. The values are derived from the committed
+inventory, dispositions, and shards; they are not a claim that all canonical
+modules have been reviewed.

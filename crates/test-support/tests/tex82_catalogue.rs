@@ -8,6 +8,23 @@ use serde_json::Value;
 
 const SOURCE_SHA256: &str = "c62ab513ef167e93f71a23bd34f311e243210afd7c7a0f9b779614b71e398324";
 
+#[derive(Debug, Eq, PartialEq)]
+struct CatalogueCensus {
+    reviewed: usize,
+    deferred: usize,
+    covered: usize,
+    gap: usize,
+}
+
+impl CatalogueCensus {
+    fn report(&self) -> String {
+        format!(
+            "{} reviewed, {} deferred; {} covered, {} gap",
+            self.reviewed, self.deferred, self.covered, self.gap
+        )
+    }
+}
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -24,11 +41,11 @@ fn text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing non-empty {field}"))
 }
 
-fn validate(repository: &Path) -> Result<(), String> {
+fn validate(repository: &Path) -> Result<CatalogueCensus, String> {
     validate_catalogue(&repository.join("tests/tex82-properties"), repository)
 }
 
-fn validate_catalogue(base: &Path, source_root: &Path) -> Result<(), String> {
+fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus, String> {
     let inventory = json(&base.join("modules.json"));
     let dispositions = json(&base.join("dispositions.json"));
     if inventory["source_sha256"] != SOURCE_SHA256 || dispositions["source_sha256"] != SOURCE_SHA256
@@ -81,6 +98,7 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<(), String> {
 
     let mut override_owner = BTreeMap::<u64, String>::new();
     let mut properties = BTreeMap::<String, (String, String, BTreeSet<u64>)>::new();
+    let mut property_statuses = Vec::<String>::new();
     let mut section_claims = BTreeMap::<u64, String>::new();
     for path in shard_paths {
         let shard = json(&path);
@@ -163,6 +181,7 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<(), String> {
                 }
                 status => return Err(format!("invalid property status {status}")),
             }
+            property_statuses.push(text(property, "status")?.to_owned());
             for link in coverage {
                 validate_link(source_root, &id, link)?;
             }
@@ -216,7 +235,39 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    Ok(catalogue_census(
+        resolved
+            .values()
+            .map(|record| text(record, "disposition").expect("validated disposition")),
+        property_statuses.iter().map(String::as_str),
+    ))
+}
+
+fn catalogue_census<'a>(
+    dispositions: impl IntoIterator<Item = &'a str>,
+    property_statuses: impl IntoIterator<Item = &'a str>,
+) -> CatalogueCensus {
+    let mut census = CatalogueCensus {
+        reviewed: 0,
+        deferred: 0,
+        covered: 0,
+        gap: 0,
+    };
+    for disposition in dispositions {
+        if disposition == "deferred_review" {
+            census.deferred += 1;
+        } else {
+            census.reviewed += 1;
+        }
+    }
+    for status in property_statuses {
+        if status == "covered" {
+            census.covered += 1;
+        } else {
+            census.gap += 1;
+        }
+    }
+    census
 }
 
 fn validate_disposition(record: &Value, module: u64) -> Result<(), String> {
@@ -284,9 +335,30 @@ fn staged_catalogue() -> tempfile::TempDir {
 
 #[test]
 fn committed_tex82_property_catalogue_is_complete_and_resolvable() {
-    if let Err(error) = validate(&root()) {
-        panic!("{error}");
-    }
+    let census = validate(&root()).unwrap_or_else(|error| panic!("{error}"));
+    println!("tex82-property-catalogue: CENSUS: {}", census.report());
+}
+
+#[test]
+fn catalogue_census_counts_review_and_property_statuses() {
+    let census = catalogue_census(
+        [
+            "property",
+            "definition_only",
+            "deferred_review",
+            "context_only",
+        ],
+        ["covered", "gap", "covered"],
+    );
+    assert_eq!(
+        census,
+        CatalogueCensus {
+            reviewed: 3,
+            deferred: 1,
+            covered: 2,
+            gap: 1
+        }
+    );
 }
 
 #[test]
