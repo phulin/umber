@@ -9,6 +9,7 @@ Run the shipout lowering cases with:
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench shipout
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench widths
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench layout
+cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench dvi_page_snapshot
 cargo run --release --manifest-path benchmarks/tex-exec/Cargo.toml --bin layout_allocations
 ```
 
@@ -17,6 +18,10 @@ cargo run --release --manifest-path benchmarks/tex-exec/Cargo.toml --bin layout_
 math lists that survived into a shipped tree. Both cases lower 1,024 child
 nodes. Each Criterion iteration builds fresh state outside the timed region,
 then times execution and artifact commit.
+
+`dvi_page_snapshot` compares the former deep clone of one bounded synthetic
+1 MiB DVI page plan with the shared immutable collection clone used by
+canonical aggregate-operation rollback. It does not use a document trace.
 
 `widths` measures exact hpack width accumulation for 64- and 4,096-character
 same-font runs and a 4,096-node mixed-font/interrupted list. It uses fixed

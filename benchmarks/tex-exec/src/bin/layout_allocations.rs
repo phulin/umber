@@ -92,6 +92,7 @@ fn linebreak_allocations() -> Stats {
         last_line_fit: 0,
         pdf_adjust_spacing: 0,
         pdf_protrude_chars: 0,
+        expansion_steps: None,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
         par_fill_skip: GlueSpec::ZERO,

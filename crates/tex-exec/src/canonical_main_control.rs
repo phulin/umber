@@ -6,6 +6,7 @@
 
 use std::ops::ControlFlow;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
@@ -55,6 +56,16 @@ use tex_typeset::PackSpec;
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
+
+type PreparedDviPages = Arc<Vec<crate::dispatch::PreparedDviPage>>;
+
+fn push_prepared_dvi_page(pages: &mut PreparedDviPages, page: crate::dispatch::PreparedDviPage) {
+    Arc::make_mut(pages).push(page);
+}
+
+fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch::PreparedDviPage> {
+    Arc::try_unwrap(std::mem::take(pages)).unwrap_or_else(|shared| shared.as_ref().clone())
+}
 
 /// Production command main control with command-owned source consumption.
 #[derive(Debug, Default)]
@@ -112,7 +123,7 @@ pub struct CanonicalMainControl {
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// canonical aggregate operation. This is replay state so rollback drops
     /// it with the corresponding World artifact/effect roots.
-    prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
+    prepared_dvi_pages: PreparedDviPages,
     /// Named safe boundaries committed by the last aggregate operation.  The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
@@ -286,7 +297,7 @@ struct CanonicalStepSnapshot {
     boxes: ReplayBoxes,
     main_loop_active: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
-    prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
+    prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
     universe: tex_state::Snapshot,
 }
@@ -790,7 +801,7 @@ impl CanonicalMainControl {
     /// these pages from artifact bytes.
     #[must_use]
     pub fn take_prepared_dvi_pages(&mut self) -> Vec<crate::dispatch::PreparedDviPage> {
-        std::mem::take(&mut self.prepared_dvi_pages)
+        take_prepared_dvi_pages(&mut self.prepared_dvi_pages)
     }
 
     /// Drains named boundaries that became safe during committed aggregate
@@ -1489,7 +1500,7 @@ impl CanonicalMainControl {
                         initex: self.initex,
                     };
                     if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
-                        self.prepared_dvi_pages.push(receipt);
+                        push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
@@ -8484,7 +8495,7 @@ fn apply_scanned_step(
     active_alignment: &mut Option<ActiveReplayAlignment>,
     command: &mut CommandMachine<'_>,
     boxes: &mut ReplayBoxes,
-    prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
+    prepared_dvi_pages: &mut PreparedDviPages,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
@@ -10205,7 +10216,7 @@ fn apply_scanned_step(
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
                 if let Some(receipt) = shipout_replay_box(node, stores, command)? {
-                    prepared_dvi_pages.push(receipt);
+                    push_prepared_dvi_page(prepared_dvi_pages, receipt);
                 }
             } else if let Some(target) = box_state.target {
                 if target.global {
@@ -11093,7 +11104,7 @@ fn box_end(
     node: Option<Node>,
     modes: &mut ModeNest,
     stores: &mut Universe,
-    prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
+    prepared_dvi_pages: &mut PreparedDviPages,
     command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
     match context {
@@ -11120,7 +11131,7 @@ fn box_end(
             if let Some(node) = node
                 && let Some(receipt) = shipout_replay_box(node, stores, command)?
             {
-                prepared_dvi_pages.push(receipt);
+                push_prepared_dvi_page(prepared_dvi_pages, receipt);
             }
             Ok(())
         }
