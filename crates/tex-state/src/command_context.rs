@@ -182,6 +182,12 @@ impl CommandContext<'_> {
         self.universe.resolve(symbol)
     }
 
+    /// Returns the TeX control-sequence namespace of an interned symbol.
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> crate::interner::ControlSequenceKind {
+        self.universe.control_sequence_kind(symbol)
+    }
+
     /// Finds an already-interned control-sequence spelling without creating
     /// a new entry in the command namespace.
     #[must_use]

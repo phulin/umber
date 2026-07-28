@@ -61,6 +61,108 @@ fn macro_tokens<'a>(stores: &'a Universe, name: &str) -> &'a [Token] {
     stores.tokens(meaning.replacement_text())
 }
 
+#[test]
+fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
+    struct Case {
+        source: &'static [u8],
+        target: &'static str,
+        required: &'static [&'static str],
+        forbidden: &'static str,
+        committed: bool,
+    }
+    let cases = [
+        Case {
+            source: br"\def\bad#2{x}\end",
+            target: "bad",
+            required: &[
+                "! Parameters must be numbered consecutively.",
+                "I've inserted the digit you should have used after the #.",
+                "Type `1' to delete what you did use.",
+            ],
+            forbidden: "Illegal parameter number in definition",
+            committed: true,
+        },
+        Case {
+            source: br"\def\bad{#x}\end",
+            target: "bad",
+            required: &[
+                "! Illegal parameter number in definition of \\bad.",
+                "You meant to type ## instead of #, right?",
+                "Or maybe a } was forgotten somewhere earlier, and things",
+                "are all screwed up? I'm going to assume that you meant ##.",
+            ],
+            forbidden: "Parameters must be numbered consecutively",
+            committed: true,
+        },
+        Case {
+            source: br"{\def\local{#x}}\end",
+            target: "local",
+            required: &[
+                "! Illegal parameter number in definition of \\local.",
+                "You meant to type ## instead of #, right?",
+            ],
+            forbidden: "Parameters must be numbered consecutively",
+            committed: false,
+        },
+        Case {
+            source: br"{\global\def\global{#x}}\end",
+            target: "global",
+            required: &[
+                "! Illegal parameter number in definition of \\global.",
+                "You meant to type ## instead of #, right?",
+            ],
+            forbidden: "Parameters must be numbered consecutively",
+            committed: true,
+        },
+        Case {
+            source: br"\catcode`~=13 \def~{{#x}}\end",
+            target: "~",
+            required: &[
+                "! Illegal parameter number in definition of ~.",
+                "You meant to type ## instead of #, right?",
+            ],
+            forbidden: "Parameters must be numbered consecutively",
+            committed: true,
+        },
+    ];
+
+    for case in cases {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, case.source);
+        run_to_end(&mut control, &mut stores);
+        let output = terminal_text(&stores);
+        for line in case.required {
+            assert!(
+                output.contains(line),
+                "{:?}: missing {line:?} in {output}",
+                case.source
+            );
+        }
+        assert!(
+            !output.contains(case.forbidden),
+            "{:?}: unexpected {:?} in {output}",
+            case.source,
+            case.forbidden
+        );
+        let symbol = if case.target == "~" {
+            stores
+                .active_character_symbol('~')
+                .expect("active target is interned")
+        } else {
+            stores
+                .symbol(case.target)
+                .expect("named target is interned")
+        };
+        assert_eq!(
+            stores.macro_meaning(symbol).is_some(),
+            case.committed,
+            "{:?}: recovered definition scope",
+            case.source
+        );
+    }
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 

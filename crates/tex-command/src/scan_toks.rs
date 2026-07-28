@@ -9,6 +9,7 @@
 #![allow(dead_code)] // executor scanner callers arrive in the following slice
 
 use tex_state::TracedTokenList;
+use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -20,7 +21,7 @@ use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistra
 use tex_state::CommandLineSource;
 
 #[cfg(any(test, feature = "instrumentation"))]
-use crate::observation::{CommandObservation, TokenListRecord};
+use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +37,8 @@ pub(crate) enum ScanToksMode {
     GeneralAfterOpening { expanded: bool, primary: OriginId },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
+    /// Production macro definition scan, carrying §479's `warning_index`.
+    MacroDefinitionFor { expanded: bool, target: Symbol },
 }
 
 /// Frozen output of one `scan_toks` episode.
@@ -54,6 +57,15 @@ struct ScannedParameterText {
     primary: OriginId,
     malformed_parameter: bool,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacroParameterDiagnostic {
+    NonconsecutiveNumber,
+    IllegalReplacementNumber { target: Option<Symbol> },
+}
+
+const NONCONSECUTIVE_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0476;
+const ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0479;
 
 impl CommandProcessor<'_> {
     /// TeX.web's special token-list collector (parts 26--27).
@@ -75,11 +87,16 @@ impl CommandProcessor<'_> {
                     warning,
                 })
             }
-            ScanToksMode::MacroDefinition { .. } => ScannerStatus::Defining(DefinitionContext {
-                target: None,
-                builder,
-                warning,
-            }),
+            ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. } => {
+                ScannerStatus::Defining(DefinitionContext {
+                    target: match mode {
+                        ScanToksMode::MacroDefinitionFor { target, .. } => Some(target),
+                        _ => None,
+                    },
+                    builder,
+                    warning,
+                })
+            }
         };
         let prior = self.command.begin_scanner_status(status.clone());
         self.observe_scanner_status_transition(
@@ -99,7 +116,9 @@ impl CommandProcessor<'_> {
                 | ScanToksMode::GeneralAfterOpening {
                     expanded: false, ..
                 } => "scan_toks",
-                ScanToksMode::MacroDefinition { .. } => "macro_replacement",
+                ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. } => {
+                    "macro_replacement"
+                }
             },
             tokens: self
                 .state
@@ -140,7 +159,18 @@ impl CommandProcessor<'_> {
                     (
                         expanded,
                         parameters.tokens,
-                        Some(parameters.highest_parameter),
+                        Some((parameters.highest_parameter, None)),
+                        parameters.hash_brace,
+                        parameters.primary,
+                        parameters.malformed_parameter,
+                    )
+                }
+                ScanToksMode::MacroDefinitionFor { expanded, target } => {
+                    let parameters = self.scan_parameter_text()?;
+                    (
+                        expanded,
+                        parameters.tokens,
+                        Some((parameters.highest_parameter, Some(target))),
                         parameters.hash_brace,
                         parameters.primary,
                         parameters.malformed_parameter,
@@ -259,7 +289,8 @@ impl CommandProcessor<'_> {
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
             // token recovery.
-            self.back_input(follower)?;
+            self.back_error(follower, NONCONSECUTIVE_PARAMETER_DIAGNOSTIC)?;
+            self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber);
             malformed_parameter = true;
             if next_parameter <= 9 {
                 output.push(TracedTokenWord::pack(
@@ -282,7 +313,7 @@ impl CommandProcessor<'_> {
     fn collect_replacement(
         &mut self,
         expanded: bool,
-        macro_parameters: Option<u8>,
+        macro_parameters: Option<(u8, Option<Symbol>)>,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
@@ -346,7 +377,7 @@ impl CommandProcessor<'_> {
             // entry had ended.
             let spelling = command.spelling();
             let token = spelling.semantic_token();
-            if let Some((hash, highest_parameter)) = pending_parameter.take() {
+            if let Some((hash, highest_parameter, target)) = pending_parameter.take() {
                 // §479: a second parameter character stores that character
                 // once -- `##` is one parameter token in the body, not two.
                 if is_parameter(token) {
@@ -366,14 +397,17 @@ impl CommandProcessor<'_> {
                     }));
                     continue;
                 }
-                self.back_input(command)?;
+                self.back_error(command, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)?;
+                self.report_macro_parameter_diagnostic(
+                    MacroParameterDiagnostic::IllegalReplacementNumber { target },
+                );
                 output.push(hash);
                 continue;
             }
-            if let Some(highest_parameter) = macro_parameters
+            if let Some((highest_parameter, target)) = macro_parameters
                 && is_parameter(token)
             {
-                pending_parameter = Some((spelling, highest_parameter));
+                pending_parameter = Some((spelling, highest_parameter, target));
                 continue;
             }
             if is_begin_group(token) {
@@ -387,6 +421,56 @@ impl CommandProcessor<'_> {
                 output.push(spelling);
             } else {
                 output.push(spelling);
+            }
+        }
+    }
+
+    fn report_macro_parameter_diagnostic(&mut self, diagnostic: MacroParameterDiagnostic) {
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic: match diagnostic {
+                MacroParameterDiagnostic::NonconsecutiveNumber => "nonconsecutive_macro_parameter",
+                MacroParameterDiagnostic::IllegalReplacementNumber { .. } => {
+                    "illegal_replacement_parameter"
+                }
+            },
+            arguments: Vec::new(),
+        }));
+        match diagnostic {
+            MacroParameterDiagnostic::NonconsecutiveNumber => {
+                let mut report = self
+                    .state
+                    .print_err("Parameters must be numbered consecutively");
+                report.help(&[
+                    "I've inserted the digit you should have used after the #.",
+                    "Type `1' to delete what you did use.",
+                ]);
+                report.error();
+            }
+            MacroParameterDiagnostic::IllegalReplacementNumber { target } => {
+                let rendered_target = target.map(|target| {
+                    (
+                        self.state.resolve(target).to_owned(),
+                        self.state.control_sequence_kind(target),
+                    )
+                });
+                let mut report = self
+                    .state
+                    .print_err("Illegal parameter number in definition of ");
+                if let Some((name, kind)) = rendered_target {
+                    if kind == ControlSequenceKind::Named {
+                        report.print_esc(&name);
+                    } else {
+                        report.print(&name);
+                    }
+                }
+                report.help(&[
+                    "You meant to type ## instead of #, right?",
+                    "Or maybe a } was forgotten somewhere earlier, and things",
+                    "are all screwed up? I'm going to assume that you meant ##.",
+                ]);
+                report.error();
             }
         }
     }

@@ -3223,7 +3223,6 @@ enum ScannedStep {
         replacement_text: TracedTokenList,
         definition_origin: tex_state::token::OriginId,
         missing_target: bool,
-        malformed_parameter: bool,
     },
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
@@ -5146,7 +5145,6 @@ fn scan_command(
                 replacement_text: definition.replacement_text,
                 definition_origin: definition.provenance.primary,
                 missing_target: definition.missing_target,
-                malformed_parameter: definition.malformed_parameter,
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -9246,18 +9244,11 @@ fn apply_scanned_step(
             replacement_text,
             definition_origin,
             missing_target,
-            malformed_parameter,
         } => {
             if missing_target {
                 stores.world_mut().write_text(
                     PrintSink::TerminalAndLog,
                     "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\n",
-                );
-            }
-            if malformed_parameter {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! Illegal parameter number in definition.\nYou meant to type ## instead of #, right?\n",
                 );
             }
             let meaning = MacroMeaning::new(

@@ -994,7 +994,7 @@
     {
       "id": "tex82.scanner.scan-toks",
       "sections": [473, 474, 475, 476, 477, 478, 479],
-      "claim": "scan_toks installs the correct scanner status, builds canonical macro parameter and balanced replacement lists, distinguishes expanded and raw collection, and splices the results of the without re-expansion.",
+      "claim": "scan_toks installs the correct scanner status, builds canonical macro parameter and balanced replacement lists, distinguishes parameter-text numbering recovery from illegal replacement parameters, distinguishes expanded and raw collection, and splices the results of the without re-expansion.",
       "preconditions": [
         "The caller selects macro versus general text and expanded versus unexpanded collection.",
         "warning_index identifies the definition or absorbing owner and input delivery preserves literal brace commands."
@@ -1017,6 +1017,7 @@
       ],
       "recovery_cases": [
         "Missing opening braces, nonconsecutive parameters, excess parameters, and illegal body parameters emit canonical diagnostics and insert or replay the specified token.",
+        "Nonconsecutive parameter-text numbering and illegal replacement-body parameters use distinct exact messages and help, back_error replay, inserted-token semantics, and named or active warning_index rendering.",
         "Outer-command and EOF recovery use the live defining or absorbing status, report the partial builder, insert the canonical right brace, and continue the same sequential scan.",
         "A right brace encountered in parameter text reports Missing left brace, terminates the definition with end_match, and returns the list built so far."
       ],
@@ -1042,6 +1043,14 @@
         {
           "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scan_toks_all_parameter_number_success_and_diagnostic_boundaries"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         },
         {
           "path": "crates/tex-command/src/scan_toks/tests.rs",
