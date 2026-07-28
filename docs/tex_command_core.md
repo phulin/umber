@@ -263,8 +263,8 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 executor-owned after the typed event has been delivered.
 
 `get_x_alignment_delivery` also surfaces `AlignmentDelivery::Completed` for
-an executor-owned replay episode (an unbraced math field, a `\mathchoice`
-branch, or a discretionary part) that retires while a cell's own content is being
+an executor-owned replay episode (a `\mathchoice` branch or a discretionary
+part) that retires while a cell's own content is being
 delivered -- for example plain.tex's `\vphantom`/`\mathpalette` building a
 `\mathchoice` inside an inline `$#$` cell template. It uses the same
 completion-aware raw fetch as ordinary (non-alignment) `get_x_token`
@@ -3352,8 +3352,8 @@ the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
 ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
-Executor-owned replay episodes (a discretionary part, an unbraced math
-field) clear the label on entry and exit. TeX reaches those
+Executor-owned replay episodes (a discretionary part, an `\afterassignment`
+token) clear the label on entry and exit. TeX reaches those
 lists through `scan_left_brace`/`push_nest` and leaves them through
 `handle_right_brace`, never mid-character-run, so an episode's own last
 character must not park the enclosing context at the lookahead.
@@ -3389,10 +3389,11 @@ rather than to repair the copy that drifted.
 
 A host-applied step is also where an operation stops being one command
 processor episode. `init_math`, the math-noad family, and `append_discretionary`
-each run **nested** episodes while they execute -- a math field (§1151
-`scan_math`, reached from §1176's `sub_sup` for a script; braced fields run
-as a live group instead, see §33.8), a `\mathchoice` branch, a discretionary
-part -- and each of those is a fresh `CommandProcessor`. Which is the same duplication one level down:
+each run **nested** command-processor episodes while they execute -- a math
+field's scan (§1151 `scan_math`, reached from §1176's `sub_sup` for a
+script; see §33.8 for why the field itself is never a replay level), a
+`\mathchoice` branch, a discretionary part -- and each of those is a fresh
+`CommandProcessor`. Which is the same duplication one level down:
 every construction site got to decide for itself whether the operation's
 observer was installed, and the three nested math constructions never did.
 An observed `^{\the\footnotenum}` then consumed its entire braced field with
@@ -3487,12 +3488,36 @@ command's provenance from the backup level rather than from its source
 `scan_math` carries a `reswitch` label of its own for `char_num`. Neither may
 grow a backup, for the same reason.
 
-### 33.8 A braced math field is a live group, not an episode
+### 33.8 A math field is classified in place or is a live group; neither is an episode
 
 TeX82 §1151's `scan_math` splits on what the next non-blank non-relax token
-is. An unbraced field is the one command already fetched, and freezing that
-single spelling into a replay episode is exact. A braced field is §1153, and
-it is not command-owned material at all:
+is, and neither outcome is an episode.
+
+An unbraced field is resolved **in place**, by the procedure that already
+fetched the command. Its six scalar cases -- `letter`, `other_char`,
+`char_given`, `char_num`, `math_char_num`, `math_given`, `delim_num` -- each
+end by assigning one math code `c`, and §1151 then stores
+`math_type(p):=math_char; character(p):=qi(c mod 256)` with its own `fam`
+rule. No input level is pushed, no token is backed up, and the command that
+selected the case is never delivered a second time. The only `back_input` in
+the whole procedure belongs to §1152's active-character restart and to
+§1153's braced field.
+
+Freezing that single spelling into a replay episode instead is a different
+engine in three ways: the command is delivered twice, a level tex.web has no
+§307 `token_type` for is pushed and retired around the second delivery, and
+the field is reconstructed as a nested mlist -- which also loses `c`'s class
+bits, because §1151 stores a math _character_ and drops the class a noad
+would have carried, so `^\mathchar"3161` became a one-noad sublist instead
+of a math char. gentle.tex reached this 147 times (`umber2-johp.265`).
+
+§1151's `othercases` is the entire rest of the vocabulary, not just a left
+brace: `\hbox` in a script field is `back_input; scan_left_brace` too, so
+§403 reports `Missing { inserted`, backs the rejected command up, and
+behaves as though a brace had been read. The `math_group` opens either way
+and the rejected command becomes the first token of its body.
+
+A braced field is §1153, and it is not command-owned material at all:
 
 ```
 @<Scan a subformula...@>=
