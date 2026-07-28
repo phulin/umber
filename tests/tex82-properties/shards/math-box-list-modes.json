@@ -1370,9 +1370,9 @@
         1158,
         1159
       ],
-      "claim": "Math fields collect one unbraced atom or a balanced braced sub-mlist with exact group ownership, and character/atom commands append the canonical noad class and typed nucleus.",
+      "claim": "Math fields classify one unbraced scalar in place or build a balanced braced sub-mlist with exact group ownership; scalar fields discard the math-code class nibble, while character and atom commands append the canonical noad class and typed nucleus.",
       "preconditions": [
-        "A live math mlist and command-owned field replay boundary are available."
+        "A live math mlist and command-owned scalar scanner or braced math-group boundary are available."
       ],
       "stimulus": [
         "Build empty, character, active, braced and nested fields for every atom command."
@@ -1381,7 +1381,7 @@
         "Field simplification and noad class/nucleus follow §§1150–1159."
       ],
       "postconditions": [
-        "Each field episode retires before parent delivery and attaches once."
+        "Each scalar field attaches once without an input transition; each braced field closes its live group before parent delivery."
       ],
       "equivalence_cases": [
         "Positive/boundary/nesting: unbraced/braced equal fields, empty group, active outer character and nested subformula"
@@ -1397,8 +1397,16 @@
           "test": "math_field_brace_opens_group_without_absorbing_its_body"
         },
         {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "math_given_field_preserves_every_non_ord_code_without_input_events"
+        },
+        {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_non_ord_mathchar_fields_discard_the_class_nibble"
         },
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",

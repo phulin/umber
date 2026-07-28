@@ -956,23 +956,92 @@ fn canonical_math_given_builds_the_same_noads_as_math_char_num() {
         (plain_var.family, plain_var.character)
     );
 
-    // §1151's `math_given: c:=cur_chr` field case, which must resolve
-    // identically to the `math_char_num` case one noad earlier. Both
-    // currently freeze a `MathField::SubMlist` where §1151's
-    // `math_type(p):=math_char` calls for a math char, because
-    // `simplify_canonical_math_field` collapses a one-noad field only when
-    // that noad is `Ord`; that pre-existing deviation is umber2-johp.204 and
-    // is deliberately not asserted as correct here.
+    // §1151's `math_given: c:=cur_chr` field case resolves identically to
+    // the `math_char_num` case one noad earlier. In particular, the class
+    // nibble that made both codes Punct noads in the surrounding mlist does
+    // not survive inside the Inner noad's scalar field.
     assert!(matches!(
         noad(5).kind,
         tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
     ));
     assert_eq!(noad(4).kind, noad(5).kind);
-    assert_eq!(
-        core::mem::discriminant(&noad(4).nucleus),
-        core::mem::discriminant(&noad(5).nucleus),
-        "a math_given field takes the same §1151 path as a math_char_num one"
-    );
+    let (
+        tex_state::math::MathField::MathChar(numeric_field),
+        tex_state::math::MathField::MathChar(given_field),
+    ) = (noad(4).nucleus, noad(5).nucleus)
+    else {
+        panic!("both §1151 scalar forms build a math-char field");
+    };
+    assert_eq!((numeric_field.family, numeric_field.character), (1, ':'));
+    assert_eq!(given_field, numeric_field);
+}
+
+/// TeX82 §1151 stores every unbraced scalar field as `math_type:=math_char`
+/// after extracting only the family and character from `c`. The class nibble
+/// therefore cannot turn the field into a nested one-noad mlist, regardless
+/// of which non-Ord noad that same code would create under §1155.
+#[test]
+fn canonical_non_ord_mathchar_fields_discard_the_class_nibble() {
+    for (outer, outer_class, field_class) in [
+        (
+            br"\mathop".as_slice(),
+            tex_state::math::NoadClass::Op,
+            1_u16,
+        ),
+        (br"\mathbin".as_slice(), tex_state::math::NoadClass::Bin, 2),
+        (br"\mathrel".as_slice(), tex_state::math::NoadClass::Rel, 3),
+        (
+            br"\mathopen".as_slice(),
+            tex_state::math::NoadClass::Open,
+            4,
+        ),
+        (
+            br"\mathclose".as_slice(),
+            tex_state::math::NoadClass::Close,
+            5,
+        ),
+        (
+            br"\mathpunct".as_slice(),
+            tex_state::math::NoadClass::Punct,
+            6,
+        ),
+        (
+            br"\mathinner".as_slice(),
+            tex_state::math::NoadClass::Inner,
+            7,
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        control.modes.push(Mode::Math);
+        let mut source = br"\fam=3 ".to_vec();
+        source.extend_from_slice(outer);
+        source.extend_from_slice(format!("\\mathchar\"{field_class:X}13A").as_bytes());
+        register_source(&mut control, &source);
+        run_to_end(&mut control, &mut universe);
+
+        let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
+            .expect("math material freezes");
+        let nodes = universe.nodes(content);
+        assert_eq!(nodes.len(), 1, "{outer:?} builds one outer noad");
+        let tex_state::node_arena::NodeRef::MathNoad(noad) = nodes.first().expect("outer noad")
+        else {
+            panic!("{outer:?} must build a math noad");
+        };
+        assert_eq!(
+            noad.kind,
+            tex_state::math::NoadKind::Normal(outer_class),
+            "{outer:?} retains its own noad class"
+        );
+        let tex_state::math::MathField::MathChar(field) = noad.nucleus else {
+            panic!("{outer:?} must store the unbraced field as a scalar math char");
+        };
+        assert_eq!(
+            (field.family, field.character),
+            (if field_class == 7 { 3 } else { 1 }, ':'),
+            "§1151 discards field class {field_class} for {outer:?}"
+        );
+    }
 }
 
 /// TeX82 §1046 lists `non_math(math_given)` beside `non_math(math_char_num)`

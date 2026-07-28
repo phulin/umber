@@ -256,17 +256,27 @@
         "box_registers": [
           0
         ],
-        "node_depth": 4,
+        "node_depth": 0,
         "command_names": [
           "math_comp"
         ]
       },
       "expected": [
-        "command:math_comp:16",
-        "command:math_comp:16",
-        "box:0/0:hlist",
-        "box:0/0/0:math-on",
-        "box:0/0/1:math-off"
+        "command:math_comp:17",
+        "command:math_comp:17",
+        "command:math_comp:18",
+        "command:math_comp:18",
+        "command:math_comp:19",
+        "command:math_comp:19",
+        "command:math_comp:20",
+        "command:math_comp:20",
+        "command:math_comp:21",
+        "command:math_comp:21",
+        "command:math_comp:22",
+        "command:math_comp:22",
+        "command:math_comp:23",
+        "command:math_comp:23",
+        "box:0/0:hlist"
       ],
       "expectation": {
         "kind": "pass"

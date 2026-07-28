@@ -618,6 +618,41 @@ fn math_field_operand_cases_reduce_to_one_math_code() {
     }
 }
 
+/// TeX82 §1151's `math_given` case copies the complete fifteen-bit value into
+/// `c`, but its scalar result remains a `math_char` for every class nibble.
+/// Classification happens on the already-delivered meaning: no replay input
+/// level or recovery delivery is introduced for non-Ord values.
+#[test]
+fn math_given_field_preserves_every_non_ord_code_without_input_events() {
+    for class in 1_u16..=7 {
+        let code = (class << 12) | 0x13a;
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let symbol = universe.intern("field").symbol();
+        universe.set_meaning(symbol, Meaning::MathCharGiven(code));
+        push(&mut command, [Token::Cs(symbol)]);
+        let mut recorder = Recorder::default();
+
+        let field = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor.scan_math_field_episode().expect("field scans")
+        };
+
+        assert_eq!(field.body, MathFieldBody::Character(code));
+        assert!(
+            !recorder
+                .0
+                .iter()
+                .any(|observation| matches!(observation, CommandObservation::Input(_))),
+            "class {class} opens and retires no replay input level"
+        );
+    }
+}
+
 /// §1151's `othercases` is the whole rest of the vocabulary, not just a left
 /// brace: it is §1153's `back_input; scan_left_brace`, and §403's recovery
 /// reaches §1153 with `cur_cmd = left_brace`. The `math_group` therefore

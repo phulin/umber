@@ -1567,7 +1567,11 @@ impl CanonicalMainControl {
             )),
             MathFieldBody::OpenGroup => {
                 let list = self.execute_live_math_group(GroupKind::Math, stores)?;
-                Ok(simplify_canonical_math_field(stores, list))
+                // TeX82 §1153 stores the completed group with
+                // `math_type(p):=sub_mlist`, even when its mlist happens to
+                // contain one undecorated Ord noad. Only §1151's unbraced
+                // scalar cases produce `math_char`.
+                Ok(MathField::SubMlist(list))
             }
         }
     }
@@ -2603,20 +2607,6 @@ fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
         MathTextFieldKind::Inner => NoadKind::Normal(NoadClass::Inner),
         MathTextFieldKind::Underline => NoadKind::Underline,
         MathTextFieldKind::Overline => NoadKind::Overline,
-    }
-}
-
-fn simplify_canonical_math_field(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
-    let nodes = stores.nodes(list);
-    if nodes.len() == 1
-        && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
-        && matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
-        && matches!(noad.subscript, MathField::Empty)
-        && matches!(noad.superscript, MathField::Empty)
-    {
-        noad.nucleus
-    } else {
-        MathField::SubMlist(list)
     }
 }
 
