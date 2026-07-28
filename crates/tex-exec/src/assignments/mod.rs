@@ -2285,8 +2285,7 @@ fn execute_prefixed_command(
                 let language = u8::try_from(language).unwrap_or(0);
                 hmode::flush_pending_hchars(nest, stores)?;
                 let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-                let right_hyphen_min =
-                    norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
+                let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
                 crate::vertical::append_node_to_current_list(
                     nest,
                     stores,

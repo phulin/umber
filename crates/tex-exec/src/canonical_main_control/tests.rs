@@ -414,7 +414,10 @@ fn setlanguage_outside_horizontal_mode_reports_the_illegal_case_and_scans_nothin
     // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
     // `scan_int`, so the operand is never consumed: the following assignment
     // is the very next command main control sees.
-    register_source(&mut control, br"\setbox0=\vbox{\setlanguage\global\count0=5}\end");
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\setlanguage\global\count0=5}\end",
+    );
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.count(0), 5);
     let text = terminal_text(&stores);
