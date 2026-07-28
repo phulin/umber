@@ -1855,6 +1855,46 @@ fn display_halign_appends_display_vertical_material() {
 }
 
 #[test]
+fn display_halign_splices_rows_instead_of_math_packing_them() {
+    let stores = super::core::run_canonical_tex82(
+        r"\setbox0=\vbox{\hsize=50pt
+          \baselineskip=15pt \lineskip=4pt \lineskiplimit=3pt
+          \noindent\vrule height0pt depth2pt width0pt\par
+          $$\halign{#\cr
+            \vrule height7.5pt depth2.5pt width0pt\cr
+            \vrule height6pt depth2pt width0pt\cr
+            \vrule height6pt depth2pt width0pt\cr}$$}\end",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
+    let display_rows = nodes
+        .iter()
+        .filter(|node| matches!(node, Node::HList(row) if row.display))
+        .count();
+
+    assert_eq!(
+        display_rows, 3,
+        "TeX82 §812 splices each finished alignment row into the display: {nodes:?}"
+    );
+    assert!(
+        nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node,
+                    Node::Glue {
+                        kind: GlueKind::BaselineSkip | GlueKind::LineSkip,
+                        ..
+                    }
+                )
+            })
+            .count()
+            >= 3,
+        "§799 row spacing must survive §812 display insertion: {nodes:?}"
+    );
+}
+
+#[test]
 fn display_halign_carries_last_row_depth_into_following_baseline_glue() {
     let stores = run_alignment_source(
         "\\setbox0=\\vbox{\\hsize=50pt \\baselineskip=12pt \\lineskiplimit=-100pt \

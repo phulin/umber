@@ -113,6 +113,7 @@ pub struct ModeList {
     incomplete_fraction: Option<IncompleteFraction>,
     display_interrupt: Option<DisplayInterrupt>,
     display_eq_no: Option<DisplayEqNo>,
+    display_alignment: bool,
     prev_depth: Option<Scaled>,
     prev_graf: i32,
     pending_hchars: Option<PendingHRun>,
@@ -345,6 +346,23 @@ impl ModeList {
 
     pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
         self.display_eq_no.take()
+    }
+
+    pub fn set_display_alignment(&mut self, nodes: Vec<Node>, prev_depth: Option<Scaled>) {
+        // A display alignment owns the whole display-mode list: §1206 permits
+        // assignments before the closing `$$`, but no additional material.
+        debug_assert!(!self.display_alignment);
+        debug_assert!(self.nodes.is_empty());
+        self.append(nodes);
+        self.prev_depth = prev_depth;
+        self.display_alignment = true;
+    }
+
+    pub fn take_display_alignment(&mut self) -> Option<(Vec<Node>, Option<Scaled>)> {
+        if !std::mem::take(&mut self.display_alignment) {
+            return None;
+        }
+        Some((self.take_nodes(), self.prev_depth))
     }
 }
 
@@ -755,6 +773,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
         }
         None => projection.bool(false),
     }
+    projection.bool(list.display_alignment);
     match list.prev_depth {
         Some(depth) => {
             projection.bool(true);

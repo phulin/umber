@@ -331,14 +331,70 @@
         "box:0/0/4:hlist",
         "box:0/0/4/0:glue",
         "box:0/0/4/1:hlist",
-        "box:0/0/4/1/0:glue",
-        "box:0/0/4/1/1:hlist",
-        "box:0/0/4/1/1/0:kern",
-        "box:0/0/4/1/2:glue",
-        "box:0/0/4/2:hlist",
-        "box:0/0/4/2/0:rule",
-        "box:0/0/5:penalty",
-        "box:0/0/6:glue"
+        "box:0/0/4/1/0:kern",
+        "box:0/0/4/2:glue",
+        "box:0/0/5:hlist",
+        "box:0/0/5/0:rule",
+        "box:0/0/6:penalty",
+        "box:0/0/7:glue"
+      ],
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "display-finished-list",
+      "property_id": "tex82.align.display-finish",
+      "source": "display-finished-list.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          812,
+          1206,
+          1207
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 2
+      },
+      "expected": [
+        "box:0/0:vlist",
+        "box:0/0/0:hlist",
+        "box:0/0/0/0:rule",
+        "box:0/0/0/1:penalty",
+        "box:0/0/0/2:glue",
+        "box:0/0/0/3:glue",
+        "box:0/0/1:glue",
+        "box:0/0/2:glue",
+        "box:0/0/3:hlist",
+        "box:0/0/3/0:hlist",
+        "box:0/0/3/1:penalty",
+        "box:0/0/3/2:glue",
+        "box:0/0/3/3:glue",
+        "box:0/0/4:penalty",
+        "box:0/0/5:glue",
+        "box:0/0/6:glue",
+        "box:0/0/7:hlist",
+        "box:0/0/7/0:glue",
+        "box:0/0/7/1:hlist",
+        "box:0/0/7/2:glue",
+        "box:0/0/8:glue",
+        "box:0/0/9:hlist",
+        "box:0/0/9/0:glue",
+        "box:0/0/9/1:hlist",
+        "box:0/0/9/2:glue",
+        "box:0/0/10:glue",
+        "box:0/0/11:hlist",
+        "box:0/0/11/0:glue",
+        "box:0/0/11/1:hlist",
+        "box:0/0/11/2:glue",
+        "box:0/0/12:penalty",
+        "box:0/0/13:glue"
       ],
       "expectation": {
         "kind": "pass"

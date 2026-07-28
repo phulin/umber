@@ -248,7 +248,7 @@ pub(crate) fn finish_display_math(
     Ok(())
 }
 
-pub(super) fn finish_display_alignment(
+pub(crate) fn finish_display_alignment(
     nest: &mut ModeNest,
     stores: &mut Universe,
     finished: crate::align::FinishedAlignment,

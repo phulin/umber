@@ -1918,8 +1918,47 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         eq_no: Option<crate::math::display::FinishedEqNo>,
     ) -> Result<(), ExecError> {
+        // TeX82 §812 routes a display alignment to §§1206–1207 instead of
+        // §1199's ordinary math-list lowering and hpack. The finished rows
+        // are already vertical display material; math-packing them collapses
+        // a multi-row alignment to the height and depth of one horizontal box.
+        if let Some((nodes, aux_prev_depth)) =
+            self.modes.current_list_mut().take_display_alignment()
+        {
+            debug_assert!(eq_no.is_none());
+            return self.finish_canonical_display_alignment(
+                stores,
+                crate::align::FinishedAlignment {
+                    nodes,
+                    aux_prev_depth,
+                },
+            );
+        }
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
         self.finish_canonical_display_math_content(stores, content, eq_no)
+    }
+
+    fn finish_canonical_display_alignment(
+        &mut self,
+        stores: &mut Universe,
+        finished: crate::align::FinishedAlignment,
+    ) -> Result<(), ExecError> {
+        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let interrupt =
+            level
+                .list_mut()
+                .take_display_interrupt()
+                .ok_or(ExecError::MissingToken {
+                    context: "display alignment interrupt",
+                })?;
+        crate::math::display::finish_display_alignment(&mut self.modes, stores, finished)?;
+        let aftergroup = stores
+            .leave_group_with_kind(GroupKind::MathShift)
+            .map_err(|_| ExecError::MissingToken {
+                context: "display alignment group",
+            })?;
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
+        self.resume_canonical_display(stores, interrupt.active_directions)
     }
 
     fn finish_canonical_display_math_content(
@@ -8373,14 +8412,23 @@ fn finish_replay_alignment(
         Scaled::from_raw(0)
     };
     let finished = crate::align::widths::finish_alignment(&state, &rows, offset, stores)?;
-    crate::align::append_finished_alignment(
-        modes,
-        stores,
-        crate::align::FinishedAlignment {
-            nodes: finished,
-            aux_prev_depth: alignment.list().prev_depth(),
-        },
-    );
+    let aux_prev_depth = alignment.list().prev_depth();
+    if modes.current_mode() == Mode::DisplayMath {
+        // Preserve §812's `(p,q,aux_save)` handoff until the closing `$$`
+        // has run §§1206–1207's assignment and delimiter scan.
+        modes
+            .current_list_mut()
+            .set_display_alignment(finished, aux_prev_depth);
+    } else {
+        crate::align::append_finished_alignment(
+            modes,
+            stores,
+            crate::align::FinishedAlignment {
+                nodes: finished,
+                aux_prev_depth,
+            },
+        );
+    }
     crate::vertical::build_page_if_outer_vertical(modes, stores)?;
     Ok(())
 }
