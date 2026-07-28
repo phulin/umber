@@ -807,6 +807,11 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "dimension_infinite_units_accept_mixed_case_repeated_suffixes",
+          "cases": ["FiL", "FiLl", "FiLlL", "mixed-case excess l consumption"]
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "dimension_internal_units_scale_whole_fraction_glue_width_and_muglue_compatibility"
         },
         {
@@ -828,15 +833,9 @@
           ]
         }
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "dimension_infinite_units_accept_mixed_case_repeated_suffixes",
-          "cases": ["FiL", "FiLl", "FiLlL", "mixed-case excess l consumption"]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.248"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.dimension-physical-conversion-recovery",

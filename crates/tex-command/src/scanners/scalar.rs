@@ -1456,17 +1456,12 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_infinite_unit(&mut self, mut order: Order) -> Result<DimensionUnit, CommandError> {
-        loop {
-            let Some(command) = self.get_x_token()? else {
-                break;
-            };
-            match command.meaning() {
-                Meaning::CharToken { ch: 'l', .. } => order = raise_infinite_order(order),
-                _ => {
-                    self.back_input(command)?;
-                    break;
-                }
-            }
+        // TeX82 §454 deliberately calls §407's full keyword scanner for
+        // every suffix letter. Besides accepting either case, that consumes
+        // leading spaces before each candidate (`fill L L L`) and restores
+        // the first non-`l` token after the loop.
+        while self.scan_keyword("l")?.value {
+            order = raise_infinite_order(order);
         }
         Ok(DimensionUnit::Infinite(order))
     }
@@ -1474,30 +1469,14 @@ impl CommandProcessor<'_> {
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            if !matches!(command.meaning(), Meaning::CharToken { ch, .. } if ch == expected) {
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
+            ) {
                 return Err(CommandError::input_invariant());
             }
         }
-        let mut order = Order::Fil;
-        loop {
-            let Some(command) = self.get_x_token()? else {
-                break;
-            };
-            match command.meaning() {
-                Meaning::CharToken { ch: 'l', .. } => order = raise_infinite_order(order),
-                Meaning::CharToken { ch: ' ', .. } => {
-                    if let Some(next) = self.get_x_token()? {
-                        self.back_input(next)?;
-                    }
-                    break;
-                }
-                _ => {
-                    self.back_input(command)?;
-                    break;
-                }
-            }
-        }
-        Ok(DimensionUnit::Infinite(order))
+        self.scan_infinite_unit(Order::Fil)
     }
 
     /// Runs TeX82 §413's `while cur_val_level>level do <Convert cur_val to a

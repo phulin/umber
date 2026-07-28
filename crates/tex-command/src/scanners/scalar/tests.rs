@@ -1678,6 +1678,43 @@ fn excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input() {
 }
 
 #[test]
+fn dimension_infinite_units_accept_mixed_case_repeated_suffixes() {
+    // TeX82 §454 implements every repeated suffix as §407's
+    // `scan_keyword("l")`. Exercise both entry paths: an adjacent leading
+    // `f` is already the integer scan's terminator, while a space before
+    // `fil` reaches the ordinary unit-keyword probe.
+    for (source, expected) in [
+        ("0pt plus 1fIl 7", Order::Fil),
+        ("0pt plus 1fIlL 7", Order::Fill),
+        ("0pt plus 1fIlLl 7", Order::Filll),
+        ("0pt plus 1 FiL 7", Order::Fil),
+        ("0pt plus 1 FiLl 7", Order::Fill),
+        ("0pt plus 1 FiLlL 7", Order::Filll),
+        // Each one-letter keyword scan skips leading spaces, including after
+        // filll; excess mixed-case suffixes are consumed while the order
+        // remains clamped, and the first non-l token is replayed.
+        ("0pt plus 1fIl L l L 7", Order::Filll),
+        ("0pt plus 1 FiLlLlL 7", Order::Filll),
+    ] {
+        let mut universe = Universe::new();
+        let (glue, following) = scan_with(&mut universe, scanner_tokens(source), |processor| {
+            let glue = processor
+                .scan_glue(false)
+                .expect("mixed-case infinite stretch scans")
+                .value;
+            let following = processor
+                .scan_integer()
+                .expect("boundary integer remains")
+                .value;
+            (glue, following)
+        });
+        assert_eq!(glue.stretch.raw(), Scaled::UNITY, "{source}");
+        assert_eq!(glue.stretch_order, expected, "{source}");
+        assert_eq!(following, 7, "{source}");
+    }
+}
+
+#[test]
 fn code_table_primitives_read_at_the_integer_level() {
     // TeX82 §414's "Fetch a character code from some table": `\catcode`,
     // `\lccode`, `\uccode`, `\sfcode`, `\mathcode`, and `\delcode` all scan
