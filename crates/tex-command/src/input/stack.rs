@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass, StoredReplayReason,
+    TokenBehavior, TokenCursor, TokenPayload,
 };
 
 /// One committed input-lifecycle transition.

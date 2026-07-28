@@ -647,9 +647,7 @@ fn ordinary_source_open_classifies_as_tex_web_537_start_input_file() {
             Vec::new(),
         ))
         .expect("source registers");
-    state
-        .open_registered_source(source)
-        .expect("source opens");
+    state.open_registered_source(source).expect("source opens");
     let InputLevel::Source(level) = state.input.levels.last().expect("source level") else {
         panic!("opened source is not a source level");
     };
