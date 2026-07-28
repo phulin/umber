@@ -125,14 +125,7 @@
         "count:0=0"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-16zz",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "count:0=0",
-          "actual": "count:0=1"
-        }
+        "kind": "pass"
       }
     },
     {

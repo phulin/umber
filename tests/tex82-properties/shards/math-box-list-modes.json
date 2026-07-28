@@ -1474,10 +1474,12 @@
         "A live math list can open four isolated replay groups."
       ],
       "stimulus": [
-        "Build empty/nonempty/nested choices with local assignments and aftergroup material in each arm."
+        "Build empty/nonempty/nested choices with local assignments and aftergroup material in each arm.",
+        "Committed `choice-groups` explicitly assigns tex.web §232 INITEX catcodes, observes one §1172 `math_choice` dispatch, and then projects the completed box after four §1174 branches."
       ],
       "expected_observations": [
-        "Each arm freezes and retires independently in display-to-scriptscript order."
+        "Each arm freezes and retires independently in display-to-scriptscript order.",
+        "The primitive is dispatched once; `build_choices` advances through the four groups without redispatching `mathchoice`."
       ],
       "postconditions": [
         "One choice node owns four distinct mlists and no arm consumes parent input."

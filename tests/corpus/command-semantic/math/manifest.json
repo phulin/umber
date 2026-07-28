@@ -341,7 +341,6 @@
       },
       "expected": [
         "command:math_choice:0",
-        "command:math_choice:0",
         "box:0/0:hlist",
         "box:0/0/0:math-on",
         "box:0/0/1:math-off"

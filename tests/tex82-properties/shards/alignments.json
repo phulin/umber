@@ -931,7 +931,7 @@
       ],
       "stimulus": [
         "Phase 2 unit `fin_align_orders_groups_packing_pop_and_insertion` and semantic case `alignment-finish-orchestration`.",
-        "Committed command-semantic case `finish-orchestration` observes the remaining boundary as a strict xfail linked to umber2-16zz."
+        "Committed command-semantic case `finish-orchestration` passes the happy-path group-restoration projection; it does not exercise the missing-group confusion branches tracked by umber2-16zz."
       ],
       "expected_observations": [
         "The two align groups are removed before width work; pop_alignment occurs after the prototype is freed and before environment insertion."
@@ -945,14 +945,11 @@
       ],
       "recovery_cases": [
         "Recovery: a missing expected align_group invokes TeX82 confusion(align1) or confusion(align0) at the corresponding check.",
-        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
+        "The passing happy-path semantic case does not cover either missing-group confusion branch; umber2-16zz remains open until both are directly exercised and fixed."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.227",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture+planned-recovery",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "align_peek_selects_noalign_finish_crcr_or_row"
@@ -969,10 +966,18 @@
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
-            "finish-orchestration strict xfail",
-            "linked to umber2-16zz",
-            "pinned first mismatch rejects XPASS and changed failure"
+            "finish-orchestration passes with count:0=0",
+            "happy-path alignment groups restore before environment insertion",
+            "missing-group confusion recovery remains linked to umber2-16zz"
           ]
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-16zz",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/align/widths/tests.rs",
+          "test": "fin_align_missing_groups_report_align1_and_align0_confusion"
         }
       ]
     },
