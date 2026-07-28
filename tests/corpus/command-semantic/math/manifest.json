@@ -374,17 +374,18 @@
       },
       "projection": {
         "kind": "execution-boundaries",
-        "box_registers": [
-          0
-        ],
-        "node_depth": 4
+        "include_artifact_hashes": true,
+        "command_names": [
+          "mkern"
+        ]
       },
       "expected": [
-        "box:0/0:hlist",
-        "box:0/0/0:math-on",
-        "box:0/0/1:kern",
-        "box:0/0/2:kern",
-        "box:0/0/3:math-off"
+        "command:mkern:99",
+        "command:mkern:99",
+        "command:mkern:99",
+        "command:mkern:99",
+        "command:mkern:99",
+        "artifact:bc0ed1a58d0e53b54a05fe26b74b2125f381bcb30d37fd00de5126aa45af0cf5"
       ],
       "expectation": {
         "kind": "pass"

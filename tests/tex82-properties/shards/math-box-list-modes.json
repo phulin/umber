@@ -1529,7 +1529,7 @@
         1176,
         1177
       ],
-      "claim": "Subscript and superscript markers attach a completed field to the previous noad, synthesize an ordinary empty noad when no nucleus exists, and recover duplicate same-kind scripts without overwriting the first.",
+      "claim": "Subscript and superscript markers reserve the previous noad's empty field before scanning, synthesize an ordinary empty noad when no target exists, and diagnose then redirect duplicate same-kind scripts before scanning their fields.",
       "preconditions": [
         "A live mlist and script-field replay boundary are available."
       ],
@@ -1537,7 +1537,7 @@
         "Attach sub-only, sup-only and paired scripts to existing/absent nuclei, then repeat either marker with nested fields."
       ],
       "expected_observations": [
-        "Field ownership and sub/sup slots follow §§1175–1177."
+        "Field ownership and sub/sup slots follow §§1175–1177; duplicate diagnostics and help precede field-scan output."
       ],
       "postconditions": [
         "The first same-kind script remains attached once and later mlist order is intact."
@@ -1558,6 +1558,14 @@
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
           "test": "tex82_script_attachment_dummy_noad_and_duplicate_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/math.rs",
+          "test": "canonical_double_script_reports_tex82_message_and_help_before_field_scan"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/math.rs",
+          "test": "canonical_script_reservation_matrix_ignores_later_tail_appends"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
