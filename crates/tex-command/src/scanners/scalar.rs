@@ -289,7 +289,7 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Consumes one optional equals sign, after optional spaces.
+    /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
         let mut provenance = OriginId::UNKNOWN;
         loop {
@@ -306,8 +306,17 @@ impl CommandProcessor<'_> {
                 provenance = command.origin();
             }
             match command.meaning() {
-                Meaning::CharToken { ch: ' ', .. } => continue,
-                Meaning::CharToken { ch: '=', .. } => {
+                Meaning::CharToken {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                } => continue,
+                // §405 compares `cur_tok` with `other_token + '='`, not the
+                // character code alone. Every other-category variant is an
+                // operand and follows the canonical backup path below.
+                Meaning::CharToken {
+                    ch: '=',
+                    cat: Catcode::Other,
+                } => {
                     return Ok(ScannedScalar {
                         value: true,
                         recovery: ScalarRecovery::None,

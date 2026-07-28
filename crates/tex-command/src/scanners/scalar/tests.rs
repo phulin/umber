@@ -3702,8 +3702,105 @@ fn scanner_syntax_optional_equals_catcode_and_relax_boundaries() {
             .value,
     ));
 
-    // Non-other equals rejection remains owned by umber2-johp.250; do not
-    // encode the current over-acceptance as canonical evidence.
+    for cat in [
+        Catcode::BeginGroup,
+        Catcode::EndGroup,
+        Catcode::MathShift,
+        Catcode::AlignmentTab,
+        Catcode::EndLine,
+        Catcode::Parameter,
+        Catcode::Superscript,
+        Catcode::Subscript,
+        Catcode::Space,
+        Catcode::Letter,
+    ] {
+        let mut universe = Universe::new();
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Char { ch: '=', cat },
+                char_token('x'),
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let (accepted, replayed, following) = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder);
+            let accepted = processor
+                .scan_optional_equals()
+                .expect("optional-equals probe scans")
+                .value;
+            let replayed = processor
+                .get_x_token()
+                .expect("rejected equals replays")
+                .expect("rejected equals remains")
+                .meaning();
+            let following = processor
+                .get_x_token()
+                .expect("following token delivers")
+                .expect("following token remains")
+                .meaning();
+            (accepted, replayed, following)
+        };
+        assert!(!accepted, "{cat:?} equals is not §405 syntax");
+        assert_eq!(replayed, Meaning::CharToken { ch: '=', cat });
+        assert_eq!(
+            following,
+            Meaning::CharToken {
+                ch: 'x',
+                cat: Catcode::Letter
+            }
+        );
+        assert_eq!(
+            recorder
+                .0
+                .iter()
+                .filter(|record| matches!(record, CommandObservation::Input(input)
+                    if input.transition == InputTransition::Backup))
+                .count(),
+            1,
+            "{cat:?} equals is canonically backed up once"
+        );
+    }
+
+    // §341 turns an active character into its active control sequence before
+    // §405 compares `cur_tok`; its category must not make it an equals sign.
+    let mut universe = Universe::new();
+    let active = universe.intern_active_character('=').symbol();
+    universe.set_meaning(active, Meaning::Relax);
+    let (accepted, replayed) = scan_with(
+        &mut universe,
+        vec![Token::Char {
+            ch: '=',
+            cat: Catcode::Active,
+        }],
+        |processor| {
+            let accepted = processor
+                .scan_optional_equals()
+                .expect("active optional-equals probe scans")
+                .value;
+            let replayed = processor
+                .get_x_token()
+                .expect("active equals replays")
+                .expect("active equals remains")
+                .meaning();
+            (accepted, replayed)
+        },
+    );
+    assert!(!accepted, "active equals is not §405 syntax");
+    assert_eq!(replayed, Meaning::Relax);
 
     let relax = universe.intern("relax").symbol();
     universe.set_meaning(relax, Meaning::Relax);

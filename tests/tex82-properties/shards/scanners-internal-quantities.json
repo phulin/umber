@@ -269,7 +269,15 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_optional_equals_catcode_and_relax_boundaries"
+          "test": "scanner_syntax_optional_equals_catcode_and_relax_boundaries",
+          "cases": [
+            "other equals",
+            "all non-other equals categories",
+            "spaces",
+            "following-token replay",
+            "backup observation",
+            "umber2-johp.250"
+          ]
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -281,15 +289,10 @@
           "path": "crates/tex-command/src/scan_toks/tests.rs",
           "test": "scanner_syntax_mandatory_brace_skips_relax",
           "cases": ["expanded relax", "unexpanded relax", "brace after relax", "umber2-johp.209"]
-        },
-        {
-          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "scanner_syntax_optional_equals_rejects_nonother_catcodes",
-          "cases": ["letter equals", "active equals", "backup preservation", "umber2-johp.250"]
         }
       ],
       "status": "gap",
-      "gap_bead": "umber2-johp.250"
+      "gap_bead": "umber2-johp.209"
     },
     {
       "id": "tex82.scanner.internal-eqtb-token-sources",
