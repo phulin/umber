@@ -377,6 +377,41 @@ impl EngineMode {
         }
     }
 
+    /// Installs the primitive and state layers selected for an INITEX run.
+    ///
+    /// Unlike [`Self::prepare_fresh`], this preserves TeX82's initial
+    /// category-code table while the format source is tokenized.
+    pub fn prepare_initex(self, stores: &mut Universe) {
+        crate::prepare_initex_stores(stores);
+        match self {
+            Self::Tex82 => {}
+            Self::ETex => {
+                tex_expand::install_etex_expandable_primitives(stores);
+                tex_exec::install_etex_unexpandable_primitives(stores);
+            }
+            Self::PdfTex => {
+                tex_expand::install_etex_expandable_primitives(stores);
+                tex_exec::install_etex_unexpandable_primitives(stores);
+                crate::pdftex::install_pdftex_layer(stores);
+                crate::pdftex::initialize_pdftex_parameter_defaults(stores);
+                stores.enable_pdf_output();
+            }
+            Self::Latex => {
+                tex_expand::install_etex_expandable_primitives(stores);
+                tex_exec::install_etex_unexpandable_primitives(stores);
+                crate::install_latex_compatibility_layer(stores);
+            }
+            Self::PdfLatex => {
+                tex_expand::install_etex_expandable_primitives(stores);
+                tex_exec::install_etex_unexpandable_primitives(stores);
+                crate::pdftex::install_pdftex_layer(stores);
+                crate::pdftex::initialize_pdftex_parameter_defaults(stores);
+                stores.enable_pdf_output();
+                crate::install_latex_compatibility_layer(stores);
+            }
+        }
+    }
+
     /// Restores driver-owned primitive implementations after a format load.
     pub fn install_after_format(self, stores: &mut Universe) {
         match self {

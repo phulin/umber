@@ -209,7 +209,7 @@ fn run_file_in_process_captured(
         stores
     } else {
         let mut stores = Universe::with_world(world);
-        engine.prepare_fresh(&mut stores);
+        engine.prepare_initex(&mut stores);
         stores
     };
     let content = stores

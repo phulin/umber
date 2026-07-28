@@ -966,6 +966,18 @@ impl From<WorldError> for FinalizationError {
     }
 }
 
+/// Installs the primitive/state setup used by an INITEX run.
+///
+/// TeX82 initializes only the category codes named in tex.web §232. In
+/// particular, `{`, `}`, `$`, `&`, `#`, `^`, and `_` remain `other_char`
+/// until the format source assigns them.
+pub fn prepare_initex_stores(stores: &mut Universe) {
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    tex_expand::install_expandable_primitives(stores);
+    tex_exec::install_unexpandable_primitives(stores);
+    stores.intern("par");
+}
+
 /// Installs the primitive/state setup used by `umber run`.
 ///
 /// `umber run` models a *format-loaded* engine -- the committed DVI corpora
@@ -976,11 +988,8 @@ impl From<WorldError> for FinalizationError {
 /// plain format -- synthesizes that part of the format prelude here rather
 /// than in [`Universe::new`]'s INITEX code tables.
 pub fn prepare_run_stores(stores: &mut Universe) {
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    tex_expand::install_expandable_primitives(stores);
-    tex_exec::install_unexpandable_primitives(stores);
+    prepare_initex_stores(stores);
     stores.install_plain_catcodes();
-    stores.intern("par");
 }
 
 /// Installs the primitive/state setup used by `umber run --etex`.
@@ -1056,11 +1065,29 @@ pub fn install_pdflatex_format_primitives(stores: &mut Universe) {
 #[cfg(test)]
 mod primitive_mode_tests {
     use super::*;
+    use crate::EngineMode;
     use tex_state::World;
     use tex_state::env::banks::TokParam;
     use tex_state::ids::TokenListId;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
     use tex_state::token::{Catcode, Token};
+
+    #[test]
+    fn composed_initex_setup_preserves_tex82_category_defaults() {
+        for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
+            let mut stores = Universe::default();
+            mode.prepare_initex(&mut stores);
+
+            assert_eq!(stores.catcode('{'), Catcode::Other, "{}", mode.name());
+            assert_eq!(stores.catcode('}'), Catcode::Other, "{}", mode.name());
+            assert_eq!(stores.catcode('#'), Catcode::Other, "{}", mode.name());
+            assert!(
+                stores.primitive_token("catcode").is_some(),
+                "{} INITEX primitives are installed",
+                mode.name()
+            );
+        }
+    }
 
     #[test]
     fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
