@@ -9606,12 +9606,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOutputRoutine => {
-            if matches!(
-                modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) {
-                let _ = crate::assignments::commit_current_list(modes, stores)?;
-            }
+            // TeX82 §1026 retires the output token list, then runs §1096's
+            // `end_graf` before it unsaves the output group. A non-null
+            // paragraph left open by \output must be line-broken into this
+            // internal vertical list; merely popping it discards the paragraph.
+            // `end_paragraph` is the shared spelling of §1096: it ignores
+            // non-horizontal modes and pops a null paragraph without a line.
+            crate::assignments::end_paragraph(modes, stores)?;
             let output_level = crate::assignments::commit_current_list(modes, stores)?;
             stores
                 .leave_group_with_kind(GroupKind::Output)

@@ -3979,6 +3979,59 @@ fn output_group_waits_for_nested_box_body_before_closing() {
     assert!(universe.box_reg(255).is_none());
 }
 
+/// TeX82 §1026 retires the output token list before it runs the shared §1096
+/// `end_graf`; therefore a live output paragraph becomes a line on the next
+/// page, while the output group is still the scope that `unsave` restores.
+#[test]
+fn output_routine_end_graf_keeps_non_null_paragraph_and_unsaves_afterward() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f \count7=3 \output={\global\output={} \count7=9 \global\count8=1 \noindent A\shipout\box255}\topskip=0pt\vsize=1pt\hsize=100pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.count(7),
+        3,
+        "§1026 unsaves output-local assignments"
+    );
+    assert_eq!(
+        universe.count(8),
+        1,
+        "global output assignments survive unsave"
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(universe.group_depth(), 0, "the output group has closed");
+    assert!(universe.box_reg(255).is_none());
+    assert_eq!(
+        universe.world().artifact_commits().len(),
+        2,
+        "the line broken from the non-null output paragraph resumes the page builder"
+    );
+}
+
+/// The §1096 null-paragraph branch still applies at §1026: it pops the
+/// horizontal level without adding a line to the resumed page builder.
+#[test]
+fn output_routine_end_graf_ignores_null_paragraph() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\output={\global\output={}\shipout\box255\noindent}\topskip=0pt\vsize=1pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(universe.group_depth(), 0);
+    assert_eq!(universe.world().artifact_commits().len(), 1);
+}
+
 #[test]
 fn simple_group_ancestor_does_not_close_nested_output_box() {
     // TeX82 §1068 dispatches `}` from the live `cur_group`.  Plain's `\big`
