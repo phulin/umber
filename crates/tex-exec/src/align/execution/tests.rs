@@ -213,9 +213,11 @@ fn execute_test_row(
     let first = next_non_space_protected(&mut input, &mut stores, &mut execution)
         .expect("row lookahead succeeds")
         .expect("test row has a terminator");
+    let mut migrations = Vec::new();
     let extra = execute_row(
         align_level,
         first,
+        &mut migrations,
         &mut nest,
         &mut input,
         &mut stores,
@@ -223,7 +225,7 @@ fn execute_test_row(
     )
     .expect("row executes");
     if finish {
-        fin_row(align_level, &mut nest, &mut stores).expect("row packages");
+        fin_row(align_level, migrations, &mut nest, &mut stores).expect("row packages");
     }
     (stores, nest, align_level, extra)
 }

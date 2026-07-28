@@ -84,17 +84,10 @@
         "box:0/0/0/1:hlist",
         "box:0/0/0/1/0:glue",
         "box:0/0/0/2:glue",
-        "box:0/0/1:adjust"
+        "box:0/0/1:kern"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-fr3l",
-        "mismatch": {
-          "index": 5,
-          "kind": "observation",
-          "expected": "box:0/0/0/2:glue",
-          "actual": "box:0/0/0/1/1:adjust"
-        }
+        "kind": "pass"
       }
     },
     {

@@ -205,6 +205,10 @@ struct ActiveReplayAlignment {
     /// row records live on the alignment level, exactly as TeX82 §775 does.
     captured_rows: Vec<Vec<NodeListId>>,
     tabskip: tex_state::ids::GlueId,
+    /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
+    /// and `\vadjust` contents §796's `hpack` migrated out of this row's
+    /// columns, waiting for §799 `fin_row` to append them after the row.
+    row_migrations: Vec<Node>,
     cell_span: u16,
     row_open: bool,
     cell_open: bool,
@@ -7915,7 +7919,16 @@ fn capture_replay_alignment_cell(
     crate::assignments::flush_pending_hchars(modes, stores)?;
     let mut cell = modes.pop()?;
     let material = if active.kind == AlignmentKind::HAlign {
-        crate::math::finish_math_lists_owned(stores, cell.list_mut().take_nodes(), false)
+        // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
+        // so §651/§655 remove its insertions, marks, and `\vadjust` contents
+        // from the column and hold them on the row's migration list; §799
+        // appends them after the packaged row. A `\valign` column is
+        // `vpackage`d with `adjust_tail` null and migrates nothing.
+        let material =
+            crate::math::finish_math_lists_owned(stores, cell.list_mut().take_nodes(), false);
+        let (retained, migrated) = crate::assignments::split_hpack_migrations(stores, material);
+        active.row_migrations.extend(migrated);
+        retained
     } else {
         cell.list_mut().take_nodes()
     };
@@ -7973,6 +7986,12 @@ fn finish_replay_alignment_row(
     // `\cases`/`\eqalign`/`\halign` bodies came out short by one
     // `\baselineskip` per row (`umber2-johp.260`).
     crate::vertical::append_node_to_vertical_list(modes, stores, row)?;
+    // §799 continues `if cur_head<>cur_tail then begin link(tail):=link(cur_head);
+    // tail:=cur_tail end`: the migrated material is spliced immediately after the
+    // row, as a plain list splice with no interline glue of its own.
+    for node in std::mem::take(&mut active.row_migrations) {
+        crate::vertical::append_vertical_contribution(modes, stores, node);
+    }
     active.row_open = false;
     Ok(())
 }
@@ -9679,6 +9698,7 @@ fn apply_scanned_step(
                 noalign_depth: None,
                 captured_rows: Vec::new(),
                 tabskip: stores.glue_param(GlueParam::TAB_SKIP),
+                row_migrations: Vec::new(),
                 cell_span: 1,
                 row_open: false,
                 cell_open: false,

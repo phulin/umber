@@ -677,21 +677,43 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
     let Node::HList(boxed) = node else {
         return Vec::new();
     };
-    let mut retained = Vec::new();
-    let mut migrated = Vec::new();
-    for child in stores.nodes(boxed.children) {
-        match child.to_owned() {
-            child @ (Node::Mark { .. } | Node::Ins { .. }) => migrated.push(child),
-            Node::Adjust(list) => {
-                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
-            }
-            child => retained.push(child),
-        }
-    }
+    let children = stores
+        .nodes(boxed.children)
+        .into_iter()
+        .map(|child| child.to_owned())
+        .collect::<Vec<_>>();
+    let (retained, migrated) = split_hpack_migrations(stores, children);
     if !migrated.is_empty() {
         boxed.children = stores.freeze_node_list(&retained);
     }
     migrated
+}
+
+/// Performs TeX82 §647's `adjust_tail` split for one horizontal list.
+///
+/// §651 sends every `ins_node`, `mark_node`, and `adjust_node` of a list being
+/// `hpack`ed to §655, which moves an insertion or a mark node itself onto the
+/// adjustment list but splices only an adjustment's *contents*
+/// (`link(adjust_tail):=adjust_ptr(p)`) and frees the `\vadjust` node. Every
+/// caller that packs a horizontal list with `adjust_tail` non-null -- §1076's
+/// `\hbox` contribution to a vertical list, §796's alignment column -- performs
+/// exactly this split, and differs only in where the migrated material lands.
+pub(crate) fn split_hpack_migrations(
+    stores: &Universe,
+    nodes: Vec<Node>,
+) -> (Vec<Node>, Vec<Node>) {
+    let mut retained = Vec::with_capacity(nodes.len());
+    let mut migrated = Vec::new();
+    for node in nodes {
+        match node {
+            node @ (Node::Mark { .. } | Node::Ins { .. }) => migrated.push(node),
+            Node::Adjust(list) => {
+                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
+            }
+            node => retained.push(node),
+        }
+    }
+    (retained, migrated)
 }
 
 enum UnboxSource {

@@ -48,10 +48,19 @@ pub(crate) fn execute_alignment(
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, execution)? {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr =
-                execute_row(align_level, first_token, nest, input, stores, execution)?;
+            // TeX82 §786's `cur_tail:=cur_head`: one holding list per row.
+            let mut migrations = Vec::new();
+            let suppress_redundant_cr = execute_row(
+                align_level,
+                first_token,
+                &mut migrations,
+                nest,
+                input,
+                stores,
+                execution,
+            )?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
-            fin_row(align_level, nest, stores)?;
+            fin_row(align_level, migrations, nest, stores)?;
             replay_everycr(input, stores);
         }
 
@@ -112,10 +121,19 @@ pub(super) fn execute_alignment_to_nodes(
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, execution)? {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr =
-                execute_row(align_level, first_token, nest, input, stores, execution)?;
+            // TeX82 §786's `cur_tail:=cur_head`: one holding list per row.
+            let mut migrations = Vec::new();
+            let suppress_redundant_cr = execute_row(
+                align_level,
+                first_token,
+                &mut migrations,
+                nest,
+                input,
+                stores,
+                execution,
+            )?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
-            fin_row(align_level, nest, stores)?;
+            fin_row(align_level, migrations, nest, stores)?;
             replay_everycr(input, stores);
         }
 
@@ -217,6 +235,7 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
 fn execute_row(
     align_level: usize,
     first_token: TracedTokenWord,
+    migrations: &mut Vec<Node>,
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
@@ -231,6 +250,7 @@ fn execute_row(
                 column,
                 first_token: start_token.take(),
             },
+            migrations,
             nest,
             input,
             stores,
@@ -253,6 +273,7 @@ fn execute_row(
 
 fn fin_row(
     align_level: usize,
+    migrations: Vec<Node>,
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
@@ -269,6 +290,12 @@ fn fin_row(
     );
     if kind == AlignmentKind::HAlign {
         append_node_to_vertical_list(nest, stores, row)?;
+        // §799 continues `if cur_head<>cur_tail then begin
+        // link(tail):=link(cur_head); tail:=cur_tail end`: a plain splice
+        // immediately after the row, with no interline glue of its own.
+        for node in migrations {
+            append_vertical_contribution(nest, stores, node);
+        }
     } else {
         nest.current_list_mut().push(row);
     }
@@ -290,6 +317,7 @@ struct CellStart {
 fn execute_cell(
     align_level: usize,
     start: CellStart,
+    migrations: &mut Vec<Node>,
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
@@ -382,7 +410,15 @@ fn execute_cell(
                         PrintSink::TerminalAndLog,
                         "\n! Extra alignment tab has been changed to \\cr.\n",
                     );
-                    package_cell(align_level, kind, span_count, next_column, nest, stores)?;
+                    package_cell(
+                        align_level,
+                        kind,
+                        span_count,
+                        next_column,
+                        migrations,
+                        nest,
+                        stores,
+                    )?;
                     leave_group(input, stores, tex_state::GroupKind::Align)?;
                     stores.enter_group_with_kind(tex_state::GroupKind::Align);
                     align_state_mut(nest, align_level)?.finish_cell(next_column);
@@ -413,7 +449,15 @@ fn execute_cell(
                         "\n! Extra alignment tab has been changed to \\cr.\n",
                     );
                 }
-                package_cell(align_level, kind, span_count, next_column, nest, stores)?;
+                package_cell(
+                    align_level,
+                    kind,
+                    span_count,
+                    next_column,
+                    migrations,
+                    nest,
+                    stores,
+                )?;
                 leave_group(input, stores, tex_state::GroupKind::Align)?;
                 // WEB fin_col immediately installs the next entry align_group,
                 // including after a row-ending \cr for fin_align to remove.
@@ -458,6 +502,7 @@ fn package_cell(
     kind: AlignmentKind,
     span_count: u16,
     next_boundary: usize,
+    migrations: &mut Vec<Node>,
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
@@ -468,7 +513,14 @@ fn package_cell(
     let mut cell_level = nest.pop()?;
     let nodes = cell_level.list_mut().take_nodes();
     let nodes = if kind == AlignmentKind::HAlign {
-        crate::math::finish_math_lists_owned(stores, nodes, false)
+        // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
+        // so §651/§655 move its insertions, marks, and `\vadjust` contents
+        // onto the row's holding list for §799 to append after the row. A
+        // `\valign` column is `vpackage`d with `adjust_tail` null.
+        let nodes = crate::math::finish_math_lists_owned(stores, nodes, false);
+        let (retained, migrated) = crate::assignments::split_hpack_migrations(stores, nodes);
+        migrations.extend(migrated);
+        retained
     } else {
         nodes
     };
