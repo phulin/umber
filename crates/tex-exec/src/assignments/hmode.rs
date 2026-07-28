@@ -617,6 +617,24 @@ pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Univers
     fix_hyphen_language(nest, stores, mode);
 }
 
+/// TeX82 §1091's `norm_min`, verbatim: `if h<=0 then norm_min:=1 else if
+/// h>=63 then norm_min:=63 else norm_min:=h`.
+///
+/// tex.web states this clamp once and applies it at every site that stores a
+/// hyphen minimum in a fixed-width field: §1091's and §1200's `prev_graf`
+/// packing, §1376's `fix_language`, and §1377's `\setlanguage`. It lives
+/// here so all of them read the same function rather than each transcribing
+/// the bounds.
+pub(crate) const fn norm_min(value: i32) -> u8 {
+    if value <= 0 {
+        1
+    } else if value >= 63 {
+        63
+    } else {
+        value as u8
+    }
+}
+
 fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     if mode != Mode::Horizontal {
         return;
@@ -628,8 +646,8 @@ fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     // tex.web's fix_language flushes the current ligature word before
     // recording the new language and its current hyphen minima.
     flush_pending_hchar_run(nest, stores, true);
-    let left_hyphen_min = stores.int_param(IntParam::LEFT_HYPHEN_MIN).clamp(1, 63) as u8;
-    let right_hyphen_min = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).clamp(1, 63) as u8;
+    let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+    let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
     nest.current_list_mut()
         .push(Node::Whatsit(tex_state::node::Whatsit::Language {
             language,

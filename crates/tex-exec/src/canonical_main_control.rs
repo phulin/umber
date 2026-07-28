@@ -2966,6 +2966,30 @@ enum ScannedStep {
     DeferredSpecial {
         tokens: TracedTokenList,
     },
+    /// TeX82 §1377's `@<Implement \setlanguage@>`, reached from §1348's
+    /// `do_extension` on `set_language_code` (§1344's `extension` modifier
+    /// 5). Unlike §1376's `fix_language`, which appends a §1341
+    /// `language_node` only when the language actually changes, §1377
+    /// appends one unconditionally -- `\setlanguage` is an explicit request,
+    /// so a same-language `\setlanguage` still produces a whatsit.
+    ///
+    /// `language` is `cur_val` exactly as `scan_int` left it; §1377's own
+    /// `<=0`/`>255` normalization to `clang` is performed at the apply seam
+    /// together with `norm_min` (§1091), because both write mode-nest and
+    /// list state the scan phase does not own.
+    SetLanguage {
+        language: i32,
+    },
+    /// TeX82 §1377's `if abs(mode)<>hmode then report_illegal_case`.
+    ///
+    /// The mode test precedes both `new_whatsit` and `scan_int`, so an
+    /// out-of-mode `\setlanguage` scans no operand at all -- matching
+    /// `IllegalBoxShift`/`IllegalInsertOrAdjust`'s same-shaped recovery, and
+    /// unlike `\prevdepth`'s §1243 check, which runs after its value is
+    /// scanned.
+    IllegalSetLanguage {
+        token: Token,
+    },
     Arithmetic {
         primitive: UnexpandablePrimitive,
         target: ArithmeticTarget,
@@ -4811,6 +4835,22 @@ fn scan_command(
                 tokens: processor.scan_special().map_err(command_error)?.tokens,
             })
         }
+        // TeX82 §1377's `@<Implement \setlanguage@>`, the `set_language_code`
+        // limb of §1348's `do_extension`. The mode test comes first and
+        // guards the `scan_int`, so the operand is read only when
+        // `abs(mode)=hmode` -- horizontal or restricted horizontal here,
+        // tex.web's `hmode` and `-hmode`.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetLanguage) => {
+            if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+                Ok(ScannedStep::SetLanguage {
+                    language: processor.scan_integer().map_err(command_error)?.value,
+                })
+            } else {
+                Ok(ScannedStep::IllegalSetLanguage {
+                    token: command.spelling().semantic_token(),
+                })
+            }
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CatCode
             | UnexpandablePrimitive::LcCode
@@ -5620,6 +5660,7 @@ fn scan_unclassified_primitive(
         | P::Xdef
         | P::Mark
         | P::VAdjust
+        | P::SetLanguage
         | P::BatchMode
         | P::NonstopMode
         | P::ScrollMode
@@ -5790,7 +5831,6 @@ fn scan_unclassified_primitive(
         | P::PdfTeXUnimplemented
         | P::PrevGraf
         | P::QuitVMode
-        | P::SetLanguage
         | P::ShowGroups
         | P::ShowIfs
         | P::ShowLists
@@ -7338,6 +7378,8 @@ fn applied_mutation_observation(
         | ScannedStep::DeferredCloseOut { .. }
         | ScannedStep::DeferredWrite { .. }
         | ScannedStep::DeferredSpecial { .. }
+        | ScannedStep::SetLanguage { .. }
+        | ScannedStep::IllegalSetLanguage { .. }
         | ScannedStep::AfterGroup(..)
         | ScannedStep::AfterAssignment(..)
         | ScannedStep::Rule { .. }
@@ -8890,6 +8932,42 @@ fn apply_scanned_step(
                     class: "dvi".to_owned(),
                     payload: tex_byte_text(&text),
                 }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::SetLanguage { language } => {
+            // TeX82 §1377, verbatim:
+            //
+            //   new_whatsit(language_node,small_node_size);
+            //   scan_int;
+            //   if cur_val<=0 then clang:=0
+            //   else if cur_val>255 then clang:=0
+            //   else clang:=cur_val;
+            //   what_lang(tail):=clang;
+            //   what_lhm(tail):=norm_min(left_hyphen_min);
+            //   what_rhm(tail):=norm_min(right_hyphen_min);
+            //
+            // Both out-of-range directions recover to language zero; only
+            // `1..=255` survives. The pending character run is flushed
+            // first, before `clang` moves, so it hyphenates under the
+            // language that was current while it was being built.
+            let clang = u8::try_from(language).unwrap_or(0);
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::Language {
+                    language: clang,
+                    left_hyphen_min: crate::assignments::norm_min(
+                        stores.int_param(IntParam::LEFT_HYPHEN_MIN),
+                    ),
+                    right_hyphen_min: crate::assignments::norm_min(
+                        stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
+                    ),
+                }));
+            modes.current_list_mut().set_hyphen_language(clang);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalSetLanguage { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Arithmetic {

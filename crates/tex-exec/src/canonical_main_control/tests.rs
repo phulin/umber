@@ -367,3 +367,70 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
         CommandObservation::Effect(effect) if effect.kind == "terminate"
     )));
 }
+
+/// Collects every `\setlanguage` whatsit inside box register zero.
+fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
+    let outer = stores.box_reg(0).expect("box 0 holds the constructed hbox");
+    let Some(Node::HList(boxed)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds an hlist");
+    };
+    stores
+        .nodes(boxed.children)
+        .iter()
+        .filter_map(|node| match node.to_owned() {
+            Node::Whatsit(tex_state::node::Whatsit::Language {
+                language,
+                left_hyphen_min,
+                right_hyphen_min,
+            }) => Some((language, left_hyphen_min, right_hyphen_min)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn setlanguage_appends_one_normalized_language_whatsit_per_request() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    // TeX82 §1377 normalizes `cur_val` in both out-of-range directions to
+    // language zero, and §1091's `norm_min` clamps each hyphen minimum into
+    // `1..=63`. The repeated `7` proves §1377 appends unconditionally: only
+    // §1376's `fix_language` is guarded by `l<>clang`.
+    register_source(
+        &mut control,
+        br"\lefthyphenmin=2 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7\setlanguage7\setlanguage300\setlanguage-1}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        language_whatsits(&stores),
+        vec![(7, 2, 63), (7, 2, 63), (0, 2, 63), (0, 2, 63)]
+    );
+}
+
+#[test]
+fn setlanguage_outside_horizontal_mode_reports_the_illegal_case_and_scans_nothing() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
+    // `scan_int`, so the operand is never consumed: the following assignment
+    // is the very next command main control sees.
+    register_source(&mut control, br"\setbox0=\vbox{\setlanguage\global\count0=5}\end");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.count(0), 5);
+    let text = terminal_text(&stores);
+    assert!(
+        text.contains("You can't use `\\setlanguage' in internal vertical mode"),
+        "{text}"
+    );
+    let outer = stores.box_reg(0).expect("box 0 holds the constructed vbox");
+    let Some(Node::VList(boxed)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    assert!(
+        !stores
+            .nodes(boxed.children)
+            .iter()
+            .any(|node| matches!(node.to_owned(), Node::Whatsit(_))),
+        "no whatsit is appended when the mode test fails"
+    );
+}

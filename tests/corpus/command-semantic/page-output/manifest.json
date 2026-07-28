@@ -18,17 +18,12 @@
         "box_registers": [0],
         "node_depth": 1
       },
-      "expected": ["command:extension:5", "box:0/0:whatsit"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-r9nt",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "command:extension:5",
-          "actual": "main-control step: UnimplementedPrimitive { primitive: SetLanguage, mode: RestrictedHorizontal, origin: OriginId(..) }"
-        }
-      }
+      "expected": [
+        "command:extension:5",
+        "box:0/0:hlist",
+        "box:0/0/0:whatsit"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

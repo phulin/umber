@@ -75,7 +75,7 @@ use hmode::*;
 pub(crate) use hmode::{
     append_canonical_character, append_canonical_control_space, append_canonical_space,
     append_given_char, append_italic_correction, control_space_glue_spec, flush_pending_hchars,
-    try_append_character, try_append_tfm_character_span,
+    norm_min, try_append_character, try_append_tfm_character_span,
 };
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
@@ -2284,9 +2284,9 @@ fn execute_prefixed_command(
                 let language = scan_i32(input, stores, execution, command.traced)?;
                 let language = u8::try_from(language).unwrap_or(0);
                 hmode::flush_pending_hchars(nest, stores)?;
-                let normalize_min = |value: i32| u8::try_from(value.clamp(1, 63)).unwrap_or(1);
-                let left_hyphen_min = normalize_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-                let right_hyphen_min = normalize_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
+                let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+                let right_hyphen_min =
+                    norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
                 crate::vertical::append_node_to_current_list(
                     nest,
                     stores,
