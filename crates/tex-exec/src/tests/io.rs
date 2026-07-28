@@ -370,7 +370,7 @@ fn openout_closeout_append_deferred_whatsits_before_shipout() {
             Some(tex_state::node::Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path })),
             Some(tex_state::node::Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: close_slot }))
         ) if *slot == tex_state::StreamSlot::new(2)
-            && *close_slot == tex_state::StreamSlot::new(2)
+            && *close_slot == Some(tex_state::StreamSlot::new(2))
             && path == "out.aux"
     ));
 }

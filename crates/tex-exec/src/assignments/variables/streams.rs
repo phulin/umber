@@ -58,7 +58,11 @@ pub(in crate::assignments) fn execute_stream_command(
             )?;
         }
         UnexpandablePrimitive::CloseOut => {
-            append_node_to_current_list(nest, stores, Node::Whatsit(Whatsit::CloseOut { slot }))?;
+            append_node_to_current_list(
+                nest,
+                stores,
+                Node::Whatsit(Whatsit::CloseOut { slot: Some(slot) }),
+            )?;
         }
         _ => unreachable!("caller restricts stream primitive"),
     }

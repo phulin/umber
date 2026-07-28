@@ -801,14 +801,43 @@ pub enum ImmediateExtension {
         file_name: ScannedFileName,
     },
     Write {
-        stream: i32,
+        stream: WriteStreamSelector,
         tokens: TracedTokenList,
     },
     CloseOut {
-        stream: i32,
+        stream: WriteStreamSelector,
     },
     PdfObject(PdfObjectRequest),
     PdfForm(PdfFormRequest),
+}
+
+/// TeX82 §§1342/1350's normalized selector stored in a write whatsit.
+///
+/// Slots 16 and 17 are deliberately represented rather than clamped: they
+/// stand for every stream above 15 and every negative stream, respectively.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriteStreamSelector {
+    Stream(u8),
+    AboveRange,
+    Negative,
+}
+
+impl WriteStreamSelector {
+    #[must_use]
+    pub const fn normalized_number(self) -> i32 {
+        match self {
+            Self::Stream(slot) => slot as i32,
+            Self::AboveRange => 16,
+            Self::Negative => 17,
+        }
+    }
+
+    pub fn stream_slot(self) -> Option<tex_state::world::StreamSlot> {
+        match self {
+            Self::Stream(slot) => Some(tex_state::world::StreamSlot::new(slot)),
+            Self::AboveRange | Self::Negative => None,
+        }
+    }
 }
 
 /// One successfully opened capability-registered input source.
@@ -2002,14 +2031,14 @@ impl CommandProcessor<'_> {
     /// §433's `scan_four_bit_int`, which `new_write_whatsit` uses only for
     /// the `open_node_size` case (`\openout`) and which reports "Bad number"
     /// and recovers as stream zero instead.
-    pub fn scan_write_stream(&mut self) -> Result<i32, CommandError> {
+    pub fn scan_write_stream(&mut self) -> Result<WriteStreamSelector, CommandError> {
         let value = self.scan_integer()?.value;
         Ok(if value < 0 {
-            17
+            WriteStreamSelector::Negative
         } else if value > 15 {
-            16
+            WriteStreamSelector::AboveRange
         } else {
-            value
+            WriteStreamSelector::Stream(value as u8)
         })
     }
 
@@ -2050,7 +2079,7 @@ impl CommandProcessor<'_> {
                 Ok(ImmediateExtension::Write { stream, tokens })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
-                let stream = self.scan_integer()?.value;
+                let stream = self.scan_write_stream()?;
                 Ok(ImmediateExtension::CloseOut { stream })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(

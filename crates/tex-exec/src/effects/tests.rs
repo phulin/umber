@@ -235,7 +235,7 @@ fn out_what_leader_suppression_and_open_retry_recovery_match_tex82() {
             tokens: tex_state::ids::TokenListId::EMPTY,
         }),
         Node::Whatsit(Whatsit::CloseOut {
-            slot: StreamSlot::new(3),
+            slot: Some(StreamSlot::new(3)),
         }),
         Node::Whatsit(Whatsit::Special {
             class: "dvi".to_owned(),

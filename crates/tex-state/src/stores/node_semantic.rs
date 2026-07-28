@@ -336,7 +336,7 @@ impl Stores {
             }
             Whatsit::CloseOut { slot } => {
                 hasher.tag(13);
-                hasher.u8(slot.raw());
+                hasher.u8(slot.map_or(16, |slot| slot.raw()));
             }
             Whatsit::DeferredWrite { sink, tokens } => {
                 hasher.tag(14);

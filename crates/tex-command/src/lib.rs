@@ -79,7 +79,7 @@ pub use scanners::{
     ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
     ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
     ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    ScannedVSplit, StructuredProvenance,
+    ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{

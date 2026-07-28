@@ -2843,6 +2843,117 @@ fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
 }
 
 #[test]
+fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
+    for stream in ["-1", "16", "999999"] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        register_source(
+            &mut control,
+            format!("\\immediate\\openout0=kept \\immediate\\closeout{stream}").as_bytes(),
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                control
+                    .step(&mut universe)
+                    .expect("immediate stream command"),
+                ReplayStep::Continue
+            );
+        }
+        assert!(matches!(
+            universe.world().effect_records(),
+            [EffectRecord::StreamOpen { slot, .. }] if *slot == StreamSlot::new(0)
+        ));
+    }
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\closeout-1\closeout0\closeout15\closeout16\closeout999999",
+    );
+    for _ in 0..5 {
+        assert_eq!(
+            control.step(&mut universe).expect("deferred closeout"),
+            ReplayStep::Continue
+        );
+    }
+    let slots: Vec<_> = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .map(|node| match node {
+            Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot }) => *slot,
+            node => panic!("unexpected closeout contribution {node:?}"),
+        })
+        .collect();
+    assert_eq!(
+        slots,
+        [
+            None,
+            Some(StreamSlot::new(0)),
+            Some(StreamSlot::new(15)),
+            None,
+            None,
+        ]
+    );
+    assert!(universe.world().effect_records().is_empty());
+}
+
+#[test]
+fn replay_openout_keeps_four_bit_recovery_before_stream_zero_effect() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\immediate\openout-1=recovered");
+    assert_eq!(
+        control.step(&mut universe).expect("openout recovery"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        universe.world().effect_records(),
+        [
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::TerminalAndLog,
+                text,
+            },
+            EffectRecord::StreamOpen { slot, .. },
+        ] if text == "\n! Bad number (-1).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
+            && *slot == StreamSlot::new(0)
+    ));
+}
+
+#[test]
+fn replay_closeout_stream_selector_committed_microfixture() {
+    let source =
+        include_bytes!("../../../../tests/corpus/tex_exec_io/closeout_stream_selectors.tex");
+    let expected =
+        test_support::read_fixture("tex_exec_io", "closeout_stream_selectors", "effects");
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+    run_to_end(&mut control, &mut universe);
+
+    let actual = universe
+        .world()
+        .effect_records()
+        .iter()
+        .map(|effect| match effect {
+            EffectRecord::StreamOpen { slot, target } => {
+                format!("open:{}:{}", slot.raw(), target.path().display())
+            }
+            EffectRecord::StreamClose { slot } => format!("close:{}", slot.raw()),
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::TerminalAndLog,
+                text,
+            } if text.contains("Bad number (-1)") => "diagnostic:-1".to_owned(),
+            effect => panic!("unexpected microfixture effect {effect:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(format!("{actual}\n"), expected);
+}
+
+#[test]
 fn replay_appends_an_unexpanded_deferred_write_whatsit() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

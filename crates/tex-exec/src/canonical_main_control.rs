@@ -3141,10 +3141,10 @@ enum ScannedStep {
         file_name: String,
     },
     DeferredCloseOut {
-        stream: i32,
+        stream: tex_command::WriteStreamSelector,
     },
     DeferredWrite {
-        stream: i32,
+        stream: tex_command::WriteStreamSelector,
         tokens: TracedTokenList,
     },
     DeferredSpecial {
@@ -5021,7 +5021,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
             Ok(ScannedStep::DeferredCloseOut {
-                stream: processor.scan_integer().map_err(command_error)?.value,
+                stream: processor.scan_write_stream().map_err(command_error)?,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
@@ -6933,11 +6933,11 @@ fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
 /// closed. §1370 therefore sends 17 to the log alone (`if (j=17) and
 /// (selector=term_and_log) then selector:=log_only`) and 16 to the terminal
 /// and log.
-fn replay_write_sink(value: i32) -> PrintSink {
+fn replay_write_sink(value: tex_command::WriteStreamSelector) -> PrintSink {
     match value {
-        0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
-        17 => PrintSink::Log,
-        _ => PrintSink::TerminalAndLog,
+        tex_command::WriteStreamSelector::Stream(slot) => PrintSink::Stream(StreamSlot::new(slot)),
+        tex_command::WriteStreamSelector::Negative => PrintSink::Log,
+        tex_command::WriteStreamSelector::AboveRange => PrintSink::TerminalAndLog,
     }
 }
 
@@ -7668,7 +7668,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
             Some(EffectRecord {
                 kind: "write",
-                detail: format!("stream:{stream}\0"),
+                detail: format!("stream:{}\0", stream.normalized_number()),
                 tokens: Some(
                     stores
                         .tokens(tokens.token_list())
@@ -9098,7 +9098,7 @@ fn apply_scanned_step(
             modes
                 .current_list_mut()
                 .push(Node::Whatsit(Whatsit::CloseOut {
-                    slot: replay_stream_slot(stream, stores),
+                    slot: stream.stream_slot(),
                 }));
             Ok(ReplayStep::Continue)
         }
@@ -9385,8 +9385,9 @@ fn apply_scanned_step(
                     stores.world_mut().write_text(sink, &text);
                 }
                 ImmediateExtension::CloseOut { stream } => {
-                    let stream = replay_stream_slot(stream, stores);
-                    stores.world_mut().close_out(stream);
+                    if let Some(stream) = stream.stream_slot() {
+                        stores.world_mut().close_out(stream);
+                    }
                 }
                 ImmediateExtension::PdfObject(request) => {
                     if matches!(request, PdfObjectRequest::Reserve) {

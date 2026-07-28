@@ -493,7 +493,8 @@ pub enum Whatsit {
         path: String,
     },
     CloseOut {
-        slot: StreamSlot,
+        /// `None` is §1342's permanently closed normalized slot 16 or 17.
+        slot: Option<StreamSlot>,
     },
     DeferredWrite {
         sink: PrintSink,

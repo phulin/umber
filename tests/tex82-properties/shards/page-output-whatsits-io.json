@@ -1422,7 +1422,7 @@
         1360,
         1361
       ],
-      "claim": "new_whatsit appends one typed node; openout/closeout scan four-bit streams, write clamps arbitrary stream integers and stores unexpanded text, special stores expanded text, and copy/free preserve subtype-sized fields and token references. These base whatsits contribute no box dimensions.",
+      "claim": "new_whatsit appends one typed node; openout scans a four-bit stream, closeout and write normalize arbitrary stream integers to slots 0..17, write stores unexpanded text, special stores expanded text, and copy/free preserve subtype-sized fields and token references. Slots 16 and 17 are permanently closed, so closeout on either is a silent no-op. These base whatsits contribute no box dimensions.",
       "preconditions": [
         "Subtype dispatch and scanners have explicit current-list ownership."
       ],
@@ -1452,6 +1452,10 @@
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "replay_closeout_stream_selector_committed_microfixture"
         },
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",

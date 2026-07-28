@@ -129,7 +129,7 @@ pub(super) enum FormatWhatsit {
         path: String,
     },
     CloseOut {
-        slot: StreamSlot,
+        slot: Option<StreamSlot>,
     },
     DeferredWrite {
         sink: PrintSink,

@@ -57,7 +57,7 @@ fn base_whatsit_scanners_construct_each_canonical_subtype() {
             Node::Whatsit(Whatsit::Special { class, payload }),
         ] if slot == &StreamSlot::new(2)
             && path == "trace"
-            && close == &StreamSlot::new(2)
+            && close == &Some(StreamSlot::new(2))
             && class == "dvi"
             && payload == b"expanded"
     ));

@@ -286,8 +286,10 @@ fn append_whatsit_effect(
             });
         }
         Whatsit::CloseOut { slot } if !suppress_deferred_streams => {
-            stores.world_mut().close_out(slot);
-            effects.push(PageEffect::CloseOut { stream: slot.raw() });
+            if let Some(slot) = slot {
+                stores.world_mut().close_out(slot);
+                effects.push(PageEffect::CloseOut { stream: slot.raw() });
+            }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
             let text = expand_write_tokens(stores, expansion, tokens)?;
