@@ -101,7 +101,7 @@ fn terminal_text(universe: &Universe) -> String {
 }
 
 fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
-    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    const CMR10: &[u8] = include_bytes!("../../../../third_party/trip/trip.tfm");
     universe
         .world_mut()
         .set_memory_file("cmr10.tfm", CMR10.to_vec())
@@ -8540,8 +8540,7 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
     tex_expand::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
-    let mut control =
-        CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
+    let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\count20=\interactionmode \interactionmode=1 \count21=\interactionmode\end",
@@ -8554,6 +8553,23 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
         universe.interaction_mode(),
         tex_state::InteractionMode::Nonstop
     );
+}
+
+#[test]
+fn canonical_the_and_showthe_recover_invalid_trip_operand_as_zero() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\edef\fromthe{\the$}\showthe$\end");
+    run_to_end(&mut control, &mut universe);
+    let fromthe = universe.intern("fromthe").symbol();
+    let meaning = universe.macro_meaning(fromthe).expect("macro is defined");
+    assert_eq!(
+        replay_text(universe.tokens(meaning.replacement_text())),
+        "0"
+    );
+    let output = terminal_text(&universe);
+    assert_eq!(output.matches("after \\the").count(), 2);
+    assert!(output.contains("\n> 0.\n"));
 }
 
 /// TeX82 §1210 files `prefix` under `any_mode`, and §1211's

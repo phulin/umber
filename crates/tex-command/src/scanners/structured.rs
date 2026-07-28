@@ -2235,9 +2235,7 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §46's `\\showthe` internal-value scan.
     pub fn scan_showthe(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
-        let value = self
-            .scan_internal_value()?
-            .ok_or(CommandError::input_invariant())?;
+        let value = self.scan_internal_value_or_zero()?;
         let text = match value.value {
             value @ (InternalValue::Integer(_)
             | InternalValue::Dimension(_)

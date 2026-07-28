@@ -620,9 +620,7 @@ impl CommandProcessor<'_> {
     /// Reaching into the target meaning here would leave that index to a later
     /// scanner and changes the observable input ordering.
     fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let Some(target) = self.scan_internal_value()? else {
-            return Err(CommandError::input_invariant());
-        };
+        let target = self.scan_internal_value_or_zero()?;
         self.expand_the_value(opener.origin(), target.value)
     }
 

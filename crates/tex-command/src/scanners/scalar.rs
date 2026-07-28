@@ -14,7 +14,10 @@ use tex_state::{BoxDimension, PrepareMagDiagnostic};
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
-use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
+use crate::{
+    CommandError, CurrentCommand,
+    processor::{CommandProcessor, meaning_text},
+};
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::{CommandObservation, ScannerRecord};
 
@@ -1049,6 +1052,37 @@ impl CommandProcessor<'_> {
                 Ok(None)
             }
         }
+    }
+
+    /// Runs TeX82 §465's `the_toks` recovery for a non-internal operand.
+    ///
+    /// Unlike the probe-shaped [`Self::scan_internal_value`], this operation
+    /// owns the operand: §465 consumes an invalid target, reports `you_cant`,
+    /// and publishes integer zero for both `\the` and `\showthe`.
+    pub(crate) fn scan_internal_value_or_zero(
+        &mut self,
+    ) -> Result<ScannedScalar<InternalValue>, CommandError> {
+        let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let provenance = ScalarProvenance {
+            primary: command.origin(),
+        };
+        let value = match self.scan_the_internal_value(&command)? {
+            Some(value) => value,
+            None => {
+                let rendered = meaning_text(&self.state, &command);
+                let mut report = self
+                    .state
+                    .print_err(&format!("You can't use `{rendered}' after \\the."));
+                report.help(&["I'm forgetting what you said and using zero instead."]);
+                report.error();
+                InternalValue::Integer(0)
+            }
+        };
+        Ok(ScannedScalar {
+            value,
+            recovery: ScalarRecovery::None,
+            provenance,
+        })
     }
 
     /// Runs TeX82 §465's `scan_something_internal(tok_val,false)` on a target

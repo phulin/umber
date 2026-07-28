@@ -206,12 +206,7 @@ fn etex_revision_uses_the_canonical_conversion_token_path() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(
-        &mut command,
-        &mut runtime,
-        &mut universe,
-        &mut capabilities,
-    );
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
     assert_eq!(rendered(&mut processor), ".6");
 }
