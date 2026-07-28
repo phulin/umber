@@ -730,6 +730,13 @@ impl CanonicalMainControl {
         self.modes.current_mode()
     }
 
+    /// Returns the mode nest's current list, so a crate test can assert on the
+    /// material main control has built without shipping a page first.
+    #[cfg(test)]
+    pub(crate) fn current_list(&self) -> &crate::ModeList {
+        self.modes.current_list()
+    }
+
     /// Returns the structural alignment started by the most recent replayed
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
@@ -2346,45 +2353,86 @@ fn simplify_canonical_math_field(stores: &Universe, list: tex_state::ids::NodeLi
     }
 }
 
+/// tex.web §687's `scripts_allowed(#)==(type(#)>=ord_noad)and(type(#)<left_noad)`.
+///
+/// The bound admits exactly the noad types from `ord_noad` through
+/// `vcenter_noad` and excludes everything else in an mlist: every ordinary
+/// node type (glue, kern, penalty, rule, disc, whatsit, ...) and both
+/// `style_node` and `choice_node` sort below `ord_noad`, while `left_noad`
+/// and `right_noad` sort at or above the upper bound.  e-TeX's `\middle`
+/// (etex.ch's `middle_noad`) is a `right_noad` carrying a distinguishing
+/// `subtype`, so the same bound excludes it without a separate test.
+fn canonical_scripts_allowed(node: &Node) -> bool {
+    match node {
+        Node::MathNoad(noad) => !matches!(
+            noad.kind,
+            NoadKind::LeftDelimiter { .. }
+                | NoadKind::RightDelimiter { .. }
+                | NoadKind::MiddleDelimiter { .. }
+        ),
+        _ => false,
+    }
+}
+
+fn canonical_script_field_mut(noad: &mut MathNoad, kind: MathScriptKind) -> &mut MathField {
+    match kind {
+        MathScriptKind::Superscript => &mut noad.superscript,
+        MathScriptKind::Subscript => &mut noad.subscript,
+    }
+}
+
+/// tex.web §1176's `sub_sup`.
+///
+/// ```text
+/// begin t:=empty; p:=null;
+/// if tail<>head then if scripts_allowed(tail) then
+///   begin p:=supscr(tail)+cur_cmd-sup_mark; t:=math_type(p); end;
+/// if (p=null)or(t<>empty) then <Insert a dummy noad to be sub/superscripted>;
+/// scan_math(p);
+/// ```
+///
+/// So the script lands on the list's tail only when the list is non-empty and
+/// that tail passes §687's `scripts_allowed`; anything else leaves `p` null.
+/// §1177 appends a fresh Ord noad whenever `p=null` **or** the selected field
+/// is already occupied, but reports an error only in the second case
+/// (`if t<>empty`), and its two messages are `print_err("Double superscript")`
+/// and `print_err("Double subscript")`: §73's `print_err` opens the line with
+/// an exclamation mark and a space, and §82's `error` closes it with a period.
 fn attach_canonical_script(
     list: &mut crate::ModeList,
     stores: &mut Universe,
     field: MathField,
     kind: MathScriptKind,
 ) {
-    let Some(mut node) = list.pop_last_node() else {
-        let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
-        if kind == MathScriptKind::Superscript {
-            noad.superscript = field
-        } else {
-            noad.subscript = field
-        };
-        list.push(Node::MathNoad(noad));
-        return;
-    };
-    if let Node::MathNoad(noad) = &mut node {
-        let target = if kind == MathScriptKind::Superscript {
-            &mut noad.superscript
-        } else {
-            &mut noad.subscript
-        };
-        if matches!(target, MathField::Empty) {
-            *target = field;
-            list.push(node);
-            return;
+    // `t<>empty`: the tail was eligible but already carries this script.
+    let occupied = match list.last_node_mut() {
+        Some(node) if canonical_scripts_allowed(node) => {
+            let Node::MathNoad(noad) = node else {
+                unreachable!("canonical_scripts_allowed admits only noads")
+            };
+            let target = canonical_script_field_mut(noad, kind);
+            if matches!(target, MathField::Empty) {
+                *target = field;
+                return;
+            }
+            true
         }
-    }
-    list.push(node);
-    let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
-    if kind == MathScriptKind::Superscript {
-        noad.superscript = field
-    } else {
-        noad.subscript = field
+        _ => false,
     };
+
+    let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+    *canonical_script_field_mut(&mut noad, kind) = field;
     list.push(Node::MathNoad(noad));
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "\n! Double math script.\n");
+
+    if occupied {
+        let message = match kind {
+            MathScriptKind::Superscript => "\n! Double superscript.\n",
+            MathScriptKind::Subscript => "\n! Double subscript.\n",
+        };
+        stores
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, message);
+    }
 }
 
 fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, kind: MathLimitKind) {

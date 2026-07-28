@@ -1775,3 +1775,92 @@ fn canonical_mathcode_8000_redispatches_inside_a_script_field() {
 
     assert_eq!(stores.count(0), 7);
 }
+
+/// tex.web §1176's `sub_sup` reaches §1177's dummy noad through `p=null`
+/// whenever the tail fails §687's `scripts_allowed`, and §1177 prints only
+/// under `if t<>empty`. A `\mskip` leaves a glue node as the tail, whose
+/// `type` sorts below `ord_noad`, so the script starts a fresh Ord noad and
+/// TeX reports nothing at all.
+#[test]
+fn canonical_script_after_a_non_noad_tail_is_silent() {
+    let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$= \mskip3mu ^2");
+
+    assert_eq!(nodes.len(), 3);
+    assert!(matches!(
+        nodes[1],
+        Node::Glue {
+            kind: GlueKind::MuSkip,
+            ..
+        }
+    ));
+    let scripted = math_noad(&nodes[2]);
+    assert!(matches!(
+        scripted.kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord)
+    ));
+    assert!(matches!(scripted.nucleus, MathField::Empty));
+    assert_math_char(&scripted.superscript, 0, '2');
+
+    let stores = super::core::run_canonical_tex82(r"$= \mskip3mu ^2$\end");
+    assert_eq!(canonical_log_text(&stores), "");
+}
+
+/// §687's `scripts_allowed` stops below `left_noad`, so a script following
+/// `\left` is a `p=null` case: it starts its own Ord noad instead of landing
+/// on the left delimiter's noad, and stays silent. e-TeX's `\middle` is a
+/// `right_noad` with `subtype=middle_noad`, so the same bound excludes it.
+#[test]
+fn canonical_script_after_left_delimiter_starts_a_fresh_ord_noad() {
+    let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$\left.^2");
+
+    assert_eq!(nodes.len(), 2);
+    let left = math_noad(&nodes[0]);
+    assert!(matches!(
+        left.kind,
+        tex_state::math::NoadKind::LeftDelimiter { .. }
+    ));
+    assert!(matches!(left.superscript, MathField::Empty));
+    let scripted = math_noad(&nodes[1]);
+    assert!(matches!(
+        scripted.kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord)
+    ));
+    assert_math_char(&scripted.superscript, 0, '2');
+
+    let stores = super::core::run_canonical_tex82(r"$\left.^2\right.$\end");
+    assert_eq!(canonical_log_text(&stores), "");
+}
+
+/// §1177's two messages are `print_err("Double superscript")` and
+/// `print_err("Double subscript")`; §73's `print_err` opens the line with an
+/// exclamation mark and a space, and §82's `error` closes it with a period.
+/// The dummy noad is appended either
+/// way, so `x^1^2` behaves like `x^1{}^2`.
+#[test]
+fn canonical_double_script_reports_tex82_message_text() {
+    let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$a^1^2");
+
+    assert_eq!(nodes.len(), 2);
+    assert_math_char(&math_noad(&nodes[0]).superscript, 0, '1');
+    assert_math_char(&math_noad(&nodes[1]).superscript, 0, '2');
+    let stores = super::core::run_canonical_tex82(r"$a^1^2$\end");
+    assert_eq!(canonical_log_text(&stores), "\n! Double superscript.\n");
+
+    let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$a_1_2");
+
+    assert_eq!(nodes.len(), 2);
+    assert_math_char(&math_noad(&nodes[0]).subscript, 0, '1');
+    assert_math_char(&math_noad(&nodes[1]).subscript, 0, '2');
+    let stores = super::core::run_canonical_tex82(r"$a_1_2$\end");
+    assert_eq!(canonical_log_text(&stores), "\n! Double subscript.\n");
+}
+
+fn canonical_log_text(stores: &Universe) -> String {
+    String::from_utf8_lossy(
+        stores
+            .world()
+            .memory_log_output()
+            .expect("memory log output"),
+    )
+    .into_owned()
+}

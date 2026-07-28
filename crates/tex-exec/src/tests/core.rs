@@ -5005,6 +5005,30 @@ fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
     assert!(matches!(page.root, tex_out::PageNode::VList(_)));
 }
 
+/// Runs `source` through canonical main control until it stops asking for
+/// tokens, then returns the mode nest's current list unfinished.
+///
+/// `run_canonical_tex82` only exposes state that survives `\end`, which cannot
+/// show the shape of a list still under construction -- an mlist, for
+/// instance, is converted away the moment its formula closes.
+pub(super) fn run_canonical_tex82_current_list(source: &str) -> (Universe, Vec<Node>) {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical source");
+    for _ in 0..1024 {
+        if control.step(&mut stores).expect("canonical step") != MainControlStep::Continue {
+            let nodes = control.current_list().nodes().to_vec();
+            return (stores, nodes);
+        }
+    }
+    panic!("canonical source did not stop consuming input");
+}
+
 pub(super) fn run_canonical_tex82(source: &str) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
