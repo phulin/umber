@@ -318,7 +318,7 @@
         "Empty token registers and empty token parameters both return an empty typed list without fabricated tokens."
       ],
       "recovery_cases": [
-        "A token or identifier requested below tok_val reports Missing number, backs up the internal command, and supplies zero for subsequent lowering.",
+        "A token or identifier requested below tok_val performs §416's one back_error and Missing number diagnostic inside scan_something_internal, commits dimen_val zero through §429, and leaves the caller an ordinary zero result.",
         "An out-of-range code-table or token-register selector recovers through its restricted integer class before lookup."
       ],
       "semantic_owner": "tex-command::scanners",
@@ -335,6 +335,10 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "internal_token_sources_recover_illegal_requested_levels_and_indexes"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/scalar/tests.rs",
+          "test": "section_416_recovery_is_internal_once_and_each_scalar_caller_observes_its_result"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
@@ -531,7 +535,7 @@
       ],
       "recovery_cases": [
         "A non-internal command reports You can't use this after the and supplies zero without consuming a successor.",
-        "A token or identifier below tok_val follows Missing number recovery before the same lowering and ownership exit."
+        "A token or identifier below tok_val follows §416's caller-independent Missing number recovery, single backup, dimen_val-zero commit, and §429 lowering before the scalar result observation."
       ],
       "semantic_owner": "tex-command::scanners",
       "test_level": "rust-unit",

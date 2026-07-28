@@ -1153,6 +1153,120 @@ fn scan_with_profile<T>(
     scan(&mut processor)
 }
 
+/// Exercises TeX82 §416 through a public scalar caller, retaining the
+/// recovery's diagnostic and replay state for its caller-specific assertions.
+fn scan_missing_number_internal<T>(
+    meaning: Meaning,
+    scan: impl FnOnce(&mut CommandProcessor<'_>) -> ScannedScalar<T>,
+) -> (ScalarRecovery, Vec<&'static str>, usize, String, Meaning) {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let rejected = universe.intern("rejected-internal").symbol();
+    universe.set_meaning(rejected, meaning);
+    push(&mut command, vec![Token::Cs(rejected)]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let (recovery, replayed) = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        let recovery = scan(&mut processor).recovery;
+        let replayed = processor
+            .get_x_token()
+            .expect("§416 replay remains available")
+            .expect("§416 backs the rejected operand once")
+            .meaning();
+        (recovery, replayed)
+    };
+    let backups = recorder
+        .0
+        .iter()
+        .filter(|record| matches!(record, CommandObservation::Input(record) if record.transition == InputTransition::Backup))
+        .count();
+    (
+        recovery,
+        scanner_kinds(&recorder),
+        backups,
+        diagnostic_text(&universe),
+        replayed,
+    )
+}
+
+#[test]
+fn section_416_recovery_is_internal_once_and_each_scalar_caller_observes_its_result() {
+    use tex_state::font::NULL_FONT;
+
+    for meaning in [Meaning::Font(NULL_FONT), Meaning::ToksRegister(0)] {
+        let (recovery, kinds, backups, diagnostic, replayed) =
+            scan_missing_number_internal(meaning, |processor| {
+                processor.scan_integer().expect("integer recovery")
+            });
+        assert_eq!(recovery, ScalarRecovery::None);
+        assert_eq!(kinds, vec!["internal", "integer"]);
+        assert_eq!(backups, 1);
+        assert_eq!(replayed, meaning);
+        assert_eq!(
+            diagnostic
+                .matches("Missing number, treated as zero")
+                .count(),
+            1
+        );
+        for help in [
+            "A number should have been here; I inserted `0'.",
+            "(If you can't figure out why I needed to see a number,",
+            "look up `weird error' in the index to The TeXbook.)",
+        ] {
+            assert_eq!(diagnostic.matches(help).count(), 1);
+        }
+
+        let (recovery, kinds, backups, diagnostic, replayed) =
+            scan_missing_number_internal(meaning, |processor| {
+                processor.scan_dimension().expect("dimension recovery")
+            });
+        assert_eq!(recovery, ScalarRecovery::None);
+        assert_eq!(kinds, vec!["internal", "dimension"]);
+        assert_eq!(backups, 1);
+        assert_eq!(replayed, meaning);
+        assert_eq!(
+            diagnostic
+                .matches("Missing number, treated as zero")
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostic
+                .matches("A number should have been here; I inserted `0'.")
+                .count(),
+            1
+        );
+
+        let (recovery, kinds, _backups, diagnostic, replayed) =
+            scan_missing_number_internal(meaning, |processor| {
+                processor.scan_glue(false).expect("glue recovery")
+            });
+        assert_eq!(recovery, ScalarRecovery::None);
+        assert_eq!(kinds, vec!["internal", "glue"]);
+        assert_eq!(replayed, meaning);
+        assert_eq!(
+            diagnostic
+                .matches("Missing number, treated as zero")
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostic
+                .matches("look up `weird error' in the index to The TeXbook.)")
+                .count(),
+            1
+        );
+    }
+}
+
 fn glue(width: i32, stretch: i32, shrink: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),
@@ -1956,7 +2070,7 @@ fn an_integer_request_for_a_font_identifier_scans_no_operand() {
 
     let scanned = processor.scan_integer().expect("§415 recovers");
     assert_eq!(scanned.value, 0);
-    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+    assert_eq!(scanned.recovery, ScalarRecovery::None);
 
     let mut replayed = Vec::new();
     while let Some(command) = processor.get_x_token().expect("replay delivers") {
@@ -2278,7 +2392,7 @@ fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
             .expect("token below tok_val recovers")
     });
     assert_eq!(scanned.value, 0);
-    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+    assert_eq!(scanned.recovery, ScalarRecovery::None);
 
     let zero = universe.intern_token_list(&[char_token('z')]);
     universe.set_toks(0, zero);
@@ -2936,10 +3050,7 @@ fn internal_coercion_recovers_noninternal_and_token_values_below_tok_level() {
     let scanned = scan_with(&mut universe, vec![Token::Cs(toks)], |processor| {
         processor.scan_integer().expect("token below tok_val")
     });
-    assert_eq!(
-        (scanned.value, scanned.recovery),
-        (0, ScalarRecovery::InsertedZero)
-    );
+    assert_eq!((scanned.value, scanned.recovery), (0, ScalarRecovery::None));
 
     let scanned = scan_with(&mut universe, vec![char_token('x')], |processor| {
         processor
@@ -3474,13 +3585,7 @@ fn dimension_internal_unit_probe_accepts_integer_and_missing_number_zero_without
         },
     );
     assert_eq!(value, 0);
-    assert_eq!(
-        following,
-        Some(Meaning::CharToken {
-            ch: 'p',
-            cat: Catcode::Letter
-        })
-    );
+    assert_eq!(following, Some(Meaning::Font(NULL_FONT)));
     assert!(
         !diagnostic_text(&universe).contains("Illegal unit of measure"),
         "§455 must not fall through to physical-unit recovery for §416 zero"
@@ -4477,7 +4582,7 @@ fn scanner_recoveries_emit_tex82_error_reports_without_changing_values() {
         processor.scan_integer().expect("token list recovers")
     });
     assert_eq!(missing.value, 0);
-    assert_eq!(missing.recovery, ScalarRecovery::InsertedZero);
+    assert_eq!(missing.recovery, ScalarRecovery::None);
 
     let mu = universe.intern_glue(glue(Scaled::UNITY, 0, 0));
     universe.set_muskip(0, mu);

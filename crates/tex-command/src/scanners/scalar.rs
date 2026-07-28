@@ -79,19 +79,14 @@ impl InternalValue {
 
 /// The outcome of one TeX82 §413 `scan_something_internal` call.
 ///
-/// §413 distinguishes three outcomes, and collapsing any two of them loses
-/// information a caller needs. They stay separate variants so a caller cannot
-/// silently treat one as another.
+/// §413 distinguishes an internal result from a token that never entered its
+/// case table. §416 recovery is itself an ordinary committed internal result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InternalScan {
     /// The command is not an internal quantity: `cur_cmd` is outside §413's
     /// `min_internal..max_internal` range, so TeX never enters §413 at all and
     /// the caller owns the ordinary-syntax path for the token it still holds.
     NotInternal,
-    /// §416's `level<>tok_val` branch: a font identifier or token list where a
-    /// number was requested. TeX reports "Missing number, treated as zero",
-    /// backs the operand up, and yields zero; the caller owns that recovery.
-    NotANumber,
     /// §413's single exit: the value at the requested level, after §429's
     /// lowering cascade and §430's negation.
     Value(InternalValue),
@@ -143,24 +138,6 @@ fn negated_internal_value(value: InternalValue) -> InternalValue {
         InternalValue::Font(_) | InternalValue::Tokens { .. } => {
             unreachable!("TeX82 §430 negates only levels at or below mu_val")
         }
-    }
-}
-
-/// TeX82 §416's `back_error; scanned_result(0)(dimen_val)`, after §429.
-///
-/// The zero §416 installs is a `dimen_val`, so §429's cascade lowers it to an
-/// integer when an integer was requested and leaves it a dimension at every
-/// level above `dimen_val`. The requested level -- never `dimen_val`
-/// unconditionally -- is what an observer must see.
-#[cfg(any(test, feature = "instrumentation"))]
-const fn missing_number_result(level: InternalLevel) -> InternalValue {
-    match level {
-        InternalLevel::Integer => InternalValue::Integer(0),
-        InternalLevel::Dimension
-        | InternalLevel::Glue
-        | InternalLevel::MuGlue
-        | InternalLevel::Font
-        | InternalLevel::Tokens => InternalValue::Dimension(Scaled::from_raw(0)),
     }
 }
 
@@ -508,14 +485,6 @@ impl CommandProcessor<'_> {
                 InternalScan::Value(_) => {
                     unreachable!("TeX82 §429 lowers an int_val request to an integer")
                 }
-                // TeX82 §416: a font identifier or token list requested below
-                // `tok_val` prints "Missing number, treated as zero", backs the
-                // operand up, and yields zero.
-                InternalScan::NotANumber => {
-                    self.back_input(first)?;
-                    self.missing_number_error();
-                    return Ok((self.inserted_zero_integer(provenance), NO_RADIX));
-                }
                 InternalScan::NotInternal => match first.meaning() {
                     Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => (
                         self.scan_radix_tail(ch, DECIMAL_RADIX)?,
@@ -623,16 +592,7 @@ impl CommandProcessor<'_> {
         let mut provenance = OriginId::UNKNOWN;
         let first = loop {
             let Some(command) = self.get_x_token()? else {
-                return Ok((
-                    ScannedScalar {
-                        value: Scaled::from_raw(0),
-                        recovery: ScalarRecovery::InsertedZero,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    },
-                    Order::Normal,
-                ));
+                break None;
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
@@ -640,7 +600,7 @@ impl CommandProcessor<'_> {
             match command.meaning() {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
-                _ => break command,
+                _ => break Some(command),
             }
         };
         let provenance = ScalarProvenance {
@@ -658,31 +618,25 @@ impl CommandProcessor<'_> {
         } else {
             InternalLevel::Dimension
         };
-        let (value, order, attach_sign) =
-            match self.scan_something_internal(&first, level, false)? {
+        let (value, order, attach_sign, recovery) = match first {
+            Some(first) => match self.scan_something_internal(&first, level, false)? {
                 InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu) {
-                    InternalDimension::Complete(value) => (value, Order::Normal, true),
+                    InternalDimension::Complete(value) => {
+                        (value, Order::Normal, true, ScalarRecovery::None)
+                    }
                     InternalDimension::Prefix(integer) => {
                         self.last_integer_terminator = None;
                         let (units, flip) =
                             self.scan_units_after_integer(integer, false, allow_infinite, mu)?;
                         negative ^= flip;
-                        (units.value, units.order, units.attach_sign)
+                        (
+                            units.value,
+                            units.order,
+                            units.attach_sign,
+                            ScalarRecovery::None,
+                        )
                     }
                 },
-                // TeX82 §416's missing-number recovery: back the operand up and
-                // take the inserted zero.
-                InternalScan::NotANumber => {
-                    self.back_input(first)?;
-                    return Ok((
-                        ScannedScalar {
-                            value: Scaled::from_raw(0),
-                            recovery: ScalarRecovery::InsertedZero,
-                            provenance,
-                        },
-                        Order::Normal,
-                    ));
-                }
                 // TeX82 §448's other branch: `back_input`, then either
                 // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
                 // numeric part, and the unit scan always follows.
@@ -690,21 +644,29 @@ impl CommandProcessor<'_> {
                     match self.scan_dimension_constant(first, allow_infinite, mu, provenance)? {
                         Some((units, flip)) => {
                             negative ^= flip;
-                            (units.value, units.order, units.attach_sign)
+                            (
+                                units.value,
+                                units.order,
+                                units.attach_sign,
+                                ScalarRecovery::None,
+                            )
                         }
-                        None => {
-                            return Ok((
-                                ScannedScalar {
-                                    value: Scaled::from_raw(0),
-                                    recovery: ScalarRecovery::InsertedZero,
-                                    provenance,
-                                },
-                                Order::Normal,
-                            ));
-                        }
+                        None => (
+                            Scaled::from_raw(0),
+                            Order::Normal,
+                            true,
+                            ScalarRecovery::InsertedZero,
+                        ),
                     }
                 }
-            };
+            },
+            None => (
+                Scaled::from_raw(0),
+                Order::Normal,
+                true,
+                ScalarRecovery::InsertedZero,
+            ),
+        };
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
         // unit scan and `attach_sign:`, so every path that reached
         // `attach_sign` by a `goto` -- §449's whole internal dimension and
@@ -718,7 +680,7 @@ impl CommandProcessor<'_> {
             } else {
                 value
             },
-            recovery: ScalarRecovery::None,
+            recovery,
             provenance,
         };
         #[cfg(any(test, feature = "instrumentation"))]
@@ -997,15 +959,11 @@ impl CommandProcessor<'_> {
                     )
                 }
                 InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
-                    unreachable!(
-                        "TeX82 §416 reports a glue_val or mu_val request for an identifier"
-                    )
+                    unreachable!("TeX82 §416 converts identifiers to dimen_val zero before §461")
                 }
                 // §461's non-internal branch: `back_input; scan_dimen(mu,
-                // false,false); if negative then negate(cur_val)`. §416's
-                // missing-number recovery for a font identifier or token list
-                // reaches the same zero through one more probe cycle.
-                InternalScan::NotANumber | InternalScan::NotInternal => {
+                // false,false); if negative then negate(cur_val)`.
+                InternalScan::NotInternal => {
                     self.back_input(command)?;
                     let width = self.scan_dimension_with_order(false, mu)?.0;
                     (
@@ -1110,9 +1068,6 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<InternalValue>, CommandError> {
         match self.scan_something_internal(target, InternalLevel::Tokens, false)? {
             InternalScan::Value(value) => Ok(Some(value)),
-            InternalScan::NotANumber => {
-                unreachable!("TeX82 §416's missing-number branch requires level<>tok_val")
-            }
             InternalScan::NotInternal => Ok(None),
         }
     }
@@ -1453,10 +1408,6 @@ impl CommandProcessor<'_> {
                 };
                 Ok(Some(unit))
             }
-            // §416 has already committed its requested-level zero. It took
-            // the internal branch, so §455 reaches `found:` rather than
-            // backing it up and attempting `em`, `ex`, or physical units.
-            InternalScan::NotANumber => Ok(Some(Scaled::from_raw(0))),
             // Only this range-miss branch owns §455's `back_input`.
             InternalScan::NotInternal => {
                 self.back_input(command)?;
@@ -1559,14 +1510,13 @@ impl CommandProcessor<'_> {
     /// `\count0=\skip3`, `\dimen0=\parskip`, and `\hsize=\baselineskip` read
     /// the register's width instead of silently scanning as zero.
     ///
-    /// `ident_val` and `tok_val` never enter the loop in tex.web: §415 has
+    /// `ident_val` and `tok_val` never enter the loop in tex.web: §416 has
     /// already replaced a font identifier or token list requested below
     /// `tok_val` with a backed-up zero, and
-    /// [`Self::scan_something_internal`]'s own §415 guard answers that case
+    /// [`Self::scan_something_internal`]'s own §416 guard answers that case
     /// before the fetch runs. `None` reports the same §415 branch from here,
     /// so a value that reaches the loop above `tok_val` by some other route
-    /// still recovers as [`InternalScan::NotANumber`] rather than coercing a
-    /// font into a number.
+    /// is recovered by §416 rather than coercing a font into a number.
     fn coerce_internal_value(
         &mut self,
         mut value: InternalValue,
@@ -1705,35 +1655,45 @@ impl CommandProcessor<'_> {
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
-        // §415 is titled "Fetch a token list or font identifier, provided that
+        // §416 is titled "Fetch a token list or font identifier, provided that
         // |level=tok_val|", and its `level<>tok_val` test runs BEFORE any
         // operand is scanned: the whole branch is `back_error;
         // scanned_result(0)(dimen_val)`. Testing it after the fetch instead
         // would run §415's own `scan_eight_bit_int`, §577's
         // `scan_four_bit_int`, and §415's `back_input; scan_font_ident` on a
         // path tex.web never reaches, consuming tokens TeX leaves in place.
-        // The `back_error` half stays caller-owned (see [`InternalScan`]).
         if level != InternalLevel::Tokens && is_token_list_or_font_identifier(command.meaning()) {
-            #[cfg(any(test, feature = "instrumentation"))]
-            self.observe_internal_value(missing_number_result(level));
-            return Ok(InternalScan::NotANumber);
+            return self.missing_number_internal_result(command, level);
         }
         let Some(value) = self.fetch_internal_value(command)? else {
             return Ok(InternalScan::NotInternal);
         };
         let Some(value) = self.coerce_internal_value(value, level) else {
-            // §416's `level<>tok_val` branch still commits a result before
-            // §413 returns, so the observation exists and is a zero at the
-            // requested level. Only the `back_error` half is caller-owned.
-            #[cfg(any(test, feature = "instrumentation"))]
-            self.observe_internal_value(missing_number_result(level));
-            return Ok(InternalScan::NotANumber);
+            return self.missing_number_internal_result(command, level);
         };
         let value = if negative {
             negated_internal_value(value)
         } else {
             value
         };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_internal_value(value);
+        Ok(InternalScan::Value(value))
+    }
+
+    /// TeX82 §416's `back_error; scanned_result(0)(dimen_val)`: the backup,
+    /// diagnostic, and zero commit belong to the internal scan, then §429
+    /// lowers the result for its caller.
+    fn missing_number_internal_result(
+        &mut self,
+        command: &CurrentCommand,
+        level: InternalLevel,
+    ) -> Result<InternalScan, CommandError> {
+        self.back_input(command.copy_for_backup())?;
+        self.missing_number_error();
+        let value = self
+            .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)
+            .expect("TeX82 §429 always lowers §416's dimen_val zero");
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe_internal_value(value);
         Ok(InternalScan::Value(value))
