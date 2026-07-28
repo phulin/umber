@@ -845,6 +845,13 @@ struct ActiveSource {
     name: String,
     source: Option<SourceId>,
     bytes: Arc<[u8]>,
+    /// Physical line starts, calculated once when the source becomes active.
+    ///
+    /// Command observation needs a line and byte-column for every direct
+    /// source delivery. Recounting newlines in the source prefix for each of
+    /// those deliveries made provenance translation scale quadratically with
+    /// the document length.
+    line_starts: Arc<[usize]>,
 }
 
 impl Recorder {
@@ -858,6 +865,7 @@ impl Recorder {
                 name: source.into(),
                 source: None,
                 bytes: Arc::from(&b""[..]),
+                line_starts: Arc::from([0]),
             }],
             registered_inputs,
             next_registered_source: 2,
@@ -881,10 +889,12 @@ impl Recorder {
     }
 
     fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
+        let line_starts = source_line_starts(&bytes);
         self.sources.push(ActiveSource {
             name: name.into(),
             source: Some(source),
             bytes,
+            line_starts,
         });
     }
 
@@ -948,18 +958,20 @@ impl CommandObserver for Recorder {
             self.activate_registered_input(detail);
             return;
         }
-        let (source_name, source_id, source_bytes) = {
+        let (source_name, source_id, source_bytes, source_line_starts) = {
             let source = self.current_source();
             (
                 source.name.clone(),
                 source.source,
                 Arc::clone(&source.bytes),
+                Arc::clone(&source.line_starts),
             )
         };
         self.events.push(translate_observation(
             &source_name,
             source_id,
             Some(&source_bytes),
+            Some(&source_line_starts),
             observation.clone(),
             &mut self.alignment_nesting,
         ));
@@ -978,6 +990,7 @@ fn translate_observation(
     source: &str,
     source_id: Option<SourceId>,
     source_bytes: Option<&[u8]>,
+    source_line_starts: Option<&[usize]>,
     observation: CommandObservation,
     alignment_nesting: &mut AlignmentNesting,
 ) -> ObservedEvent {
@@ -1010,7 +1023,13 @@ fn translate_observation(
                         command: record.command.clone(),
                         operand,
                         control_sequence,
-                        location: command_location(&record, source, source_id, source_bytes),
+                        location: command_location(
+                            &record,
+                            source,
+                            source_id,
+                            source_bytes,
+                            source_line_starts,
+                        ),
                     },
                 }),
                 context,
@@ -1174,23 +1193,36 @@ fn command_location(
     source: &str,
     source_id: Option<SourceId>,
     source_bytes: Option<&[u8]>,
+    source_line_starts: Option<&[usize]>,
 ) -> Option<SourceLocation> {
     let location = record.provenance.source_location?;
     if Some(location.source()) != source_id {
         return None;
     }
     let bytes = source_bytes?;
+    let line_starts = source_line_starts?;
     let byte = usize::try_from(location.byte()).ok()?;
-    let prefix = bytes.get(..byte)?;
-    let line_start = prefix
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |position| position + 1);
+    bytes.get(..byte)?;
+    let line_index = line_starts.partition_point(|start| *start <= byte);
+    let line_start = *line_starts.get(line_index.checked_sub(1)?)?;
     Some(SourceLocation {
         source: source.into(),
-        line: u32::try_from(prefix.iter().filter(|byte| **byte == b'\n').count() + 1).ok()?,
+        line: u32::try_from(line_index).ok()?,
         byte: u32::try_from(byte.checked_sub(line_start)?).ok()?,
     })
+}
+
+fn source_line_starts(bytes: &[u8]) -> Arc<[usize]> {
+    let mut starts = Vec::with_capacity(bytes.iter().filter(|&&byte| byte == b'\n').count() + 1);
+    starts.push(0);
+    starts.extend(
+        bytes
+            .iter()
+            .enumerate()
+            .filter(|(_, byte)| **byte == b'\n')
+            .map(|(index, _)| index + 1),
+    );
+    starts.into()
 }
 
 /// The spelling and typed operand a delivered command carries.
@@ -1677,6 +1709,17 @@ mod tests {
     }
     fn observed(value: &str) -> ObservedEvent {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
+    }
+
+    #[test]
+    fn source_line_index_preserves_line_and_column_boundaries() {
+        let starts = source_line_starts(b"first\n\nlast");
+        assert_eq!(&*starts, &[0, 6, 7]);
+        assert_eq!(starts.partition_point(|start| *start < 1), 1);
+        assert_eq!(starts.partition_point(|start| *start <= 5), 1);
+        assert_eq!(starts.partition_point(|start| *start <= 6), 2);
+        assert_eq!(starts.partition_point(|start| *start <= 7), 3);
+        assert_eq!(starts.partition_point(|start| *start <= 10), 3);
     }
 
     /// The transport owns no catcode table of its own: it renders whatever

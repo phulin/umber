@@ -1,5 +1,39 @@
 # Profiling Umber with Gentle
 
+## Command-stream repository comparison
+
+The exhaustive command-stream repository comparison is a manual performance
+workload, not a native test: its generated Plain, Story, and Gentle traces are
+too large for routine gates. Run the user-visible optimized-development
+measurement with:
+
+```bash
+/usr/bin/time -f 'wall=%e maxrss_kib=%M' \
+  cargo run-dev -q -p tex-command-stream -- \
+  --repository . --max-divergences 100000
+```
+
+It must remain an exhaustive `DIVERGED` run (exit 1) with its current exact
+per-fixture accounting, ordered worklist, grouping, and report text. Attribute
+hotspots separately with a symbolized optimized capture; the `profiling`
+profile keeps release optimization and full debuginfo:
+
+```bash
+cargo build --profile profiling -p tex-command-stream
+perf record -F 99 --call-graph fp -o target/profiles/command-stream.perf -- \
+  target/profiling/tex-command-stream --repository . --max-divergences 100000
+perf report --stdio --no-children --percent-limit 0.2 \
+  -i target/profiles/command-stream.perf
+```
+
+At the initial `umber2-johp.287` measurement, source-line indexing in
+`tex-state` was the dominant cross-subsystem cost (51.29% self samples), with
+the tracer's observation translation next (15.86%). Keep improvements scoped
+to the attributable owner: file a cross-subsystem issue for a dominant hotspot
+outside `tools/tex-command-stream`; do not infer a target from source reading.
+Bounded synthetic streams and focused unit tests are the suitable regression
+coverage for comparison and translation kernels.
+
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:
 
