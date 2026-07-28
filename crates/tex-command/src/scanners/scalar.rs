@@ -500,9 +500,11 @@ impl CommandProcessor<'_> {
         // dimension step because `\z@` is a dimension register, not a numeric
         // literal; `\ifnum\parskip>0` and `\count0=\skip3` rely on the glue
         // step.
-        let (value, radix) =
+        let (value, radix, recovery) =
             match self.scan_something_internal(&first, InternalLevel::Integer, false)? {
-                InternalScan::Value(InternalValue::Integer(value)) => (value, NO_RADIX),
+                InternalScan::Value(InternalValue::Integer(value)) => {
+                    (value, NO_RADIX, ScalarRecovery::None)
+                }
                 InternalScan::Value(_) => {
                     unreachable!("TeX82 §429 lowers an int_val request to an integer")
                 }
@@ -515,21 +517,30 @@ impl CommandProcessor<'_> {
                     return Ok((self.inserted_zero_integer(provenance), NO_RADIX));
                 }
                 InternalScan::NotInternal => match first.meaning() {
-                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
-                        (self.scan_radix_tail(ch, DECIMAL_RADIX)?, DECIMAL_RADIX)
-                    }
+                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => (
+                        self.scan_radix_tail(ch, DECIMAL_RADIX)?,
+                        DECIMAL_RADIX,
+                        ScalarRecovery::None,
+                    ),
                     // TeX.web `scan_int` treats an apostrophe or double quote as
                     // an octal or hexadecimal introducer. The following digits
                     // still travel through `get_x_token`, so their deliveries are
                     // observable before the completed scanner result.
-                    Meaning::CharToken { ch: '\'', .. } => (self.scan_radix_tail('0', 8)?, 8),
-                    Meaning::CharToken { ch: '"', .. } => (self.scan_radix_tail('0', 16)?, 16),
+                    Meaning::CharToken { ch: '\'', .. } => {
+                        (self.scan_radix_tail('0', 8)?, 8, ScalarRecovery::None)
+                    }
+                    Meaning::CharToken { ch: '"', .. } => {
+                        (self.scan_radix_tail('0', 16)?, 16, ScalarRecovery::None)
+                    }
                     // TeX's `\` character-code form consumes its following token
                     // through raw delivery: that token supplies a character code,
                     // rather than participating in ordinary expansion.  The
                     // optional following space remains an expanded scanner token.
                     // §442 never enters §444, so `radix` stays zero.
-                    Meaning::CharToken { ch: '`', .. } => (self.scan_character_code()?, NO_RADIX),
+                    Meaning::CharToken { ch: '`', .. } => {
+                        let (value, recovery) = self.scan_character_code()?;
+                        (value, NO_RADIX, recovery)
+                    }
                     _ => {
                         // §444's `vacuous` case. `radix:=10` is assigned before
                         // the accumulation loop, so it survives §446's recovery.
@@ -544,7 +555,7 @@ impl CommandProcessor<'_> {
             } else {
                 value
             },
-            recovery: ScalarRecovery::None,
+            recovery,
             provenance: ScalarProvenance {
                 primary: provenance,
             },
@@ -1144,9 +1155,9 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_character_code(&mut self) -> Result<i32, CommandError> {
+    fn scan_character_code(&mut self) -> Result<(i32, ScalarRecovery), CommandError> {
         let Some(command) = self.get_next_character_code()? else {
-            return Ok(0);
+            return Ok((0, ScalarRecovery::None));
         };
         // TeX82 §442 tests `cur_tok`, not `cur_cmd`: an active character is
         // represented by a control-sequence meaning, but remains a valid
@@ -1161,17 +1172,22 @@ impl CommandProcessor<'_> {
                     (Some(ch), None) => i32::try_from(u32::from(ch)).unwrap_or(0),
                     _ => {
                         self.back_input(command)?;
-                        return Ok(0);
+                        return Ok((0, ScalarRecovery::None));
                     }
                 }
             }
             _ => {
                 self.back_input(command)?;
-                return Ok(0);
+                return Ok((0, ScalarRecovery::None));
             }
         };
+        if value > i32::from(u8::MAX) && !self.command.profile().capabilities().supports_unicode() {
+            self.back_input(command)?;
+            self.improper_alphabetic_constant_error();
+            return Ok((0, ScalarRecovery::InsertedZero));
+        }
         self.scan_optional_space()?;
-        Ok(value)
+        Ok((value, ScalarRecovery::None))
     }
 
     fn scan_decimal_dimension(
@@ -1572,6 +1588,16 @@ impl CommandProcessor<'_> {
     }
 
     /// TeX82 §456's unit recovery for math glue.
+    /// TeX82 §442's out-of-range alphabetic-constant recovery.
+    fn improper_alphabetic_constant_error(&mut self) {
+        let mut report = self.state.print_err("Improper alphabetic constant");
+        report.help(&[
+            "A one-character control sequence belongs after a ` mark.",
+            "So I'm essentially inserting \\0 here.",
+        ]);
+        report.error();
+    }
+
     fn illegal_unit_mu_error(&mut self) {
         let mut report = self
             .state
