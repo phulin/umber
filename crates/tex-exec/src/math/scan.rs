@@ -461,15 +461,23 @@ pub(super) fn apply_limit_switch(
         UnexpandablePrimitive::DisplayLimits => LimitType::DisplayLimits,
         _ => unreachable!("caller restricts limit primitive"),
     };
-    let Some(Node::MathNoad(noad)) = nest.current_list_mut().last_node_mut() else {
+    let Some(is_operator) = nest.current_list_mut().with_last_node_mut(|node| {
+        let Node::MathNoad(noad) = node else {
+            return false;
+        };
+        match noad.kind {
+            NoadKind::Operator(_) | NoadKind::Normal(NoadClass::Op) => {
+                noad.kind = NoadKind::Operator(limit_type);
+                true
+            }
+            _ => false,
+        }
+    }) else {
         report_math_error(stores, "Limit controls must follow a math operator");
         return;
     };
-    match noad.kind {
-        NoadKind::Operator(_) | NoadKind::Normal(NoadClass::Op) => {
-            noad.kind = NoadKind::Operator(limit_type);
-        }
-        _ => report_math_error(stores, "Limit controls must follow a math operator"),
+    if !is_operator {
+        report_math_error(stores, "Limit controls must follow a math operator");
     }
 }
 

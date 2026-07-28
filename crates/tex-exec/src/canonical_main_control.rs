@@ -2874,27 +2874,33 @@ pub(crate) fn fill_canonical_script_target(
     target: CanonicalScriptTarget,
     field: MathField,
 ) {
-    let Some(Node::MathNoad(noad)) = list.node_mut(target.node_index) else {
-        unreachable!("reserved canonical script target must remain a noad")
-    };
-    let reserved = canonical_script_field_mut(noad, target.kind);
-    debug_assert!(matches!(reserved, MathField::Empty));
-    *reserved = field;
+    list.with_node_mut(target.node_index, |node| {
+        let Node::MathNoad(noad) = node else {
+            unreachable!("reserved canonical script target must remain a noad")
+        };
+        let reserved = canonical_script_field_mut(noad, target.kind);
+        debug_assert!(matches!(reserved, MathField::Empty));
+        *reserved = field;
+    })
+    .expect("reserved canonical script target must remain present");
 }
 
 fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, kind: MathLimitKind) {
-    if let Some(Node::MathNoad(noad)) = list.last_node_mut()
-        && matches!(
+    list.with_last_node_mut(|node| {
+        let Node::MathNoad(noad) = node else {
+            return;
+        };
+        if matches!(
             noad.kind,
             NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_)
-        )
-    {
-        noad.kind = NoadKind::Operator(match kind {
-            MathLimitKind::Limits => LimitType::Limits,
-            MathLimitKind::NoLimits => LimitType::NoLimits,
-            MathLimitKind::DisplayLimits => LimitType::DisplayLimits,
-        });
-    }
+        ) {
+            noad.kind = NoadKind::Operator(match kind {
+                MathLimitKind::Limits => LimitType::Limits,
+                MathLimitKind::NoLimits => LimitType::NoLimits,
+                MathLimitKind::DisplayLimits => LimitType::DisplayLimits,
+            });
+        }
+    });
 }
 
 fn start_canonical_fraction(

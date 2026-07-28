@@ -145,8 +145,14 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
-    pub(crate) fn node_mut(&mut self, index: usize) -> Option<&mut Node> {
-        Arc::make_mut(&mut self.nodes).get_mut(index)
+    /// Mutates one pre-existing node without allowing the mutable reference to
+    /// escape this list's write barrier.
+    pub(crate) fn with_node_mut<R>(
+        &mut self,
+        index: usize,
+        mutate: impl FnOnce(&mut Node) -> R,
+    ) -> Option<R> {
+        Arc::make_mut(&mut self.nodes).get_mut(index).map(mutate)
     }
 
     pub(crate) fn reconstitution_target(&mut self) -> &mut Vec<Node> {
@@ -288,8 +294,12 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).pop()
     }
 
-    pub fn last_node_mut(&mut self) -> Option<&mut Node> {
-        Arc::make_mut(&mut self.nodes).last_mut()
+    /// Mutates the tail node without allowing its mutable reference to escape.
+    pub(crate) fn with_last_node_mut<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut Node) -> R,
+    ) -> Option<R> {
+        Arc::make_mut(&mut self.nodes).last_mut().map(mutate)
     }
 
     #[must_use]

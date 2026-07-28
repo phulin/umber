@@ -42,6 +42,33 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
 }
 
 #[test]
+fn preexisting_node_write_barriers_apply_scoped_mutations() {
+    let mut nest = ModeNest::new();
+    nest.current_list_mut().push(kern(11));
+    nest.current_list_mut()
+        .with_node_mut(0, |node| {
+            let Node::Kern { amount, .. } = node else {
+                panic!("fixture node must be a kern");
+            };
+            *amount = Scaled::from_raw(17);
+        })
+        .expect("fixture node");
+    nest.current_list_mut()
+        .with_last_node_mut(|node| {
+            let Node::Kern { amount, .. } = node else {
+                panic!("fixture tail must be a kern");
+            };
+            *amount = Scaled::from_raw(23);
+        })
+        .expect("fixture tail");
+
+    let Node::Kern { amount, .. } = &nest.current_list().nodes()[0] else {
+        panic!("fixture node must remain a kern");
+    };
+    assert_eq!(*amount, Scaled::from_raw(23));
+}
+
+#[test]
 fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
     let mut nest = ModeNest::new();
     let summary = nest.summary();

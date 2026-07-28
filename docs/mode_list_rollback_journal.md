@@ -1,6 +1,6 @@
 # Mode-list rollback journal
 
-Status: measured design; implementation gate not yet satisfied
+Status: measured design; typed mutation-boundary work in progress; journal disabled
 
 Scope: canonical aggregate operations in `tex-exec`. This document does not
 change TeX semantics or the atomic boundary in
@@ -82,6 +82,25 @@ makes mutation capabilities typed and non-escaping, then installs the journal,
 then switches `CanonicalStepSnapshot` from a retained `ModeNest` root to its
 opaque savepoint. Until all three land together, the retained root remains the
 correct implementation.
+
+## Implementation sequence
+
+The historical 233-seam census includes both syntactic mutable accessors and
+capabilities forwarded through helper functions, so a raw text count is not a
+completion measure. The boundary phase removes capabilities by mutation
+family and keeps source-boundary tests for each eliminated family.
+
+The first phase replaces direct `&mut Node` access by index and at the tail
+with closure-scoped write barriers. This establishes the shape required for a
+future moved-value inverse without enabling any journal semantics. Remaining
+work is ordered in `umber2-johp.300.1` through `umber2-johp.300.3`: complete
+the non-escaping mutation boundary, implement and exhaustively test a disabled
+journal, then promote and profile it atomically.
+
+The acceptance baseline is the integrated five-fixture command-stream report:
+`CLEAN`, zero ordered divergences, and zero root sites. The older
+eight-divergence/two-root signature predates later canonical fixes and must not
+be used for promotion.
 
 ## Promotion gates
 
