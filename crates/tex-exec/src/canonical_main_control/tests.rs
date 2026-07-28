@@ -321,11 +321,6 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
     for mode in MODES {
         let mut stores = Universe::new_with_plain_catcodes();
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
-        let def = stores.intern("def");
-        stores.set_meaning(
-            def,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def),
-        );
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
             control.modes.push(mode);
@@ -472,11 +467,25 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
     for mode in MODES {
         let mut stores = Universe::new_with_plain_catcodes();
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let replacement = stores.intern_token_list(
+            &"fixture"
+                .chars()
+                .map(|ch| Token::Char {
+                    ch,
+                    cat: Catcode::Letter,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let name = stores.intern("n");
+        stores.set_macro_meaning_global(
+            name,
+            MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, replacement),
+        );
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
             control.modes.push(mode);
         }
-        register_source(&mut control, br"\def\n{fixture}{\pdfspacefont{\n-space}}X");
+        register_source(&mut control, br"{\pdfspacefont{\n-space}}X");
         run_to_end(&mut control, &mut stores);
 
         assert_eq!(
