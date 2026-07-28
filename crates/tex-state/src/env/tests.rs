@@ -18,6 +18,27 @@ fn default_get_before_any_set_is_undefined() {
 }
 
 #[test]
+fn meaning_level_projection_follows_live_local_and_global_ownership() {
+    let mut env = Env::new();
+    let symbol = Symbol::new(10);
+
+    env.set(symbol, Meaning::Relax);
+    assert_eq!(env.testing_meaning_level(symbol), 1);
+
+    env.enter_group();
+    env.set(symbol, Meaning::CharGiven('L'));
+    assert_eq!(env.testing_meaning_level(symbol), 2);
+
+    env.enter_group();
+    env.set_global(symbol, Meaning::CharGiven('G'));
+    assert_eq!(env.testing_meaning_level(symbol), 1);
+    let _ = env.leave_group();
+    assert_eq!(env.testing_meaning_level(symbol), 1);
+    let _ = env.leave_group();
+    assert_eq!(env.testing_meaning_level(symbol), 1);
+}
+
+#[test]
 fn lower_meaning_write_preserves_allocated_higher_segments() {
     let mut env = Env::new();
     let low = Symbol::new(7);

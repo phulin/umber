@@ -287,6 +287,34 @@ impl Env {
         self.get_meaning_slot(symbol.raw())
     }
 
+    /// Returns the TeX assignment level encoded by the live save stack.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_meaning_level(&self, symbol: Symbol) -> u32 {
+        let mut depth = 0_u32;
+        let mut level = 1_u32;
+        for index in 0..self.journal.len() {
+            match self.journal.entry(index) {
+                crate::journal::Entry::Marker(crate::journal::Marker::Group { .. }) => {
+                    depth = depth.checked_add(1).expect("group depth exceeds u32");
+                }
+                crate::journal::Entry::Undo(rec)
+                    if rec.cell().bank() == BankTag::Meaning
+                        && rec.cell().index() == symbol.raw() =>
+                {
+                    level = if rec.cell().is_global() {
+                        1
+                    } else {
+                        depth.checked_add(1).expect("meaning level exceeds u32")
+                    };
+                }
+                crate::journal::Entry::Undo(_)
+                | crate::journal::Entry::BoxUndo(_)
+                | crate::journal::Entry::Marker(crate::journal::Marker::Checkpoint(_)) => {}
+            }
+        }
+        level
+    }
+
     /// Returns the meaning at a dense interner slot.
     #[must_use]
     pub(crate) fn get_meaning_slot(&self, slot: u32) -> Meaning {

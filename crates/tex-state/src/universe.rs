@@ -1486,6 +1486,17 @@ impl Universe {
         self.primitive_meanings.get(name).copied()
     }
 
+    /// Returns TeX's assignment level for a live meaning cell.
+    ///
+    /// This deliberately narrow white-box projection derives ownership from
+    /// the actual environment journal rather than duplicating binding
+    /// metadata. Production consumers should resolve the live meaning.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_meaning_level(&self, symbol: impl crate::interner::SymbolReference) -> u32 {
+        self.stores.testing_meaning_level(symbol)
+    }
+
     /// Returns the first registered spelling for a primitive meaning.
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {

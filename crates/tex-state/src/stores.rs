@@ -530,6 +530,12 @@ impl Stores {
         self.resolve_stored_meaning(self.env.get_meaning_slot(symbol.raw()))
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_meaning_level(&self, symbol: impl SymbolReference) -> u32 {
+        let symbol = self.resolve_symbol_reference(symbol);
+        self.env.testing_meaning_level(symbol.symbol())
+    }
+
     /// Returns the nonzero, monotonically increasing meaning-write guard.
     #[must_use]
     pub(crate) fn meaning_cache_guard(&self) -> crate::universe::MeaningCacheGuard {

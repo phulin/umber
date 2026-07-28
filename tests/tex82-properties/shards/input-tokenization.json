@@ -562,15 +562,15 @@
         "Reinstalling an initialization spelling reuses its identity; hash-capacity failure is fatal before a partially installed primitive becomes visible."
       ],
       "semantic_owner": "tex-command::control-sequences",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-command/src/command/tests.rs",
           "test": "primitive_installation_binds_spelling_command_operand_and_level"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.241"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.stored-token-representation",

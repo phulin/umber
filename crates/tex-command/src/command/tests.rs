@@ -277,22 +277,38 @@ fn lookup_reuses_existing_identity_and_guarded_miss_does_not_intern() {
 #[test]
 fn primitive_installation_binds_spelling_command_operand_and_level() {
     let mut universe = Universe::new();
-    let meaning = Meaning::ExpandablePrimitive(ExpandablePrimitive::Number);
+    for (name, meaning, expected_identity, expected_operand) in [
+        (
+            "/",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ItalicCorrection),
+            "ital_corr",
+            0,
+        ),
+        (
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+            "convert",
+            0,
+        ),
+    ] {
+        universe.install_primitive_meaning(name, meaning);
 
-    universe.install_primitive_meaning("number", meaning);
+        let symbol = universe
+            .symbol(name)
+            .expect("primitive spelling is interned");
+        assert_eq!(universe.resolve(symbol), name);
+        assert_eq!(universe.primitive_meaning(name), Some(meaning));
+        assert_eq!(universe.primitive_name(meaning), Some(name));
+        assert_eq!(universe.testing_meaning_level(symbol), 1);
+        assert_eq!(universe.meaning(symbol), meaning);
 
-    let symbol = universe
-        .symbol("number")
-        .expect("primitive spelling is interned");
-    assert_eq!(universe.primitive_meaning("number"), Some(meaning));
-    assert_eq!(universe.primitive_name(meaning), Some("number"));
-    assert_eq!(universe.meaning(symbol), meaning);
-    let command = resolve(&mut universe, Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
-    assert_eq!(
-        command.identity(),
-        CommandIdentity::Convert(ConvertSelector::Number)
-    );
-    assert_eq!(ConvertSelector::Number.operand(), 0);
+        let command = resolve(&mut universe, Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
+        assert_eq!(command.meaning(), meaning);
+        assert_eq!(
+            canonical_command_identity(command.meaning()),
+            (expected_identity.to_owned(), Some(expected_operand))
+        );
+    }
 }
 
 #[test]
