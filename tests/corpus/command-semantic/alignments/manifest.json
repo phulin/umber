@@ -35,6 +35,10 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
+          93,
+          95,
+          110,
+          796,
           797,
           798
         ]
@@ -46,17 +50,11 @@
         ]
       },
       "expected": [
-        "execution:error:confusion(256 spans)"
+        "execution:error:confusion(256 spans)",
+        "count:0=0"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-cpwg",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "execution:error:confusion(256 spans)",
-          "actual": "count:0=1"
-        }
+        "kind": "pass"
       }
     },
     {

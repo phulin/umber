@@ -295,7 +295,7 @@ fn fin_row(
         children,
         super::packaging::row_unset_kind(kind),
         1,
-    );
+    )?;
     if kind == AlignmentKind::HAlign {
         append_node_to_vertical_list(nest, stores, row)?;
         // §799 continues `if cur_head<>cur_tail then begin
@@ -538,7 +538,7 @@ fn package_cell(
         children,
         super::packaging::cell_unset_kind(kind),
         span_count,
-    );
+    )?;
     nest.current_list_mut().push(cell);
     let tabskip = align_state(nest, align_level)?.tabskip_for_boundary(next_boundary);
     nest.current_list_mut().push(Node::Glue {

@@ -437,3 +437,110 @@ fn setlanguage_outside_horizontal_mode_reports_the_illegal_case_and_scans_nothin
         "no whatsit is appended when the mode test fails"
     );
 }
+
+/// TeX82 §796/§798's spanned-column packaging, at and just past its bound.
+///
+/// `#&&#` is a periodic preamble, so a body entry can span arbitrarily many
+/// columns. §796 sets `n:=min_quarterword`, "this represents a span count of
+/// 1", and §798 then runs `repeat incr(n); q:=link(link(q)); until q=cur_align`
+/// over the spanned columns, so `n` is the number of `\span` delimiters.
+/// §110's `max_quarterword` is 255.
+fn spanning_alignment_source(spans: &str) -> Vec<u8> {
+    format!(
+        concat!(
+            r"\catcode`{{=1 \catcode`}}=2 \catcode`\#=6 \catcode`\&=4",
+            "\n",
+            r"\def\a{{\span}}\def\b{{\a\a}}\def\c{{\b\b}}\def\d{{\c\c}}",
+            "\n",
+            r"\def\e{{\d\d}}\def\f{{\e\e}}\def\g{{\f\f}}\def\h{{\g\g}}\def\i{{\h\h}}",
+            "\n",
+            r"\setbox0=\vbox{{\halign{{#&&#\cr\relax{spans}\relax\cr}}}}",
+            "\n",
+            r"\global\count0=1\end",
+            "\n",
+        ),
+        spans = spans
+    )
+    .into_bytes()
+}
+
+#[test]
+fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    // 128+64+32+16+8+4+2+1 = 255 `\span` delimiters, so §798's `n` is exactly
+    // `max_quarterword` and the guard `n>max_quarterword` does not fire.
+    register_source(
+        &mut control,
+        &spanning_alignment_source(r"\h\g\f\e\d\c\b\a"),
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(control.fatal_error(), None);
+    assert_eq!(stores.count(0), 1, "the job ran on to \\global\\count0=1");
+}
+
+#[test]
+fn two_hundred_fifty_six_span_steps_succumb_to_section_798s_confusion() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    // `\i` is 2^8 = 256 `\span` delimiters, so §798's `n` is 256 and
+    // `if n>max_quarterword then confusion("256 spans")` fires.
+    register_source(&mut control, &spanning_alignment_source(r"\i"));
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        control.fatal_error(),
+        Some(FatalError::confusion("256 spans"))
+    );
+    // §93 `succumb` calls §81 `jump_out`, so nothing after the alignment runs.
+    assert_eq!(stores.count(0), 0);
+}
+
+#[test]
+fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, &spanning_alignment_source(r"\i"));
+
+    run_to_end(&mut control, &mut stores);
+    let fatal = control.fatal_error();
+
+    for _ in 0..4 {
+        assert_eq!(
+            control
+                .step(&mut stores)
+                .expect("a terminal session reports"),
+            MainControlStep::End,
+        );
+    }
+    assert_eq!(control.fatal_error(), fatal);
+    assert_eq!(stores.count(0), 0);
+}
+
+#[test]
+fn succumbing_commits_a_fatal_diagnostic_observation() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, &spanning_alignment_source(r"\i"));
+
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("a fatal error is a terminal state, never an Err")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let fatal = FatalError::confusion("256 spans");
+    assert_eq!(control.fatal_error(), Some(fatal));
+    assert_eq!(
+        observations.0.last(),
+        Some(&CommandObservation::Diagnostic(fatal.record())),
+    );
+}

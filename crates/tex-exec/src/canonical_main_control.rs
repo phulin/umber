@@ -8035,7 +8035,7 @@ fn capture_replay_alignment_cell(
         material,
         crate::align::packaging::cell_unset_kind(active.kind),
         active.cell_span,
-    );
+    )?;
     modes.current_list_mut().push(cell);
     modes.current_list_mut().push(Node::Glue {
         spec: active.tabskip,
@@ -8063,7 +8063,7 @@ fn finish_replay_alignment_row(
         children,
         crate::align::packaging::row_unset_kind(active.kind),
         1,
-    );
+    )?;
     // TeX82 §799's `fin_row`: `p:=hpack(link(head),natural,...); pop_nest;
     // append_to_vlist(p)`. The completed (still unset) row joins the
     // alignment's own vertical list through §679 `append_to_vlist`, so the
