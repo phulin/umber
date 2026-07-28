@@ -7908,7 +7908,18 @@ fn finish_replay_alignment_row(
         crate::align::packaging::row_unset_kind(active.kind),
         1,
     );
-    modes.current_list_mut().push(row);
+    // TeX82 §799's `fin_row`: `p:=hpack(link(head),natural,...); pop_nest;
+    // append_to_vlist(p)`. The completed (still unset) row joins the
+    // alignment's own vertical list through §679 `append_to_vlist`, so the
+    // interline glue between two rows is the ordinary `\baselineskip`/
+    // `\lineskip` decision against the running `prev_depth` -- not a bare
+    // splice. §807's unset-to-set conversion changes only widths and glue
+    // set, never a row's height or depth, so computing the glue here is
+    // exactly what tex.web computes. A bare push produced rows stacked with
+    // no interline glue at all, which is why plain's `\pmatrix`/`\matrix`/
+    // `\cases`/`\eqalign`/`\halign` bodies came out short by one
+    // `\baselineskip` per row (`umber2-johp.260`).
+    crate::vertical::append_node_to_vertical_list(modes, stores, row)?;
     active.row_open = false;
     Ok(())
 }
@@ -9591,11 +9602,23 @@ fn apply_scanned_step(
                 row_open: false,
                 cell_open: false,
             });
+            // TeX82 §774's `init_align` runs `push_nest` and then only
+            // *negates* the mode, so the alignment's own list inherits the
+            // enclosing list's `aux` (its `prev_depth`) -- §216's `push_nest`
+            // copies `cur_list` wholesale and resets only `head`/`tail`/
+            // `prev_graf`/`mode_line`. Umber's `ModeNest::push` starts every
+            // level at `ignore_depth` instead, so the inheritance has to be
+            // restated here; without it §799's `append_to_vlist` suppresses
+            // the interline glue before the alignment's first row.
+            let enclosing_prev_depth = modes.current_list().prev_depth();
             modes.push(replay_alignment_mode(if vertical {
                 AlignmentKind::VAlign
             } else {
                 AlignmentKind::HAlign
             }));
+            if let Some(prev_depth) = enclosing_prev_depth {
+                modes.current_list_mut().set_prev_depth(prev_depth);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleOpening { alignment, packing } => {

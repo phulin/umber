@@ -2413,3 +2413,37 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
         .expect("malformed conditional preamble replay should recover");
     assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
+
+/// TeX82 §799's `fin_row` ends every alignment row with
+/// `pop_nest; append_to_vlist(p)`, so consecutive rows are separated by §679's
+/// ordinary `\baselineskip`/`\lineskip` decision against the running
+/// `prev_depth` -- exactly like consecutive boxes in any other vertical list.
+/// §774's `init_align` reaches that running value because §216's `push_nest`
+/// preserves `aux`; the alignment's own list therefore starts at the enclosing
+/// list's `prev_depth`, not at `ignore_depth`.
+#[test]
+fn canonical_alignment_rows_carry_interline_glue() {
+    let (_, nodes) = super::core::run_canonical_tex82_current_list(
+        r"\baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt
+          \vbox{\halign{#\cr\hbox to 7pt{}\cr\hbox to 9pt{}\cr}",
+    );
+
+    let glue: Vec<_> = nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node,
+                Node::Glue {
+                    kind: GlueKind::BaselineSkip,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        glue.len(),
+        1,
+        "one §679 interline glue between the two rows: {nodes:?}"
+    );
+    assert_eq!(nodes.len(), 3, "row, interline glue, row: {nodes:?}");
+}
