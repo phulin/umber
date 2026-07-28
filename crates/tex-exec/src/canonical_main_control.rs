@@ -9587,12 +9587,10 @@ fn apply_scanned_step(
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
-                modes
-                    .current_list_mut()
-                    .push(Node::MathNoad(MathNoad::new(
-                        NoadKind::VCenter,
-                        MathField::SubBox(boxed),
-                    )));
+                modes.current_list_mut().push(Node::MathNoad(MathNoad::new(
+                    NoadKind::VCenter,
+                    MathField::SubBox(boxed),
+                )));
                 return Ok(ReplayStep::Continue);
             }
             if let Some(kind) = box_state.leader_kind {
