@@ -1,0 +1,13 @@
+\input math_preamble.inc
+\hsize=100pt
+\skip0=0pt
+\skip1=0pt plus 1fil
+\tabskip=\skip1
+$$\halign to100pt{%
+  \hfil#\tabskip=\skip0&
+  #\hfil\tabskip=\skip1&
+  #\tabskip=\skip0\cr
+  A&B&C\cr
+  AA&BBBB\cr
+  AAAAA&B&C\cr}$$
+\end

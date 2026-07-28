@@ -3011,6 +3011,7 @@ struct MainControlParking {
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    Relax,
     AlignPeekRestart {
         alignment: AlignmentIdentity,
     },
@@ -6335,7 +6336,7 @@ fn scan_unclassified_meaning(
         // frozen relax `\noexpand` substitutes for its operand (§358) -- is
         // the one meaning for which "consume nothing and proceed" is the
         // whole specified behavior.
-        Meaning::Relax => Ok(ScannedStep::Continue),
+        Meaning::Relax => Ok(ScannedStep::Relax),
         // TeX82 §1048's Forbidden case `any_mode(last_item)`:
         // `report_illegal_case`. `Meaning::InternalInteger` is tex.web's
         // `last_item` command code with an operand other than
@@ -7662,6 +7663,7 @@ fn applied_mutation_observation(
         // `prefixed_command`, so the reference engine has
         // `umber_mutation_command` false throughout and emits nothing.
         ScannedStep::Continue
+        | ScannedStep::Relax
         | ScannedStep::AlignPeekRestart { .. }
         | ScannedStep::AlignmentTemplateEntered
         | ScannedStep::MissingMathShift
@@ -8513,6 +8515,14 @@ fn apply_scanned_step(
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
+        ScannedStep::Relax => {
+            // TeX82 §1030 reaches §1045's do-nothing arm only after leaving
+            // the ligature loop. The command itself has no list effect, but
+            // it is still a word boundary: `?\\relax\\char96` must not form
+            // the `?`` ligature across the relax.
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::AlignPeekRestart { alignment } => {
             let active = active_alignment
                 .as_mut()
@@ -11218,6 +11228,11 @@ fn apply_scanned_rule(
         ) {
             start_canonical_paragraph(command, modes, stores, true)?;
         }
+        // TeX82 §1054 reaches `append_rule` only after main_control has
+        // finished the current word. Materialize Umber's pending character
+        // run before appending the rule so a `\vrule` cannot split a word and
+        // move its final character behind the rule node.
+        crate::assignments::flush_pending_hchars(modes, stores)?;
         modes.current_list_mut().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows

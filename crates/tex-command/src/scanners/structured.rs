@@ -2701,7 +2701,10 @@ impl CommandProcessor<'_> {
                     current_tabskip = self.scan_glue(false)?.value;
                     let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
                     self.state.define_preamble_tabskip(current_tabskip, global);
-                    tabskips[columns.len()] = current_tabskip;
+                    // TeX82 §759 has already appended the glue node for the
+                    // boundary before this u-template. This assignment is
+                    // therefore the value for the next boundary, which the
+                    // completed-column path appends below.
                     continue;
                 }
                 let token = command.spelling().semantic_token();
@@ -2774,7 +2777,9 @@ impl CommandProcessor<'_> {
                     current_tabskip = self.scan_glue(false)?.value;
                     let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
                     self.state.define_preamble_tabskip(current_tabskip, global);
-                    tabskips[columns.len()] = current_tabskip;
+                    // The current boundary was frozen before this template;
+                    // the completed-column path appends this new value for
+                    // the following boundary.
                     continue;
                 }
                 let token = command.spelling().semantic_token();

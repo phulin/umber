@@ -1675,6 +1675,93 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
 }
 
 #[test]
+fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
+    let mut command = CommandState::default();
+    let alignment = crate::AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let initial = universe.intern_glue(tex_state::glue::GlueSpec {
+        width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
+        ..tex_state::glue::GlueSpec::ZERO
+    });
+    universe.set_glue_param(tex_state::env::banks::GlueParam::TAB_SKIP, initial);
+    let tabskip = universe.intern("tabskip").symbol();
+    let cr = universe.intern("cr").symbol();
+    universe.set_meaning(
+        tabskip,
+        Meaning::GlueParam(tex_state::env::banks::GlueParam::TAB_SKIP.raw()),
+    );
+    universe.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            Token::Cs(tabskip),
+            Token::Char {
+                ch: '=',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '2',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'p',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 't',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '&',
+                cat: Catcode::AlignmentTab,
+            },
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            Token::Cs(cr),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_alignment_preamble_opening()
+            .expect("scan_spec consumes the opening brace");
+        processor
+            .begin_alignment_preamble_scan()
+            .expect("preamble scans");
+    }
+
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .expect("frozen preamble is available");
+    assert_eq!(preamble.tabskips.len(), 3);
+    assert_eq!(
+        preamble.tabskips[0],
+        universe.glue(initial),
+        "the glue preceding the first template was already frozen"
+    );
+    assert_eq!(
+        preamble.tabskips[1].width.raw(),
+        2 * tex_state::scaled::Scaled::UNITY
+    );
+}
+
+#[test]
 fn alignment_preamble_missing_parameter_before_tab_replays_the_delimiter_into_v_template() {
     assert_missing_preamble_parameter(
         [
