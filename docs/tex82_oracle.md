@@ -6,7 +6,21 @@ Status: pinned build boundary for command-core conformance.
 
 Schema v1 is immutable and remains the format of all committed command fixtures. Schema v2 adds a detached `geometry` semantic event with three transitions: `hpack` and `vpack` contain finalized `width_sp`, `height_sp`, and `depth_sp`; `shipout` contains final `page_width_sp` and `page_height_sp`. Every value is a signed TeX scaled point (1/65536 pt). No node, pointer, memory, glue-ratio, selector, or output-driver identity is observable.
 
-Schema version participates in both manifest and stream domain hashes. The established v1 observer and decoder remain byte-for-byte compatible and do not accept geometry records; a future v2 observer will select the v2 header/domain before it emits the detached `GeometryEvent` contract. Umber observation is opt-in through the schema-v2 stream selection, so schema-v1 observers and fixtures remain event-for-event unchanged. Fixtures are not rewritten in place: a future geometry fixture has a separate v2 manifest and stream, while existing v1 manifests, JSON, headers, and identities remain byte-for-byte valid. The schema is an observation contract only; reference and Umber emitters are introduced independently.
+Schema version participates in both manifest and stream domain hashes. The
+established v1 observer and decoder remain byte-for-byte compatible and do not
+accept geometry records. The TeX82 geometry profile selects the v2 header
+before emitting the detached `GeometryEvent` contract, while Umber observation
+is separately opt-in through schema-v2 stream selection. Existing v1
+observers, fixtures, JSON, headers, and identities remain byte-for-byte
+unchanged.
+
+The reference profile is a separately built writable executable and runs only
+`tests/tex82-oracle/geometry.tex`. Its committed
+`geometry-expected.jsonl` projection is a standalone canonical schema-v2 stream
+that pins event order and signed scaled-point values. The hooks observe the
+single finalized seams from tex.web §§633, 668, and 664: `hpack`, `vpackage`,
+then `ship_out`. No Gentle or other full-document run is part of this
+differential fixture.
 
 ## Authority and identity
 
@@ -22,6 +36,7 @@ they do not make Umber part of the reference engine.
 ```text
 target/tex82-oracle/bin/umber-tex82-oracle
 target/tex82-oracle/bin/umber-tex82-oracle-instrumentable
+target/tex82-oracle/bin/umber-tex82-oracle-geometry-profile
 ```
 
 The first uses only the ordered upstream change stack. The second appends

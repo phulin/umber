@@ -25,6 +25,7 @@ instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 geometry_input="${repo_root}/tests/tex82-oracle/geometry.tex"
+geometry_expected="${repo_root}/tests/tex82-oracle/geometry-expected.jsonl"
 transition_source_dir="${repo_root}/tests/tex82-oracle"
 semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
@@ -121,6 +122,8 @@ verify_inputs() {
     fail "missing instrumentation change file: $instrumentation_change"
   [[ -f "$semantic_event_matrix" ]] ||
     fail "missing semantic event matrix: $semantic_event_matrix"
+  [[ -f "$geometry_expected" ]] ||
+    fail "missing geometry expectation: $geometry_expected"
 }
 
 write_trip_profile_change() {
@@ -308,6 +311,28 @@ run_geometry() {
     fail "$variant geometry marker is absent"
 }
 
+validate_geometry_fixture() {
+  local trace="$1" projected
+  projected="$(mktemp)"
+  {
+    sed -n '1p' "$trace"
+    awk '
+      /"event":"geometry"/ {
+        sub(/"sequence":[0-9]+/, "\"sequence\":" (sequence + 0))
+        print
+        sequence++
+      }
+    ' "$trace"
+  } >"$projected"
+  cmp "$geometry_expected" "$projected" >/dev/null || {
+    rm -f "$projected"
+    fail "geometry-profile oracle disagrees with the committed schema-v2 fixture"
+  }
+  cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$projected" ||
+    fail "committed geometry projection is not a valid schema-v2 stream"
+  rm -f "$projected"
+}
+
 write_build_record() {
   local record="${out_dir}/build-record.txt" linker_path path tool tool_path
   {
@@ -436,6 +461,8 @@ cmp "${out_dir}/geometry/geometry-profile/tex82-events.jsonl" \
   "${out_dir}/geometry/geometry-profile-repeat/tex82-events.jsonl" >/dev/null ||
   fail "geometry-profile oracle emitted a nondeterministic trace"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+  "${out_dir}/geometry/geometry-profile/tex82-events.jsonl"
+validate_geometry_fixture \
   "${out_dir}/geometry/geometry-profile/tex82-events.jsonl"
 write_build_record
 printf '%s\n' "$bin_dir"

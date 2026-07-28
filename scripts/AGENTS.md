@@ -76,7 +76,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   terminal/log/DVI transparency and the machine-readable semantic event matrix
   are gated together, including the focused expansion/macro/token-list,
   scanner/conditional, alignment-delivery, and source/input/EOF-recovery
-  program set, and all identities are recorded.
+  program set, and all identities are recorded. Its separately built geometry
+  profile runs only the focused microfixture and pins schema-v2 hpack, vpack,
+  and shipout records.
 - `test-tex82-trip-observer.sh`: offline two-phase clean and bounded-profile
   TeX82 TRIP comparison, schema validation, and profile repeatability gate.
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition

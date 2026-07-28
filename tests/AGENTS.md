@@ -33,6 +33,10 @@ The `alignment-delivery.tex` child isolates preamble repetition, brace-state
 delivery, delimiter interception, u/v/omit templates, `\noalign`, nested
 ownership, backup correction, recovery, and template retirement. Its messages
 and shipped rules provide independent transcript and DVI observations.
+The `geometry.tex` microfixture runs only in the isolated writable schema-v2
+geometry profile. Its committed `geometry-expected.jsonl` projection pins the
+finalized hpack, vpack, and shipout records without putting a full document or
+live reference invocation in Cargo tests.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
 tex82 --profile initex-eight-bit`; Cargo correctness tests never invoke the
 live oracle.
