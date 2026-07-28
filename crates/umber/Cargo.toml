@@ -51,6 +51,8 @@ proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-state = { path = "../tex-state", features = ["testing"] }
+tex-command-stream = { path = "../../tools/tex-command-stream" }
+tex-oracle = { path = "../tex-oracle" }
 ttf-parser = "0.25.1"
 
 [lints]

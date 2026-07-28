@@ -183,6 +183,14 @@ impl CommandObserver for TripGeometryObserver {
 pub struct TripObservers {
     pub command: TripProfileObserver,
     pub geometry: TripGeometryObserver,
+    captured: Vec<CommandObservation>,
+}
+
+impl TripObservers {
+    #[must_use]
+    pub fn into_captured(self) -> Vec<CommandObservation> {
+        self.captured
+    }
 }
 
 impl CommandObserver for TripObservers {
@@ -191,6 +199,7 @@ impl CommandObserver for TripObservers {
     }
 
     fn committed(&mut self, observation: CommandObservation) {
+        self.captured.push(observation.clone());
         self.command.committed(observation.clone());
         self.geometry.committed(observation);
     }

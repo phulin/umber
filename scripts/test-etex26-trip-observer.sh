@@ -68,18 +68,17 @@ project_geometry() {
   } >"$output"
 }
 
-project_command() {
+project_root_session() {
   local input="$1" output="$2"
   {
     sed -n '1p' "$input"
     awk '
-      /"event":"input".*"transition":"stop"/ ||
-      /"event":"effect".*"kind":"shipout"/ ||
-      /"event":"effect".*"kind":"terminate"/ {
+      started {
         sub(/"sequence":[0-9]+/, "\"sequence\":" (sequence + 0))
         print
         sequence++
       }
+      /"event":"input".*"transition":"push".*"reason":"source"/ { started=1 }
     ' "$input"
   } >"$output"
 }
@@ -87,9 +86,9 @@ project_command() {
 mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
   "$work_root/geometry-a" "$work_root/geometry-b"
 run_phase "${oracle_bin}/umber-etex26-extended-oracle-clean" "$work_root/clean" clean
-run_phase "${oracle_bin}/umber-etex26-extended-oracle-trip-profile" \
+run_phase "${oracle_bin}/umber-etex26-extended-oracle-instrumented" \
   "$work_root/profile-a" profile
-run_phase "${oracle_bin}/umber-etex26-extended-oracle-trip-profile" \
+run_phase "${oracle_bin}/umber-etex26-extended-oracle-instrumented" \
   "$work_root/profile-b" profile
 run_phase "${oracle_bin}/umber-etex26-extended-oracle-trip-geometry-profile" \
   "$work_root/geometry-a" geometry
@@ -97,14 +96,14 @@ run_phase "${oracle_bin}/umber-etex26-extended-oracle-trip-geometry-profile" \
   "$work_root/geometry-b" geometry
 
 for phase in initex trip; do
-  project_command \
+  project_root_session \
     "$work_root/profile-a/profile-${phase}-events.jsonl" \
     "$work_root/profile-a/profile-${phase}-projected.jsonl"
-  project_command \
+  project_root_session \
     "$work_root/profile-b/profile-${phase}-events.jsonl" \
     "$work_root/profile-b/profile-${phase}-projected.jsonl"
   cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
-    --tex82-trip-profile "$work_root/profile-a/profile-${phase}-projected.jsonl"
+    "$work_root/profile-a/profile-${phase}-projected.jsonl"
   cmp "$work_root/profile-a/profile-${phase}-projected.jsonl" \
     "$work_root/profile-b/profile-${phase}-projected.jsonl"
   project_geometry \

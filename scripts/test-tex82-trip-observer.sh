@@ -43,6 +43,19 @@ run_phase() {
   ) || true
 }
 
+run_full_initex() {
+  local directory="$1"
+  cp "${trip_root}/trip.tex" "${trip_root}/trip.tfm" \
+    "${trip_root}/tripos.tex" "$directory/"
+  (
+    cd "$directory"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH=1783604160 FORCE_SOURCE_DATE=1 TEXMFCNF="$texmfcnf" \
+      "${oracle_bin}/umber-tex82-oracle-instrumentable" \
+      -ini -interaction=nonstopmode trip.tex >terminal.txt 2>&1
+  ) || true
+}
+
 normalize_output() {
   sed -E 's/preloaded format=[^)]*/preloaded format=<FORMAT>/' "$1"
 }
@@ -101,8 +114,24 @@ project_geometry() {
   } >"$output"
 }
 
+project_root_session() {
+  local input="$1" output="$2"
+  {
+    sed -n '1p' "$input"
+    awk '
+      started {
+        sub(/"sequence":[0-9]+/, "\"sequence\":" (sequence + 0))
+        print
+        sequence++
+      }
+      /"event":"input".*"transition":"push".*"reason":"source"/ { started=1 }
+    ' "$input"
+  } >"$output"
+}
+
 mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
-  "$work_root/geometry-a" "$work_root/geometry-b"
+  "$work_root/geometry-a" "$work_root/geometry-b" \
+  "$work_root/full-initex-a" "$work_root/full-initex-b"
 run_phase "${oracle_bin}/umber-tex82-oracle" "$work_root/clean" clean
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-a" profile
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-b" profile
@@ -110,6 +139,18 @@ run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
   "$work_root/geometry-a" geometry
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
   "$work_root/geometry-b" geometry
+run_full_initex "$work_root/full-initex-a"
+run_full_initex "$work_root/full-initex-b"
+cmp "$work_root/full-initex-a/tex82-events.jsonl" \
+  "$work_root/full-initex-b/tex82-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+  "$work_root/full-initex-a/tex82-events.jsonl"
+project_root_session "$work_root/full-initex-a/tex82-events.jsonl" \
+  "$work_root/full-initex-a/root-session.jsonl"
+project_root_session "$work_root/full-initex-b/tex82-events.jsonl" \
+  "$work_root/full-initex-b/root-session.jsonl"
+cmp "$work_root/full-initex-a/root-session.jsonl" \
+  "$work_root/full-initex-b/root-session.jsonl"
 
 for profile in profile-a profile-b; do
   cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
@@ -154,7 +195,7 @@ done
 
 artifact_root="${target_dir}/trip-oracles/trip"
 mkdir -p "$artifact_root"
-cp "$work_root/profile-a/profile-initex-events.jsonl" "$artifact_root/initex-command.jsonl"
+cp "$work_root/full-initex-a/root-session.jsonl" "$artifact_root/initex-command.jsonl"
 cp "$work_root/profile-a/profile-trip-events.jsonl" "$artifact_root/format-loaded-command.jsonl"
 cp "$work_root/geometry-a/geometry-initex-projected.jsonl" "$artifact_root/initex-geometry.jsonl"
 cp "$work_root/geometry-a/geometry-trip-projected.jsonl" "$artifact_root/format-loaded-geometry.jsonl"

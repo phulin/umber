@@ -3,6 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(feature = "instrumentation")]
+use std::{collections::BTreeMap, mem};
 
 use parity_harness::run_named_fixture_document;
 #[cfg(feature = "instrumentation")]
@@ -13,11 +15,17 @@ use parity_harness::{
 #[cfg(feature = "instrumentation")]
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
+#[cfg(feature = "instrumentation")]
+use tex_command::CommandObserver;
 use tex_command::FontResource;
+#[cfg(feature = "instrumentation")]
+use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineCheckpoint};
+#[cfg(feature = "instrumentation")]
+use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
-use tex_state::{JobClock, Universe, World};
+use tex_state::{EffectRecord, JobClock, PrintSink, Universe, World};
 
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
@@ -56,7 +64,67 @@ struct InProcessRun {
     #[cfg(feature = "instrumentation")]
     log: Vec<u8>,
     #[cfg(feature = "instrumentation")]
-    observers: TripObservers,
+    capture: LiveCapture,
+}
+
+#[cfg(feature = "instrumentation")]
+struct LiveCapture {
+    root: LiveSource,
+    registered_inputs: BTreeMap<String, Arc<[u8]>>,
+    observations: Vec<tex_command::CommandObservation>,
+    outcome: LiveSessionOutcome,
+    terminal: Vec<u8>,
+    log: Vec<u8>,
+}
+
+#[cfg(feature = "instrumentation")]
+impl LiveCapture {
+    fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
+        let header = ObservationStream::from_canonical_json_lines(oracle)
+            .expect("oracle stream validates")
+            .header;
+        let mut translator = LiveSessionTranslator::for_root(
+            SchemaVersion::V1,
+            "terminal",
+            self.root.clone(),
+            self.registered_inputs.clone(),
+        );
+        translator.translate_captured(self.observations.clone());
+        translator
+            .finish(header, self.outcome.clone())
+            .expect("live observations translate")
+    }
+
+    fn geometry(&self, oracle: &[u8]) -> Vec<u8> {
+        let mut observer = parity_harness::TripGeometryObserver::default();
+        for observation in self.observations.iter().cloned() {
+            observer.committed(observation);
+        }
+        observer
+            .canonical_json_lines(oracle)
+            .expect("geometry observations translate")
+    }
+}
+
+#[cfg(feature = "instrumentation")]
+fn transcript_channels(effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
+    let mut terminal = String::new();
+    let mut log = String::new();
+    for effect in effects {
+        let EffectRecord::StreamWrite { sink, text } = effect else {
+            continue;
+        };
+        match sink {
+            PrintSink::Terminal => terminal.push_str(text),
+            PrintSink::Log => log.push_str(text),
+            PrintSink::TerminalAndLog => {
+                terminal.push_str(text);
+                log.push_str(text);
+            }
+            PrintSink::Stream(_) => {}
+        }
+    }
+    (terminal.into_bytes(), log.into_bytes())
 }
 
 struct NoCheckpoints;
@@ -113,6 +181,24 @@ fn run_file_in_process(
     format: Option<&[u8]>,
     engine: EngineMode,
 ) -> Result<InProcessRun, String> {
+    #[cfg(feature = "instrumentation")]
+    let mut failure = None;
+    run_file_in_process_captured(
+        path,
+        format,
+        engine,
+        #[cfg(feature = "instrumentation")]
+        &mut failure,
+    )
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+fn run_file_in_process_captured(
+    path: &Path,
+    format: Option<&[u8]>,
+    engine: EngineMode,
+    #[cfg(feature = "instrumentation")] failure: &mut Option<LiveCapture>,
+) -> Result<InProcessRun, String> {
     let (world, path) = staged_world(path)?;
 
     let mut stores = if let Some(format) = format {
@@ -128,6 +214,8 @@ fn run_file_in_process(
         .world_mut()
         .read_file(&path)
         .map_err(|error| error.to_string())?;
+    #[cfg(feature = "instrumentation")]
+    let root_bytes = content.shared_bytes();
     let base_dir = path
         .parent()
         .ok_or_else(|| format!("input has no parent: {}", path.display()))?
@@ -141,16 +229,53 @@ fn run_file_in_process(
     } else {
         CanonicalEngineSession::prepared_initex(&mut stores, engine.command_profile())
     };
-    session
+    let root_source = session
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
+    #[cfg(feature = "instrumentation")]
+    let registered_inputs = fs::read_dir(&base_dir)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.path() != path && entry.path().extension().is_some_and(|ext| ext == "tex")
+        })
+        .filter_map(|entry| {
+            let name = entry.path().file_stem()?.to_str()?.to_owned();
+            let bytes = fs::read(entry.path()).ok()?;
+            Some((name, Arc::from(bytes)))
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut host = StagedDirResourceHost { base_dir };
     #[cfg(feature = "instrumentation")]
     let mut observers = TripObservers::default();
     #[cfg(feature = "instrumentation")]
-    let run = session
-        .run_with_observer(&mut host, &mut NoCheckpoints, &mut observers)
-        .map_err(|error| canonical_error_message(&session, &error))?;
+    let run = match session.run_with_observer(&mut host, &mut NoCheckpoints, &mut observers) {
+        Ok(run) => run,
+        Err(error) => {
+            let message = canonical_error_message(&session, &error);
+            let (terminal, log) = transcript_channels(session.stores().world().effect_records());
+            *failure = Some(LiveCapture {
+                root: LiveSource {
+                    name: path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    source: root_source,
+                    bytes: root_bytes,
+                },
+                registered_inputs,
+                observations: mem::take(&mut observers).into_captured(),
+                outcome: LiveSessionOutcome::Failed {
+                    diagnostic: "canonical_session_error".into(),
+                    detail: message.clone(),
+                },
+                terminal,
+                log,
+            });
+            return Err(message);
+        }
+    };
     #[cfg(not(feature = "instrumentation"))]
     let run = session
         .run(&mut host, &mut NoCheckpoints)
@@ -178,17 +303,7 @@ fn run_file_in_process(
     let provenance = stores.provenance_stats();
     let macro_provenance = stores.macro_invocation_provenance_stats();
     #[cfg(feature = "instrumentation")]
-    let terminal = stores
-        .world()
-        .memory_terminal_output()
-        .unwrap_or_default()
-        .to_vec();
-    #[cfg(feature = "instrumentation")]
-    let log = stores
-        .world()
-        .memory_log_output()
-        .unwrap_or_default()
-        .to_vec();
+    let (terminal, log) = transcript_channels(&run.effects);
     Ok(InProcessRun {
         dvi,
         #[cfg(feature = "instrumentation")]
@@ -196,11 +311,26 @@ fn run_file_in_process(
         provenance,
         macro_provenance,
         #[cfg(feature = "instrumentation")]
-        terminal,
+        terminal: terminal.clone(),
         #[cfg(feature = "instrumentation")]
-        log,
+        log: log.clone(),
         #[cfg(feature = "instrumentation")]
-        observers,
+        capture: LiveCapture {
+            root: LiveSource {
+                name: path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                source: root_source,
+                bytes: root_bytes,
+            },
+            registered_inputs,
+            observations: observers.into_captured(),
+            outcome: LiveSessionOutcome::Completed,
+            terminal: terminal.clone(),
+            log: log.clone(),
+        },
     })
 }
 
@@ -528,16 +658,8 @@ fn compare_trip_phase(
     let expected_terminal =
         fs::read(oracle_root.join(format!("{phase}-terminal.txt"))).expect("terminal oracle");
     let expected_log = fs::read(oracle_root.join(format!("{phase}.log"))).expect("log oracle");
-    let actual_command = run
-        .observers
-        .command
-        .canonical_json_lines(&expected_command)
-        .expect("encode command-event stream");
-    let actual_geometry = run
-        .observers
-        .geometry
-        .canonical_json_lines(&expected_geometry)
-        .expect("encode geometry-event stream");
+    let actual_command = run.capture.streams(&expected_command).diagnostic;
+    let actual_geometry = run.capture.geometry(&expected_geometry);
     fs::write(
         artifact_root.join(format!("{phase}-command.jsonl")),
         &actual_command,
@@ -582,6 +704,82 @@ fn compare_trip_phase(
 }
 
 #[cfg(feature = "instrumentation")]
+fn compare_trip_failure(
+    root: &Path,
+    fixture_name: &str,
+    phase: &str,
+    capture: &LiveCapture,
+    error: &str,
+) {
+    let oracle_root = target_dir(root).join("trip-oracles").join(fixture_name);
+    let expected_command =
+        fs::read(oracle_root.join(format!("{phase}-command.jsonl"))).expect("command oracle");
+    let expected_geometry =
+        fs::read(oracle_root.join(format!("{phase}-geometry.jsonl"))).expect("geometry oracle");
+    let actual_command = capture.streams(&expected_command).diagnostic;
+    let mut geometry = parity_harness::TripGeometryObserver::default();
+    for observation in capture.observations.iter().cloned() {
+        geometry.committed(observation);
+    }
+    let actual_geometry = (geometry.event_count() != 0).then(|| {
+        geometry
+            .canonical_json_lines(&expected_geometry)
+            .expect("geometry")
+    });
+    let expected_terminal =
+        fs::read(oracle_root.join(format!("{phase}-terminal.txt"))).expect("terminal oracle");
+    let expected_log = fs::read(oracle_root.join(format!("{phase}.log"))).expect("log oracle");
+    let artifact_root = target_dir(root)
+        .join("conformance-artifacts")
+        .join(fixture_name);
+    fs::create_dir_all(&artifact_root).expect("create event artifact directory");
+    fs::write(
+        artifact_root.join(format!("{phase}-command.jsonl")),
+        &actual_command,
+    )
+    .expect("write failed command stream");
+    if let Some(geometry) = &actual_geometry {
+        fs::write(
+            artifact_root.join(format!("{phase}-geometry.jsonl")),
+            geometry,
+        )
+        .expect("write failed geometry stream");
+    }
+    let label = format!("{fixture_name}-{phase}");
+    let identity = format!("failed:sha256:{:x}", Sha256::digest(error.as_bytes()));
+    write_trip_triage_artifact(
+        &target_dir(root).join("conformance-triage"),
+        TripTriageInput {
+            label: &label,
+            phase,
+            expected_source: TripTriageSource {
+                name: &format!("target/trip-oracles/{fixture_name}/{phase}"),
+                identity: "pinned-reference",
+            },
+            actual_source: TripTriageSource {
+                name: "umber failed canonical run",
+                identity: &identity,
+            },
+            expected: TripTriageChannels {
+                command_events: Some(&expected_command),
+                geometry_events: Some(&expected_geometry),
+                transcript: &expected_terminal,
+                log: &expected_log,
+                dvi: None,
+            },
+            actual: TripTriageChannels {
+                command_events: Some(&actual_command),
+                geometry_events: actual_geometry.as_deref(),
+                transcript: &capture.terminal,
+                log: &capture.log,
+                dvi: None,
+            },
+        },
+    )
+    .expect("write failed-run triage");
+}
+
+#[cfg(feature = "instrumentation")]
 fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
     let root = &gate.repo_root;
     let fixture_name = gate.name;
@@ -618,8 +816,18 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     } else {
         EngineMode::Tex82
     };
-    let initial = run_file_in_process(&input, None, engine)
-        .unwrap_or_else(|error| panic!("{fixture_name} format creation failed: {error}"));
+    let mut failure = None;
+    let initial =
+        run_file_in_process_captured(&input, None, engine, &mut failure).unwrap_or_else(|error| {
+            compare_trip_failure(
+                root,
+                fixture_name,
+                "initex",
+                failure.as_ref().expect("failed capture"),
+                &error,
+            );
+            panic!("{fixture_name} format creation failed: {error}")
+        });
     let format = initial
         .format
         .clone()
@@ -634,8 +842,18 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         &initex_identity,
         None,
     );
-    let loaded = run_file_in_process(&input, Some(&format), engine)
-        .unwrap_or_else(|error| panic!("{fixture_name} format-loaded run failed: {error}"));
+    let mut failure = None;
+    let loaded = run_file_in_process_captured(&input, Some(&format), engine, &mut failure)
+        .unwrap_or_else(|error| {
+            compare_trip_failure(
+                root,
+                fixture_name,
+                "format-loaded",
+                failure.as_ref().expect("failed capture"),
+                &error,
+            );
+            panic!("{fixture_name} format-loaded run failed: {error}")
+        });
     let dvi = loaded
         .dvi
         .clone()
