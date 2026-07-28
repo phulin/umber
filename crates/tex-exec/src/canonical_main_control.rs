@@ -3461,6 +3461,10 @@ enum ScannedStep {
     /// Application appends an ordered whatsit after flushing any pending
     /// horizontal character run; shipout traversal owns the toggle state.
     PdfInterwordSpace(tex_state::node::PdfAccessibilityControl),
+    /// pdftex.web §§1597–1598's operand-free running-link shipout controls.
+    /// Application appends an ordered whatsit; PDF traversal owns the
+    /// initially-enabled policy for continuation annotations.
+    PdfRunningLink(bool),
     /// pdftex.web §1599's expanded balanced text selecting the global,
     /// job-owned fallback font name used by accessible-space PDF output.
     PdfSpaceFont(TracedTokenList),
@@ -5406,6 +5410,12 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFakeSpace) => Ok(
             ScannedStep::PdfInterwordSpace(tex_state::node::PdfAccessibilityControl::FakeSpace),
         ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRunningLinkOn) => {
+            Ok(ScannedStep::PdfRunningLink(true))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRunningLinkOff) => {
+            Ok(ScannedStep::PdfRunningLink(false))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSpaceFont) => {
             Ok(ScannedStep::PdfSpaceFont(
                 processor
@@ -6360,6 +6370,8 @@ fn scan_unclassified_primitive(
         | P::PdfInterwordSpaceOff
         | P::PdfInterwordSpaceOn
         | P::PdfFakeSpace
+        | P::PdfRunningLinkOff
+        | P::PdfRunningLinkOn
         | P::PdfSpaceFont
         | P::PdfRefXForm
         | P::PdfRefXImage
@@ -6580,8 +6592,6 @@ fn scan_unclassified_primitive(
         | P::PdfNoLigatures
         | P::PdfOutline
         | P::PdfRpCode
-        | P::PdfRunningLinkOff
-        | P::PdfRunningLinkOn
         | P::PdfShbsCode
         | P::PdfSnapRefPoint
         | P::PdfSnapY
@@ -7995,6 +8005,7 @@ fn applied_mutation_observation(
         | ScannedStep::PdfSetRandomSeed { .. }
         | ScannedStep::PdfResetTimer
         | ScannedStep::PdfInterwordSpace(..)
+        | ScannedStep::PdfRunningLink(..)
         | ScannedStep::PdfSpaceFont(..)
         | ScannedStep::PdfGraphics(..)
         | ScannedStep::PdfObject(..)
@@ -9842,6 +9853,20 @@ fn apply_scanned_step(
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfAccessibility(control)));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfRunningLink(enabled) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode(if enabled {
+                    "pdfrunninglinkon"
+                } else {
+                    "pdfrunninglinkoff"
+                }));
+            }
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            modes
+                .current_list_mutation()
+                .push(Node::Whatsit(Whatsit::PdfRunningLink(enabled)));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfSpaceFont(tokens) => {

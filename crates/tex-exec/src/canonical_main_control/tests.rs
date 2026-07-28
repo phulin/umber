@@ -157,6 +157,11 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
             UnexpandablePrimitive::PdfInterwordSpaceOff,
         ),
         ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
+        ("pdfrunninglinkon", UnexpandablePrimitive::PdfRunningLinkOn),
+        (
+            "pdfrunninglinkoff",
+            UnexpandablePrimitive::PdfRunningLinkOff,
+        ),
         ("pdfspacefont", UnexpandablePrimitive::PdfSpaceFont),
     ] {
         let symbol = stores.intern(name);
@@ -451,6 +456,138 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             tex_state::node::PdfAccessibilityControl::InterwordSpaceOff,
         ]
     );
+}
+
+#[test]
+fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_interword_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
+        run_to_end(&mut control, &mut stores);
+
+        let toggles = control
+            .modes
+            .current_list()
+            .nodes()
+            .iter()
+            .filter_map(|node| match node {
+                Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            toggles,
+            [false, true],
+            "mode {mode:?}: ordered toggle whatsits consume no operand"
+        );
+    }
+
+    let mut grouped_stores = Universe::new_with_plain_catcodes();
+    grouped_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut grouped = pdftex_interword_control(&mut grouped_stores);
+    register_source(&mut grouped, br"{\pdfrunninglinkoff\pdfrunninglinkon}");
+    run_to_end(&mut grouped, &mut grouped_stores);
+    assert!(matches!(
+        grouped.modes.current_list().nodes(),
+        [
+            Node::Whatsit(Whatsit::PdfRunningLink(false)),
+            Node::Whatsit(Whatsit::PdfRunningLink(true))
+        ]
+    ));
+}
+
+#[test]
+fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\global\pdfrunninglinkoff");
+
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert!(control.modes.current_list().nodes().is_empty());
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control.step(&mut stores).expect("replayed extension"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfRunningLink(false))]
+    ));
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+    register_source(&mut dvi_control, br"\pdfrunninglinkon");
+    assert!(matches!(
+        dvi_control.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
+    ));
+    assert!(dvi_control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_interword_control(&mut stores);
+    register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
+
+    assert_eq!(
+        control.step(&mut stores).expect("first toggle"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("running-link toggle checkpoints");
+    assert_eq!(
+        control.step(&mut stores).expect("second toggle"),
+        MainControlStep::Continue
+    );
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("running-link toggle restores");
+    assert_eq!(
+        control.step(&mut stores).expect("second toggle retries"),
+        MainControlStep::Continue
+    );
+
+    let toggles = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Whatsit(Whatsit::PdfRunningLink(enabled)) => Some(*enabled),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(toggles, [false, true]);
 }
 
 #[test]

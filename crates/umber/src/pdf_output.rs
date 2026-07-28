@@ -1950,11 +1950,14 @@ fn lower_page_annotations(
         .collect::<BTreeMap<_, _>>();
     let mut active = Vec::<ActiveShippedLink>::new();
     let mut result = Vec::with_capacity(pages.len());
+    // pdftex.web §1597 initializes `gen_running_link` once, while
+    // §§37031–37034/37116–37119 mutate it as ordered whatsits are shipped.
+    // It therefore persists across pages rather than resetting per shipout.
+    let mut running = true;
 
     for (page, link_margin) in pages.iter().zip(link_margins.iter().copied()) {
         let mut shipped = Vec::new();
         let mut boxes = BTreeMap::<u32, PositionedBox>::new();
-        let mut running = true;
         for event in &page.events {
             match event {
                 PositionedEvent::Box(positioned_box) => {
@@ -6135,6 +6138,32 @@ mod tests {
         assign_annotation_objects(&mut stores, &mut shipped).expect("continuation object");
         assert_eq!(shipped[0][0].object, link.object());
         assert_ne!(shipped[1][0].object, link.object());
+    }
+
+    #[test]
+    fn running_link_policy_persists_across_pages_until_ordered_reenable() {
+        let (mut stores, result) = run(concat!(
+            "\\pdfoutput=1",
+            "\\shipout\\hbox{",
+            "\\pdfstartlink height 6pt user{/Subtype /Link}",
+            "\\kern10pt\\pdfrunninglinkoff}",
+            "\\shipout\\vbox{\\hbox{\\kern10pt}}",
+            "\\shipout\\vbox{\\pdfrunninglinkon\\hbox{\\kern10pt\\pdfendlink}}",
+            "\\end",
+        ));
+        let bytes = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("running-link policy serializes");
+        let document = probe(&bytes);
+        let pages = document.pages().expect("generated pages");
+        assert_eq!(pages.len(), 3);
+        assert_eq!(
+            pages
+                .iter()
+                .map(|page| page.annotations.len())
+                .collect::<Vec<_>>(),
+            [1, 0, 1],
+            "off suppresses the intervening page until an ordered on whatsit ships"
+        );
     }
 
     #[test]
