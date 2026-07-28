@@ -19,3 +19,23 @@ the raw rejected integer, repeated-report order, recovered values, primitive
 variants, and local/global family assignment semantics. The property catalogue
 records those executable owners; no live reference executable runs in the
 correctness tier.
+
+## Validation
+
+The first authoritative native run found an environmental prerequisite gap:
+
+```text
+run-native-tests: VERDICT: FAIL - 33 packages, 44/48 test binaries, 3872 passed, 5 failed, 941 ignored; TeX82 property catalogue: 938 reviewed, 442 deferred; 100 covered, 51 gap; deferred tiers: 0 of 6 passed on this tree
+```
+
+All five failures named absent gitignored conformance inputs or DVI oracles.
+After materializing only those declared inputs, the four DVI oracles, and the
+47 declared plain-TeX TFM files from the primary checkout, the authoritative
+rerun completed:
+
+```text
+run-native-tests: VERDICT: PASS - 33 packages, 48/48 test binaries, 3953 passed, 0 failed, 941 ignored; TeX82 property catalogue: 938 reviewed, 442 deferred; 100 covered, 51 gap; deferred tiers: 0 of 6 passed on this tree
+```
+
+The copied prerequisites remain gitignored and are not part of this change.
+`scripts/check.sh` also reported `all 4 gates passed`.
