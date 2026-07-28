@@ -97,6 +97,13 @@ TFM set through `CommandHostCapabilities::register_font` before its first step,
 because canonical font resolution fails rather than suspends. See
 "Differential Tracer" in `docs/testing_infrastructure.md`.
 
+The Cargo integration test calls the committed-only runner. That entry point
+enforces fixed, name-independent source-count, combined-source-byte, and event-
+count ceilings before replay, so adding a document-scale fixture to the
+committed registry fails with an actionable diagnostic. Only the explicit CLI
+runner loads `tex82-documents`; do not route automated tests through it or
+raise the ceilings to accommodate a full document.
+
 `scripts/fetch-conformance-inputs.sh` acquires the external hyphenation and
 Computer Modern font inputs and fetches and verifies the pinned official Knuth
 TeX82 TRIP and e-TeX V2 e-TRIP materials. Cargo integration tests execute the

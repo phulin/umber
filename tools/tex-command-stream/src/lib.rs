@@ -55,6 +55,18 @@ const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
 const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
+/// Maximum number of source files in one fixture selected by an automated
+/// differential-tracer test.
+///
+/// This and the other automated-fixture bounds classify fixtures by their
+/// structural footprint, not by a document name. Full-document traces belong
+/// to [`documents`] and the explicit [`run_repository`] diagnostic.
+const AUTOMATED_MAX_SOURCES: usize = 64;
+/// Maximum combined source bytes in one automated tracer fixture.
+const AUTOMATED_MAX_SOURCE_BYTES: u64 = 64 * 1024;
+/// Maximum ordered oracle events in one automated tracer fixture.
+const AUTOMATED_MAX_EVENTS: usize = 50_000;
+
 /// Default cap on ordered divergences reported *per fixture*
 /// (`--max-divergences` overrides it). Chosen to comfortably batch a
 /// fixture's independent defects into one worklist without an unbounded
@@ -149,6 +161,7 @@ pub fn run_committed_repository(
                 })?);
         let fixture = CommittedFixture::load(&fixture_directory)
             .map_err(|error| RunnerError::Fixture(entry.selector.clone(), error.to_string()))?;
+        validate_automated_fixture(&fixture)?;
         collect_fixture_divergences(
             &fixture_directory,
             &fixture,
@@ -160,6 +173,60 @@ pub fn run_committed_repository(
     collect_geometry_divergences(repository, options, &mut report)?;
 
     Ok(report)
+}
+
+fn validate_automated_fixture(fixture: &CommittedFixture) -> Result<(), RunnerError> {
+    let sources = fixture.manifest.sources.len();
+    let source_bytes = fixture
+        .manifest
+        .sources
+        .values()
+        .try_fold(0_u64, |total, source| total.checked_add(source.bytes))
+        .ok_or_else(|| {
+            RunnerError::Fixture(
+                fixture.manifest.name.clone(),
+                "source-byte total overflows u64".into(),
+            )
+        })?;
+    validate_automated_footprint(
+        &fixture.manifest.name,
+        AutomatedFixtureFootprint {
+            sources,
+            source_bytes,
+            events: fixture.stream.events.len(),
+        },
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AutomatedFixtureFootprint {
+    sources: usize,
+    source_bytes: u64,
+    events: usize,
+}
+
+fn validate_automated_footprint(
+    name: &str,
+    footprint: AutomatedFixtureFootprint,
+) -> Result<(), RunnerError> {
+    if footprint.sources <= AUTOMATED_MAX_SOURCES
+        && footprint.source_bytes <= AUTOMATED_MAX_SOURCE_BYTES
+        && footprint.events <= AUTOMATED_MAX_EVENTS
+    {
+        return Ok(());
+    }
+    Err(RunnerError::Fixture(
+        name.into(),
+        format!(
+            "automated differential tracing accepts only bounded microfixtures: \
+             observed {} source(s), {} source byte(s), and {} event(s); limits are \
+             {AUTOMATED_MAX_SOURCES} source(s), {AUTOMATED_MAX_SOURCE_BYTES} source byte(s), \
+             and {AUTOMATED_MAX_EVENTS} event(s). Move full-document traces to \
+             tests/corpus/command/tex82-documents and run the explicit \
+             `cargo run-dev -q -p tex-command-stream -- --repository .` diagnostic",
+            footprint.sources, footprint.source_bytes, footprint.events
+        ),
+    ))
 }
 
 fn collect_geometry_divergences(
@@ -1775,6 +1842,36 @@ mod tests {
     }
     fn observed(value: &str) -> ObservedEvent {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
+    }
+
+    #[test]
+    fn committed_command_microfixture_satisfies_automated_bounds() {
+        let fixture = committed_fixture();
+        validate_automated_fixture(&fixture).expect("focused fixture must remain test-sized");
+    }
+
+    #[test]
+    fn automated_selection_rejects_a_full_document_footprint() {
+        let error = validate_automated_footprint(
+            "tex82/accidental-document",
+            AutomatedFixtureFootprint {
+                sources: 1,
+                source_bytes: 4096,
+                events: AUTOMATED_MAX_EVENTS + 1,
+            },
+        )
+        .expect_err("a document-scale trace must not enter Cargo tests");
+        let message = error.to_string();
+        assert!(
+            message.contains("accepts only bounded microfixtures"),
+            "{message}"
+        );
+        assert!(
+            message.contains("tests/corpus/command/tex82-documents"),
+            "{message}"
+        );
+        assert!(message.contains("--repository ."), "{message}");
+        assert!(message.contains("50001 event(s)"), "{message}");
     }
 
     #[test]

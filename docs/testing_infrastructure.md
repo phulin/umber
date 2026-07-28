@@ -872,8 +872,14 @@ The native correctness suite runs this committed-microfixture comparison and
 requires `CLEAN`; its `committed_tex82_command_traces_are_clean` test uses the
 committed-only runner, which validates the fixture inventory before replaying
 it. An absent or drifted committed fixture therefore fails explicitly rather
-than making the gate look clean. It never loads the generated document-trace
-tree, so the routine suite does not replay Plain, Story, Gentle, TRIP, or any
+than making the gate look clean. Selection also enforces a structural
+microfixture footprint: at most 64 source files, 64 KiB of combined source,
+and 50,000 ordered events per fixture. A registry entry beyond any bound fails
+with its observed footprint, every limit, and the manual command to use
+instead. This is deliberately name-independent, so accidentally registering
+any full document is rejected rather than relying on a list of known document
+names. The generated document-trace tree is loaded only by the explicit CLI
+runner, so the routine suite does not replay Plain, Story, Gentle, TRIP, or any
 other full document. The committed geometry microfixture is deliberately
 font-independent and covers explicit packaging, paragraph line packing, an
 explicit shipment, and end-of-job page-builder shipment. Controlled hpack and
