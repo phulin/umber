@@ -159,7 +159,7 @@ line carries the count, so a `PASS` can no longer be mistaken for a statement
 about the deferred tiers:
 
 ```text
-run-native-tests: VERDICT: PASS - 33 packages, 46/46 test binaries, 3625 passed, 0 failed, 941 ignored; deferred tiers: 0 of 3 passed on this tree
+run-native-tests: VERDICT: PASS - 33 packages, 48/48 test binaries, 4018 passed, 0 failed, 941 ignored; TeX82 property catalogue: 946 reviewed, 434 deferred; 105 covered, 46 gap; deferred tiers: 0 of 6 passed on this tree
 ```
 
 `scripts/test_tier_stamp.py` drives the classifier with every shape that must
@@ -769,7 +769,7 @@ rewriting either fixture.
 
 ### Canonical Story and Gentle Regression Gates
 
-`e2e_conformance_story_canonical` and the explicitly ignored manual
+`e2e_conformance_story_canonical` and
 `e2e_conformance_gentle_canonical` in the same
 `crates/umber/tests/it/e2e_conformance.rs` check canonical/reference DVI
 parity: the canonical `tex-command`/
@@ -787,23 +787,16 @@ above for what an absent oracle does.
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story_canonical -- --nocapture
-cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --ignored --exact --nocapture
+cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --exact --nocapture
 ```
 
 The Gentle oracle is the existing 263424-byte real-pdfTeX artifact, SHA-256
 `04f86e97e8264f9b8ce35dc1e9df27f2b075ca85365af71acc5fe1478399866b`.
-The previously reported 263472-byte canonical artifact was not stale:
-executable comparison reproduced genuine geometry differences after the
-TeX82 §1093 list-commit fix. The generic TeX82 fixes tracked through
-`umber2-johp.286`--`.292` advanced those differences, but did not establish
-final parity. At integration tip f9dabd38, the manual gate produces 263456
-bytes with SHA-256
-`1494281fc822f41c9d433160c691f67102b38e96080f34c7f2b5d730b813e4c9` and
-reports the first difference at byte 162675 on page 52 (`z0` versus `down3`);
-`umber2-johp.294` tracks that downstream DVI boundary. Gentle remains a
-byte-exact DVI conformance gate only: its `#[ignore]` keeps the full document
-out of routine native tests, and it is not an automated differential-tracer
-fixture. Run it only through the explicit manual command above.
+The canonical gate now matches that oracle byte-for-byte and therefore runs in
+the routine native suite. Gentle remains a byte-exact DVI conformance gate,
+not an automated differential-tracer fixture: the tracer's structural tests
+admit only committed microfixtures and synthetic fixtures, and do not load
+Gentle or another full document.
 
 Unlike the legacy runner (`EngineSession` over `ExecutionContext`/
 `InputResolver`/`FontResolver`), this test drives

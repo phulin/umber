@@ -516,7 +516,6 @@ fn canonical_math_group_singleton_ord_matches_reference_dvi() {
 /// shared conformance comparator permits only the variable preamble comment;
 /// every remaining byte, including list-setting geometry, must match.
 #[test]
-#[ignore = "explicit canonical Gentle byte-exact conformance gate"]
 fn e2e_conformance_gentle_canonical() {
     assets::with_gate("gentle", |gate| {
         run_plain_fixture_case_canonical("gentle.tex", gate);
