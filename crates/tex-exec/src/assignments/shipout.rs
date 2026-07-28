@@ -70,7 +70,7 @@ pub(crate) fn shipout_node_with_input_summary(
     write_expander: &mut direct::WriteExpander<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     prepare_pdf_output_policy(stores)?;
-    let geometry = shipout_geometry(&node);
+    let geometry = shipout_geometry(&node, stores);
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
             PrintSink::TerminalAndLog,
@@ -228,13 +228,14 @@ pub(crate) fn test_stage_shipout_artifact(
         .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
 }
 
-fn shipout_geometry(node: &Node) -> Option<GeometryObservation> {
+fn shipout_geometry(node: &Node, stores: &Universe) -> Option<GeometryObservation> {
     let (Node::HList(node) | Node::VList(node)) = node else {
         return None;
     };
     Some(GeometryObservation::Shipout {
         page_width_sp: i64::from(node.width.raw()),
         page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
+        counts: direct::page_counts(stores),
     })
 }
 

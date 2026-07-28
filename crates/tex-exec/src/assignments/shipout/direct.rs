@@ -378,6 +378,7 @@ fn invalid_artifact(error: impl ToString) -> ExecError {
 }
 
 mod lower;
+pub(super) use lower::page_counts;
 mod materialize;
 mod normalize;
 #[cfg(test)]

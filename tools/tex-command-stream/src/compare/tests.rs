@@ -92,6 +92,7 @@ fn shipout(page_width_sp: i64, page_height_sp: i64) -> Event {
     Event::Geometry(GeometryEvent::Shipout {
         page_width_sp,
         page_height_sp,
+        counts: [0; 10],
     })
 }
 

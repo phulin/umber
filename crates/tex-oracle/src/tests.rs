@@ -484,11 +484,13 @@ fn geometry_uses_finalized_signed_scaled_points() {
     assert_eq!(
         GeometryEvent::Shipout {
             page_width_sp: 65_536,
-            page_height_sp: 98_304
+            page_height_sp: 98_304,
+            counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         },
         GeometryEvent::Shipout {
             page_width_sp: 65_536,
-            page_height_sp: 98_304
+            page_height_sp: 98_304,
+            counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         }
     );
 }

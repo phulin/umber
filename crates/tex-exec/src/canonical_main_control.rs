@@ -2368,9 +2368,11 @@ impl CanonicalMainControl {
             GeometryObservation::Shipout {
                 page_width_sp,
                 page_height_sp,
+                counts,
             } => GeometryRecord::Shipout {
                 page_width_sp,
                 page_height_sp,
+                counts,
             },
         };
         CommandObservation::Geometry(record)

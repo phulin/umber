@@ -122,7 +122,10 @@ begin
 if not umber_geometry_profile then return;
 umber_trace_begin;
 write_ln(umber_trace_file,'{"event":"geometry","data":{"transition":"shipout","page_width_sp":',
-  width(p):1,',"page_height_sp":',height(p)+depth(p):1,'}}}');
+  width(p):1,',"page_height_sp":',height(p)+depth(p):1,
+  ',"counts":[',count(0):1,',',count(1):1,',',count(2):1,',',count(3):1,',',
+  count(4):1,',',count(5):1,',',count(6):1,',',count(7):1,',',count(8):1,',',
+  count(9):1,']}}}');
 end;
 
 procedure umber_trace_command_name(@!c:integer);

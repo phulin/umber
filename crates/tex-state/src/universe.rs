@@ -1202,6 +1202,7 @@ pub enum GeometryObservation {
     Shipout {
         page_width_sp: i64,
         page_height_sp: i64,
+        counts: [i32; 10],
     },
 }
 

@@ -1290,9 +1290,11 @@ fn translate_observation(
                 GeometryRecord::Shipout {
                     page_width_sp,
                     page_height_sp,
+                    counts,
                 } => GeometryEvent::Shipout {
                     page_width_sp,
                     page_height_sp,
+                    counts,
                 },
             }),
             format!("source={source}"),

@@ -408,6 +408,8 @@ pub enum GeometryEvent {
     Shipout {
         page_width_sp: i64,
         page_height_sp: i64,
+        /// TeX82 §617's `count0..count9` values written by `bop`.
+        counts: [i32; 10],
     },
 }
 
