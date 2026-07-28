@@ -302,7 +302,12 @@ fn integer_and_fraction_tails_reject_recategorized_decimal_digits() {
     let mut command = CommandState::default();
     push(
         &mut command,
-        vec![char_token('1'), recategorized, char_token('p'), char_token('t')],
+        vec![
+            char_token('1'),
+            recategorized,
+            char_token('p'),
+            char_token('t'),
+        ],
     );
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new();

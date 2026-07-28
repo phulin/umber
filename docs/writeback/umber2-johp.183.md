@@ -22,3 +22,20 @@ terminators, recategorized integer and fraction digits, legal and illegal
 vacuous units, replay, and diagnostic order. Two hermetic command-semantic
 microfixtures commit the representative scanner and terminal projections. No
 live reference executable runs in the correctness tier.
+
+## Validation
+
+After materializing the declared gitignored conformance inputs, DVI oracles,
+and plain-TeX font metrics from the primary checkout, the native correctness
+suite reported:
+
+```text
+run-native-tests: VERDICT: PASS - 33 packages, 48/48 test binaries, 3961 passed, 0 failed, 941 ignored; TeX82 property catalogue: 938 reviewed, 442 deferred; 100 covered, 51 gap; deferred tiers: 0 of 6 passed on this tree
+```
+
+`scripts/check.sh` reported `all 4 gates passed`.
+
+The exhaustive differential-tracer invocation compared the committed
+command-transition and geometry fixtures with zero divergences. Its overall
+verdict was `PARTIAL`, not convergence, because the generated Plain, Story,
+and Gentle document traces were absent from this worktree.

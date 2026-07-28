@@ -501,15 +501,11 @@ impl CommandProcessor<'_> {
                     Meaning::CharToken {
                         ch: '\'',
                         cat: Catcode::Other,
-                    } => {
-                        (self.scan_radix_tail(0, 8)?, 8, ScalarRecovery::None)
-                    }
+                    } => (self.scan_radix_tail(0, 8)?, 8, ScalarRecovery::None),
                     Meaning::CharToken {
                         ch: '"',
                         cat: Catcode::Other,
-                    } => {
-                        (self.scan_radix_tail(0, 16)?, 16, ScalarRecovery::None)
-                    }
+                    } => (self.scan_radix_tail(0, 16)?, 16, ScalarRecovery::None),
                     // TeX's `\` character-code form consumes its following token
                     // through raw delivery: that token supplies a character code,
                     // rather than participating in ordinary expansion.  The
@@ -773,8 +769,7 @@ impl CommandProcessor<'_> {
             // can only ever be the point this branch just backed up.
             let _ = self.get_token()?;
         }
-        let (units, flip) =
-            self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
+        let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
         Ok((units, flip, recovery))
     }
 
