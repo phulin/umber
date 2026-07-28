@@ -6030,6 +6030,7 @@ fn scan_unclassified_primitive(
         | P::NonScript
         | P::Penalty
         | P::PrevDepth
+        | P::PrevGraf
         | P::Raise
         | P::Read
         | P::ReadLine
@@ -6240,7 +6241,6 @@ fn scan_unclassified_primitive(
         | P::PdfStbsCode
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
-        | P::PrevGraf
         | P::QuitVMode
         | P::ShowGroups
         | P::ShowIfs

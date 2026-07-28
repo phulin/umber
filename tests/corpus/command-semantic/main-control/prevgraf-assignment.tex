@@ -1,0 +1,15 @@
+\count0=0 \count1=0 \count2=0 \count3=0 \count4=0
+\count5=0 \count6=0 \count7=0 \count8=0
+\prevgraf = 0
+\ifnum\prevgraf=0 \global\count0=1 \fi
+{\prevgraf 1}
+\ifnum\prevgraf=1 \global\count1=1 \fi
+\global\prevgraf=2
+\ifnum\prevgraf=2 \global\count2=1 \fi
+\vbox{\prevgraf=3 \ifnum\prevgraf=3 \global\count3=1 \fi}
+\hbox{\prevgraf=4 \ifnum\prevgraf=4 \global\count4=1 \fi}
+x\prevgraf=5 \ifnum\prevgraf=5 \global\count5=1 \fi\par
+$\prevgraf=6 \ifnum\prevgraf=6 \global\count6=1 \fi$
+\prevgraf=-1\global\count7=1
+\ifnum\prevgraf=6 \global\count8=1 \fi
+\end

@@ -7160,6 +7160,77 @@ fn canonical_prevgraf_assignment_sets_the_enclosing_vertical_level() {
 }
 
 #[test]
+fn canonical_prevgraf_assignment_is_legal_in_every_mode() {
+    // TeX82 §1210 dispatches `any_mode(set_prev_graf)` to `prefixed_command`,
+    // and §1244's `alter_prev_graf` walks outward to a vertical level instead
+    // of rejecting any mode. Positive and zero values therefore work in all
+    // six main-control modes.
+    for (mode, value) in [
+        (Mode::Vertical, 0),
+        (Mode::InternalVertical, 1),
+        (Mode::Horizontal, 2),
+        (Mode::RestrictedHorizontal, 3),
+        (Mode::Math, 4),
+        (Mode::DisplayMath, 5),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, format!("\\prevgraf={value} ").as_bytes());
+        run_to_end(&mut control, &mut universe);
+
+        assert_eq!(
+            control.modes.enclosing_vertical_prev_graf(),
+            value,
+            "mode {mode:?}"
+        );
+        assert!(
+            !terminal_text(&universe).contains("You can't use"),
+            "mode {mode:?}: {}",
+            terminal_text(&universe)
+        );
+    }
+}
+
+#[test]
+fn canonical_prevgraf_updates_nearest_internal_vertical_level() {
+    // TeX82 §1244 stops at the first enclosing mode whose absolute value is
+    // vmode. An hmode nested inside an internal-vmode box must update that
+    // box's paragraph count, not the outer page's.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.set_enclosing_vertical_prev_graf(11);
+    control.modes.push(Mode::InternalVertical);
+    control.modes.set_enclosing_vertical_prev_graf(12);
+    control.modes.push(Mode::Horizontal);
+    register_source(&mut control, br"\prevgraf = 6 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 6);
+    control.modes.pop().expect("leave horizontal mode");
+    control.modes.pop().expect("leave internal vertical mode");
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 11);
+}
+
+#[test]
+fn canonical_prevgraf_is_ungrouped_and_prefixes_do_not_change_its_scope() {
+    // TeX82 §1242 says these definitions are always global. `prev_graf` is a
+    // mode-list field, not an eqtb entry, so braces, `\global`, and
+    // `\globaldefs` cannot create save-stack restoration.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"{\prevgraf=2}\global\prevgraf 3 \globaldefs=-1 \prevgraf = 4 ",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 4);
+}
+
+#[test]
 fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
     // TeX82 §1244: `if cur_val<0 then int_error(cur_val)` -- a negative value
     // is diagnosed and the paragraph count is left untouched.
@@ -7170,7 +7241,25 @@ fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
-    assert!(terminal_text(&universe).contains("Bad \\prevgraf (-1)"));
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Bad \\prevgraf (-1).\nI allow only nonnegative values here.\n"
+    );
+}
+
+#[test]
+fn canonical_prevgraf_scanner_preserves_the_following_token_after_negative_value() {
+    // TeX82 §1244 calls the ordinary `scan_int`; its error branch changes no
+    // input-stack state after scanning. The command immediately following a
+    // rejected integer must therefore still execute.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.set_enclosing_vertical_prev_graf(7);
+    register_source(&mut control, br"\prevgraf=-1\count0=23 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
+    assert_eq!(universe.count(0), 23);
 }
 
 #[test]
