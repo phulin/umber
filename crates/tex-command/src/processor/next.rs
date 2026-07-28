@@ -2676,8 +2676,7 @@ mod tests {
         let mut universe = Universe::new_with_plain_catcodes();
         universe.set_catcode('\r', Catcode::Active);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
         let endline = processor
             .get_next()
@@ -2706,8 +2705,7 @@ mod tests {
         let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
         let symbol = processor
             .get_token()
