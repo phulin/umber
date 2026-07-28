@@ -4,8 +4,8 @@ use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
-    PureMemoLayer, PureShipoutEntry, Universe,
+    ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
+    PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
 };
 
 use super::scan_box_value_node;
@@ -62,6 +62,7 @@ pub(crate) fn shipout_node_with_input_summary(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     prepare_pdf_output_policy(stores)?;
+    let geometry = shipout_geometry(&node);
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
             PrintSink::TerminalAndLog,
@@ -110,6 +111,9 @@ pub(crate) fn shipout_node_with_input_summary(
             // plan. Rebuild its equivalent pure receipt exactly once at this
             // publication boundary so canonical callers never need to lower
             // an already-committed page during finalization.
+            if let Some(geometry) = geometry {
+                stores.record_geometry_observation(geometry);
+            }
             let plan = DviPagePlan::compile_v10(
                 stores
                     .world()
@@ -145,6 +149,9 @@ pub(crate) fn shipout_node_with_input_summary(
             (artifact_bytes, render_origin_ends, render_origins)
         });
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    if let Some(geometry) = geometry {
+        stores.record_geometry_observation(geometry);
+    }
     for (sink, text) in retained_diagnostics {
         stores.world_mut().write_text(sink, &text);
     }
@@ -192,6 +199,16 @@ pub(crate) fn test_stage_shipout_artifact(
     )?;
     tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
         .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
+}
+
+fn shipout_geometry(node: &Node) -> Option<GeometryObservation> {
+    let (Node::HList(node) | Node::VList(node)) = node else {
+        return None;
+    };
+    Some(GeometryObservation::Shipout {
+        page_width_sp: i64::from(node.width.raw()),
+        page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
+    })
 }
 
 fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {

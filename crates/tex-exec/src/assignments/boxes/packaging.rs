@@ -5,7 +5,7 @@ use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::token::{Catcode, TracedTokenWord};
-use tex_state::{ExpansionState, GroupKind, Universe};
+use tex_state::{ExpansionState, GeometryObservation, GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
 use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
@@ -317,7 +317,13 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         });
     }
     let children = stores.freeze_node_list_owned(nodes);
-    plan.finish(children).node
+    let packed = plan.finish(children);
+    stores.record_geometry_observation(GeometryObservation::Hpack {
+        width_sp: i64::from(packed.node.width.raw()),
+        height_sp: i64::from(packed.node.height.raw()),
+        depth_sp: i64::from(packed.node.depth.raw()),
+    });
+    packed.node
 }
 
 pub(crate) fn scan_box_group(

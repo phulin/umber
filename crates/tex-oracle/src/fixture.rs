@@ -401,6 +401,7 @@ fn visit_event_locations(
             Ok(())
         }
         Event::Effect(event) => visit_value_locations(&event.value, visitor),
+        Event::Geometry(_) => Ok(()),
         Event::Input(_)
         | Event::ScannerStatus(_)
         | Event::Macro(crate::MacroEvent::Activation { .. })

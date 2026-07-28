@@ -346,6 +346,7 @@ fn positionless_event(event: &Event) -> Event {
             channel: channel.clone(),
             value: positionless_value(value),
         }),
+        Event::Geometry(event) => Event::Geometry(event.clone()),
     }
 }
 

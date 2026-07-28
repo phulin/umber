@@ -45,8 +45,8 @@ pub use observation::canonical_names;
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,
-    EffectRecord, InputReason, InputRecord, InputTransition, MacroRecord, MutationRecord,
-    ObservedToken, ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord,
+    EffectRecord, GeometryRecord, InputReason, InputRecord, InputTransition, MacroRecord,
+    MutationRecord, ObservedToken, ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord,
     ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
 };
 pub use processor::{

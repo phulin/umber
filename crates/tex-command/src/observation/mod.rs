@@ -563,6 +563,25 @@ pub struct EffectRecord {
     pub tokens: Option<Vec<ObservedToken>>,
 }
 
+/// Finalized dimensions from one canonical packing or shipout commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GeometryRecord {
+    Hpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    Vpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    Shipout {
+        page_width_sp: i64,
+        page_height_sp: i64,
+    },
+}
+
 /// A stable semantic diagnostic selected by a committed command transition.
 ///
 /// Formatting remains executor/host policy; this record preserves only the
@@ -590,6 +609,7 @@ pub enum CommandObservation {
     Mutation(MutationRecord),
     Diagnostic(DiagnosticRecord),
     Effect(EffectRecord),
+    Geometry(GeometryRecord),
 }
 
 /// Test/instrumentation sink for committed command-owned semantic records.
@@ -597,6 +617,10 @@ pub enum CommandObservation {
 /// This interface is intentionally non-fallible. An instrumentation transport
 /// must buffer or handle its own failures outside the command operation.
 pub trait CommandObserver {
+    fn observes_geometry(&self) -> bool {
+        false
+    }
+
     fn committed(&mut self, observation: CommandObservation);
 }
 

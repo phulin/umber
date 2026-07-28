@@ -64,6 +64,11 @@ impl ObservationStream {
                     event.sequence
                 )));
             }
+            if matches!(event.semantic, Event::Geometry(_)) && _schema == SchemaVersion::V1 {
+                return Err(ObservationError::InvalidStream(
+                    "schema v1 does not permit geometry events".into(),
+                ));
+            }
             events.push(event);
         }
         Ok(Self { header, events })

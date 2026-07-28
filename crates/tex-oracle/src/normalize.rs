@@ -85,6 +85,7 @@ fn normalize_event(event: &mut Event) {
         }
         Event::Diagnostic(event) => normalize_diagnostic(event),
         Event::Effect(event) => normalize_effect(event),
+        Event::Geometry(_) => {}
     }
 }
 

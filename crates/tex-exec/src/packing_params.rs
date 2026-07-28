@@ -1,8 +1,8 @@
 //! Execution-side snapshots of packing parameters.
 
-use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::ids::NodeListId;
+use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 #[must_use]
@@ -31,6 +31,11 @@ pub(crate) fn hpack(
 ) -> PackedBox {
     let packed = tex_typeset::hpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
+    stores.record_geometry_observation(GeometryObservation::Hpack {
+        width_sp: i64::from(packed.node.width.raw()),
+        height_sp: i64::from(packed.node.height.raw()),
+        depth_sp: i64::from(packed.node.depth.raw()),
+    });
     packed
 }
 
@@ -42,6 +47,11 @@ pub(crate) fn vpack(
 ) -> PackedBox {
     let packed = tex_typeset::vpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
+    stores.record_geometry_observation(GeometryObservation::Vpack {
+        width_sp: i64::from(packed.node.width.raw()),
+        height_sp: i64::from(packed.node.height.raw()),
+        depth_sp: i64::from(packed.node.depth.raw()),
+    });
     packed
 }
 
@@ -53,5 +63,10 @@ pub(crate) fn vtop(
 ) -> PackedBox {
     let packed = tex_typeset::vtop(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
+    stores.record_geometry_observation(GeometryObservation::Vpack {
+        width_sp: i64::from(packed.node.width.raw()),
+        height_sp: i64::from(packed.node.height.raw()),
+        depth_sp: i64::from(packed.node.depth.raw()),
+    });
     packed
 }

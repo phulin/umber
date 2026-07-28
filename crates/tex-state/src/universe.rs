@@ -490,6 +490,7 @@ impl<'a> InputOpenContext<'a> {
 /// for M3 World/input state.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
+    geometry_observations_len: usize,
     owner: SnapshotOwner,
     serial: u64,
     store: StoreSnapshot,
@@ -1177,12 +1178,33 @@ pub struct Universe {
     dependencies: DependencyRuntime,
     /// Optional pure-query cache; excluded from snapshots and semantic hashes.
     pure_memo: crate::pure_memo::PureMemoRuntime,
+    geometry_observations: Vec<GeometryObservation>,
+    geometry_observation_enabled: bool,
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
 ///
 /// Construction stays under [`Universe`] so handle-bearing mode state is
 /// resolved through the owning stores rather than hashing runtime ids.
+/// Finalized packing/shipout geometry retained only while observation is enabled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GeometryObservation {
+    Hpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    Vpack {
+        width_sp: i64,
+        height_sp: i64,
+        depth_sp: i64,
+    },
+    Shipout {
+        page_width_sp: i64,
+        page_height_sp: i64,
+    },
+}
+
 pub struct EngineBoundaryHasher<'a> {
     stores: &'a Stores,
     hasher: StateHasher,
@@ -1319,6 +1341,8 @@ impl Clone for Universe {
             fork_origin: self.fork_origin,
             dependencies: self.dependencies.clone(),
             pure_memo: self.pure_memo.clone(),
+            geometry_observations: self.geometry_observations.clone(),
+            geometry_observation_enabled: self.geometry_observation_enabled,
         }
     }
 }
@@ -1426,6 +1450,8 @@ impl Universe {
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
             pure_memo: crate::pure_memo::PureMemoRuntime::default(),
+            geometry_observations: Vec::new(),
+            geometry_observation_enabled: false,
         }
     }
 
@@ -2325,6 +2351,8 @@ impl Universe {
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
             pure_memo: crate::pure_memo::PureMemoRuntime::default(),
+            geometry_observations: Vec::new(),
+            geometry_observation_enabled: false,
         })
     }
 
@@ -2465,6 +2493,7 @@ impl Universe {
             dependency_tracker: self.dependencies.snapshot_tracker(),
             state_hash,
             state_hash_base: next_hash_base,
+            geometry_observations_len: self.geometry_observations.len(),
         }
     }
 
@@ -2508,6 +2537,8 @@ impl Universe {
         self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
             .restore_tracker(&snapshot.dependency_tracker);
+        self.geometry_observations
+            .truncate(snapshot.geometry_observations_len);
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -2523,6 +2554,27 @@ impl Universe {
         self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
             .restore_tracker(&snapshot.dependency_tracker);
+        self.geometry_observations
+            .truncate(snapshot.geometry_observations_len);
+    }
+
+    pub fn enable_geometry_observation(&mut self) {
+        self.geometry_observation_enabled = true;
+    }
+
+    pub fn geometry_observations_since(&self, start: usize) -> &[GeometryObservation] {
+        &self.geometry_observations[start..]
+    }
+
+    #[must_use]
+    pub const fn geometry_observation_len(&self) -> usize {
+        self.geometry_observations.len()
+    }
+
+    pub fn record_geometry_observation(&mut self, observation: GeometryObservation) {
+        if self.geometry_observation_enabled {
+            self.geometry_observations.push(observation);
+        }
     }
 
     fn state_hash_slice(

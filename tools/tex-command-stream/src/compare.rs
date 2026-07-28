@@ -41,7 +41,7 @@ use std::fmt;
 
 use tex_oracle::{
     AlignmentTransition, CanonicalCommand, CommandDelivery, CommandEvent, ConditionTransition,
-    DiagnosticSeverity, EffectKind, Event, InputReason, InputTransition, MacroEvent,
+    DiagnosticSeverity, EffectKind, Event, GeometryEvent, InputReason, InputTransition, MacroEvent,
     NormalizedEvent, RecoveryKind, StateTarget, TokenListTransition,
 };
 
@@ -490,6 +490,9 @@ enum AlignmentKey<'a> {
         kind: EffectKind,
         channel: &'a str,
     },
+    Geometry {
+        transition: &'static str,
+    },
 }
 
 fn alignment_key(event: &Event) -> AlignmentKey<'_> {
@@ -547,6 +550,15 @@ fn alignment_key(event: &Event) -> AlignmentKey<'_> {
         Event::Effect(effect) => AlignmentKey::Effect {
             kind: effect.kind,
             channel: &effect.channel,
+        },
+        Event::Geometry(GeometryEvent::Hpack { .. }) => AlignmentKey::Geometry {
+            transition: "hpack",
+        },
+        Event::Geometry(GeometryEvent::Vpack { .. }) => AlignmentKey::Geometry {
+            transition: "vpack",
+        },
+        Event::Geometry(GeometryEvent::Shipout { .. }) => AlignmentKey::Geometry {
+            transition: "shipout",
         },
     }
 }
@@ -1004,6 +1016,7 @@ pub(crate) fn classify_mismatch_kind(sides: &MismatchSides) -> &'static str {
         (Event::Mutation(_), Event::Mutation(_)) => "mutation_mismatch",
         (Event::Diagnostic(_), Event::Diagnostic(_)) => "diagnostic_mismatch",
         (Event::Effect(_), Event::Effect(_)) => "effect_mismatch",
+        (Event::Geometry(_), Event::Geometry(_)) => "geometry_mismatch",
         (
             Event::Command(_)
             | Event::Input(_)
@@ -1016,7 +1029,8 @@ pub(crate) fn classify_mismatch_kind(sides: &MismatchSides) -> &'static str {
             | Event::Alignment(_)
             | Event::Mutation(_)
             | Event::Diagnostic(_)
-            | Event::Effect(_),
+            | Event::Effect(_)
+            | Event::Geometry(_),
             _,
         ) => "event_kind_mismatch",
     }

@@ -24,9 +24,11 @@ use tex_command::{
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
-    CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
-    ParameterClass, canonical_names::glue_order_name, parameter_mutation_key,
+    CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
+    ObservedToken, ParameterClass, canonical_names::glue_order_name, parameter_mutation_key,
 };
+#[cfg(any(test, feature = "instrumentation"))]
+use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -2065,13 +2067,26 @@ impl CanonicalMainControl {
         if self.fatal.is_some() {
             return Ok(CanonicalStepResult::Progress(MainControlStep::End));
         }
+        let geometry_start = observer.observes_geometry().then(|| {
+            stores.enable_geometry_observation();
+            stores.geometry_observation_len()
+        });
         let snapshot = self.snapshot_step(stores);
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
         self.operation_observations = Some(ObservationBuffer::default());
         let stepped = self.step_with_observer_once(stores, None);
-        let pending = self.operation_observations.take().unwrap_or_default();
+        let mut pending = self.operation_observations.take().unwrap_or_default();
+        if let Some(geometry_start) = geometry_start {
+            pending.0.extend(
+                stores
+                    .geometry_observations_since(geometry_start)
+                    .iter()
+                    .copied()
+                    .map(Self::geometry_observation),
+            );
+        }
         match stepped {
             Ok(step) => {
                 pending.flush_into(observer);
@@ -2102,6 +2117,38 @@ impl CanonicalMainControl {
                 }
             }
         }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn geometry_observation(observation: GeometryObservation) -> CommandObservation {
+        let record = match observation {
+            GeometryObservation::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+            } => GeometryRecord::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+            },
+            GeometryObservation::Vpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+            } => GeometryRecord::Vpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+            },
+            GeometryObservation::Shipout {
+                page_width_sp,
+                page_height_sp,
+            } => GeometryRecord::Shipout {
+                page_width_sp,
+                page_height_sp,
+            },
+        };
+        CommandObservation::Geometry(record)
     }
 
     /// TeX82 §93's `succumb`: `history:=fatal_error_stop; jump_out`.

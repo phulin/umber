@@ -427,4 +427,6 @@ pub enum Event {
     Mutation(MutationEvent),
     Diagnostic(DiagnosticEvent),
     Effect(EffectEvent),
+    /// Detached finalized box/page geometry, available only in schema v2.
+    Geometry(GeometryEvent),
 }

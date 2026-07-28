@@ -140,9 +140,10 @@ pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnos
 pub use survivor::{DeferredNodeOriginCursor, DeferredNodeOrigins};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
-    FormatError, GenerationForkError, GenerationSubstrate, InputOpenContext, InputOpenState,
-    InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine, PenaltyArrayKind,
-    ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind, Universe,
+    FormatError, GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
+    InputOpenState, InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine,
+    PenaltyArrayKind, ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult,
+    UnboxKind, Universe,
 };
 #[cfg(feature = "profiling-stats")]
 pub use world::ProfilingTimer;

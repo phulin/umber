@@ -14,8 +14,8 @@ use std::sync::Arc;
 use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
-    ConditionRecord, EffectRecord, FontResource, InputReason as CommandInputReason, InputRecord,
-    InputTransition, MacroRecord, MutationRecord, ObservedToken,
+    ConditionRecord, EffectRecord, FontResource, GeometryRecord, InputReason as CommandInputReason,
+    InputRecord, InputTransition, MacroRecord, MutationRecord, ObservedToken,
     RecoveryKind as CommandRecoveryKind, RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord,
     SourceNameClass, SourceRegistration, TokenListRecord,
 };
@@ -23,9 +23,9 @@ use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, DiagnosticEvent,
-    DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, InputEvent, InputReason,
-    MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent,
-    ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
+    DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, GeometryEvent, InputEvent,
+    InputReason, MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent,
+    ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation, StateTarget, TokenListEvent,
     TokenListTransition, validate_tex82_command_trace_suite,
 };
 use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
@@ -590,6 +590,7 @@ struct CanonicalStartup {
     input_capabilities: BTreeMap<String, Arc<[u8]>>,
     fonts: BTreeMap<String, Arc<[u8]>>,
     expected_events: usize,
+    schema: SchemaVersion,
 }
 
 impl CanonicalStartup {
@@ -662,6 +663,9 @@ impl CanonicalStartup {
             input_capabilities,
             fonts: resources.fonts.clone(),
             expected_events: fixture.stream.events.len(),
+            schema: SchemaVersion::try_from(fixture.manifest.oracle.schema).map_err(|error| {
+                RunnerError::Replay(format!("unsupported fixture schema: {error}"))
+            })?,
         })
     }
 
@@ -745,7 +749,7 @@ impl CanonicalStartup {
                 },
             );
         }
-        let mut recorder = Recorder::new("terminal", self.input_capabilities);
+        let mut recorder = Recorder::new("terminal", self.input_capabilities, self.schema);
         let scanned = control
             .scan_startup_file_name(&mut universe, &mut recorder)
             .map_err(|error| {
@@ -834,6 +838,7 @@ struct Recorder {
     next_registered_source: u32,
     alignment_nesting: AlignmentNesting,
     events: Vec<ObservedEvent>,
+    geometry: bool,
 }
 
 struct ActiveSource {
@@ -843,7 +848,11 @@ struct ActiveSource {
 }
 
 impl Recorder {
-    fn new(source: impl Into<String>, registered_inputs: BTreeMap<String, Arc<[u8]>>) -> Self {
+    fn new(
+        source: impl Into<String>,
+        registered_inputs: BTreeMap<String, Arc<[u8]>>,
+        schema: SchemaVersion,
+    ) -> Self {
         Self {
             sources: vec![ActiveSource {
                 name: source.into(),
@@ -854,6 +863,7 @@ impl Recorder {
             next_registered_source: 2,
             alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
+            geometry: schema == SchemaVersion::V2,
         }
     }
 
@@ -919,7 +929,14 @@ fn canonical_trace_source_name(name: &str) -> String {
 }
 
 impl CommandObserver for Recorder {
+    fn observes_geometry(&self) -> bool {
+        self.geometry
+    }
+
     fn committed(&mut self, observation: CommandObservation) {
+        if matches!(observation, CommandObservation::Geometry(_)) && !self.geometry {
+            return;
+        }
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
@@ -1098,6 +1115,36 @@ fn translate_observation(
         CommandObservation::Effect(record) => {
             ObservedEvent::new(translate_effect(record), format!("source={source}"))
         }
+        CommandObservation::Geometry(record) => ObservedEvent::new(
+            Event::Geometry(match record {
+                GeometryRecord::Hpack {
+                    width_sp,
+                    height_sp,
+                    depth_sp,
+                } => GeometryEvent::Hpack {
+                    width_sp,
+                    height_sp,
+                    depth_sp,
+                },
+                GeometryRecord::Vpack {
+                    width_sp,
+                    height_sp,
+                    depth_sp,
+                } => GeometryEvent::Vpack {
+                    width_sp,
+                    height_sp,
+                    depth_sp,
+                },
+                GeometryRecord::Shipout {
+                    page_width_sp,
+                    page_height_sp,
+                } => GeometryEvent::Shipout {
+                    page_width_sp,
+                    page_height_sp,
+                },
+            }),
+            format!("source={source}"),
+        ),
     }
 }
 
@@ -1952,6 +1999,7 @@ mod tests {
             input_capabilities: BTreeMap::from([("child".into(), Arc::from(&b"c"[..]))]),
             fonts: BTreeMap::new(),
             expected_events: 0,
+            schema: SchemaVersion::V1,
         }
     }
 
@@ -2245,6 +2293,7 @@ mod tests {
             input_capabilities: BTreeMap::new(),
             fonts: BTreeMap::new(),
             expected_events: 0,
+            schema: SchemaVersion::V1,
         };
 
         let error = startup.replay().expect_err("stale root must not open");
