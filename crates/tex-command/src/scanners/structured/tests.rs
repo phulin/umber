@@ -2155,9 +2155,114 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
         .scan_delimiter_number()
         .expect("delimiter number scans");
     assert_eq!((delimiter.code, delimiter.recovered), (0, true));
+}
 
-    // Input-stream four-bit recovery remains owned by umber2-johp.255; do
-    // not encode the current unbounded stream selector as canonical evidence.
+/// TeX82 §435 supplies the one selector scan used by §1225's
+/// `read_to_cs` and §§1272-1275's `in_stream` command. Every consumer sees
+/// `cur_val=0` after an invalid selector, while `int_error` retains the
+/// original value and the ordinary integer observation precedes the request.
+#[test]
+fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for primitive in [P::OpenIn, P::CloseIn, P::Read, P::ReadLine] {
+        for (source, expected, recovered) in [
+            ("-1", 0, true),
+            ("15", 15, false),
+            ("16", 0, true),
+            ("1000000", 0, true),
+        ] {
+            let mut command = CommandState::default();
+            let mut runtime = CommandRuntime::default();
+            let mut universe = Universe::new_with_plain_catcodes();
+            let mut capabilities = CommandHostCapabilities::default();
+            universe.intern("readtarget");
+            let suffix = match primitive {
+                P::OpenIn => "=fixture ".to_owned(),
+                P::CloseIn => String::new(),
+                P::Read | P::ReadLine => {
+                    if primitive == P::ReadLine {
+                        universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+                    }
+                    universe
+                        .world_mut()
+                        .push_memory_terminal_line(if primitive == P::ReadLine {
+                            ""
+                        } else {
+                            "body"
+                        })
+                        .expect("terminal line queues");
+                    " to \\readtarget ".to_owned()
+                }
+                _ => unreachable!(),
+            };
+            let input = format!("{source} {suffix}");
+            let input_source = command
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(input.into_bytes()),
+                ))
+                .expect("operand source registers");
+            command
+                .open_registered_source(input_source)
+                .expect("operand source opens");
+            let mut recorder = Recorder::default();
+            let request = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder)
+            .scan_input_stream_request(primitive, false)
+            .unwrap_or_else(|error| panic!("{primitive:?} selector {source} scans: {error}"));
+
+            let (stream, scanned, did_recover) = match request {
+                InputStreamRequest::Open {
+                    stream,
+                    scanned,
+                    recovered,
+                    ..
+                }
+                | InputStreamRequest::Close {
+                    stream,
+                    scanned,
+                    recovered,
+                }
+                | InputStreamRequest::Read {
+                    stream,
+                    scanned,
+                    recovered,
+                    ..
+                } => (stream, scanned, recovered),
+            };
+            assert_eq!(
+                (stream, scanned, did_recover),
+                (
+                    expected,
+                    source.parse::<i32>().expect("decimal case"),
+                    recovered
+                ),
+                "{primitive:?} selector {source}",
+            );
+
+            let integer_events: Vec<_> = recorder
+                .0
+                .iter()
+                .filter_map(|event| match event {
+                    CommandObservation::Scanner(record) if record.kind == "integer" => {
+                        Some(record.value.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                integer_events.first().copied(),
+                Some(source),
+                "{primitive:?} observes the raw integer before request commit",
+            );
+        }
+    }
 }
 
 #[test]

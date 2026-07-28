@@ -8892,8 +8892,30 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::InputStream { request, resource } => {
+            let (scanned, recovered) = match &request {
+                InputStreamRequest::Open {
+                    scanned, recovered, ..
+                }
+                | InputStreamRequest::Close {
+                    scanned, recovered, ..
+                }
+                | InputStreamRequest::Read {
+                    scanned, recovered, ..
+                } => (*scanned, *recovered),
+            };
+            // TeX82 §435 finishes `scan_four_bit_int` (including `int_error`
+            // and `cur_val:=0`) before §§1225/1275 consume the selector.
+            if recovered {
+                report_restricted_integer_recovery(
+                    stores,
+                    RestrictedIntegerClass::FourBit,
+                    scanned,
+                );
+            }
             match request {
-                InputStreamRequest::Open { stream, file_name } => {
+                InputStreamRequest::Open {
+                    stream, file_name, ..
+                } => {
                     let slot = replay_stream_slot(stream, stores);
                     // §1275 closes any stream already open on `n` before it
                     // tries to open the new file, whichever command this is.
@@ -8910,7 +8932,7 @@ fn apply_scanned_step(
                     )?;
                     stores.world_mut().open_in_content(slot, &content)?;
                 }
-                InputStreamRequest::Close { stream } => {
+                InputStreamRequest::Close { stream, .. } => {
                     let slot = replay_stream_slot(stream, stores);
                     stores.world_mut().close_in(slot);
                 }

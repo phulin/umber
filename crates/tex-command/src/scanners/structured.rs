@@ -755,10 +755,16 @@ pub struct ScannedFileName {
 pub enum InputStreamRequest {
     Open {
         stream: i32,
+        /// The unrecovered §435 `scan_int` result for `int_error`.
+        scanned: i32,
+        /// Whether §435 replaced `scanned` with stream zero.
+        recovered: bool,
         file_name: ScannedFileName,
     },
     Close {
         stream: i32,
+        scanned: i32,
+        recovered: bool,
     },
     /// TeX82 §482's `read_toks` has already run: the collected list is
     /// carried here, not a stream the executor must go read itself.
@@ -768,6 +774,8 @@ pub enum InputStreamRequest {
     /// core. Replay only installs the parameterless macro §482 built.
     Read {
         stream: i32,
+        scanned: i32,
+        recovered: bool,
         target: Symbol,
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
@@ -1713,16 +1721,27 @@ impl CommandProcessor<'_> {
     ) -> Result<InputStreamRequest, CommandError> {
         use tex_state::meaning::UnexpandablePrimitive;
 
-        let stream = self.scan_integer()?.value;
+        // TeX82 §435's `scan_four_bit_int` is the selector scan shared by
+        // §1225's read_to_cs and §§1272-1275's in_stream command. Recovery is
+        // complete before any request is committed; the raw value crosses
+        // the apply seam only so §435's `int_error` can report it first.
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
+        let stream = scanned.value;
         match primitive {
             UnexpandablePrimitive::OpenIn => {
                 let _ = self.scan_optional_equals()?;
                 Ok(InputStreamRequest::Open {
                     stream,
+                    scanned: scanned.scanned,
+                    recovered: scanned.recovered,
                     file_name: self.scan_file_name()?,
                 })
             }
-            UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close { stream }),
+            UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close {
+                stream,
+                scanned: scanned.scanned,
+                recovered: scanned.recovered,
+            }),
             UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
                 // tex.web §1225 reports a missing `to` and inserts it, then
                 // runs `get_r_token` regardless: the keyword is recovered,
@@ -1744,6 +1763,8 @@ impl CommandProcessor<'_> {
                     self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
                 Ok(InputStreamRequest::Read {
                     stream,
+                    scanned: scanned.scanned,
+                    recovered: scanned.recovered,
                     target,
                     global: read_global,
                     missing_to,

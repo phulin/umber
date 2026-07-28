@@ -199,6 +199,64 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
 }
 
 #[test]
+fn input_stream_recovery_reports_raw_selector_before_recovered_read_commit() {
+    // TeX82 §§435/1225: `scan_four_bit_int` observes 16, reports it, and
+    // substitutes zero before `read_toks` and the target definition.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("recovered")
+        .expect("terminal line queues");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\read16 to \line\end");
+    let mut observations = ObservationRecorder::default();
+    for _ in 0..64 {
+        if matches!(
+            control
+                .step_with_observer(&mut stores, &mut observations)
+                .expect("recovered read remains executable"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    assert_eq!(
+        macro_tokens(&stores, "line")[0],
+        Token::Char {
+            ch: 'r',
+            cat: Catcode::Letter,
+        }
+    );
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("! Bad number (16)."));
+    assert!(terminal.contains("I changed this one to zero."));
+    let integer = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Scanner(scanner)
+                    if scanner.kind == "integer" && scanner.value == "16"
+            )
+        })
+        .expect("raw selector is observed");
+    let mutation = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Mutation(mutation)
+                    if mutation.key.as_deref() == Some("line")
+            )
+        })
+        .expect("recovered read target is committed");
+    assert!(integer < mutation);
+}
+
+#[test]
 fn read_to_definition_preserves_effective_scope_and_replay() {
     // TeX82 §§1214/1225 select scope before `read_toks`, then install its
     // parameterless macro after collection. Exercise explicit prefixes and

@@ -610,17 +610,15 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "restricted_integer_consumers_observe_recovered_zero_before_commit"
-        }
-      ],
-      "planned_coverage": [
+        },
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "restricted_input_stream_consumers_recover_out_of_range_to_zero",
-          "cases": ["openin", "closein", "read", "readline", "four-bit bound", "umber2-johp.255"]
+          "test": "restricted_input_stream_consumers_recover_out_of_range_to_zero"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.255"
+      "planned_coverage": [],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.scanner.integer",
