@@ -66,14 +66,22 @@ Semantic hashing and named checkpoints read only live mode state. Journal
 cursors, inverse capacity, and spare allocation are operational state and must
 not enter semantic equality, traces, formats, or durable summaries.
 
-## Why implementation is deferred
+## Why implementation remains deferred
 
-The current mutation boundary is not journal-safe. The crate has 233
-`current_list_mut`/`list_mut` and direct mutation uses, including APIs returning
-`&mut Vec<Node>`, `&mut Node`, `&mut AlignState`, and `&mut ModeList`.
-Installing only an append watermark would make successful character steps
-fast while silently breaking rollback for math-node edits, reconstitution,
-alignment state, list ownership transfer, and nested operations.
+The typed-boundary phase removed the mutable aggregate escape hatch before any
+journal behavior was enabled. Its final production census reduced five
+escaping accessor APIs and 189 exact `current_list_mut`/`list_mut`/
+`reconstitution_target`/`align_state_mut` uses to zero. Ordinary edits now use
+named operations on a private `ModeListMutation` capability. Pre-existing
+`Node`, reconstitution `Vec<Node>`, and `AlignState` edits use higher-ranked
+closure write barriers that cannot return their mutable borrow. The capability
+does not implement `DerefMut`, `AsMut`, or `BorrowMut`, and it has no generic
+raw-list mutation closure.
+
+The boundary alone does not make a partial journal correct. Installing only an
+append watermark would still silently break rollback for math-node edits,
+reconstitution, alignment state, list ownership transfer, and nested
+operations.
 
 The bounded benchmark establishes the performance opportunity, but it cannot
 bound the correctness risk of converting all 233 seams in the same profiling
@@ -85,17 +93,18 @@ correct implementation.
 
 ## Implementation sequence
 
-The historical 233-seam census includes both syntactic mutable accessors and
-capabilities forwarded through helper functions, so a raw text count is not a
-completion measure. The boundary phase removes capabilities by mutation
-family and keeps source-boundary tests for each eliminated family.
+The historical 233-seam census included both syntactic mutable accessors and
+capabilities forwarded through helper functions, so it was not directly
+comparable to the final exact-use census. The source-boundary gate now rejects
+the four retired accessor families, mutable aggregate return signatures,
+generic raw-list closures, and standard mutable-dereference escape traits.
 
-The first phase replaces direct `&mut Node` access by index and at the tail
-with closure-scoped write barriers. This establishes the shape required for a
-future moved-value inverse without enabling any journal semantics. Remaining
-work is ordered in `umber2-johp.300.1` through `umber2-johp.300.3`: complete
-the non-escaping mutation boundary, implement and exhaustively test a disabled
-journal, then promote and profile it atomically.
+The completed first phase replaced direct `&mut Node` access by index and at
+the tail with closure-scoped write barriers, then moved every remaining mode
+list mutation behind the typed capability. This establishes the shape required
+for future inverse recording without enabling any journal semantics. Remaining
+work is ordered in `umber2-johp.300.2` and `umber2-johp.300.3`: implement and
+exhaustively test a disabled journal, then promote and profile it atomically.
 
 The acceptance baseline is the integrated five-fixture command-stream report:
 `CLEAN`, zero ordered divergences, and zero root sites. The older
