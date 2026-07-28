@@ -544,20 +544,7 @@ fn typed_parameter_register_and_arithmetic_assignments_cover_scope_copy_and_boun
     );
     assert_eq!(
         stores.tokens(stores.tok_param(TokParam::EVERY_PAR)),
-        &[
-            Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            letter('h'),
-            letter('o'),
-            letter('o'),
-            letter('k'),
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            },
-        ]
+        &[letter('h'), letter('o'), letter('o'), letter('k')]
     );
     assert_eq!(stores.catcode('@'), Catcode::Letter);
     assert_eq!(stores.count(9), 0, "ordinary local register restores");
