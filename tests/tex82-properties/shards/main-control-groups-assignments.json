@@ -194,6 +194,22 @@
       "rationale": "Typed right-brace handling restores scoped state."
     },
     {
+      "modules": { "first": 934, "last": 937 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.hyphenation-data"],
+      "gap_bead": null,
+      "rationale": "Hyphenation exception scanning diagnoses invalid commands and lccodes while preserving word recovery."
+    },
+    {
+      "modules": { "first": 960, "last": 963 },
+      "disposition": "property",
+      "owner": "tex-exec::assignments",
+      "property_ids": ["tex82.assignment.hyphenation-data"],
+      "gap_bead": null,
+      "rationale": "Pattern scanning and application diagnose finalized tries, invalid commands and letters, and duplicate trie paths."
+    },
+    {
       "modules": { "first": 1208, "last": 1214 },
       "disposition": "property",
       "owner": "tex-exec::assignments",
