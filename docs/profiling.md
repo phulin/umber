@@ -74,12 +74,34 @@ followed by the engine-owned `DviPagePlan::clone` at 19.06% inclusive and
 7.92% self. The largest `tex-command-stream`-owned kernels were
 `events_match` at 0.25% self and `translate_observation` at 0.23% self.
 
+Issue `umber2-johp.296` attributed that content hashing through a DWARF-stack
+capture to `SourceDescriptor::generated` below canonical raw source delivery.
+The command source registry already retained the immutable backing, but rebuilt
+its generated descriptor before every token and therefore rehashed the complete
+source. A registered command source now retains the mechanically identical
+descriptor, including its domain-separated identity, and clones it for
+rollback-coupled source-map registration. This does not cache by digest or
+accept a caller-supplied identity: `GeneratedSource` still computes the exact
+versioned input-domain identity once when the source is registered, so
+collision safety and descriptor equality remain unchanged.
+
+The bounded focused benchmark is:
+
+```bash
+cargo bench --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bench source_descriptor -- --noplot
+```
+
+It compares rebuilding a descriptor for one shared 1 MiB generated backing
+against cloning the descriptor retained at registration. Full Plain, Story,
+and Gentle traces remain manual profiling and exact-report validation inputs,
+not benchmark fixtures.
+
 Those tool-owned ceilings are too small to support a credible end-to-end
-optimization, so no tracer change was promoted. Follow-up `umber2-johp.296`
-owns profiling and reducing the repeated content hashing without changing
-content identity semantics. On the measured base, the current exhaustive
-signature was 23 divergences in 9 root sites with `DIVERGED` exit 1; this
-supersedes older event totals only for comparisons based on that commit.
+optimization, so no tracer change was promoted. On the measured base, the
+current exhaustive signature was 23 divergences in 9 root sites with
+`DIVERGED` exit 1; this supersedes older event totals only for comparisons
+based on that commit.
 
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:

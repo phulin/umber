@@ -1,6 +1,7 @@
 //! Registered source and source-cursor ownership.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use tex_state::source_map::SourceDescriptor;
@@ -191,29 +192,21 @@ impl fmt::Display for SourceRegistrationError {
 impl std::error::Error for SourceRegistrationError {}
 
 /// Complete immutable source backing retained by command state.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct RegisteredSource {
     pub(crate) id: SourceId,
     pub(crate) kind: RegisteredSourceKind,
     pub(crate) mode: CharacterMode,
     pub(crate) bytes: Arc<[u8]>,
     pub(crate) world_record: Option<InputRecordId>,
+    descriptor: SourceDescriptor,
 }
 
 impl RegisteredSource {
     /// Returns the immutable backing descriptor used to register source
     /// coordinates with the aggregate source map.
     pub(crate) fn source_descriptor(&self) -> SourceDescriptor {
-        self.world_record.map_or_else(
-            || SourceDescriptor::generated(Arc::clone(&self.bytes)),
-            |record| {
-                SourceDescriptor::world(
-                    record,
-                    u64::try_from(self.bytes.len())
-                        .expect("registered source length was validated"),
-                )
-            },
-        )
+        self.descriptor.clone()
     }
 
     pub(crate) fn register(
@@ -241,13 +234,59 @@ impl RegisteredSource {
                 MalformedUnicodeRange { start, end },
             ));
         }
+        let descriptor = registration.world_record.map_or_else(
+            || SourceDescriptor::generated(Arc::clone(&registration.bytes)),
+            |record| {
+                SourceDescriptor::world(
+                    record,
+                    u64::try_from(registration.bytes.len())
+                        .expect("registered source length was validated"),
+                )
+            },
+        );
         Ok(Self {
             id,
             kind: registration.kind,
             mode,
             bytes: registration.bytes,
             world_record: registration.world_record,
+            descriptor,
         })
+    }
+}
+
+impl fmt::Debug for RegisteredSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegisteredSource")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("mode", &self.mode)
+            .field("bytes", &self.bytes)
+            .field("world_record", &self.world_record)
+            .finish()
+    }
+}
+
+impl PartialEq for RegisteredSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.kind == other.kind
+            && self.mode == other.mode
+            && self.bytes == other.bytes
+            && self.world_record == other.world_record
+    }
+}
+
+impl Eq for RegisteredSource {}
+
+impl Hash for RegisteredSource {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.kind.hash(state);
+        self.mode.hash(state);
+        self.bytes.hash(state);
+        self.world_record.hash(state);
     }
 }
 

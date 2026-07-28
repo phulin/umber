@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::{collections::hash_map::DefaultHasher, hash::Hash, hash::Hasher};
 
 use tex_state::{SourceId, World};
 
@@ -107,6 +108,32 @@ fn every_registration_kind_is_retained_without_changing_backing() {
         assert_eq!(registered.kind, kind);
         assert_eq!(registered.bytes, bytes);
     }
+}
+
+#[test]
+fn generated_descriptor_is_retained_without_changing_source_semantics() {
+    let bytes = Arc::<[u8]>::from(vec![b'x'; 64 * 1024]);
+    let registered = RegisteredSource::register(
+        SourceId::new(11),
+        CommandProfile::TEX82,
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::clone(&bytes)),
+    )
+    .expect("generated source registers");
+    let clone = registered.clone();
+
+    let first = registered.source_descriptor();
+    let second = registered.source_descriptor();
+    let expected = tex_state::source_map::SourceDescriptor::generated(Arc::clone(&bytes));
+    assert_eq!(first, expected);
+    assert_eq!(second, expected);
+    assert_eq!(registered, clone);
+
+    let semantic_hash = |source: &RegisteredSource| {
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(semantic_hash(&registered), semantic_hash(&clone));
 }
 
 #[test]

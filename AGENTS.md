@@ -64,6 +64,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/bib-bst`: bounded classic BibTeX style lexer, parser, compiler, and immutable programs.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
+- `benchmarks/tex-command`: bounded generated-source descriptor identity reuse benchmark.
 - `benchmarks/png-import`: host-only comparison of custom, Reader, and bounded
   StreamingDecoder PNG alpha import paths on a recent-arXiv raster workload.
 - `tests/`: committed fixtures and parity test definitions.
