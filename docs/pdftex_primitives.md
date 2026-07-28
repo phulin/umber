@@ -257,6 +257,16 @@ The timer, random seed, and shell-escape capability are immutable host inputs
 at the `World` boundary plus checkpointed engine state. `\pdfelapsedtime` uses
 pdfTeX's 16.16-second result at 100-microsecond resolution, and
 `\pdfresettimer` rebases it without consulting a host clock during execution.
+pdftex.web §§1581 and 1586 install the reset as an `extension`, dispatch it in
+every mode, scan no operand, and replace the process-global epoch immediately.
+It is consequently below TeX82 §125's prefixable-command boundary, is not
+restored by grouping, and is restored by Umber's execution snapshots rather
+than serialized into formats. The deterministic monotonic sample and epoch
+both participate in semantic identity; rollback, checkpoint replay, and a
+resource retry therefore reproduce the same enquiry without another host
+clock read. pdftex.web §526 computes the enquiry by truncating the elapsed
+microseconds to 100-microsecond units before 16.16 scaling and saturates at
+`2^31-1` once the whole-second delta exceeds 32,767.
 `\pdfsetrandomseed`, `\pdfuniformdeviate`, and `\pdfnormaldeviate` reproduce
 pdfTeX's MetaPost-derived 55-word subtractive generator and fixed-point
 rounding exactly. `\pdfshellescape` reports 0, 1, or 2 for disabled,

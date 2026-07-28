@@ -71,6 +71,15 @@ fn pdftex_random_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_timer_control(stores: &mut Universe) -> CanonicalMainControl {
+    let reset_timer = stores.intern("pdfresettimer");
+    stores.set_meaning(
+        reset_timer,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer),
+    );
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
 fn step_until_pdf_seed(control: &mut CanonicalMainControl, stores: &mut Universe, expected: i32) {
     for _ in 0..4 {
         control.step(stores).expect("canonical random command");
@@ -157,6 +166,60 @@ fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
         MainControlStep::Continue
     );
     assert_eq!(stores.world().pdf_random_seed(), 9);
+}
+
+#[test]
+fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
+    let mut stores = Universe::default();
+    stores.world_mut().set_pdf_time_micros(1_250_000);
+    let mut control = pdftex_timer_control(&mut stores);
+    register_source(&mut control, br"{\pdfresettimer X}");
+
+    assert_eq!(
+        control.step(&mut stores).expect("begin group"),
+        MainControlStep::Continue
+    );
+    for _ in 0..3 {
+        control.step(&mut stores).expect("timer reset");
+        if stores.world().pdf_elapsed_time() == 0 {
+            break;
+        }
+    }
+    assert_eq!(stores.world().pdf_elapsed_time(), 0);
+
+    stores.world_mut().set_pdf_time_micros(2_250_000);
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        stores.world().pdf_elapsed_time(),
+        65_536,
+        "the reset is not restored by a group, and the following token was not consumed"
+    );
+}
+
+#[test]
+fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
+    let mut stores = Universe::default();
+    stores.world_mut().set_pdf_time_micros(1_250_000);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_timer_control(&mut stores);
+    register_source(&mut control, br"\global\pdfresettimer ");
+
+    assert_eq!(
+        control.step(&mut stores).expect("reject prefix"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_elapsed_time(), 81_920);
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+
+    assert_eq!(
+        control.step(&mut stores).expect("replayed timer reset"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.world().pdf_elapsed_time(), 0);
 }
 
 #[test]

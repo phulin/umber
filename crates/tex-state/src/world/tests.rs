@@ -634,6 +634,33 @@ fn pdftex_utility_state_rolls_back_with_world_snapshot() {
 }
 
 #[test]
+fn pdftex_elapsed_timer_matches_source_quantization_saturation_and_rollback() {
+    let mut world = World::memory_with_pdftex_inputs(
+        JobClock::DEFAULT,
+        0,
+        1_000_000,
+        ShellEscapePolicy::Disabled,
+    );
+    assert_eq!(world.pdf_elapsed_time(), 0);
+
+    world.set_pdf_time_micros(1_000_100);
+    assert_eq!(world.pdf_elapsed_time(), 6);
+    world.set_pdf_time_micros(1_999_999);
+    assert_eq!(world.pdf_elapsed_time(), 65_529);
+    world.set_pdf_time_micros(2_000_000);
+    assert_eq!(world.pdf_elapsed_time(), 65_536);
+
+    let snapshot = world.snapshot();
+    world.reset_pdf_timer();
+    assert_eq!(world.pdf_elapsed_time(), 0);
+    world.set_pdf_time_micros(32_770_000_000);
+    assert_eq!(world.pdf_elapsed_time(), i32::MAX);
+
+    world.rollback(&snapshot);
+    assert_eq!(world.pdf_elapsed_time(), 65_536);
+}
+
+#[test]
 fn pdftex_session_inputs_are_supplied_at_world_construction() {
     let world = World::memory_with_pdftex_inputs(
         JobClock::DEFAULT,

@@ -3342,6 +3342,10 @@ enum ScannedStep {
     PdfSetRandomSeed {
         seed: i32,
     },
+    /// pdftex.web §1586's `\pdfresettimer`: there is no operand; application
+    /// atomically rebases the ungrouped job timer to the deterministic
+    /// monotonic sample already held by `World`.
+    PdfResetTimer,
     PdfGraphics(PdfGraphicsRequest),
     PdfObject(PdfObjectRequest),
     PdfReferenceObject(PdfReferenceObjectRequest),
@@ -5246,6 +5250,9 @@ fn scan_command(
                 seed: seed.saturating_abs(),
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer) => {
+            Ok(ScannedStep::PdfResetTimer)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
             ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
         ),
@@ -6160,6 +6167,7 @@ fn scan_unclassified_primitive(
         | P::PdfRestore
         | P::PdfSave
         | P::PdfSavePos
+        | P::PdfResetTimer
         | P::PdfSetRandomSeed
         | P::PdfSetMatrix
         | P::PdfStartLink
@@ -6373,7 +6381,6 @@ fn scan_unclassified_primitive(
         | P::PdfNoBuiltinToUnicode
         | P::PdfNoLigatures
         | P::PdfOutline
-        | P::PdfResetTimer
         | P::PdfRpCode
         | P::PdfRunningLinkOff
         | P::PdfRunningLinkOn
@@ -7790,6 +7797,7 @@ fn applied_mutation_observation(
         | ScannedStep::PdfXImage { .. }
         | ScannedStep::PdfRefXImage { .. }
         | ScannedStep::PdfSetRandomSeed { .. }
+        | ScannedStep::PdfResetTimer
         | ScannedStep::PdfGraphics(..)
         | ScannedStep::PdfObject(..)
         | ScannedStep::PdfReferenceObject(..)
@@ -9416,6 +9424,10 @@ fn apply_scanned_step(
         }
         ScannedStep::PdfSetRandomSeed { seed } => {
             stores.world_mut().set_pdf_random_seed(seed);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfResetTimer => {
+            stores.world_mut().reset_pdf_timer();
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
