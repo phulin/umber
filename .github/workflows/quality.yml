@@ -1,0 +1,29 @@
+name: Quality
+
+# This workflow is deliberately unfiltered. dprint covers documentation and
+# root configuration as well as Rust, while the lint inventory covers every
+# workspace member. A path filter here would turn those guarantees into guesses.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  format-and-lint:
+    name: scripts/check.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dprint
+        run: npm install --global dprint@0.55.2
+      - name: Validate CI coverage contract
+        run: python3 scripts/test-ci-workflows.py
+      - name: Format and lint
+        run: scripts/check.sh

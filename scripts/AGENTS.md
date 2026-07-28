@@ -35,6 +35,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-check-lint-passes.py`: synthetic-input proof that each coverage guard
   in `check-lint-passes.py` fails when it should; the clippy gate runs it
   before trusting them.
+- `test-ci-workflows.py`: deterministic contract check that the always-on
+  GitHub Actions quality workflow has no path filter, invokes `check.sh`, and
+  leaves native correctness and browser WASM coverage in the deferred workflow
+  without duplicating the format/lint gate.
 - `tier-runner.sh`: sourced step accounting shared by the deferred tiers; gives
   each one named steps, a `VERDICT:` line naming what ran, a BLOCKED outcome
   for an absent prerequisite that never exits 0, and a stamp written from that

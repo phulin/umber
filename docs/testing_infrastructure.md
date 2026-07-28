@@ -183,6 +183,15 @@ refusing `BLOCKED` and `FAILED` too would make recording a bad outcome worse
 for the author than never running the tier at all. Install the hooks with
 `scripts/install-hooks.sh`, which prints what it installed.
 
+The repository format and lint contract is independent of those expensive
+tiers. `.github/workflows/quality.yml` runs `scripts/check.sh` without a path
+filter on every pull request and every push to `main`, so documentation, root
+Markdown, fixtures, scripts, tools, and every workspace crate reach the same
+gate. The deferred WASM job runs native correctness through
+`run-native-tests.py` but does not repeat formatting or linting.
+`scripts/test-ci-workflows.py` binds those workflow responsibilities so a
+future edit cannot silently put the path-filter hole back.
+
 A tier can be BLOCKED on a normal development machine, and that is the point:
 on a host without ripgrep, `check-tools.sh` reports
 `VERDICT: BLOCKED - 11 of 12 steps ran, 1 could not run` and exits 4 rather

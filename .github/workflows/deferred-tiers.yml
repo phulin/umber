@@ -48,8 +48,10 @@ jobs:
         run: cargo install wasm-pack --version 0.14.0 --locked
       - name: Install dprint
         run: npm install --global dprint@0.55.2
-      - name: Native quality gate
-        run: scripts/check-and-test.sh
+      # Formatting and linting have their own unfiltered workflow. Keep native
+      # correctness here without paying for those gates twice.
+      - name: Native correctness gate
+        run: scripts/run-native-tests.py
       - name: Test optimized package in Firefox and Chrome
         run: CHROME="$(command -v chrome)" CHROME_NO_SANDBOX=1 scripts/check-wasm.sh
 
