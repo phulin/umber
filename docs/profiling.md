@@ -57,6 +57,15 @@ live source region. This is the bounded reproduction of the command-stream
 hot path; full Plain, Story, and Gentle traces remain manual profiling inputs
 rather than test fixtures.
 
+The first cache-aware candidate still compared the full shared byte slice and
+measured 36.020 µs median. The final shared-backing fast path measured
+55.545 ns median and 56.061 ns mean, a 99.8445% reduction. A 29K-sample
+`perf -F 999` capture over the focused release benchmark reported
+`SourceMap::existing_registration` as the remaining registration kernel and
+no samples in `source_line_starts`. The exhaustive report signature this path
+must preserve is 61 divergences in 24 root sites: transitions, Plain, and Story
+clean; Gentle's first divergence at event 476410; `DIVERGED` exit 1.
+
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:
 
