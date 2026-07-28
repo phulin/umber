@@ -5095,6 +5095,58 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
     );
 }
 
+#[test]
+fn outer_vertical_rule_waits_for_the_next_page_builder_command() {
+    // TeX82 §1056's append_rule contributes the rule and resets prev_depth,
+    // but has no build_page tail. The backed-up \par that terminated the rule
+    // specification is therefore delivered first; §1096's vertical-par arm
+    // owns the subsequent page-builder visit.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\hrule height2pt\par\end");
+
+    control
+        .step(&mut universe)
+        .expect("vertical rule is contributed");
+    assert!(matches!(
+        universe.page_contribution_front(),
+        Some(Node::Rule {
+            height: Some(height),
+            ..
+        }) if *height == Scaled::from_raw(131_072)
+    ));
+    assert_eq!(
+        universe.current_page_len(),
+        0,
+        "append_rule itself does not visit the page builder"
+    );
+
+    control
+        .step(&mut universe)
+        .expect("backed-up par visits the page builder");
+    assert_eq!(universe.page_contribution_front(), None);
+    assert!(
+        universe.current_page_len() > 0,
+        "the following vertical par owns §1096's build_page call"
+    );
+}
+
+#[test]
+fn outer_vertical_penalty_still_visits_page_builder_after_a_rule() {
+    // Negative control: §1056 changes only append_rule. §1103's append_penalty
+    // retains its explicit `if mode=vmode then build_page` tail.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\hrule height2pt\penalty0\end");
+
+    control.step(&mut universe).expect("vertical rule");
+    assert!(universe.page_contribution_front().is_some());
+    control
+        .step(&mut universe)
+        .expect("vertical penalty visits page builder");
+    assert_eq!(universe.page_contribution_front(), None);
+}
+
 // The rest of §1090's shared vertical-mode case, each checked the same way:
 // the delivering step commits the backup and scans nothing, and the operand is
 // scanned only after the backed-up token is redelivered in horizontal mode.

@@ -11207,7 +11207,10 @@ fn apply_scanned_rule(
         modes
             .current_list_mut()
             .set_prev_depth(crate::mode::ignored_depth(stores));
-        crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+        // TeX82 §1056's `append_rule` stops after `tail_append` and resetting
+        // `prev_depth` in vertical mode. Unlike §1075's box append and §1103's
+        // penalty append, it deliberately does not call `build_page`; the
+        // next command with an explicit page-builder tail owns that visit.
     } else {
         if matches!(
             modes.current_mode(),
