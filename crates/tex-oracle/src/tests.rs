@@ -17,6 +17,7 @@ use crate::{
     EngineIdentity, Event, EventObserver, FixtureArtifact, FixtureManifest, FixtureProfile,
     GeometryEvent, JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationHeader,
     ObservationStream, SCHEMA_VERSION, SchemaVersion, ToolIdentity,
+    validate_tex82_geometry_trace_fixture,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -254,6 +255,41 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
                 .expect("fixture audit matrix"),
         )
         .expect("complete bidirectional fixture audit");
+}
+
+#[test]
+fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture =
+        validate_tex82_geometry_trace_fixture(repository).expect("committed geometry fixture");
+    assert_eq!(fixture.selector, "tex82/geometry-v2");
+    assert_eq!(fixture.stream.header.schema, SchemaVersion::V2.number());
+    assert_eq!(fixture.stream.events.len(), 7);
+    assert!(
+        fixture
+            .stream
+            .events
+            .iter()
+            .all(|event| matches!(event.semantic, Event::Geometry(_)))
+    );
+    assert!(
+        fixture
+            .stream
+            .events
+            .iter()
+            .any(|event| matches!(event.semantic, Event::Geometry(GeometryEvent::Hpack { .. })))
+    );
+    assert!(
+        fixture
+            .stream
+            .events
+            .iter()
+            .any(|event| matches!(event.semantic, Event::Geometry(GeometryEvent::Vpack { .. })))
+    );
+    assert!(fixture.stream.events.iter().any(|event| matches!(
+        event.semantic,
+        Event::Geometry(GeometryEvent::Shipout { .. })
+    )));
 }
 
 #[test]

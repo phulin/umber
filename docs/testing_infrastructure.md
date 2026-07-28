@@ -813,11 +813,13 @@ are floors. Pass a budget large enough to exhaust every fixture whenever the
 totals are going to be compared against anything.
 
 Run this from the repository root. It replays the committed
-`tests/corpus/command/tex82` fixture registry through the instrumented
-command boundary and compares the translated `tex-oracle` event stream
-against the expected trace. It is fully hermetic (no external corpus,
-distribution, or live TeX tool required) and never invokes a reference
-engine.
+`tests/corpus/command/tex82` fixture registry and the separately pinned
+`tests/tex82-oracle/geometry.tex` microfixture through the instrumented command
+boundary and compares the translated `tex-oracle` event streams against their
+expected traces. The geometry source selects schema v2 and compares its
+detached hpack, vpack, and shipout projection; ordinary command fixtures remain
+schema v1. The run is fully hermetic (no external corpus, distribution, or live
+TeX tool required) and never invokes a reference engine.
 
 The native correctness suite runs this committed-microfixture comparison and
 requires `CLEAN`; its `committed_tex82_command_traces_are_clean` test uses the
@@ -825,7 +827,11 @@ committed-only runner, which validates the fixture inventory before replaying
 it. An absent or drifted committed fixture therefore fails explicitly rather
 than making the gate look clean. It never loads the generated document-trace
 tree, so the routine suite does not replay Plain, Story, Gentle, TRIP, or any
-other full document.
+other full document. The committed geometry microfixture is deliberately
+font-independent and covers explicit packaging, paragraph line packing, an
+explicit shipment, and end-of-job page-builder shipment. Controlled hpack and
+shipout mutations gate `geometry_mismatch` diagnostics, including both
+expected and actual signed scaled-point values.
 
 It reports a ranked WORKLIST, not just the first divergence:
 

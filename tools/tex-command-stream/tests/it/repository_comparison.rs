@@ -19,4 +19,11 @@ fn committed_tex82_command_traces_are_clean() {
     assert!(report.is_complete(), "{report}");
     assert!(report.uncompared().is_empty(), "{report}");
     assert!(!report.fixtures.is_empty(), "{report}");
+    assert!(
+        report
+            .fixtures
+            .iter()
+            .any(|fixture| fixture.name == "tex82/geometry-v2"),
+        "the committed schema-v2 geometry projection must be part of the native gate: {report}"
+    );
 }

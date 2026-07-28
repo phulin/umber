@@ -26,7 +26,7 @@ use tex_oracle::{
     DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, GeometryEvent, InputEvent,
     InputReason, MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent,
     ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation, StateTarget, TokenListEvent,
-    TokenListTransition, validate_tex82_command_trace_suite,
+    TokenListTransition, validate_tex82_command_trace_suite, validate_tex82_geometry_trace_fixture,
 };
 use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
 
@@ -157,8 +157,61 @@ pub fn run_committed_repository(
             &mut report,
         )?;
     }
+    collect_geometry_divergences(repository, options, &mut report)?;
 
     Ok(report)
+}
+
+fn collect_geometry_divergences(
+    repository: &Path,
+    options: RunOptions,
+    report: &mut ComparisonReport,
+) -> Result<(), RunnerError> {
+    let fixture = validate_tex82_geometry_trace_fixture(repository)
+        .map_err(|error| RunnerError::Suite(error.to_string()))?;
+    let replay =
+        CanonicalStartup::geometry(fixture.source, fixture.stream.events.len()).replay()?;
+    let actual = replay
+        .events
+        .into_iter()
+        .filter(|event| matches!(event.event, Event::Geometry(_)))
+        .collect::<Vec<_>>();
+    let actual_events = actual.len();
+    let identity = format!("{} projection={}", fixture.selector, fixture.identity);
+    let comparison = find_divergences(
+        &identity,
+        &fixture.stream.events,
+        &actual,
+        options.max_divergences,
+        options.alignment,
+    );
+    let first = report.divergences.len();
+    let budgeted = comparison.entries.len();
+    report.divergences.extend(
+        comparison
+            .entries
+            .into_iter()
+            .map(Box::new)
+            .map(Divergence::Mismatch),
+    );
+    if let Some(failure) = replay.failure {
+        report.divergences.push(Divergence::Failure {
+            fixture: identity.clone(),
+            index: actual_events,
+            failure,
+        });
+    }
+    report.fixtures.push(FixtureSummary {
+        name: fixture.selector,
+        identity,
+        state: FixtureState::Compared {
+            divergences: report.divergences.len() - first,
+            budgeted,
+            first_index: report.divergences.get(first).map(Divergence::index),
+            budget_reached: comparison.budget_reached,
+        },
+    });
+    Ok(())
 }
 
 /// Runs every registered TeX82 trace with no live-engine access, reporting up
@@ -594,6 +647,19 @@ struct CanonicalStartup {
 }
 
 impl CanonicalStartup {
+    fn geometry(source: Vec<u8>, expected_events: usize) -> Self {
+        Self {
+            profile: CommandProfile::TEX82,
+            terminal_filename: Arc::from(&b"geometry.tex "[..]),
+            root_name: "geometry.tex".into(),
+            root_bytes: Arc::from(source),
+            input_capabilities: BTreeMap::new(),
+            fonts: BTreeMap::new(),
+            expected_events,
+            schema: SchemaVersion::V2,
+        }
+    }
+
     #[allow(
         clippy::disallowed_methods,
         reason = "this offline host tool reads fixture bytes after CommittedFixture validation"

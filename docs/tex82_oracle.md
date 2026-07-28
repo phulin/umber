@@ -17,10 +17,30 @@ unchanged.
 The reference profile is a separately built writable executable and runs only
 `tests/tex82-oracle/geometry.tex`. Its committed
 `geometry-expected.jsonl` projection is a standalone canonical schema-v2 stream
-that pins event order and signed scaled-point values. The hooks observe the
-single finalized seams from tex.web §§633, 668, and 664: `hpack`, `vpackage`,
-then `ship_out`. No Gentle or other full-document run is part of this
-differential fixture.
+that pins event order and signed scaled-point values. The microfixture covers
+an explicit hbox and vbox, a font-independent paragraph line packed to
+`\hsize`, an explicit shipment, and the end-of-job page-builder shipment. The
+hooks observe the single finalized seams from tex.web §§633, 668, and 664:
+`hpack`, `vpackage`, then `ship_out`. The native differential gate replays
+this source with schema-v2 observation enabled and compares only the same
+detached geometry projection. It reports dimension and page-total mutations as
+`geometry_mismatch` with both signed scaled-point records.
+
+No Gentle or other full document is part of this differential fixture. To run
+the exhaustive full-document diagnostic manually after its local prerequisites
+have been populated, generate the gitignored trace and use an unbounded-enough
+comparison:
+
+```bash
+scripts/build-tex82-document-traces.sh --document gentle
+cargo run -q -p tex-command-stream -- --repository . \
+  --max-divergences 100000
+```
+
+That manual run retains the generated-document registry's schema-v1 command
+stream and the committed schema-v2 geometry microfixture. Do not copy Gentle,
+its generated trace, or any projection derived from it into the committed
+native-test registry.
 
 ## Authority and identity
 

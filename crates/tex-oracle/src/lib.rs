@@ -31,7 +31,10 @@ pub use schema::{
     ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation, StateTarget, TokenListEvent,
     TokenListTransition,
 };
-pub use suite::{Tex82CommandTraceSuite, Tex82TraceFixture, validate_tex82_command_trace_suite};
+pub use suite::{
+    Tex82CommandTraceSuite, Tex82GeometryTraceFixture, Tex82TraceFixture,
+    validate_tex82_command_trace_suite, validate_tex82_geometry_trace_fixture,
+};
 pub use transport::{
     DisabledObserver, EventObserver, JsonLinesObserver, ObservationError, ObservationHeader,
     ObservationStream,

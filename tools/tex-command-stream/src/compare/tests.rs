@@ -80,6 +80,21 @@ fn default_align(expected: &[Event], actual: &[Event]) -> Vec<StreamMismatch> {
     align(expected, actual, AlignmentTuning::default())
 }
 
+fn hpack(width_sp: i64, height_sp: i64, depth_sp: i64) -> Event {
+    Event::Geometry(GeometryEvent::Hpack {
+        width_sp,
+        height_sp,
+        depth_sp,
+    })
+}
+
+fn shipout(page_width_sp: i64, page_height_sp: i64) -> Event {
+    Event::Geometry(GeometryEvent::Shipout {
+        page_width_sp,
+        page_height_sp,
+    })
+}
+
 #[test]
 fn identical_streams_report_nothing() {
     let stream = run("k", 20);
@@ -104,6 +119,37 @@ fn payload_difference_is_reported_once_and_leaves_the_streams_aligned() {
     assert_eq!(entries[0].suppressed_cascade, 0);
     assert_eq!(entries[1].index, 12);
     assert_eq!(entries[1].repair, Repair::Changed);
+}
+
+#[test]
+fn pending_character_hpack_mutation_is_a_local_geometry_mismatch() {
+    let expected = [hpack(655_360, 262_144, 65_536), shipout(655_360, 983_040)];
+    let actual = [hpack(655_360, 196_608, 65_536), shipout(655_360, 983_040)];
+
+    let entries = default_align(&expected, &actual);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].index, 0);
+    assert_eq!(entries[0].repair, Repair::Changed);
+    assert_eq!(entries[0].kind, "geometry_mismatch");
+    let diagnostic = entries[0].to_string();
+    assert!(diagnostic.contains("height_sp: 262144"));
+    assert!(diagnostic.contains("height_sp: 196608"));
+    assert!(diagnostic.contains("source=case.tex"));
+}
+
+#[test]
+fn page_total_mutation_is_a_local_shipout_geometry_mismatch() {
+    let expected = [hpack(655_360, 262_144, 65_536), shipout(655_360, 983_040)];
+    let actual = [hpack(655_360, 262_144, 65_536), shipout(655_360, 917_504)];
+
+    let entries = default_align(&expected, &actual);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].index, 1);
+    assert_eq!(entries[0].repair, Repair::Changed);
+    assert_eq!(entries[0].kind, "geometry_mismatch");
+    let diagnostic = entries[0].to_string();
+    assert!(diagnostic.contains("page_height_sp: 983040"));
+    assert!(diagnostic.contains("page_height_sp: 917504"));
 }
 
 #[test]
