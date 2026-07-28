@@ -73,7 +73,7 @@ pub(crate) fn try_append_tfm_character_span(
         if nest.current_list().pending_hchars().is_some_and(|pending| {
             pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)
         }) {
-            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal);
+            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal, false);
         }
 
         let list = nest.current_list_mut();
@@ -176,7 +176,19 @@ pub(crate) fn flush_pending_hchars(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
+    flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false);
+    Ok(())
+}
+
+/// Flushes the active TeX82 §1038 character run after its lookahead consumed
+/// `\noboundary`. This suppresses only the right boundary; a separate flag on
+/// the list records §1030's left-boundary cancellation before a new run.
+pub(crate) fn flush_pending_hchars_without_right_boundary(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+    flush_pending_hchar_run(nest, stores, insert_hyphen_discs, true);
     Ok(())
 }
 
@@ -195,7 +207,12 @@ pub(crate) fn commit_current_list(
     nest.pop()
 }
 
-fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hyphen_discs: bool) {
+fn flush_pending_hchar_run(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    insert_hyphen_discs: bool,
+    suppress_right_boundary: bool,
+) {
     let Some(pending) = nest.current_list_mut().take_pending_hchars() else {
         return;
     };
@@ -223,7 +240,7 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
         .then(|| boundary_command_node(stores, pending.first, true))
         .flatten()
         .map(|node| (pending.insertion_index, node));
-    let right_boundary_kern = (!no_boundary)
+    let right_boundary_kern = (!suppress_right_boundary)
         .then(|| right_boundary_kern(stores, &pending.current))
         .flatten();
     let disc = literal_hyphen_disc(stores, &pending.current, insert_hyphen_discs);
@@ -617,7 +634,7 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
-            flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
+            flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false);
         }
         let list = nest.current_list_mut();
         append_pending_hchar(list, stores, mode, font, font_is_ltr_shaping, ch, origin);
@@ -660,7 +677,7 @@ fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     }
     // tex.web's fix_language flushes the current ligature word before
     // recording the new language and its current hyphen minima.
-    flush_pending_hchar_run(nest, stores, true);
+    flush_pending_hchar_run(nest, stores, true, false);
     let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
     let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
     nest.current_list_mut()

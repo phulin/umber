@@ -120,6 +120,72 @@ fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Univer
     );
 }
 
+fn register_boundary_probe_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
+    // A compact valid TFM with boundary character space and a visible kern
+    // for both `A + boundary` and `boundary + C`. TeX82 §545's first/last lig-kern instruction
+    // conventions make the two boundary directions independently visible.
+    let lh = 2_u16;
+    let bc = u16::from(b'A');
+    let ec = u16::from(b'D');
+    let char_info = [
+        [1, 0, 1, 1], // A starts lig/kern program 1.
+        [1, 0, 0, 0],
+        [1, 0, 0, 0],
+        [1, 0, 0, 0],
+    ];
+    let lig_kerns = [
+        [255, b' ', 0, 0], // right boundary character
+        [128, b' ', 128, 0],
+        [128, b'C', 128, 0],
+        [255, 0, 0, 2], // left boundary program starts at 2
+    ];
+    let nw = 2_u16;
+    let nh = 1_u16;
+    let nd = 1_u16;
+    let ni = 1_u16;
+    let lf = 6
+        + lh
+        + u16::try_from(char_info.len()).expect("probe character count fits u16")
+        + nw
+        + nh
+        + nd
+        + ni
+        + u16::try_from(lig_kerns.len()).expect("probe lig/kern count fits u16")
+        + 1;
+    let mut tfm = Vec::new();
+    for value in [lf, lh, bc, ec, nw, nh, nd, ni, 4, 1, 0, 0] {
+        tfm.extend_from_slice(&value.to_be_bytes());
+    }
+    for word in [[0, 0, 0, 0], [0, 0xa0, 0, 0]]
+        .into_iter()
+        .chain(char_info)
+        .chain([[0, 0, 0, 0], [0, 8, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain(lig_kerns)
+        .chain([[0, 8, 0, 0]])
+    {
+        tfm.extend_from_slice(&word);
+    }
+    universe
+        .world_mut()
+        .set_memory_file("boundary-probe.tfm", tfm)
+        .expect("boundary font fixture installs");
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut universe.input_open_context(),
+        std::path::Path::new("boundary-probe.tfm"),
+    )
+    .expect("boundary font fixture reads");
+    control.capabilities_mut().register_font(
+        "boundary-probe.tfm",
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+}
+
 #[test]
 fn canonical_character_definitions_scan_scope_and_recovery() {
     let mut universe = Universe::new_with_plain_catcodes();
@@ -7998,6 +8064,113 @@ fn canonical_noboundary_in_math_mode_is_a_no_op() {
         "no diagnostics expected: {}",
         terminal_text(&universe)
     );
+}
+
+#[test]
+fn canonical_noboundary_suppresses_left_and_right_boundaries_independently() {
+    // TeX82 §§1030 and 1038: the first two boxes exercise the left-boundary
+    // kern (`boundary+C`), while the second pair exercise the right boundary
+    // kern (`A+boundary`).
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_boundary_probe_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=boundary-probe
+           \setbox0=\hbox{\f C}\setbox1=\hbox{\f\noboundary C}
+           \setbox2=\hbox{\f A}\setbox3=\hbox{\f A\noboundary}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let boundary_kerns = |register| {
+        box_children(&universe, register)
+            .into_iter()
+            .filter(|node| {
+                matches!(
+                    node,
+                    Node::Kern {
+                        kind: KernKind::Font,
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    assert_eq!((boundary_kerns(0), boundary_kerns(1)), (1, 0));
+    assert_eq!((boundary_kerns(2), boundary_kerns(3)), (1, 0));
+}
+
+#[test]
+fn canonical_noboundary_noncharacter_lookahead_has_no_lingering_effect() {
+    // §1030 sets cancel_boundary only for letter/other/char_given/char_num.
+    // A relax is reswitched in place and the later C therefore retains its
+    // ordinary left-boundary kern.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_boundary_probe_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=boundary-probe\setbox0=\hbox{\f\noboundary\relax C}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(box_children(&universe, 0).into_iter().any(|node| matches!(
+        node,
+        Node::Kern {
+            kind: KernKind::Font,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn canonical_noboundary_character_forms_and_expansion_preserve_the_following_command() {
+    // §1030 uses get_x_token, then recognizes all four main-loop character
+    // entries. The expanded macro, char_given, and char_num cases must each
+    // execute once with their original character and suppress the left edge.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_boundary_probe_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=boundary-probe\chardef\c=67 \def\m{C}
+           \setbox0=\hbox{\f\noboundary\m}
+           \setbox1=\hbox{\f\noboundary\c}
+           \setbox2=\hbox{\f\noboundary\char67 }\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    for register in 0..=2 {
+        let glyphs = box_children(&universe, register)
+            .into_iter()
+            .filter_map(|node| match node {
+                Node::Char { ch, .. } | Node::Lig { ch, .. } => Some(ch),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(glyphs, vec!['C'], "box {register}");
+    }
+}
+
+#[test]
+fn prefix_before_noboundary_recovers_then_preserves_its_lookahead() {
+    // §§1211-1212 reject the prefix, back up \noboundary, and later execute
+    // it normally. The following C is neither lost nor delivered twice.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_boundary_probe_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=boundary-probe\setbox0=\hbox{\f\global\noboundary C}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(terminal_text(&universe).contains("You can't use a prefix with `\\noboundary'."));
+    let glyphs = box_children(&universe, 0)
+        .into_iter()
+        .filter(|node| matches!(node, Node::Char { .. } | Node::Lig { .. }))
+        .count();
+    assert_eq!(glyphs, 1);
 }
 
 #[test]

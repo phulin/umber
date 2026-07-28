@@ -75,7 +75,8 @@ use hmode::*;
 pub(crate) use hmode::{
     append_canonical_character, append_canonical_control_space, append_canonical_space,
     append_given_char, append_italic_correction, commit_current_list, control_space_glue_spec,
-    flush_pending_hchars, norm_min, try_append_character, try_append_tfm_character_span,
+    flush_pending_hchars, flush_pending_hchars_without_right_boundary, norm_min,
+    try_append_character, try_append_tfm_character_span,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 pub(crate) use hyphenation::HyphenationApplyDiagnostic;

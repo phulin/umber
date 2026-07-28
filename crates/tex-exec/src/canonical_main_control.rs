@@ -3123,6 +3123,7 @@ enum ScannedStep {
     },
     CharacterCode {
         value: i32,
+        suppress_left_boundary: bool,
     },
     /// TeX82 §1105's `any_mode(remove_item): delete_last` -- `\unpenalty`,
     /// `\unkern`, and `\unskip` are legal in every mode with no scan of their
@@ -3148,17 +3149,14 @@ enum ScannedStep {
     IllegalItalicCorrection {
         token: Token,
     },
-    /// TeX82 §1030's `hmode+no_boundary` (peek the next token and suppress
-    /// its left boundary ligature/kern) is instead represented here as a
-    /// plain per-list flag consulted when Umber's pending-character run is
-    /// next flushed, since character appending is buffered rather than
-    /// processed token-by-token; setting the flag regardless of what follows
-    /// is equivalent because the flush point is exactly the next character
-    /// append. §1045's `mmode+no_boundary` is tex.web's `do_nothing`;
-    /// vertical mode instead starts a paragraph via `ParagraphStart` above,
-    /// matching §1090's `vmode+no_boundary` membership in the `back_input;
-    /// new_graf(true)` group alongside `vmode+ex_space` and friends.
-    NoBoundary,
+    /// TeX82 §1038's lookahead consumes `no_boundary` after a character run
+    /// by setting `bchar:=non_char`, suppressing only that run's right
+    /// boundary processing. The §1030 big-switch occurrence has different
+    /// semantics and is folded into its following command during scanning.
+    /// §1045's math-mode occurrence is a no-op.
+    NoBoundary {
+        suppress_right: bool,
+    },
     /// TeX82 §1171's `mmode+non_script: tail_append(new_glue(zero_glue));
     /// subtype(tail):=cond_math_glue`. Legal only in math/display-math mode;
     /// §1046's `non_math(non_script)` routes every other mode through
@@ -3604,6 +3602,7 @@ enum ScannedStep {
         ch: char,
         cat: Catcode,
         origin: tex_state::token::OriginId,
+        suppress_left_boundary: bool,
     },
     Accent(ScannedAccent),
     Discretionary(ScannedDiscretionary),
@@ -3663,7 +3662,7 @@ impl ScannedStep {
                 cat: Catcode::Letter | Catcode::Other,
                 ..
             } => Some(ch),
-            Self::CharacterCode { value } => u32::try_from(value).ok().and_then(char::from_u32),
+            Self::CharacterCode { value, .. } => u32::try_from(value).ok().and_then(char::from_u32),
             _ => None,
         }
     }
@@ -3991,6 +3990,17 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
+    if main_loop_active
+        && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+        && matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+        )
+    {
+        return Ok(ScannedStep::NoBoundary {
+            suppress_right: true,
+        });
+    }
     dispatch_main_control_command(
         processor,
         command,
@@ -4042,6 +4052,7 @@ fn dispatch_main_control_command(
     // that command in place. `goto reswitch` is therefore not `back_input`,
     // and a case using it pushes no input level and delivers nothing twice.
     // This loop is that label.
+    let mut suppress_left_boundary = false;
     loop {
         let mut global = false;
         let mut flags = MeaningFlags::EMPTY;
@@ -4111,6 +4122,26 @@ fn dispatch_main_control_command(
             command = next;
             continue;
         }
+        if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+            && matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+            )
+        {
+            let Some(next) = processor.get_x_token().map_err(command_error)? else {
+                return Ok(ScannedStep::Continue);
+            };
+            suppress_left_boundary = matches!(
+                next.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                } | Meaning::CharGiven(_)
+                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            );
+            command = next;
+            continue;
+        }
         // TeX82 §1214 resolves `\globaldefs` exactly once, before entering
         // §1211's assignment case. Every scanner-time provisional
         // definition, committed application, and mutation observation below
@@ -4126,7 +4157,7 @@ fn dispatch_main_control_command(
                     )
                 ),
         );
-        return scan_command(
+        let mut scanned = scan_command(
             processor,
             command,
             global,
@@ -4136,7 +4167,21 @@ fn dispatch_main_control_command(
             innermost_group,
             job_is_all_over,
             display_eq_no,
-        );
+        )?;
+        if suppress_left_boundary {
+            match &mut scanned {
+                ScannedStep::Character {
+                    suppress_left_boundary,
+                    ..
+                }
+                | ScannedStep::CharacterCode {
+                    suppress_left_boundary,
+                    ..
+                } => *suppress_left_boundary = true,
+                _ => {}
+            }
+        }
+        return Ok(scanned);
     }
 }
 
@@ -4912,7 +4957,10 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
-            Ok(ScannedStep::CharacterCode { value })
+            Ok(ScannedStep::CharacterCode {
+                value,
+                suppress_left_boundary: false,
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => Ok(ScannedStep::Accent(
             processor.scan_accent().map_err(command_error)?,
@@ -5713,6 +5761,7 @@ fn scan_command(
             ch,
             cat,
             origin: command.spelling().origin(),
+            suppress_left_boundary: false,
         }),
         // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
         // its own; `\unpenalty`/`\unkern`/`\unskip` differ only in which node
@@ -5742,7 +5791,9 @@ fn scan_command(
         // (`do_nothing`) reach here; both need only the live mode at apply
         // time, with no scan of their own.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary) => {
-            Ok(ScannedStep::NoBoundary)
+            Ok(ScannedStep::NoBoundary {
+                suppress_right: false,
+            })
         }
         // TeX82 §1171's `mmode+non_script` vs. §1046's `non_math(non_script)`
         // recovery, exactly mirroring the `\vskip`-in-math-mode gate above
@@ -6390,7 +6441,10 @@ fn scan_unclassified_meaning(
         // `\char`'s own already-dispatched `ScannedStep`; the only
         // difference is that the character code is already known and needs
         // no `scan_char_num`.
-        Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode { value: ch as i32 }),
+        Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode {
+            value: ch as i32,
+            suppress_left_boundary: false,
+        }),
         // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
         // recovery the whole math-only vocabulary takes outside math mode.
         // Reaching this arm proves `mode` is not `Math`/`DisplayMath`:
@@ -7663,7 +7717,7 @@ fn applied_mutation_observation(
         | ScannedStep::DeleteLast(..)
         | ScannedStep::ItalicCorrection
         | ScannedStep::IllegalItalicCorrection { .. }
-        | ScannedStep::NoBoundary
+        | ScannedStep::NoBoundary { .. }
         | ScannedStep::NonScript
         | ScannedStep::ControlSpace
         | ScannedStep::FixedHorizontalGlue { .. }
@@ -8722,15 +8776,9 @@ fn apply_scanned_step(
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::NoBoundary => {
-            // TeX82 §1030's `hmode+no_boundary`; §1045's `mmode+no_boundary`
-            // is `do_nothing`. Vertical mode never reaches this step (see
-            // `ScannedStep::ParagraphStart` above).
-            if matches!(
-                modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) {
-                modes.current_list_mut().set_no_boundary(true);
+        ScannedStep::NoBoundary { suppress_right } => {
+            if suppress_right {
+                crate::assignments::flush_pending_hchars_without_right_boundary(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -8744,7 +8792,10 @@ fn apply_scanned_step(
             });
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::CharacterCode { value } => {
+        ScannedStep::CharacterCode {
+            value,
+            suppress_left_boundary,
+        } => {
             let ch = u32::try_from(value).ok().and_then(char::from_u32).ok_or(
                 ExecError::InvalidCode {
                     context: "\\char",
@@ -8773,6 +8824,9 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
+            modes
+                .current_list_mut()
+                .set_no_boundary(suppress_left_boundary);
             crate::assignments::append_canonical_character(
                 modes,
                 stores,
@@ -10622,7 +10676,12 @@ fn apply_scanned_step(
             start_canonical_paragraph(command.state, modes, stores, true)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Character { ch, cat, origin } => {
+        ScannedStep::Character {
+            ch,
+            cat,
+            origin,
+            suppress_left_boundary,
+        } => {
             if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
@@ -10654,6 +10713,9 @@ fn apply_scanned_step(
                     ) {
                         start_canonical_paragraph(command.state, modes, stores, true)?;
                     }
+                    modes
+                        .current_list_mut()
+                        .set_no_boundary(suppress_left_boundary);
                     crate::assignments::append_canonical_character(modes, stores, ch, origin)?;
                 }
                 _ => unreachable!("canonical character scan restricts catcodes"),
