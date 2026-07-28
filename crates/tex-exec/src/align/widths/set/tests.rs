@@ -81,6 +81,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             box_node: box_node(11, 13, empty),
         },
         empty,
+        Scaled::from_raw(0),
         &mut stores,
     )
     .expect("running horizontal rules resolve");
@@ -107,6 +108,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             box_node: box_node(11, 13, empty),
         },
         empty,
+        Scaled::from_raw(0),
         &mut stores,
     )
     .expect("running vertical rules resolve");
@@ -114,6 +116,39 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         vertical.as_slice(),
         [Node::Rule { height: Some(height), .. }] if *height == sp(13)
     ));
+
+    // TeX82 §806's second half: a nonzero §800 `o` wraps the rule in an
+    // `hpack(q,natural)` whose `shift_amount` is `o`, because a rule node has
+    // no shift field of its own.
+    let shifted = set_alignment_nodes(
+        AlignmentKind::HAlign,
+        &[Node::Rule {
+            width: None,
+            height: Some(sp(2)),
+            depth: Some(sp(1)),
+        }],
+        &ResolvedWidths {
+            columns: vec![sp(11)],
+            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+        },
+        &Prototype {
+            box_node: box_node(11, 13, empty),
+        },
+        empty,
+        sp(5),
+        &mut stores,
+    )
+    .expect("display running rules resolve");
+    let [Node::HList(wrapper)] = shifted.as_slice() else {
+        panic!("a display alignment rule must be wrapped in a shifted hbox");
+    };
+    assert_eq!(wrapper.shift, sp(5));
+    assert_eq!(wrapper.width, sp(11));
+    let children = stores.nodes(wrapper.children).testing_decoded();
+    let [Node::Rule { width: Some(width), .. }] = children else {
+        panic!("the wrapper must hold the one running rule");
+    };
+    assert_eq!(*width, sp(11));
 }
 
 #[test]
@@ -170,12 +205,16 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         &resolved,
         &prototype,
         empty,
+        sp(5),
         &mut stores,
     )
     .expect("spanned row sets");
     let [Node::HList(row)] = set.as_slice() else {
         panic!("unset row must become one hlist");
     };
+    // TeX82 §807 closes with `shift_amount(q):=o`, the same §800 offset §806
+    // gives a running rule.
+    assert_eq!(row.shift, sp(5));
     let children = stores.nodes(row.children).testing_decoded();
     let [
         Node::Glue {

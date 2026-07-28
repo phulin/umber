@@ -142,7 +142,7 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         vec![GlueId::ZERO, GlueId::ZERO, GlueId::ZERO],
     );
 
-    let finished = finish_alignment(&state, &[row], &mut stores)
+    let finished = finish_alignment(&state, &[row], Scaled::from_raw(0), &mut stores)
         .expect("the complete width, prototype, and setting pipeline succeeds");
 
     let [Node::HList(row)] = finished.as_slice() else {

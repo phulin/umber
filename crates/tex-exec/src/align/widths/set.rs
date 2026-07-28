@@ -21,6 +21,9 @@ struct SetConfig<'a> {
     resolved: &'a ResolvedWidths,
     prototype: &'a Prototype,
     empty: NodeListId,
+    /// TeX82 §800's `o`: `display_indent` when the alignment is a display,
+    /// zero otherwise. §807 shifts every row by it and §806 every rule.
+    offset: Scaled,
 }
 
 pub(super) fn set_alignment_nodes(
@@ -29,6 +32,7 @@ pub(super) fn set_alignment_nodes(
     resolved: &ResolvedWidths,
     prototype: &Prototype,
     empty: NodeListId,
+    offset: Scaled,
     stores: &mut Universe,
 ) -> Result<Vec<Node>, ExecError> {
     let config = SetConfig {
@@ -36,6 +40,7 @@ pub(super) fn set_alignment_nodes(
         resolved,
         prototype,
         empty,
+        offset,
     };
     let mut out = Vec::with_capacity(rows.len());
     for node in rows {
@@ -44,46 +49,58 @@ pub(super) fn set_alignment_nodes(
                 let set = set_row(config, row, stores)?;
                 out.push(set);
             }
-            _ => {
-                out.push(set_noalign_node(
-                    config.kind,
-                    node,
-                    &config.prototype.box_node,
-                ));
-            }
+            Node::Rule { .. } => out.push(set_running_rule(config, node, stores)),
+            _ => out.push(node.clone()),
         }
     }
     Ok(out)
 }
 
-fn set_noalign_node(kind: AlignmentKind, node: &Node, prototype: &BoxNode) -> Node {
-    match (kind, node) {
-        (
-            AlignmentKind::HAlign,
-            Node::Rule {
-                width: None,
-                height,
-                depth,
-            },
-        ) => Node::Rule {
-            width: Some(prototype.width),
+/// TeX82 §806, `<Make the running dimensions in rule q extend to the
+/// boundaries of the alignment>`.
+///
+/// The running dimensions come from the prototype box, and then -- this is the
+/// half that was missing -- `if o<>0 then begin r:=link(q); link(q):=null;
+/// q:=hpack(q,natural); shift_amount(q):=o; link(q):=r; link(s):=q end`. A rule
+/// node has no `shift_amount` field of its own, so a display alignment can only
+/// indent one by wrapping it in a box. §807 shifts rows by the same `o`, and
+/// leaving the rule unwrapped left it starting at the margin while every row
+/// beside it was indented (`umber2-jnfg`).
+fn set_running_rule(config: SetConfig<'_>, node: &Node, stores: &mut Universe) -> Node {
+    let prototype = &config.prototype.box_node;
+    let Node::Rule {
+        width,
+        height,
+        depth,
+    } = node
+    else {
+        return node.clone();
+    };
+    let rule = match config.kind {
+        AlignmentKind::HAlign => Node::Rule {
+            width: Some(width.unwrap_or(prototype.width)),
             height: *height,
             depth: *depth,
         },
-        (
-            AlignmentKind::VAlign,
-            Node::Rule {
-                width,
-                height: None,
-                depth,
-            },
-        ) => Node::Rule {
+        AlignmentKind::VAlign => Node::Rule {
             width: *width,
-            height: Some(prototype.height),
+            height: Some(height.unwrap_or(prototype.height)),
             depth: *depth,
         },
-        _ => node.clone(),
+    };
+    if config.offset.raw() == 0 {
+        return rule;
     }
+    let list = stores.freeze_node_list(std::slice::from_ref(&rule));
+    let mut packed = crate::packing_params::hpack(
+        stores,
+        list,
+        tex_typeset::PackSpec::Natural,
+        crate::packing_params::hpack_params(stores),
+    )
+    .node;
+    packed.shift = config.offset;
+    Node::HList(packed)
 }
 
 fn set_row(
@@ -98,7 +115,7 @@ fn set_row(
             width: config.prototype.box_node.width,
             height: row.height,
             depth: row.depth,
-            shift: Scaled::from_raw(0),
+            shift: config.offset,
             display: false,
             glue_set: config.prototype.box_node.glue_set,
             glue_sign: config.prototype.box_node.glue_sign,
@@ -109,7 +126,7 @@ fn set_row(
             width: row.width,
             height: config.prototype.box_node.height,
             depth: row.depth,
-            shift: Scaled::from_raw(0),
+            shift: config.offset,
             display: false,
             glue_set: config.prototype.box_node.glue_set,
             glue_sign: config.prototype.box_node.glue_sign,

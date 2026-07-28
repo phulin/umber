@@ -155,14 +155,7 @@
         "box:0/0/6:glue"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-jnfg",
-        "mismatch": {
-          "index": 15,
-          "kind": "observation",
-          "expected": "box:0/0/4/1:hlist",
-          "actual": "box:0/0/4/1:rule"
-        }
+        "kind": "pass"
       }
     },
     {

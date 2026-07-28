@@ -154,7 +154,15 @@ fn finish_alignment_level(
             context: "alignment state",
         })?;
     let nodes = level.list_mut().take_nodes();
-    let finished = super::widths::finish_alignment(&state, &nodes, stores)?;
+    // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent
+    // else o:=0`. The alignment level has just been popped, so the current mode
+    // is the enclosing one §800 inspects.
+    let offset = if nest.current_mode() == Mode::DisplayMath {
+        stores.dimen_param(tex_state::env::banks::DimenParam::DISPLAY_INDENT)
+    } else {
+        tex_state::scaled::Scaled::from_raw(0)
+    };
+    let finished = super::widths::finish_alignment(&state, &nodes, offset, stores)?;
     Ok(FinishedAlignment {
         nodes: finished,
         aux_prev_depth,

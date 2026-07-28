@@ -271,9 +271,8 @@ pub(super) fn finish_display_alignment(
         },
     );
 
-    let display_indent = stores.dimen_param(DimenParam::DISPLAY_INDENT);
     for node in finished.nodes {
-        let node = display_alignment_node(node, display_indent);
+        let node = display_alignment_node(node);
         append_vertical_contribution(nest, stores, node);
     }
     if let Some(prev_depth) = finished.aux_prev_depth {
@@ -299,10 +298,15 @@ pub(super) fn finish_display_alignment(
     Ok(())
 }
 
-fn display_alignment_node(mut node: Node, display_indent: Scaled) -> Node {
+/// Marks a finished display alignment's boxes as display material.
+///
+/// The `\displayindent` shift is *not* applied here: TeX82 §800 decides it
+/// once as `o` and §806/§807 apply it while the unset boxes and running rules
+/// are being set, which is the only place a rule -- a node with no
+/// `shift_amount` field -- can receive it at all.
+fn display_alignment_node(mut node: Node) -> Node {
     if let Node::HList(box_node) | Node::VList(box_node) = &mut node {
         box_node.display = true;
-        box_node.shift = display_indent;
     }
     node
 }

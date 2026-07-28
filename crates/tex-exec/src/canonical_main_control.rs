@@ -8033,7 +8033,15 @@ fn finish_replay_alignment(
         active.tabskip,
         active.repeat_start,
     );
-    let finished = crate::align::widths::finish_alignment(&state, &rows, stores)?;
+    // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent
+    // else o:=0`. The alignment level has just been popped, so the current mode
+    // is the enclosing one §800 inspects.
+    let offset = if modes.current_mode() == Mode::DisplayMath {
+        stores.dimen_param(DimenParam::DISPLAY_INDENT)
+    } else {
+        Scaled::from_raw(0)
+    };
+    let finished = crate::align::widths::finish_alignment(&state, &rows, offset, stores)?;
     crate::align::append_finished_alignment(
         modes,
         stores,

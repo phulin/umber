@@ -132,7 +132,10 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         ] if *above_spec == above
             && *below_spec == below
             && row.display
-            && row.shift == sp(5)
+            // §812's display insertion only marks the material as display
+            // content; the `\displayindent` shift is §800's `o`, applied by
+            // §806/§807 while `fin_align` sets the boxes.
+            && row.shift == Scaled::from_raw(0)
     ));
     assert_eq!(nest.current_list().prev_depth(), Some(sp(7)));
 

@@ -15,16 +15,30 @@ use crate::ExecError;
 use crate::mode::{AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::packing_params::{hpack, hpack_params as read_hpack_params, vpack, vpack_params};
 
+/// Runs TeX82 §800 `fin_align`'s setting pass over the alignment's own list.
+///
+/// `offset` is §800's `o`: `if nest[nest_ptr-1].mode_field=mmode then
+/// o:=display_indent else o:=0`. It is the shift §807 gives every row and
+/// §806 gives every running rule, so it must be decided once, from the mode
+/// enclosing the alignment level, and applied to both.
 pub(crate) fn finish_alignment(
     state: &AlignState,
     rows: &[Node],
+    offset: Scaled,
     stores: &mut Universe,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
     let empty = stores.freeze_node_list(&[]);
     let prototype = pack_prototype(state, &resolved, empty, stores);
-    let finished =
-        set::set_alignment_nodes(state.kind(), rows, &resolved, &prototype, empty, stores)?;
+    let finished = set::set_alignment_nodes(
+        state.kind(),
+        rows,
+        &resolved,
+        &prototype,
+        empty,
+        offset,
+        stores,
+    )?;
     debug::debug_assert_no_unset_nodes(stores, &finished);
     Ok(finished)
 }
