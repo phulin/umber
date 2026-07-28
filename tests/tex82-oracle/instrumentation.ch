@@ -121,8 +121,8 @@ procedure umber_trace_geometry_shipout(@!p:pointer);
 begin
 if not umber_geometry_profile then return;
 umber_trace_begin;
-write_ln(umber_trace_file,'{"event":"geometry","data":{"transition":"shipout",'
-  '"page_width_sp":',width(p):1,',"page_height_sp":',height(p)+depth(p):1,'}}}');
+write_ln(umber_trace_file,'{"event":"geometry","data":{"transition":"shipout","page_width_sp":',
+  width(p):1,',"page_height_sp":',height(p)+depth(p):1,'}}}');
 end;
 
 procedure umber_trace_command_name(@!c:integer);

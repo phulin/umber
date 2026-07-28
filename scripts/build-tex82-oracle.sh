@@ -20,9 +20,11 @@ bin_dir="${out_dir}/bin"
 clean_executable="${bin_dir}/umber-tex82-oracle"
 instrumentable_executable="${bin_dir}/umber-tex82-oracle-instrumentable"
 trip_profile_executable="${bin_dir}/umber-tex82-oracle-trip-profile"
+geometry_profile_executable="${bin_dir}/umber-tex82-oracle-geometry-profile"
 instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
+geometry_input="${repo_root}/tests/tex82-oracle/geometry.tex"
 transition_source_dir="${repo_root}/tests/tex82-oracle"
 semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
@@ -41,6 +43,8 @@ The default final change emits schema-v1 command-core transitions. Set
 UMBER_TEX82_INSTRUMENTATION_CHANGE to select another final change file.
 
 Outputs and a complete identity record are written under target/tex82-oracle.
+The geometry-profile executable is a separately selected schema-v2 observer;
+it never changes the schema-v1 instrumentable executable or its trace.
 After the first acquisition, --offline performs no network I/O.
 EOF
 }
@@ -123,6 +127,12 @@ write_trip_profile_change() {
   trip_profile_change="${out_dir}/trip-profile-instrumentation.ch"
   sed 's/umber_trip_profile:=false;/umber_trip_profile:=true;/' \
     "$instrumentation_change" >"$trip_profile_change"
+}
+
+write_geometry_profile_change() {
+  geometry_profile_change="${out_dir}/geometry-profile-instrumentation.ch"
+  sed 's/umber_geometry_profile:=false;/umber_geometry_profile:=true;/' \
+    "$instrumentation_change" >"$geometry_profile_change"
 }
 
 extract_source() {
@@ -278,6 +288,26 @@ run_transitions() {
     >"${run_dir}/ordinary.log"
 }
 
+run_geometry() {
+  local executable="$1" variant="$2" run_dir
+  run_dir="${out_dir}/geometry/${variant}"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$geometry_input" "${run_dir}/geometry.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
+      "$executable" -ini -interaction=batchmode geometry.tex >terminal.txt 2>&1
+  )
+  [[ -f "${run_dir}/geometry.log" ]] || fail "$variant geometry run did not write geometry.log"
+  [[ -f "${run_dir}/geometry.dvi" ]] || fail "$variant geometry run did not write geometry.dvi"
+  [[ -f "${run_dir}/tex82-events.jsonl" ]] || fail "$variant geometry run did not write a trace"
+  grep -Fq 'UMBER-TEX82-GEOMETRY' "${run_dir}/geometry.log" ||
+    fail "$variant geometry marker is absent"
+}
+
 write_build_record() {
   local record="${out_dir}/build-record.txt" linker_path path tool tool_path
   {
@@ -295,6 +325,7 @@ write_build_record() {
     printf 'instrumentation-change %s\n' "${instrumentation_change#"${repo_root}/"}"
     printf 'instrumentation-change-sha256 %s\n' "$(sha_digest 256 "$instrumentation_change")"
     printf 'trip-profile-change-sha256 %s\n' "$(sha_digest 256 "$trip_profile_change")"
+    printf 'geometry-profile-change-sha256 %s\n' "$(sha_digest 256 "$geometry_profile_change")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
     printf 'tool-sha256 web2c %s\n' \
@@ -328,12 +359,17 @@ write_build_record() {
     printf 'executable trip-profile %s %s\n' \
       "${trip_profile_executable#"${repo_root}/"}" \
       "$(sha_digest 256 "$trip_profile_executable")"
+    printf 'executable geometry-profile %s %s\n' \
+      "${geometry_profile_executable#"${repo_root}/"}" \
+      "$(sha_digest 256 "$geometry_profile_executable")"
     printf 'smoke-ordinary-log-sha256 clean %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/clean/ordinary.log")"
     printf 'smoke-ordinary-log-sha256 instrumentable %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/instrumentable/ordinary.log")"
     printf 'transition-trace-sha256 instrumentable %s\n' \
       "$(sha_digest 256 "${out_dir}/transitions/instrumentable/tex82-events.jsonl")"
+    printf 'geometry-trace-sha256 geometry-profile %s\n' \
+      "$(sha_digest 256 "${out_dir}/geometry/geometry-profile/tex82-events.jsonl")"
     for variant in clean instrumentable instrumentable-repeat; do
       printf 'transition-terminal-sha256 %s %s\n' "$variant" \
         "$(sha_digest 256 "${out_dir}/transitions/${variant}/terminal.txt")"
@@ -353,6 +389,7 @@ fetch_source
 extract_source
 configure_tools
 write_trip_profile_change
+write_geometry_profile_change
 build_variant "$clean_executable"
 cp "${web_build_dir}/tex-final.ch" "${out_dir}/clean-final.ch"
 build_variant "$instrumentable_executable" "$instrumentation_change"
@@ -392,5 +429,13 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
     fail "transition trace is missing $family/$boundary from $fixture at $seam"
 done < "$semantic_event_matrix"
 build_variant "$trip_profile_executable" "$trip_profile_change"
+build_variant "$geometry_profile_executable" "$geometry_profile_change"
+run_geometry "$geometry_profile_executable" geometry-profile
+run_geometry "$geometry_profile_executable" geometry-profile-repeat
+cmp "${out_dir}/geometry/geometry-profile/tex82-events.jsonl" \
+  "${out_dir}/geometry/geometry-profile-repeat/tex82-events.jsonl" >/dev/null ||
+  fail "geometry-profile oracle emitted a nondeterministic trace"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+  "${out_dir}/geometry/geometry-profile/tex82-events.jsonl"
 write_build_record
 printf '%s\n' "$bin_dir"
