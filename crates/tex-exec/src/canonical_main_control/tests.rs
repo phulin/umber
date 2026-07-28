@@ -486,6 +486,22 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
     )));
 }
 
+#[test]
+fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\iftrue\n\\ifcase0\n\\ifnum1=1\n\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        terminal_text(&stores),
+        "(\\end occurred when \\ifnum on line 3 was incomplete)\
+\n(\\end occurred when \\ifcase on line 2 was incomplete)\
+\n(\\end occurred when \\iftrue on line 1 was incomplete)"
+    );
+}
+
 /// Collects every `\setlanguage` whatsit inside box register zero.
 fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
     let outer = stores.box_reg(0).expect("box 0 holds the constructed hbox");

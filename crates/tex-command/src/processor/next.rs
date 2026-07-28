@@ -56,7 +56,7 @@ impl CommandProcessor<'_> {
     /// boundary; Umber's terminal level is already gone by then (it supplied
     /// only the startup filename), so the terminal stop is reported here once
     /// the stack is empty, exactly as ordinary exhaustion reports it.
-    pub fn final_cleanup(&mut self) {
+    pub fn final_cleanup(&mut self) -> Vec<crate::IncompleteCondition> {
         let mut terminal_stopped = false;
         while let Some(retirement) = self.command.pop_input_level_at_end_of_job() {
             let terminal = matches!(retirement.action, InputRetirementAction::TerminalStop);
@@ -88,6 +88,7 @@ impl CommandProcessor<'_> {
         }
         #[cfg(not(any(test, feature = "instrumentation")))]
         let _ = terminal_stopped;
+        self.command.conditions.drain_incomplete()
     }
 
     /// Retires the exhausted level that supplied the immediately preceding

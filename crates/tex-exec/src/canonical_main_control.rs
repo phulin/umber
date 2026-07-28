@@ -2848,6 +2848,7 @@ enum ScannedStep {
     /// of `final_cleanup`, so it is carried rather than discarded.
     End {
         dump: bool,
+        incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     },
     /// TeX82 §1051's `privileged` failure for `\\end`/`\\dump` in internal
     /// vertical mode (`mode<0`): `report_illegal_case`, and the job keeps
@@ -4489,12 +4490,13 @@ fn scan_command(
             if job_is_all_over {
                 // §1335's `final_cleanup` unwinds the input stack that
                 // `main_control`'s return has abandoned.
-                processor.final_cleanup();
+                let incomplete_conditions = processor.final_cleanup();
                 return Ok(ScannedStep::End {
                     dump: matches!(
                         command.meaning(),
                         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump)
                     ),
+                    incomplete_conditions,
                 });
             }
             processor.back_input(command).map_err(command_error)?;
@@ -5569,6 +5571,27 @@ fn scan_command(
         // case, over `Catcode` -- so a newly added variant fails to compile
         // there instead of reaching a silent `ScannedStep::Continue` here.
         meaning => scan_unclassified_meaning(processor, command, meaning, mode),
+    }
+}
+
+/// TeX82 §1335 reports and frees unfinished conditionals innermost-first.
+fn report_incomplete_conditions(
+    stores: &mut Universe,
+    incomplete: impl IntoIterator<Item = tex_command::IncompleteCondition>,
+) {
+    let mut printer = stores.printer();
+    for condition in incomplete {
+        printer
+            .print_nl("(")
+            .print_esc("end occurred ")
+            .print("when ")
+            .print_esc(condition.kind_name());
+        if condition.source_line() != 0 {
+            printer
+                .print(" on line ")
+                .print_int(i32::try_from(condition.source_line()).unwrap_or(i32::MAX));
+        }
+        printer.print(" was incomplete)");
     }
 }
 
@@ -8225,7 +8248,11 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
-        ScannedStep::End { dump } => {
+        ScannedStep::End {
+            dump,
+            incomplete_conditions,
+        } => {
+            report_incomplete_conditions(stores, incomplete_conditions);
             // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
             // production binary keeps only the `print_nl` that says so. `\end`
             // reaches neither.

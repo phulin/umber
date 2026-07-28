@@ -88,6 +88,44 @@ fn condition_identity_updates_outer_frame_after_nested_push() {
 }
 
 #[test]
+fn final_cleanup_drains_nested_kinds_in_current_first_order_with_saved_lines() {
+    let mut stack = ConditionStack::default();
+    let outer = stack.push(ConditionalKind::IfTrue, 11);
+    assert!(stack.change_if_limit(outer, IfLimit::Else));
+    let middle = stack.push(ConditionalKind::IfCase, 23);
+    assert!(stack.change_if_limit(middle, IfLimit::Or));
+    stack.push(ConditionalKind::IfNum, 37);
+
+    let incomplete = stack.drain_incomplete();
+
+    assert_eq!(
+        incomplete
+            .iter()
+            .map(|condition| (condition.kind_name(), condition.source_line()))
+            .collect::<Vec<_>>(),
+        [("ifnum", 37), ("ifcase", 23), ("iftrue", 11)]
+    );
+    assert!(stack.current().is_none());
+    assert!(stack.drain_incomplete().is_empty());
+}
+
+#[test]
+fn ordinary_pop_restores_the_outer_current_kind_line_and_limit() {
+    let mut stack = ConditionStack::default();
+    let outer = stack.push(ConditionalKind::IfDim, 41);
+    assert!(stack.change_if_limit(outer, IfLimit::Else));
+    stack.push(ConditionalKind::IfX, 43);
+
+    let popped = stack.pop().expect("inner frame");
+
+    assert_eq!(popped.kind, ConditionalKind::IfX);
+    let restored = stack.current().expect("outer frame is current again");
+    assert_eq!(restored.kind, ConditionalKind::IfDim);
+    assert_eq!(restored.source_line, 41);
+    assert_eq!(restored.limit, IfLimit::Else);
+}
+
+#[test]
 fn evaluating_delimiter_recovery_is_typed_and_frame_specific() {
     let mut stack = ConditionStack::default();
     let evaluating = stack.push(ConditionalKind::If, 3);

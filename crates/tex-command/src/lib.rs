@@ -5,6 +5,7 @@
 
 mod command;
 mod conditionals;
+pub use conditionals::IncompleteCondition;
 mod error;
 mod fatal;
 mod host;

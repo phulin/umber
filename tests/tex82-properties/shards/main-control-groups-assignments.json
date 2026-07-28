@@ -1574,7 +1574,21 @@
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "final_cleanup_drains_nested_kinds_in_current_first_order_with_saved_lines"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["final-cleanup-incomplete-conditionals"]
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-xfj3",
       "planned_coverage": [

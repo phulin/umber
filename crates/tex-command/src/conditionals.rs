@@ -55,7 +55,6 @@ pub(crate) enum ConditionalKind {
 
 #[allow(dead_code)] // used by pass_text now; evaluation uses the same classifier next
 impl ConditionalKind {
-    #[cfg(any(test, feature = "instrumentation"))]
     const fn canonical_name(self) -> &'static str {
         match self {
             Self::IfTrue => "iftrue",
@@ -184,6 +183,27 @@ pub(crate) struct ConditionFrame {
     pub(crate) inverted: bool,
 }
 
+/// One unfinished conditional retired by TeX82 §1335's final cleanup.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct IncompleteCondition {
+    kind: ConditionalKind,
+    source_line: u32,
+}
+
+impl IncompleteCondition {
+    /// TeX82's `print_cmd_chr(if_test,cur_if)` spelling without the escape.
+    #[must_use]
+    pub const fn kind_name(self) -> &'static str {
+        self.kind.canonical_name()
+    }
+
+    /// The saved `if_line`; zero suppresses the `on line` clause.
+    #[must_use]
+    pub const fn source_line(self) -> u32 {
+        self.source_line
+    }
+}
+
 /// Independent persistent condition stack.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionStack {
@@ -221,6 +241,17 @@ impl ConditionStack {
 
     pub(crate) fn pop(&mut self) -> Option<ConditionFrame> {
         self.frames.pop()
+    }
+
+    pub(crate) fn drain_incomplete(&mut self) -> Vec<IncompleteCondition> {
+        let mut incomplete = Vec::with_capacity(self.frames.len());
+        while let Some(frame) = self.pop() {
+            incomplete.push(IncompleteCondition {
+                kind: frame.kind,
+                source_line: frame.source_line,
+            });
+        }
+        incomplete
     }
 
     pub(crate) fn current_etex_values(&self) -> (i32, i32, i32) {
@@ -359,10 +390,11 @@ impl CommandProcessor<'_> {
         };
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
+        let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
         let condition = self
             .command
             .conditions
-            .push_with_inversion(kind, 0, inverted);
+            .push_with_inversion(kind, source_line, inverted);
         let frame = self
             .command
             .conditions

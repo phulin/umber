@@ -473,6 +473,32 @@
       "projection": { "kind": "terminal-checks", "terminal_checks": ["performed only by INITEX"] },
       "expected": ["terminal-check:performed only by INITEX=true"],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "final-cleanup-incomplete-conditionals",
+      "property_id": "tex82.main-control.final-cleanup-end-or-dump",
+      "source": "final-cleanup-incomplete-conditionals.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [489, 495, 496, 1335]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "\\end occurred when \\ifnum on line 3 was incomplete",
+          "\\end occurred when \\ifcase on line 2 was incomplete",
+          "\\end occurred when \\iftrue on line 1 was incomplete",
+          "! "
+        ]
+      },
+      "expected": [
+        "terminal-check:\\end occurred when \\ifnum on line 3 was incomplete=true",
+        "terminal-check:\\end occurred when \\ifcase on line 2 was incomplete=true",
+        "terminal-check:\\end occurred when \\iftrue on line 1 was incomplete=true",
+        "terminal-check:! =false"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }
