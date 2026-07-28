@@ -708,10 +708,6 @@
           "path": "crates/tex-command/tests/it/character_input.rs",
           "test": "tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery",
           "cases": ["signed hexadecimal operands", "conditional selection", "ordinary-source continuation"]
-        },
-        {
-          "path": "tests/corpus/command-semantic/scanners-internal-quantities/manifest.json",
-          "test": "numeric-token-categories"
         }
       ],
       "status": "covered"
@@ -775,10 +771,6 @@
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
           "test": "vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order"
-        },
-        {
-          "path": "tests/corpus/command-semantic/scanners-internal-quantities/manifest.json",
-          "test": "vacuous-dimension-units"
         }
       ],
       "planned_coverage": [],
