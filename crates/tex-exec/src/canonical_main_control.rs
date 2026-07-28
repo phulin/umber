@@ -1386,40 +1386,6 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn execute_math_episode(
-        &mut self,
-        episode: tex_command::CommandReplayEpisode,
-        stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
-        self.modes.push(Mode::Math);
-        // Liveness of the stored level, not a per-step completion event, is
-        // the robust retirement test here. TeX82's `get_next`/`get_x_token`
-        // deliberately let an operand scanner (`scan_dimen`'s optional-space
-        // lookahead after `\kern1pt`, for example) probe one token past this
-        // episode's own last token and back it up -- "ordinary `get_x_token`
-        // retains TeX82's uninterrupted behavior by consuming this boundary
-        // internally" (see docs/tex_command_core.md §2.1). That nested probe
-        // silently retires the stored level without ever producing this
-        // loop's own `ScannedStep::ReplayCompleted`, so watching for that one
-        // event here would keep looping past the field's true end and
-        // consume unrelated following material as if it were still part of
-        // the field. Checking liveness directly is correct regardless of
-        // which nested scan discovered the retirement, and matches the
-        // already-established pattern in `execute_discretionary_part`.
-        self.main_loop_active = false;
-        while self.command.replay_episode_is_active(episode) {
-            match self.nested_step_once(stores, None)? {
-                ReplayStep::End | ReplayStep::EndOfInput => {
-                    return Err(ExecError::MissingToken {
-                        context: "math replay episode",
-                    });
-                }
-                ReplayStep::Continue => {}
-            }
-        }
-        self.finish_math_level(stores)
-    }
-
     /// Runs one live `push_math` group to its closing brace.
     ///
     /// Both of TeX82's braced mlist openers work this way. §1153 is
@@ -1504,20 +1470,29 @@ impl CanonicalMainControl {
         self.execute_live_math_group(GroupKind::MathChoice, stores)
     }
 
+    /// Stores one completed TeX82 §1151 field.
+    ///
+    /// §1151 ends with `math_type(p):=math_char; character(p):=qi(c mod 256)`
+    /// and §1151's own `fam` rule -- it never builds a noad, so `c`'s class
+    /// bits are deliberately dropped here. The scalar case is a value, not
+    /// deferred input: the command processor has already read, expanded, and
+    /// classified everything the field consumed, so nothing is replayed and
+    /// no input level is opened (`umber2-johp.265`).
     fn execute_math_field(
         &mut self,
         field: tex_command::MathFieldEpisode,
         stores: &mut Universe,
     ) -> Result<MathField, ExecError> {
-        let list = match field.body {
-            MathFieldBody::Missing => return Ok(MathField::Empty),
-            MathFieldBody::OpenGroup => self.execute_live_math_group(GroupKind::Math, stores)?,
-            MathFieldBody::Replay => {
-                let episode = self.command.push_math_field_episode(field);
-                self.execute_math_episode(episode, stores)?
+        match field.body {
+            MathFieldBody::Missing => Ok(MathField::Empty),
+            MathFieldBody::Character(code) => Ok(MathField::MathChar(
+                canonical_math_char(stores, u32::from(code), field.provenance.primary)?.1,
+            )),
+            MathFieldBody::OpenGroup => {
+                let list = self.execute_live_math_group(GroupKind::Math, stores)?;
+                Ok(simplify_canonical_math_field(stores, list))
             }
-        };
-        Ok(simplify_canonical_math_field(stores, list))
+        }
     }
 
     fn apply_canonical_math_request(

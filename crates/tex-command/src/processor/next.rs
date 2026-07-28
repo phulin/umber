@@ -1824,7 +1824,6 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
         Stored::EveryCr => InputReason::EveryCr,
         Stored::Mark => InputReason::Mark,
         Stored::Write => InputReason::Write,
-        Stored::MathField => InputReason::UmberReplay(UmberReplayKind::MathField),
         Stored::Discretionary => InputReason::UmberReplay(UmberReplayKind::Discretionary),
         Stored::AfterAssignment => InputReason::UmberReplay(UmberReplayKind::AfterAssignment),
     }

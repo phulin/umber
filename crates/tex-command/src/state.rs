@@ -5,7 +5,6 @@ use tex_state::token::TracedTokenWord;
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::AlignmentRecord;
-use crate::MathFieldEpisode;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
@@ -74,12 +73,6 @@ pub enum CommandReplayDelivery {
 }
 
 impl CommandState {
-    /// Schedules one completed math field without exposing its frozen token
-    /// list to the executor. The returned opaque identity bounds replay.
-    pub fn push_math_field_episode(&mut self, field: MathFieldEpisode) -> CommandReplayEpisode {
-        self.push_stored_episode(field.tokens, StoredReplayReason::MathField)
-    }
-
     /// Schedules one completed `\\discretionary` part for canonical replay.
     ///
     /// This is deliberately a stored command level, not an executor-owned

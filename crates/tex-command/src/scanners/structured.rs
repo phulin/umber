@@ -548,8 +548,11 @@ pub struct ScannedMathScript {
 
 /// How the stomach must realize one completed math field.
 ///
-/// TeX82 §1151's `scan_math` has exactly two outcomes: an unbraced field is
-/// one already-fetched command, while a braced field is §1153's
+/// TeX82 §1151's `scan_math` has exactly two outcomes. An unbraced field is
+/// resolved *in place*, by the same procedure that fetched the command: its
+/// six scalar cases (`letter`, `other_char`, `char_given`, `char_num`,
+/// `math_char_num`, `math_given`, `delim_num`) each end by assigning a single
+/// math code `c`, and nothing is ever re-read. A braced field is §1153's
 /// ``back_input; scan_left_brace; ... push_math(math_group)`` -- the
 /// mandatory brace is consumed and the subformula body is then read *live*
 /// by ordinary main control, closed by §1186's `math_group` arm of
@@ -557,12 +560,19 @@ pub struct ScannedMathScript {
 /// material at all, and must never be absorbed into a token list: doing so
 /// backs the brace up a second time, opens an extra replay input level, and
 /// swallows the closing brace that TeX delivers as a command.
+///
+/// A scalar field must not be absorbed and replayed either. §1151 never
+/// pushes an input level for it, so a frozen-spelling replay delivers the
+/// same command twice, opens and retires a level tex.web has no `token_type`
+/// for, and reconstructs the field through a nested mlist -- which also
+/// loses `c`'s class bits, because §1151 stores `math_type:=math_char` and
+/// drops the class a noad would have carried (`umber2-johp.265`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathFieldBody {
-    /// Frozen command-owned material replayed as its own episode: the single
-    /// unbraced command spelling, or the empty list left behind when
-    /// `scan_left_brace` recovered a missing mandatory brace.
-    Replay,
+    /// TeX82 §1151's scalar outcome: the math code `c` its six cases
+    /// produce, which the stomach stores as
+    /// ``math_type:=math_char; character:=qi(c mod 256); fam:=...``.
+    Character(u16),
     /// TeX82 §1153: `math_group`'s opening brace has been consumed and the
     /// body is live input the stomach reads through main control.
     OpenGroup,
@@ -570,14 +580,13 @@ pub enum MathFieldBody {
     Missing,
 }
 
-/// Immutable command-owned material for one math field.
+/// One completed math field, ready for the stomach to store.
 ///
-/// The frozen payload is deliberately private. A consumer can only schedule
-/// it through [`CommandState`](crate::CommandState)'s typed replay entry point,
-/// keeping command delivery, expansion, and provenance in `tex-command`.
+/// Nothing here is deferred input: §1151 has already read, expanded, and
+/// classified everything the field consumed, so the stomach receives a value
+/// rather than a replay handle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MathFieldEpisode {
-    pub(crate) tokens: TracedTokenList,
     pub body: MathFieldBody,
     pub provenance: StructuredProvenance,
 }
@@ -1245,50 +1254,109 @@ impl CommandProcessor<'_> {
 
     /// Completes one TeX82 §1151 `scan_math` field.
     ///
-    /// An unbraced field is one expanded command spelling, frozen here.
-    /// Active characters are resolved by `get_x_token` before freezing, so
-    /// their replay cannot reopen source input or bypass command provenance.
-    /// A braced field is §1153: the mandatory brace is consumed by
-    /// `scan_left_brace` and nothing is absorbed, because `push_math`'s
-    /// `math_group` reads its body from live input.
+    /// §1151 is a classification, not an absorption:
+    ///
+    /// ```text
+    /// begin restart:<Get the next non-blank non-relax non-call token>;
+    /// reswitch: case cur_cmd of
+    /// letter,other_char,char_given: begin c:=ho(math_code(cur_chr));
+    ///     if c=@'100000 then begin <Treat cur_chr as an active character>;
+    ///       goto restart; end; end;
+    /// char_num: begin scan_char_num; cur_chr:=cur_val; cur_cmd:=char_given;
+    ///   goto reswitch; end;
+    /// math_char_num: begin scan_fifteen_bit_int; c:=cur_val; end;
+    /// math_given: c:=cur_chr;
+    /// delim_num: begin scan_twenty_seven_bit_int; c:=cur_val div @'10000; end;
+    /// othercases <Scan a subformula enclosed in braces and return>
+    /// endcases;
+    /// ```
+    ///
+    /// Every scalar case ends holding a math code and nothing else: no input
+    /// level is pushed, no token is backed up, and the command that carried
+    /// the case is never delivered a second time. The only `back_input` in
+    /// the whole procedure belongs to §1152's active-character restart and to
+    /// §1153's braced field.
+    ///
+    /// `othercases` is the *entire* rest of the vocabulary, not just a left
+    /// brace: §1153's `back_input; scan_left_brace` runs §403, which either
+    /// consumes a real `{` or reports ``Missing { inserted``, backs the
+    /// rejected command up, and behaves as though a brace had been read. The
+    /// `math_group` opens either way, so a rejected command becomes the first
+    /// token of the subformula body rather than being silently dropped.
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
         loop {
-            let Some(command) = self.get_x_token()? else {
+            // §1151's `restart` label: §404's shared "next non-blank
+            // non-relax non-call token", the same fetch §403 opens with.
+            let Some(command) = self.next_non_blank_non_relax_x_token()? else {
                 return Ok(MathFieldEpisode {
-                    tokens: self.state.finish_traced_token_list(&[]),
                     body: MathFieldBody::Missing,
                     provenance: StructuredProvenance {
                         primary: OriginId::UNKNOWN,
                     },
                 });
             };
-            match command.meaning() {
+            let provenance = StructuredProvenance {
+                primary: command.origin(),
+            };
+            // §1151's `reswitch`: `char_num` scans its selector and re-enters
+            // the table as `char_given`, so both reach one `math_code` read.
+            let character = match command.meaning() {
                 Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                } => Some(ch),
+                Meaning::CharGiven(ch) => Some(ch),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                    Some(self.scan_character_number()?)
                 }
-                | Meaning::Relax => continue,
-                Meaning::CharToken {
-                    cat: Catcode::BeginGroup,
-                    ..
-                } => {
-                    // TeX82 §1153 verbatim: `back_input; scan_left_brace;
-                    // ... push_math(math_group)`. The brace is re-read, not
-                    // re-consumed from `command`, because `scan_left_brace`
-                    // is what TeX runs here and its skipped spaces and
-                    // recovery are observable.
+                _ => None,
+            };
+            if let Some(ch) = character {
+                let code = self.state.mathcode(ch);
+                // §1151 tests `c=@'100000` exactly, and §1152 then resolves
+                // the character's active meaning, expands it once with
+                // `x_token`, backs the result up, and restarts the field.
+                if code == 0o100000 {
+                    self.treat_as_active_character(ch, provenance.primary)?;
+                    continue;
+                }
+                return Ok(MathFieldEpisode {
+                    body: MathFieldBody::Character(code as u16),
+                    provenance,
+                });
+            }
+            let (code, provenance) = match command.meaning() {
+                // §1224's `\mathchardef` target carries its own code.
+                Meaning::MathCharGiven(code) => (code, provenance),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathChar) => {
+                    let scanned = self.scan_math_character()?;
+                    (scanned.code, scanned.provenance)
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
+                    let scanned = self.scan_delimiter_number()?;
+                    // §1151: `c:=cur_val div @'10000`.
+                    ((scanned.code / 0o10000) as u16, scanned.provenance)
+                }
+                // §1153's `othercases`, verbatim: `back_input;
+                // scan_left_brace; ... push_math(math_group); return`. The
+                // brace is re-read rather than consumed from `command`
+                // because §403's skipped spaces and its missing-brace
+                // recovery are both observable.
+                _ => {
                     self.back_input(command)?;
                     return Ok(match self.scan_left_brace(true) {
                         Ok(opening) => MathFieldEpisode {
-                            tokens: self.state.finish_traced_token_list(&[]),
                             body: MathFieldBody::OpenGroup,
                             provenance: StructuredProvenance {
                                 primary: opening.origin(),
                             },
                         },
+                        // §403's recovery reaches §1153 with `cur_cmd =
+                        // left_brace`, so `push_math(math_group)` runs
+                        // unconditionally; the rejected command is already
+                        // backed up and opens the body.
                         Err(CommandError::InputInvariant(_)) => MathFieldEpisode {
-                            tokens: self.state.finish_traced_token_list(&[]),
-                            body: MathFieldBody::Replay,
+                            body: MathFieldBody::OpenGroup,
                             provenance: StructuredProvenance {
                                 primary: OriginId::UNKNOWN,
                             },
@@ -1296,17 +1364,11 @@ impl CommandProcessor<'_> {
                         Err(error) => return Err(error),
                     });
                 }
-                _ => {
-                    let provenance = StructuredProvenance {
-                        primary: command.origin(),
-                    };
-                    return Ok(MathFieldEpisode {
-                        tokens: self.state.finish_traced_token_list(&[command.spelling()]),
-                        body: MathFieldBody::Replay,
-                        provenance,
-                    });
-                }
-            }
+            };
+            return Ok(MathFieldEpisode {
+                body: MathFieldBody::Character(code),
+                provenance,
+            });
         }
     }
 

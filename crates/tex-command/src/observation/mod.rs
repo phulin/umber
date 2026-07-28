@@ -418,8 +418,6 @@ pub enum InputReason {
 /// One replay level Umber owns that tex.web has no `token_type` for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UmberReplayKind {
-    /// A completed math field (tex.web §1151 `scan_math` reads it live).
-    MathField,
     /// A `\discretionary` part (tex.web §1117 reads each part live).
     Discretionary,
     /// The `\afterassignment` token (tex.web §1269 `back_input`s it).

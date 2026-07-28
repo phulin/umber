@@ -210,9 +210,6 @@ pub(crate) enum StoredReplayReason {
     Mark,
     /// §307 `write_text=15`.
     Write,
-    /// A completed math field, replayed while the executor constructs its
-    /// typed field without acquiring a source cursor.
-    MathField,
     Discretionary,
     AfterAssignment,
 }

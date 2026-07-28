@@ -1763,13 +1763,34 @@ fn canonical_mathcode_below_32768_never_consults_the_active_character() {
     assert_eq!(stores.count(0), 0);
 }
 
+/// TeX82 §1151 stores its result with `math_type(p):=math_char;
+/// character(p):=qi(c mod 256)` and its own `fam` rule -- it builds no noad,
+/// so `c`'s class bits are dropped. A `\mathchar` script field is therefore a
+/// math character, never a one-noad sublist carrying the class the same code
+/// would give an mlist entry (`umber2-johp.265`).
+#[test]
+fn canonical_mathchar_script_field_is_a_math_char_without_its_class() {
+    let (_, nodes) = super::core::run_canonical_tex82_current_list("$y^\\mathchar\"3161");
+
+    assert_eq!(nodes.len(), 1);
+    let scripted = math_noad(&nodes[0]);
+    assert_math_char(&scripted.nucleus, 1, 'y');
+    assert_math_char(&scripted.superscript, 1, 'a');
+}
+
 /// §1151's `scan_math` carries the same branch as §1155: a script field whose
 /// first token is a `math_code`-32768 character is redispatched through the
 /// active character instead of becoming the field itself.
+///
+/// §1152 is `x_token; back_input`, so the field restarts on whatever the
+/// active meaning's expansion *begins* with, and §1151 then classifies that
+/// token like any other. A `{` therefore reaches §1153 and the assignment
+/// runs as live `math_group` body -- the redispatched expansion is ordinary
+/// input, never material the field absorbs.
 #[test]
 fn canonical_mathcode_8000_redispatches_inside_a_script_field() {
     let stores = super::core::run_canonical_tex82(
-        r"\catcode`\?=13 \def?{\global\count0=7 x}\catcode`\?=12
+        r"\catcode`\?=13 \def?{{\global\count0=7 x}}\catcode`\?=12
           \mathcode`\?=32768 $y^?$\end",
     );
 

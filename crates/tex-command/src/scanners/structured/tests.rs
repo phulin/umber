@@ -380,28 +380,20 @@ fn replay_completion_precedes_parent_delivery() {
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
-        [
-            Token::Char {
-                ch: 'a',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: 'z',
-                cat: Catcode::Letter,
-            },
-        ],
+        [Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        }],
     );
-    // §1151's unbraced `scan_math` field is the vehicle: it is the one math
-    // scan that still freezes command-owned material. §1153's braced field
-    // and §1172's `\mathchoice` branches deliberately open no episode at all.
-    let field = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor
-            .scan_math_field_episode()
-            .expect("unbraced field scans")
-    };
-    assert_eq!(field.body, MathFieldBody::Replay);
-    let episode = command.push_math_field_episode(field);
+    // A `\discretionary` part is the vehicle: it is command-owned material
+    // TeX82 §1117 reads as its own list. No math scan opens an episode --
+    // §1151's scalar field is classified in place, and §1153's braced field
+    // and §1172's `\mathchoice` branches are live input.
+    let part = universe.finish_traced_token_list(&[traced(Token::Char {
+        ch: 'a',
+        cat: Catcode::Letter,
+    })]);
+    let episode = command.push_discretionary_episode(part);
 
     let first = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -530,6 +522,135 @@ fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
             cat: Catcode::Letter
         }
     );
+}
+
+/// TeX82 §1151's scalar cases -- `letter`, `other_char`, `char_given`,
+/// `char_num`, `math_char_num`, `math_given`, `delim_num` -- each end by
+/// assigning one math code `c`. None of them pushes an input level, backs a
+/// token up, or re-reads the command that selected the case, so the very
+/// next delivery is the token that follows the field (`umber2-johp.265`).
+#[test]
+fn math_field_scalar_case_resolves_without_replaying_its_command() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'z',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let mut recorder = Recorder::default();
+    let field = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor.scan_math_field_episode().expect("field scans")
+    };
+
+    assert_eq!(
+        field.body,
+        MathFieldBody::Character(universe.mathcode('x') as u16)
+    );
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|observation| matches!(observation, CommandObservation::Input(_))),
+        "§1151 opens and retires no input level for a scalar field"
+    );
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("delivery succeeds")
+            .expect("the following token arrives")
+            .spelling()
+            .semantic_token()
+    };
+    assert_eq!(
+        next,
+        Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+/// §1151's `char_num`, `math_char_num`, and `delim_num` cases scan their own
+/// operand and reduce to the same math code: `\char` re-enters the table as
+/// `char_given`, `\mathchar` takes §436's fifteen-bit value directly, and
+/// `\delimiter` takes §437's twenty-seven-bit value `div @'10000`.
+#[test]
+fn math_field_operand_cases_reduce_to_one_math_code() {
+    for (primitive, text, expected) in [
+        (UnexpandablePrimitive::Char, "`x ", u32::from('x')),
+        (UnexpandablePrimitive::MathChar, "\"3161 ", 0x3161),
+        (UnexpandablePrimitive::Delimiter, "\"1161361 ", 0x1161),
+    ] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let symbol = universe.intern("p").symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        let mut tokens = vec![Token::Cs(symbol)];
+        tokens.extend(text_tokens(text));
+        push(&mut command, tokens);
+        let field = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor.scan_math_field_episode().expect("field scans")
+        };
+        let expected = if primitive == UnexpandablePrimitive::Char {
+            universe.mathcode(char::from_u32(expected).expect("a character code"))
+        } else {
+            expected
+        };
+        assert_eq!(field.body, MathFieldBody::Character(expected as u16));
+    }
+}
+
+/// §1151's `othercases` is the whole rest of the vocabulary, not just a left
+/// brace: it is §1153's `back_input; scan_left_brace`, and §403's recovery
+/// reaches §1153 with `cur_cmd = left_brace`. The `math_group` therefore
+/// opens either way, and the rejected command -- already backed up by §403 --
+/// becomes the first token of the live subformula body.
+#[test]
+fn math_field_rejects_a_non_field_command_into_an_open_group() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let symbol = universe.intern("hbox").symbol();
+    universe.set_meaning(
+        symbol,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox),
+    );
+    push(&mut command, [Token::Cs(symbol)]);
+    let field = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.scan_math_field_episode().expect("field scans")
+    };
+
+    assert_eq!(field.body, MathFieldBody::OpenGroup);
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("delivery succeeds")
+            .expect("the rejected command opens the body")
+            .spelling()
+            .semantic_token()
+    };
+    assert_eq!(next, Token::Cs(symbol));
 }
 
 #[test]

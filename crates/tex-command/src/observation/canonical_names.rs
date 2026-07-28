@@ -239,7 +239,6 @@ pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
         InputReason::EveryCr => "every_cr",
         InputReason::Mark => "mark",
         InputReason::Write => "write",
-        InputReason::UmberReplay(UmberReplayKind::MathField) => "umber:math_field",
         InputReason::UmberReplay(UmberReplayKind::Discretionary) => "umber:discretionary",
         InputReason::UmberReplay(UmberReplayKind::AfterAssignment) => "umber:after_assignment",
     })
