@@ -282,19 +282,33 @@
       "expectation": { "kind": "pass" }
     },
     {
-      "id": "read-to-definition",
+      "id": "read-missing-to",
       "property_id": "tex82.assignment.read-to-definition",
-      "source": "read-to-definition.tex",
+      "source": "read-missing-to.tex",
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1225] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "expectation": { "kind": "pass" },
+      "terminal_lines": ["alpha"]
+    },
+    {
+      "id": "read-to-definition",
+      "property_id": "tex82.assignment.read-to-definition",
+      "source": "read-to-definition.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [370, 1215, 1225]
+      },
+      "projection": { "kind": "observations", "kinds": ["mutation"] },
+      "expected": ["mutation:meaning:count:macro definition:local"],
       "expectation": {
         "kind": "xfail",
         "bug": "umber2-vq14",
         "mismatch": {
           "index": 0,
           "kind": "execution",
-          "expected": "count:0=1",
+          "expected": "mutation:meaning:count:macro definition:local",
           "actual": "main-control step: Command(InputInvariant)"
         }
       },
