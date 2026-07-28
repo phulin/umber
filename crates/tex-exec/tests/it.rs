@@ -35,6 +35,51 @@ fn scoped_execution_transaction_cannot_escape_public_api() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn mode_list_mutation_capabilities_do_not_expose_mutable_aggregate_references() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mode = fs::read_to_string(manifest_dir.join("src/mode.rs"))
+        .expect("read mode-list mutation boundary");
+
+    for forbidden in [
+        "fn current_list_mut(",
+        "fn list_mut(",
+        "fn reconstitution_target(",
+        "fn align_state_mut(",
+        "impl DerefMut for ModeListMutation",
+        "impl AsMut<ModeList> for ModeListMutation",
+        "impl BorrowMut<ModeList> for ModeListMutation",
+        "fn apply<R>(self",
+    ] {
+        assert!(
+            !mode.contains(forbidden),
+            "mode-list mutation boundary must not expose `{forbidden}`"
+        );
+    }
+    for forbidden_return in [
+        "-> &mut ModeList",
+        "-> Option<&mut ModeList>",
+        "-> &mut Vec<Node>",
+        "-> Option<&mut Vec<Node>>",
+        "-> &mut Node",
+        "-> Option<&mut Node>",
+        "-> &mut AlignState",
+        "-> Option<&mut AlignState>",
+    ] {
+        assert!(
+            !mode.contains(forbidden_return),
+            "mode-list API must not return `{forbidden_return}`"
+        );
+    }
+    assert!(
+        mode.contains("impl for<'a> FnOnce(&'a mut Node)")
+            && mode.contains("impl for<'a> FnOnce(&'a mut Vec<Node>)")
+            && mode.contains("impl for<'a> FnOnce(&'a mut AlignState)"),
+        "pre-existing aggregate edits must remain behind higher-ranked write barriers"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_boundary() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let driver = fs::read_to_string(manifest_dir.join("src/canonical_main_control.rs"))

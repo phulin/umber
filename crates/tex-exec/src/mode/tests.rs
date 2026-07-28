@@ -15,7 +15,7 @@ fn kern(value: i32) -> Node {
 fn mode_summary_shares_roots_and_restored_mutation_detaches() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal);
-    nest.current_list_mut().push(kern(1));
+    nest.current_list_mutation().push(kern(1));
     let summary = nest.summary();
 
     assert!(Arc::ptr_eq(&nest.levels, &summary.levels));
@@ -23,7 +23,7 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
 
     let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
     assert!(Arc::ptr_eq(&restored.levels, &summary.levels));
-    restored.current_list_mut().push(kern(2));
+    restored.current_list_mutation().push(kern(2));
 
     assert!(!Arc::ptr_eq(&restored.levels, &summary.levels));
     let restored_nodes = &restored.levels.last().expect("horizontal level").list.nodes;
@@ -44,8 +44,8 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
 #[test]
 fn preexisting_node_write_barriers_apply_scoped_mutations() {
     let mut nest = ModeNest::new();
-    nest.current_list_mut().push(kern(11));
-    nest.current_list_mut()
+    nest.current_list_mutation().push(kern(11));
+    nest.current_list_mutation()
         .with_node_mut(0, |node| {
             let Node::Kern { amount, .. } = node else {
                 panic!("fixture node must be a kern");
@@ -53,7 +53,7 @@ fn preexisting_node_write_barriers_apply_scoped_mutations() {
             *amount = Scaled::from_raw(17);
         })
         .expect("fixture node");
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .with_last_node_mut(|node| {
             let Node::Kern { amount, .. } = node else {
                 panic!("fixture tail must be a kern");
@@ -85,13 +85,13 @@ fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
 fn mode_projection_is_canonical_and_content_sensitive() {
     let mut first = ModeNest::new();
     first.push(Mode::Horizontal);
-    first.current_list_mut().push(kern(11));
+    first.current_list_mutation().push(kern(11));
     let mut equal = ModeNest::new();
     equal.push(Mode::Horizontal);
-    equal.current_list_mut().push(kern(11));
+    equal.current_list_mutation().push(kern(11));
     let mut changed = ModeNest::new();
     changed.push(Mode::Horizontal);
-    changed.current_list_mut().push(kern(12));
+    changed.current_list_mutation().push(kern(12));
 
     let first_hash = first.summary().semantic_fingerprint(&Universe::new());
     assert_eq!(
@@ -165,16 +165,17 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
 #[test]
 fn semantic_nest_push_and_pop_preserve_fields_and_start_empty_list() {
     let mut nest = ModeNest::new();
-    nest.current_list_mut().set_prev_graf(7);
-    nest.current_list_mut().push(kern(11));
+    nest.current_list_mutation().set_prev_graf(7);
+    nest.current_list_mutation().push(kern(11));
 
     for mode in [Mode::Horizontal, Mode::Math, Mode::InternalVertical] {
         nest.push(mode);
         assert_eq!(nest.current_mode(), mode);
         assert!(nest.current_list().is_empty());
     }
-    nest.current_list_mut().set_prev_depth(Scaled::from_raw(23));
-    nest.current_list_mut().push(kern(29));
+    nest.current_list_mutation()
+        .set_prev_depth(Scaled::from_raw(23));
+    nest.current_list_mutation().push(kern(29));
 
     let inner = nest.pop().expect("nested mode pops");
     assert_eq!(inner.mode(), Mode::InternalVertical);

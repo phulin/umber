@@ -177,10 +177,9 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
         UnexpandablePrimitive::ScriptStyle,
         UnexpandablePrimitive::ScriptScriptStyle,
     ] {
-        nest.current_list_mut()
-            .push(Node::MathStyle(crate::math::support::style_for_primitive(
-                primitive,
-            )));
+        nest.current_list_mutation().push(Node::MathStyle(
+            crate::math::support::style_for_primitive(primitive),
+        ));
     }
     append_noad(
         &mut nest,
@@ -205,7 +204,7 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
     }
 
     let before = nest.current_list().nodes().len();
-    nest.current_list_mut().push(Node::Penalty(1));
+    nest.current_list_mutation().push(Node::Penalty(1));
     apply_limit_switch(&mut nest, &mut stores, UnexpandablePrimitive::Limits);
     assert_eq!(nest.current_list().nodes().len(), before + 1);
     assert!(pending_terminal_text(&stores).contains("Limit controls must follow"));

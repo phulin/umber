@@ -176,7 +176,7 @@ fn enter_math_after_paragraph(
         Mode::Math
     });
     if let Some((_, _, _, active_directions)) = interrupt {
-        nest.current_list_mut()
+        nest.current_list_mutation()
             .set_display_interrupt(DisplayInterrupt { active_directions });
     }
     let every = stores.tok_param(if display {
@@ -251,7 +251,7 @@ pub(crate) fn dispatch_math_token_with_context(
             ..
         } => {
             let noad = scan::scan_math_atom_group_after_open(nest, input, stores, execution)?;
-            nest.current_list_mut().push(Node::MathNoad(noad));
+            nest.current_list_mutation().push(Node::MathNoad(noad));
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -369,7 +369,7 @@ fn finish_math(
     }
     let mut level = crate::assignments::commit_current_list(nest, stores)?;
     if display {
-        let interrupt = level.list_mut().take_display_interrupt().ok_or(
+        let interrupt = level.list_mutation().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
                 token: Token::Cs(stores.intern("display").symbol()),
@@ -391,10 +391,10 @@ fn finish_math(
             insert_penalties,
         );
         execution.record_paragraph_math_families(family_mask);
-        nest.current_list_mut().append(nodes);
+        nest.current_list_mutation().append(nodes);
         // tex.web `Finish math in text`: an inline formula resets sentence
         // spacing before the math-shift group is unsaved.
-        nest.current_list_mut().set_space_factor(1000);
+        nest.current_list_mutation().set_space_factor(1000);
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
         execution.paragraph_group_exited(stores);
     }
@@ -440,7 +440,7 @@ fn finish_equation_number(
     }
     let mut eq_level = crate::assignments::commit_current_list(nest, stores)?;
     let mut eq_no = eq_level
-        .list_mut()
+        .list_mutation()
         .take_display_eq_no()
         .expect("equation-number mode carries its enclosing display");
     if font_failure.is_some() {
@@ -451,14 +451,15 @@ fn finish_equation_number(
     execution.paragraph_group_exited(stores);
 
     let mut display_level = crate::assignments::commit_current_list(nest, stores)?;
-    let interrupt = display_level.list_mut().take_display_interrupt().ok_or(
-        ExecError::UnimplementedTypesetting {
+    let interrupt = display_level
+        .list_mutation()
+        .take_display_interrupt()
+        .ok_or(ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
             token: Token::Cs(stores.intern("display").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "display interrupt state",
-        },
-    )?;
+        })?;
     finish_display_math(nest, stores, eq_no.display, Some(finished_eq_no))?;
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
@@ -793,7 +794,7 @@ fn dispatch_math_primitive(
                 let spec = assignments::fixed_infinite_glue(primitive);
                 stores.intern_glue(spec)
             };
-            nest.current_list_mut().push(Node::Glue {
+            nest.current_list_mutation().push(Node::Glue {
                 spec,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -802,7 +803,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::MSkip => {
             let spec = assignments::scan_glue_id(input, stores, execution, true, traced)?;
-            nest.current_list_mut().push(Node::Glue {
+            nest.current_list_mutation().push(Node::Glue {
                 spec,
                 kind: GlueKind::MuSkip,
                 leader: None,
@@ -811,7 +812,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::MKern => {
             let amount = scan_mu_dimen(input, stores, execution, traced)?;
-            nest.current_list_mut().push(Node::Kern {
+            nest.current_list_mutation().push(Node::Kern {
                 amount,
                 kind: KernKind::Mu,
             });
@@ -819,7 +820,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::Kern => {
             let amount = assignments::scan_scaled(input, stores, execution, traced)?;
-            nest.current_list_mut().push(Node::Kern {
+            nest.current_list_mutation().push(Node::Kern {
                 amount,
                 kind: KernKind::Explicit,
             });
@@ -831,7 +832,7 @@ fn dispatch_math_primitive(
             // `new_kern`'s default `normal` subtype to `explicit`, so it must
             // not become a legal kern-then-glue line-break point the way an
             // explicit `\kern` or hmode `\/` would.
-            nest.current_list_mut().push(Node::Kern {
+            nest.current_list_mutation().push(Node::Kern {
                 amount: Scaled::from_raw(0),
                 kind: KernKind::Font,
             });
@@ -839,12 +840,12 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::VRule => {
             let rule = assignments::scan_rule_node(input, stores, execution, primitive, traced)?;
-            nest.current_list_mut().push(rule);
+            nest.current_list_mutation().push(rule);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::NonScript => {
             let spec = stores.intern_glue(GlueSpec::ZERO);
-            nest.current_list_mut().push(Node::Glue {
+            nest.current_list_mutation().push(Node::Glue {
                 spec,
                 kind: GlueKind::NonScript,
                 leader: None,
@@ -853,7 +854,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::Penalty => {
             let penalty = assignments::scan_i32(input, stores, execution, traced)?;
-            nest.current_list_mut().push(Node::Penalty(penalty));
+            nest.current_list_mutation().push(Node::Penalty(penalty));
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathChoice => {
@@ -899,7 +900,7 @@ fn dispatch_math_primitive(
         | UnexpandablePrimitive::TextStyle
         | UnexpandablePrimitive::ScriptStyle
         | UnexpandablePrimitive::ScriptScriptStyle => {
-            nest.current_list_mut()
+            nest.current_list_mutation()
                 .push(Node::MathStyle(style_for_primitive(primitive)));
             Ok(DispatchAction::Continue)
         }
@@ -942,20 +943,18 @@ fn finish_display_halign(
             tex_state::PrintSink::TerminalAndLog,
             "\n! Improper \\halign inside $$'s.\nDisplays can use special alignments (like \\eqalignno)\nonly if nothing but the alignment itself is between $$'s.\nSo I've deleted the formulas that preceded this alignment.\n",
         );
-        let _ = nest.current_list_mut().take_nodes();
-        let _ = nest.current_list_mut().take_display_eq_no();
+        let _ = nest.current_list_mutation().take_nodes();
+        let _ = nest.current_list_mutation().take_display_eq_no();
     }
     let mut level = crate::assignments::commit_current_list(nest, stores)?;
-    let interrupt =
-        level
-            .list_mut()
-            .take_display_interrupt()
-            .ok_or(ExecError::UnimplementedTypesetting {
-                mode: Mode::DisplayMath,
-                token: Token::Cs(stores.intern("display").symbol()),
-                origin: OriginId::UNKNOWN,
-                operation: "display interrupt state",
-            })?;
+    let interrupt = level.list_mutation().take_display_interrupt().ok_or(
+        ExecError::UnimplementedTypesetting {
+            mode: Mode::DisplayMath,
+            token: Token::Cs(stores.intern("display").symbol()),
+            origin: OriginId::UNKNOWN,
+            operation: "display interrupt state",
+        },
+    )?;
     let nodes = crate::align::execute_display_halign(context, nest, input, stores, execution)?;
     finish_display_alignment_assignments(input, stores, execution)?;
     let closing_origin = consume_display_alignment_closer(input, stores, context.origin())?;

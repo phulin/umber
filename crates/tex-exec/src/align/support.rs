@@ -13,12 +13,13 @@ pub(super) fn align_state(nest: &ModeNest, align_level: usize) -> Result<&AlignS
         })
 }
 
-pub(super) fn align_state_mut(
+pub(super) fn mutate_align_state<R>(
     nest: &mut ModeNest,
     align_level: usize,
-) -> Result<&mut AlignState, ExecError> {
-    nest.list_mut(align_level)
-        .and_then(crate::mode::ModeList::align_state_mut)
+    mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
+) -> Result<R, ExecError> {
+    nest.list_mutation(align_level)
+        .and_then(|mut list| list.with_align_state_mut(mutate))
         .ok_or(ExecError::MissingToken {
             context: "alignment state",
         })

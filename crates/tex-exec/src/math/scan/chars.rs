@@ -136,7 +136,7 @@ pub(crate) fn redispatch_active_char(input: &mut InputStack, stores: &mut Univer
 }
 
 pub(crate) fn append_noad(nest: &mut ModeNest, kind: NoadKind, nucleus: MathField) {
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .push(Node::MathNoad(MathNoad::new(kind, nucleus)));
 }
 
@@ -148,12 +148,12 @@ pub(crate) fn attach_script(
     superscript: bool,
 ) -> Result<(), ExecError> {
     let field = scan_math_field(nest, input, stores, execution)?;
-    let Some(mut node) = nest.current_list_mut().pop_last_node() else {
+    let Some(mut node) = nest.current_list_mutation().pop_last_node() else {
         push_scripted_empty_noad(nest, field, superscript);
         return Ok(());
     };
     let Node::MathNoad(noad) = &mut node else {
-        nest.current_list_mut().push(node);
+        nest.current_list_mutation().push(node);
         push_scripted_empty_noad(nest, field, superscript);
         return Ok(());
     };
@@ -163,7 +163,7 @@ pub(crate) fn attach_script(
         &mut noad.subscript
     };
     if !matches!(target, MathField::Empty) {
-        nest.current_list_mut().push(node);
+        nest.current_list_mutation().push(node);
         report_math_error(
             stores,
             if superscript {
@@ -175,7 +175,7 @@ pub(crate) fn attach_script(
         push_scripted_empty_noad(nest, field, superscript);
     } else {
         *target = field;
-        nest.current_list_mut().push(node);
+        nest.current_list_mutation().push(node);
     }
     Ok(())
 }
@@ -187,5 +187,5 @@ fn push_scripted_empty_noad(nest: &mut ModeNest, field: MathField, superscript: 
     } else {
         noad.subscript = field;
     }
-    nest.current_list_mut().push(Node::MathNoad(noad));
+    nest.current_list_mutation().push(Node::MathNoad(noad));
 }

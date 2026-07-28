@@ -262,10 +262,11 @@ pub(super) fn start_left_group(
 ) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     nest.push(Mode::Math);
-    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
-        NoadKind::LeftDelimiter { delimiter },
-        MathField::Empty,
-    )));
+    nest.current_list_mutation()
+        .push(Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter },
+            MathField::Empty,
+        )));
     sync_engine_state(execution, nest, stores);
     Ok(())
 }
@@ -297,10 +298,11 @@ pub(super) fn append_middle_delimiter(
         report_math_error(stores, "Extra \\middle");
         return Ok(());
     }
-    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
-        NoadKind::MiddleDelimiter { delimiter },
-        MathField::Empty,
-    )));
+    nest.current_list_mutation()
+        .push(Node::MathNoad(MathNoad::new(
+            NoadKind::MiddleDelimiter { delimiter },
+            MathField::Empty,
+        )));
     Ok(())
 }
 
@@ -375,7 +377,7 @@ pub(super) fn finish_current_math_list(
     stores: &mut Universe,
 ) -> tex_state::ids::NodeListId {
     let (nodes, incomplete) = {
-        let list = nest.current_list_mut();
+        let mut list = nest.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
     };
     let nodes = if let Some(incomplete) = incomplete {
@@ -438,9 +440,9 @@ pub(super) fn start_fraction(
         }
         _ => FractionThickness::Default,
     };
-    let numerator_nodes = nest.current_list_mut().take_nodes();
+    let numerator_nodes = nest.current_list_mutation().take_nodes();
     let numerator = stores.freeze_node_list(&numerator_nodes);
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .set_incomplete_fraction(IncompleteFraction {
             numerator,
             thickness,
@@ -461,7 +463,7 @@ pub(super) fn apply_limit_switch(
         UnexpandablePrimitive::DisplayLimits => LimitType::DisplayLimits,
         _ => unreachable!("caller restricts limit primitive"),
     };
-    let Some(is_operator) = nest.current_list_mut().with_last_node_mut(|node| {
+    let Some(is_operator) = nest.current_list_mutation().with_last_node_mut(|node| {
         let Node::MathNoad(noad) = node else {
             return false;
         };
@@ -491,12 +493,13 @@ pub(super) fn append_math_choice(
     let text = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
     let script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
     let script_script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
-    nest.current_list_mut().push(Node::MathChoice(MathChoice {
-        display,
-        text,
-        script,
-        script_script,
-    }));
+    nest.current_list_mutation()
+        .push(Node::MathChoice(MathChoice {
+            display,
+            text,
+            script,
+            script_script,
+        }));
     Ok(())
 }
 

@@ -2300,7 +2300,7 @@ fn execute_prefixed_command(
                         right_hyphen_min,
                     }),
                 )?;
-                nest.current_list_mut().set_hyphen_language(language);
+                nest.current_list_mutation().set_hyphen_language(language);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Shipout => {
@@ -2433,7 +2433,8 @@ fn execute_prefixed_command(
                     UnexpandablePrimitive::EndR => tex_state::node::Direction::EndR,
                     _ => unreachable!(),
                 };
-                nest.current_list_mut().push(Node::Direction(direction));
+                nest.current_list_mutation()
+                    .push(Node::Direction(direction));
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::BatchMode

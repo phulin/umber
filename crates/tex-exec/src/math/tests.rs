@@ -340,14 +340,16 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut execution = crate::ExecutionContext::new("texput");
     enter_math(&mut inline, &mut input, &mut stores, &mut execution).expect("inline enters");
-    inline.current_list_mut().push(Node::MathNoad(MathNoad::new(
-        NoadKind::Normal(NoadClass::Ord),
-        MathField::MathChar(MathChar {
-            family: 0,
-            character: 'a',
-            origin: OriginId::UNKNOWN,
-        }),
-    )));
+    inline
+        .current_list_mutation()
+        .push(Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(MathChar {
+                family: 0,
+                character: 'a',
+                origin: OriginId::UNKNOWN,
+            }),
+        )));
     finish_math(
         &mut inline,
         &mut input,

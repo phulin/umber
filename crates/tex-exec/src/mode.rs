@@ -155,8 +155,11 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).get_mut(index).map(mutate)
     }
 
-    pub(crate) fn reconstitution_target(&mut self) -> &mut Vec<Node> {
-        Arc::make_mut(&mut self.nodes)
+    pub(crate) fn with_reconstitution_target<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
+    ) -> R {
+        mutate(Arc::make_mut(&mut self.nodes))
     }
 
     pub(crate) fn push_reconstituted(
@@ -311,8 +314,11 @@ impl ModeList {
         self.align_state = Some(state);
     }
 
-    pub fn align_state_mut(&mut self) -> Option<&mut AlignState> {
-        self.align_state.as_mut()
+    pub fn with_align_state_mut<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
+    ) -> Option<R> {
+        self.align_state.as_mut().map(mutate)
     }
 
     pub fn take_align_state(&mut self) -> Option<AlignState> {
@@ -373,6 +379,173 @@ impl ModeList {
             return None;
         }
         Some((self.take_nodes(), self.prev_depth))
+    }
+}
+
+/// A typed, short-lived write capability for one mode list.
+///
+/// The capability deliberately does not implement `DerefMut` or expose its
+/// backing list. Operations either consume/replace owned values or execute a
+/// higher-ranked closure whose mutable borrow cannot escape.
+pub(crate) struct ModeListMutation<'a> {
+    list: &'a mut ModeList,
+}
+
+impl ModeListMutation<'_> {
+    #[cfg(test)]
+    pub(crate) fn for_test(list: &mut ModeList) -> ModeListMutation<'_> {
+        ModeListMutation { list }
+    }
+
+    pub(crate) fn push(&mut self, node: Node) {
+        self.list.push(node);
+    }
+
+    pub(crate) fn nodes(&self) -> &[Node] {
+        self.list.nodes()
+    }
+
+    pub(crate) fn append(&mut self, nodes: impl IntoIterator<Item = Node>) {
+        self.list.append(nodes);
+    }
+
+    pub(crate) fn take_nodes(&mut self) -> Vec<Node> {
+        self.list.take_nodes()
+    }
+
+    pub(crate) fn pop_last_node(&mut self) -> Option<Node> {
+        self.list.pop_last_node()
+    }
+
+    pub(crate) fn take_last_box(&mut self) -> Option<Node> {
+        self.list.take_last_box()
+    }
+
+    pub(crate) fn with_node_mut<R>(
+        &mut self,
+        index: usize,
+        mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
+    ) -> Option<R> {
+        self.list.with_node_mut(index, mutate)
+    }
+
+    pub(crate) fn with_last_node_mut<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
+    ) -> Option<R> {
+        self.list.with_last_node_mut(mutate)
+    }
+
+    pub(crate) fn with_reconstitution_target<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
+    ) -> R {
+        self.list.with_reconstitution_target(mutate)
+    }
+
+    pub(crate) fn push_reconstituted(
+        &mut self,
+        insertion: Option<(usize, Node)>,
+        first: Node,
+        second: Option<Node>,
+        third: Option<Node>,
+    ) {
+        self.list
+            .push_reconstituted(insertion, first, second, third);
+    }
+
+    pub(crate) fn begin_pending_hchars(
+        &mut self,
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        retain_source: bool,
+    ) {
+        self.list
+            .begin_pending_hchars(font, ch, origin, retain_source);
+    }
+
+    pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
+        self.list.set_pending_hchars(pending);
+    }
+
+    pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
+        self.list.take_pending_hchars()
+    }
+
+    pub(crate) fn set_space_factor(&mut self, value: i32) {
+        self.list.set_space_factor(value);
+    }
+
+    pub(crate) fn space_factor(&self) -> i32 {
+        self.list.space_factor()
+    }
+
+    pub(crate) fn set_no_boundary(&mut self, value: bool) {
+        self.list.set_no_boundary(value);
+    }
+
+    pub(crate) fn set_hyphen_language(&mut self, language: u8) {
+        self.list.set_hyphen_language(language);
+    }
+
+    pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
+        self.list.set_prev_depth(depth);
+    }
+
+    pub(crate) fn set_prev_graf(&mut self, lines: i32) {
+        self.list.set_prev_graf(lines);
+    }
+
+    pub(crate) fn set_align_state(&mut self, state: AlignState) {
+        self.list.set_align_state(state);
+    }
+
+    pub(crate) fn with_align_state_mut<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
+    ) -> Option<R> {
+        self.list.with_align_state_mut(mutate)
+    }
+
+    pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
+        self.list.take_align_state()
+    }
+
+    pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
+        self.list.set_incomplete_fraction(fraction);
+    }
+
+    pub(crate) fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
+        self.list.take_incomplete_fraction()
+    }
+
+    pub(crate) fn incomplete_fraction(&self) -> Option<&IncompleteFraction> {
+        self.list.incomplete_fraction()
+    }
+
+    pub(crate) fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
+        self.list.set_display_interrupt(interrupt);
+    }
+
+    pub(crate) fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
+        self.list.take_display_interrupt()
+    }
+
+    pub(crate) fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
+        self.list.set_display_eq_no(eq_no);
+    }
+
+    pub(crate) fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
+        self.list.take_display_eq_no()
+    }
+
+    pub(crate) fn set_display_alignment(&mut self, nodes: Vec<Node>, prev_depth: Option<Scaled>) {
+        self.list.set_display_alignment(nodes, prev_depth);
+    }
+
+    pub(crate) fn take_display_alignment(&mut self) -> Option<(Vec<Node>, Option<Scaled>)> {
+        self.list.take_display_alignment()
     }
 }
 
@@ -660,8 +833,17 @@ impl ModeLevelSummary {
         &self.list
     }
 
-    pub fn list_mut(&mut self) -> &mut ModeList {
-        &mut self.list
+    pub(crate) fn mutate_list<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut ModeList) -> R,
+    ) -> R {
+        mutate(&mut self.list)
+    }
+
+    pub(crate) fn list_mutation(&mut self) -> ModeListMutation<'_> {
+        ModeListMutation {
+            list: &mut self.list,
+        }
     }
 }
 
@@ -897,7 +1079,7 @@ impl ModeNest {
     pub fn push(&mut self, mode: Mode) {
         let mut level = ModeLevelSummary::new(mode);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
-            level.list_mut().set_space_factor(1000);
+            level.mutate_list(|list| list.set_space_factor(1000));
         }
         self.levels_mut_for_push().push(level);
     }
@@ -939,21 +1121,25 @@ impl ModeNest {
             .list()
     }
 
-    pub fn current_list_mut(&mut self) -> &mut ModeList {
-        Arc::make_mut(&mut self.levels)
+    pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
+        let level = Arc::make_mut(&mut self.levels)
             .last_mut()
-            .expect("ModeNest always has at least one level")
-            .list_mut()
+            .expect("ModeNest always has at least one level");
+        ModeListMutation {
+            list: &mut level.list,
+        }
     }
 
     pub(crate) fn list(&self, index: usize) -> Option<&ModeList> {
         self.levels.get(index).map(ModeLevelSummary::list)
     }
 
-    pub(crate) fn list_mut(&mut self, index: usize) -> Option<&mut ModeList> {
+    pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
         Arc::make_mut(&mut self.levels)
             .get_mut(index)
-            .map(ModeLevelSummary::list_mut)
+            .map(|level| ModeListMutation {
+                list: &mut level.list,
+            })
     }
 
     #[must_use]
@@ -970,9 +1156,7 @@ impl ModeNest {
 
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
         let index = self.enclosing_vertical_index();
-        Arc::make_mut(&mut self.levels)[index]
-            .list_mut()
-            .set_prev_graf(lines);
+        Arc::make_mut(&mut self.levels)[index].mutate_list(|list| list.set_prev_graf(lines));
     }
 
     fn enclosing_vertical_index(&self) -> usize {

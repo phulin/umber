@@ -88,14 +88,14 @@ fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
     stores.set_sfcode('.', 3000);
     let mut nest = ModeNest::new();
 
-    update_space_factor(nest.current_list_mut(), &stores, 'A');
+    update_space_factor(&mut nest.current_list_mutation(), &stores, 'A');
     assert_eq!(nest.current_list().space_factor(), 999);
 
-    update_space_factor(nest.current_list_mut(), &stores, '.');
+    update_space_factor(&mut nest.current_list_mutation(), &stores, '.');
     assert_eq!(nest.current_list().space_factor(), 1000);
 
-    update_space_factor(nest.current_list_mut(), &stores, 'a');
-    update_space_factor(nest.current_list_mut(), &stores, '.');
+    update_space_factor(&mut nest.current_list_mutation(), &stores, 'a');
+    update_space_factor(&mut nest.current_list_mutation(), &stores, '.');
     assert_eq!(nest.current_list().space_factor(), 3000);
 }
 
@@ -425,7 +425,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
         metrics,
     ));
     let mut nest = ModeNest::new();
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
 
     flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
@@ -497,7 +497,7 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
     let second_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
     let mut nest = ModeNest::new();
     append_pending_hchar(
-        nest.current_list_mut(),
+        &mut nest.current_list_mutation(),
         &mut stores,
         Mode::RestrictedHorizontal,
         font,
@@ -506,7 +506,7 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
         first_origin,
     );
     append_pending_hchar(
-        nest.current_list_mut(),
+        &mut nest.current_list_mutation(),
         &mut stores,
         Mode::RestrictedHorizontal,
         font,
@@ -579,7 +579,7 @@ fn right_boundary_kern_prevents_a_following_italic_correction() {
         metrics,
     ));
     let mut nest = ModeNest::new();
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
 
     append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");

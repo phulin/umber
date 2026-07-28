@@ -9,8 +9,8 @@ use tex_state::token::{Token, TracedTokenWord};
 use tex_state::{ExpansionContext, ExpansionState, InteractionMode, PrintSink, Universe};
 
 use super::support::{
-    align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
-    is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode,
+    align_kind, align_state, alignment_mode, cell_mode, is_alignment_tab, is_cr, is_crcr,
+    is_end_group, is_noalign, is_omit, is_span, mutate_align_state, row_mode,
 };
 use crate::assignments::flush_pending_hchars;
 use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
@@ -37,10 +37,10 @@ pub(crate) fn execute_alignment(
         if let Some(prev_depth) = enclosing_prev_depth {
             // TeX.web push_nest preserves aux, so an ordinary vertical-mode
             // alignment starts with the enclosing list's prev_depth too.
-            nest.current_list_mut().set_prev_depth(prev_depth);
+            nest.current_list_mutation().set_prev_depth(prev_depth);
         }
         let align_level = nest.depth() - 1;
-        nest.current_list_mut().set_align_state(state);
+        nest.current_list_mutation().set_align_state(state);
         // TeX82 keeps an entry align_group above the whole-alignment group.
         // fin_col replaces this level after every completed entry.
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
@@ -59,7 +59,9 @@ pub(crate) fn execute_alignment(
                 stores,
                 execution,
             )?;
-            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
+            mutate_align_state(nest, align_level, |state| {
+                state.set_suppress_redundant_cr(suppress_redundant_cr)
+            })?;
             fin_row(align_level, migrations, nest, stores)?;
             replay_everycr(input, stores);
         }
@@ -86,13 +88,13 @@ pub(crate) fn append_finished_alignment(
     {
         // TeX.web fin_align restores the alignment level's aux wholesale
         // before splicing nodes whose dimensions may have been transformed.
-        nest.current_list_mut().set_prev_depth(prev_depth);
+        nest.current_list_mutation().set_prev_depth(prev_depth);
     }
     for node in finished.nodes {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);
         } else {
-            nest.current_list_mut().push(node);
+            nest.current_list_mutation().push(node);
         }
     }
 }
@@ -111,10 +113,10 @@ pub(super) fn execute_alignment_to_nodes(
         if let Some(prev_depth) = enclosing_prev_depth {
             // TeX.web init_align reaches through display math to recover the
             // enclosing vlist's prev_depth after push_nest preserves aux.
-            nest.current_list_mut().set_prev_depth(prev_depth);
+            nest.current_list_mutation().set_prev_depth(prev_depth);
         }
         let align_level = nest.depth() - 1;
-        nest.current_list_mut().set_align_state(state);
+        nest.current_list_mutation().set_align_state(state);
         // Match init_align's entry align_group for the display path too.
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
@@ -132,7 +134,9 @@ pub(super) fn execute_alignment_to_nodes(
                 stores,
                 execution,
             )?;
-            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
+            mutate_align_state(nest, align_level, |state| {
+                state.set_suppress_redundant_cr(suppress_redundant_cr)
+            })?;
             fin_row(align_level, migrations, nest, stores)?;
             replay_everycr(input, stores);
         }
@@ -148,12 +152,12 @@ fn finish_alignment_level(
     let mut level = crate::assignments::commit_current_list(nest, stores)?;
     let aux_prev_depth = level.list().prev_depth();
     let state = level
-        .list_mut()
+        .list_mutation()
         .take_align_state()
         .ok_or(ExecError::MissingToken {
             context: "alignment state",
         })?;
-    let nodes = level.list_mut().take_nodes();
+    let nodes = level.list_mutation().take_nodes();
     // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent
     // else o:=0`. The alignment level has just been popped, so the current mode
     // is the enclosing one §800 inspects.
@@ -210,7 +214,9 @@ fn align_peek(
         // \cr immediately following that recovery is the redundant terminator
         // of the same malformed row, not the start of another empty row.
         if align_state(nest, align_level)?.suppress_redundant_cr() && is_cr(stores, semantic) {
-            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(false);
+            mutate_align_state(nest, align_level, |state| {
+                state.set_suppress_redundant_cr(false)
+            })?;
             continue;
         }
         // align_peek ignores \crcr between rows, but a bare \cr starts and
@@ -219,7 +225,9 @@ fn align_peek(
         if is_crcr(stores, semantic) {
             continue;
         }
-        align_state_mut(nest, align_level)?.set_suppress_redundant_cr(false);
+        mutate_align_state(nest, align_level, |state| {
+            state.set_suppress_redundant_cr(false)
+        })?;
         return Ok(Some(token));
     }
 }
@@ -227,12 +235,12 @@ fn align_peek(
 fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     let kind = align_kind(nest, align_level)?;
     let first_tabskip = align_state(nest, align_level)?.tabskip_for_boundary(0);
-    align_state_mut(nest, align_level)?.start_row();
+    mutate_align_state(nest, align_level, AlignState::start_row)?;
     nest.push(row_mode(kind));
     if kind == AlignmentKind::HAlign {
-        nest.current_list_mut().set_space_factor(0);
+        nest.current_list_mutation().set_space_factor(0);
     }
-    nest.current_list_mut().push(Node::Glue {
+    nest.current_list_mutation().push(Node::Glue {
         spec: first_tabskip,
         kind: GlueKind::TabSkip,
         leader: None,
@@ -288,7 +296,7 @@ fn fin_row(
     let kind = align_kind(nest, align_level)?;
 
     let mut row_level = crate::assignments::commit_current_list(nest, stores)?;
-    let nodes = row_level.list_mut().take_nodes();
+    let nodes = row_level.list_mutation().take_nodes();
     let children = stores.freeze_node_list(&nodes);
     let row = super::packaging::make_unset_node(
         stores,
@@ -305,9 +313,9 @@ fn fin_row(
             append_vertical_contribution(nest, stores, node);
         }
     } else {
-        nest.current_list_mut().push(row);
+        nest.current_list_mutation().push(row);
     }
-    align_state_mut(nest, align_level)?.finish_row();
+    mutate_align_state(nest, align_level, AlignState::finish_row)?;
     Ok(())
 }
 
@@ -342,7 +350,9 @@ fn execute_cell(
         let omit = initial
             .map(tex_expand::semantic_token)
             .is_some_and(|token| is_omit(stores, token));
-        align_state_mut(nest, align_level)?.start_cell(column, span_count);
+        mutate_align_state(nest, align_level, |state| {
+            state.start_cell(column, span_count)
+        })?;
         let column_templates = align_state(nest, align_level)?
             .column_for(column)
             .copied()
@@ -381,7 +391,9 @@ fn execute_cell(
             input.begin_alignment_cell(None, v_template);
             None
         };
-        align_state_mut(nest, align_level)?.start_cell(column, span_count);
+        mutate_align_state(nest, align_level, |state| {
+            state.start_cell(column, span_count)
+        })?;
 
         let terminator = if let Some(command) = escaped_endv {
             match do_template_driver_endv(command, input, stores)? {
@@ -429,7 +441,7 @@ fn execute_cell(
                     )?;
                     leave_group(input, stores, tex_state::GroupKind::Align)?;
                     stores.enter_group_with_kind(tex_state::GroupKind::Align);
-                    align_state_mut(nest, align_level)?.finish_cell(next_column);
+                    mutate_align_state(nest, align_level, |state| state.finish_cell(next_column))?;
                     return Ok(CellResult {
                         next_column,
                         ended_row: true,
@@ -470,7 +482,7 @@ fn execute_cell(
                 // WEB fin_col immediately installs the next entry align_group,
                 // including after a row-ending \cr for fin_align to remove.
                 stores.enter_group_with_kind(tex_state::GroupKind::Align);
-                align_state_mut(nest, align_level)?.finish_cell(next_column);
+                mutate_align_state(nest, align_level, |state| state.finish_cell(next_column))?;
                 return Ok(CellResult {
                     next_column,
                     ended_row: matches!(terminator, CellTerminator::Cr) || extra_alignment_tab,
@@ -519,7 +531,7 @@ fn package_cell(
     }
 
     let mut cell_level = crate::assignments::commit_current_list(nest, stores)?;
-    let nodes = cell_level.list_mut().take_nodes();
+    let nodes = cell_level.list_mutation().take_nodes();
     let nodes = if kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 move its insertions, marks, and `\vadjust` contents
@@ -539,9 +551,9 @@ fn package_cell(
         super::packaging::cell_unset_kind(kind),
         span_count,
     )?;
-    nest.current_list_mut().push(cell);
+    nest.current_list_mutation().push(cell);
     let tabskip = align_state(nest, align_level)?.tabskip_for_boundary(next_boundary);
-    nest.current_list_mut().push(Node::Glue {
+    nest.current_list_mutation().push(Node::Glue {
         spec: tabskip,
         kind: GlueKind::TabSkip,
         leader: None,

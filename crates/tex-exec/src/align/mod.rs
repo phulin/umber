@@ -41,9 +41,9 @@ pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
-        nest.current_list_mut().set_space_factor(1000);
+        nest.current_list_mutation().set_space_factor(1000);
     } else {
-        nest.current_list_mut()
+        nest.current_list_mutation()
             .set_prev_depth(crate::mode::ignored_depth(stores));
         crate::assignments::normal_paragraph(nest, stores);
     }

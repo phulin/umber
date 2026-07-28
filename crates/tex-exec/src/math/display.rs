@@ -69,7 +69,7 @@ pub(super) fn start_eq_no(
     // number and the following `$` closes the enclosing display, and both the
     // mode nest and save stack must remain snapshot-coverable between them.
     nest.push(Mode::Math);
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .set_display_eq_no(DisplayEqNo { side, display });
     Ok(())
 }
@@ -276,7 +276,7 @@ pub(crate) fn finish_display_alignment(
         append_vertical_contribution(nest, stores, node);
     }
     if let Some(prev_depth) = finished.aux_prev_depth {
-        nest.current_list_mut().set_prev_depth(prev_depth);
+        nest.current_list_mutation().set_prev_depth(prev_depth);
     }
 
     append_vertical_contribution(
@@ -341,8 +341,8 @@ pub(super) fn resume_after_display_alignment(
         }
         Some(traced) => {
             nest.push(Mode::Horizontal);
-            nest.current_list_mut().set_space_factor(1000);
-            nest.current_list_mut()
+            nest.current_list_mutation().set_space_factor(1000);
+            nest.current_list_mutation()
                 .append(active_directions.iter().copied().map(Node::Direction));
             crate::insert_traced_tokens(input, stores, [traced]);
         }
@@ -407,8 +407,8 @@ pub(super) fn resume_after_display(
         .expect("display-math prev_graf overflow");
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     nest.push(Mode::Horizontal);
-    nest.current_list_mut().set_space_factor(1000);
-    nest.current_list_mut()
+    nest.current_list_mutation().set_space_factor(1000);
+    nest.current_list_mutation()
         .append(active_directions.iter().copied().map(Node::Direction));
     match input.next_traced_token(stores)? {
         Some(traced)

@@ -146,15 +146,16 @@ pub(crate) fn indent_in_hmode(
         Mode::Math | Mode::DisplayMath => {
             let box_node = make_indent_box(stores);
             let list = stores.freeze_node_list(&[box_node]);
-            nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
-                NoadKind::Normal(NoadClass::Ord),
-                MathField::SubBox(list),
-            )));
+            nest.current_list_mutation()
+                .push(Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::SubBox(list),
+                )));
             Ok(())
         }
         _ => {
             flush_pending_hchars(nest, stores)?;
-            nest.current_list_mut().set_space_factor(1000);
+            nest.current_list_mutation().set_space_factor(1000);
             append_indent_box(nest, stores)
         }
     }
@@ -210,7 +211,7 @@ fn start_paragraph(
 }
 
 fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
-    nest.current_list_mut().push(make_indent_box(stores));
+    nest.current_list_mutation().push(make_indent_box(stores));
     Ok(())
 }
 
@@ -320,8 +321,8 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
     continuation: crate::executor::ParagraphContinuation,
 ) -> Result<Option<BoxNode>, ExecError> {
     debug_assert_eq!(nest.current_mode(), Mode::Horizontal);
-    let _ = nest.current_list_mut().take_nodes();
-    nest.current_list_mut().append(nodes);
+    let _ = nest.current_list_mutation().take_nodes();
+    nest.current_list_mutation().append(nodes);
     let Some((finished, line_count, last_badness)) = finished else {
         let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
         let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
@@ -356,7 +357,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
         }
     }
     let prev_graf = nest.enclosing_vertical_prev_graf();
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .set_prev_graf(prev_graf.saturating_add(line_count));
     stores.set_last_badness(last_badness);
     if continuation == crate::executor::ParagraphContinuation::End {
@@ -469,15 +470,21 @@ fn break_current_paragraph(
     flush_pending_hchars(nest, stores)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
     let params = snapshot_paragraph_params(nest, stores);
-    remove_final_glue(nest.current_list_mut());
-    nest.current_list_mut().push(Node::Penalty(10_000));
-    nest.current_list_mut().push(Node::Glue {
+    {
+        let mut list = nest.current_list_mutation();
+        if matches!(list.nodes().last(), Some(Node::Glue { .. })) {
+            let _ = list.pop_last_node();
+        }
+    }
+    nest.current_list_mutation().push(Node::Penalty(10_000));
+    nest.current_list_mutation().push(Node::Glue {
         spec: params.par_fill_skip,
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
     let mut level = crate::assignments::commit_current_list(nest, stores)?;
-    let hlist = crate::math::finish_math_lists_owned(stores, level.list_mut().take_nodes(), true);
+    let hlist =
+        crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps =
@@ -558,7 +565,7 @@ fn break_current_paragraph(
         }
         line_nodes = broken.nodes;
     }
-    nest.current_list_mut().set_prev_graf(
+    nest.current_list_mutation().set_prev_graf(
         params
             .prev_graf
             .checked_add(line_count)
@@ -996,12 +1003,6 @@ fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
     normal_paragraph(nest, stores);
 }
 
-fn remove_final_glue(list: &mut crate::ModeList) {
-    if matches!(list.nodes().last(), Some(Node::Glue { .. })) {
-        let _ = list.pop_last_node();
-    }
-}
-
 fn assign_parshape(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -1064,7 +1065,7 @@ fn assign_prevdepth(
 ) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let depth = scan_scaled(input, stores, execution, context)?;
-    nest.current_list_mut().set_prev_depth(depth);
+    nest.current_list_mutation().set_prev_depth(depth);
     Ok(())
 }
 

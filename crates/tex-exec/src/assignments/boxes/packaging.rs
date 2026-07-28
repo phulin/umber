@@ -176,7 +176,7 @@ pub(crate) fn take_last_box(
         }
         Mode::Vertical => Ok(stores.take_page_contribution_last_box()),
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
-            Ok(nest.current_list_mut().take_last_box())
+            Ok(nest.current_list_mutation().take_last_box())
         }
     }
 }

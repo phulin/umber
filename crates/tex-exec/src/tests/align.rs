@@ -1138,7 +1138,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     let input_summary = input.publication_summary(&mut stores);
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical);
-    nest.current_list_mut().set_align_state(state);
+    nest.current_list_mutation().set_align_state(state);
 
     let cell = unset_for_test(
         &mut stores,
@@ -1170,12 +1170,14 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     );
 
     {
-        let list = nest.current_list_mut();
+        let mut list = nest.current_list_mutation();
         list.push(row);
-        let state = list.align_state_mut().expect("alignment state");
-        state.start_row();
-        state.start_cell(1, 2);
-        state.set_suppress_redundant_cr(true);
+        list.with_align_state_mut(|state| {
+            state.start_row();
+            state.start_cell(1, 2);
+            state.set_suppress_redundant_cr(true);
+        })
+        .expect("alignment state");
     }
     stores.set_input_summary(input_summary.clone());
     let snapshot = stores.snapshot();
@@ -1184,10 +1186,10 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     let _temporary = stores.freeze_node_list(&[Node::Penalty(99)]);
     stores.set_input_summary(tex_state::InputSummary::default());
     {
-        let list = nest.current_list_mut();
+        let mut list = nest.current_list_mutation();
         list.push(Node::Penalty(123));
-        let state = list.align_state_mut().expect("alignment state");
-        state.start_cell(0, 1);
+        list.with_align_state_mut(|state| state.start_cell(0, 1))
+            .expect("alignment state");
     }
 
     stores.rollback(&snapshot);
@@ -1806,7 +1808,7 @@ fn fin_align_restores_saved_aux_instead_of_recomputing_it_from_set_nodes() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical);
-    nest.current_list_mut().set_prev_depth(sp(1));
+    nest.current_list_mutation().set_prev_depth(sp(1));
 
     crate::align::append_finished_alignment(
         &mut nest,

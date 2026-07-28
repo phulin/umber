@@ -488,7 +488,7 @@ fn run_output_routine_inner(
 ) -> Result<(), ExecError> {
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .set_prev_depth(ignored_depth(stores));
     let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
     *replay = Some(output_replay);

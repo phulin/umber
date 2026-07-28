@@ -232,7 +232,7 @@ pub(super) fn execute_box_list_command(
                 if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                     append_vertical_contribution(nest, stores, node);
                 } else {
-                    nest.current_list_mut().push(node);
+                    nest.current_list_mutation().push(node);
                 }
             }
         }
@@ -476,7 +476,7 @@ pub(super) fn execute_hrule(
         context,
     )?;
     append_vertical_contribution(nest, stores, node);
-    nest.current_list_mut()
+    nest.current_list_mutation()
         .set_prev_depth(crate::mode::ignored_depth(stores));
     Ok(())
 }
@@ -502,7 +502,7 @@ pub(crate) fn execute_delete_last(
             | (UnexpandablePrimitive::UnKern, Some(Node::Kern { .. }))
     );
     if matches_target {
-        let _ = nest.current_list_mut().pop_last_node();
+        let _ = nest.current_list_mutation().pop_last_node();
     }
     Ok(())
 }
@@ -672,7 +672,7 @@ pub(crate) fn append_box_node_to_current_list(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
-        nest.current_list_mut().set_space_factor(1000);
+        nest.current_list_mutation().set_space_factor(1000);
     }
     Ok(())
 }
@@ -745,7 +745,7 @@ fn append_unboxed(
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);
         } else {
-            nest.current_list_mut().push(node);
+            nest.current_list_mutation().push(node);
         }
     }
     Ok(())

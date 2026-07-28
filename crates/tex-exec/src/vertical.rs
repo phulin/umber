@@ -17,7 +17,7 @@ pub(crate) fn append_node_to_current_list(
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         append_node_to_vertical_list(nest, stores, node)
     } else {
-        nest.current_list_mut().push(node);
+        nest.current_list_mutation().push(node);
         Ok(())
     }
 }
@@ -66,7 +66,7 @@ pub(crate) fn append_node_to_vertical_list(
         );
     }
     append_vertical_contribution(nest, stores, node);
-    nest.current_list_mut().set_prev_depth(depth);
+    nest.current_list_mutation().set_prev_depth(depth);
     Ok(())
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn append_vertical_contribution(nest: &mut ModeNest, stores: &mut Uni
     if is_outer_vertical(nest) {
         stores.append_page_contribution(node);
     } else {
-        nest.current_list_mut().push(node);
+        nest.current_list_mutation().push(node);
     }
 }
 

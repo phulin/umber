@@ -1147,7 +1147,7 @@ impl CanonicalMainControl {
         let pre = self.execute_discretionary_part(discretionary.pre_break.tokens, stores)?;
         let post = self.execute_discretionary_part(discretionary.post_break.tokens, stores)?;
         let replace = self.execute_discretionary_part(discretionary.replacement.tokens, stores)?;
-        self.modes.current_list_mut().push(Node::Disc {
+        self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
             post,
@@ -1659,7 +1659,7 @@ impl CanonicalMainControl {
         match request {
             CanonicalMathRequest::Character(value) => {
                 append_canonical_math_char(
-                    self.modes.current_list_mut(),
+                    self.modes.current_list_mutation(),
                     stores,
                     u32::from(value.code),
                     value.provenance.primary,
@@ -1667,7 +1667,7 @@ impl CanonicalMainControl {
             }
             CanonicalMathRequest::Delimiter(value) => {
                 append_canonical_math_char(
-                    self.modes.current_list_mut(),
+                    self.modes.current_list_mutation(),
                     stores,
                     value.code >> 12,
                     value.provenance.primary,
@@ -1677,7 +1677,7 @@ impl CanonicalMainControl {
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         noad_kind_for_text(kind),
                         field,
@@ -1685,23 +1685,23 @@ impl CanonicalMainControl {
             }
             CanonicalMathRequest::Script(script) => {
                 let target = reserve_canonical_script_target(
-                    self.modes.current_list_mut(),
+                    self.modes.current_list_mutation(),
                     stores,
                     script.kind,
                 );
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
-                fill_canonical_script_target(self.modes.current_list_mut(), target, field);
+                fill_canonical_script_target(self.modes.current_list_mutation(), target, field);
             }
             CanonicalMathRequest::Limits(kind) => {
-                apply_canonical_limits(self.modes.current_list_mut(), stores, kind)
+                apply_canonical_limits(self.modes.current_list_mutation(), stores, kind)
             }
             CanonicalMathRequest::Fraction(fraction) => {
-                start_canonical_fraction(self.modes.current_list_mut(), stores, fraction)
+                start_canonical_fraction(self.modes.current_list_mutation(), stores, fraction)
             }
             CanonicalMathRequest::Style(style) => {
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathStyle(match style {
                         MathStyleKind::Display => MathStyle::Display,
                         MathStyleKind::Text => MathStyle::Text,
@@ -1724,7 +1724,7 @@ impl CanonicalMainControl {
                 let script = self.execute_math_choice_branch(stores)?;
                 let script_script = self.execute_math_choice_branch(stores)?;
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathChoice(MathChoice {
                         display,
                         text,
@@ -1736,7 +1736,7 @@ impl CanonicalMainControl {
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::Radical {
                             delimiter: delimiter.code,
@@ -1751,21 +1751,21 @@ impl CanonicalMainControl {
                     canonical_math_char(stores, u32::from(accent.code), accent.provenance.primary)?
                         .1;
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::Accent { accent },
                         field,
                     )));
             }
             CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
-                self.modes.current_list_mut().push(Node::Glue {
+                self.modes.current_list_mutation().push(Node::Glue {
                     spec: stores.intern_glue(glue),
                     kind: GlueKind::MuSkip,
                     leader: None,
                 })
             }
             CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Kern(amount)) => {
-                self.modes.current_list_mut().push(Node::Kern {
+                self.modes.current_list_mutation().push(Node::Kern {
                     amount,
                     kind: KernKind::Mu,
                 })
@@ -1781,9 +1781,8 @@ impl CanonicalMainControl {
                     stores.enter_group_with_kind(GroupKind::MathShift);
                     stores.set_int_param(IntParam::FAM, -1);
                     self.modes.push(Mode::Math);
-                    self.modes
-                        .current_list_mut()
-                        .set_display_eq_no(crate::mode::DisplayEqNo {
+                    self.modes.current_list_mutation().set_display_eq_no(
+                        crate::mode::DisplayEqNo {
                             side: match number.side {
                                 tex_command::EquationNumberSide::Left => {
                                     crate::mode::EqNoSide::Left
@@ -1793,7 +1792,8 @@ impl CanonicalMainControl {
                                 }
                             },
                             display,
-                        });
+                        },
+                    );
                 }
             }
             CanonicalMathRequest::Family(_) => {}
@@ -1882,7 +1882,7 @@ impl CanonicalMainControl {
         );
         self.enter_canonical_math(true, stores);
         self.modes
-            .current_list_mut()
+            .current_list_mutation()
             .set_display_interrupt(crate::mode::DisplayInterrupt {
                 active_directions: paragraph.active_directions,
             });
@@ -1901,8 +1901,8 @@ impl CanonicalMainControl {
             },
             insert_penalties,
         );
-        self.modes.current_list_mut().append(nodes);
-        self.modes.current_list_mut().set_space_factor(1000);
+        self.modes.current_list_mutation().append(nodes);
+        self.modes.current_list_mutation().set_space_factor(1000);
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
@@ -1916,7 +1916,7 @@ impl CanonicalMainControl {
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let eq = level
-            .list_mut()
+            .list_mutation()
             .take_display_eq_no()
             .expect("equation number mode state");
         let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
@@ -1942,7 +1942,7 @@ impl CanonicalMainControl {
         // are already vertical display material; math-packing them collapses
         // a multi-row alignment to the height and depth of one horizontal box.
         if let Some((nodes, aux_prev_depth)) =
-            self.modes.current_list_mut().take_display_alignment()
+            self.modes.current_list_mutation().take_display_alignment()
         {
             debug_assert!(eq_no.is_none());
             return self.finish_canonical_display_alignment(
@@ -1965,7 +1965,7 @@ impl CanonicalMainControl {
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let interrupt =
             level
-                .list_mut()
+                .list_mutation()
                 .take_display_interrupt()
                 .ok_or(ExecError::MissingToken {
                     context: "display alignment interrupt",
@@ -1989,7 +1989,7 @@ impl CanonicalMainControl {
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let interrupt =
             level
-                .list_mut()
+                .list_mutation()
                 .take_display_interrupt()
                 .ok_or(ExecError::MissingToken {
                     context: "display interrupt",
@@ -2016,9 +2016,9 @@ impl CanonicalMainControl {
             .expect("display prev_graf overflow");
         self.modes.set_enclosing_vertical_prev_graf(prev);
         self.modes.push(Mode::Horizontal);
-        self.modes.current_list_mut().set_space_factor(1000);
+        self.modes.current_list_mutation().set_space_factor(1000);
         self.modes
-            .current_list_mut()
+            .current_list_mutation()
             .append(directions.into_iter().map(Node::Direction));
         self.scan_canonical_optional_space(stores)?;
         crate::math::display::build_page_after_display_resume(&self.modes, stores)
@@ -2062,7 +2062,7 @@ impl CanonicalMainControl {
             MathDelimiterBoundaryKind::Left => {
                 self.modes.push(Mode::Math);
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::LeftDelimiter {
                             delimiter: boundary.delimiter.code,
@@ -2073,7 +2073,7 @@ impl CanonicalMainControl {
             MathDelimiterBoundaryKind::Middle => {
                 if canonical_left_group_open(&self.modes, stores) {
                     self.modes
-                        .current_list_mut()
+                        .current_list_mutation()
                         .push(Node::MathNoad(MathNoad::new(
                             NoadKind::MiddleDelimiter {
                                 delimiter: boundary.delimiter.code,
@@ -2108,7 +2108,7 @@ impl CanonicalMainControl {
                 )));
                 let content = stores.freeze_node_list(&nodes);
                 self.modes
-                    .current_list_mut()
+                    .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
                         NoadKind::Normal(NoadClass::Inner),
                         MathField::SubMlist(content),
@@ -2697,7 +2697,7 @@ fn canonical_math_char(
 }
 
 fn append_canonical_math_char(
-    list: &mut crate::ModeList,
+    mut list: crate::mode::ModeListMutation<'_>,
     stores: &Universe,
     code: u32,
     origin: tex_state::token::OriginId,
@@ -2748,7 +2748,7 @@ fn set_canonical_math_char(
             .map_err(command_error)?;
         return Ok(());
     }
-    append_canonical_math_char(modes.current_list_mut(), stores, code, origin)
+    append_canonical_math_char(modes.current_list_mutation(), stores, code, origin)
 }
 
 fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
@@ -2819,7 +2819,7 @@ pub(crate) struct CanonicalScriptTarget {
 /// recovered or nested field executes cannot move the eventual attachment to a
 /// newer tail.
 pub(crate) fn reserve_canonical_script_target(
-    list: &mut crate::ModeList,
+    mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     kind: MathScriptKind,
 ) -> CanonicalScriptTarget {
@@ -2870,7 +2870,7 @@ pub(crate) fn reserve_canonical_script_target(
 }
 
 pub(crate) fn fill_canonical_script_target(
-    list: &mut crate::ModeList,
+    mut list: crate::mode::ModeListMutation<'_>,
     target: CanonicalScriptTarget,
     field: MathField,
 ) {
@@ -2885,7 +2885,11 @@ pub(crate) fn fill_canonical_script_target(
     .expect("reserved canonical script target must remain present");
 }
 
-fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, kind: MathLimitKind) {
+fn apply_canonical_limits(
+    mut list: crate::mode::ModeListMutation<'_>,
+    _stores: &mut Universe,
+    kind: MathLimitKind,
+) {
     list.with_last_node_mut(|node| {
         let Node::MathNoad(noad) = node else {
             return;
@@ -2904,7 +2908,7 @@ fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, ki
 }
 
 fn start_canonical_fraction(
-    list: &mut crate::ModeList,
+    mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     fraction: tex_command::ScannedMathFraction,
 ) {
@@ -2966,7 +2970,7 @@ fn take_finished_canonical_math_list(
     stores: &mut Universe,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
     let (nodes, incomplete) = {
-        let list = modes.current_list_mut();
+        let mut list = modes.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
     };
     finish_canonical_math_list(&nodes, incomplete.as_ref(), stores)
@@ -6787,7 +6791,7 @@ fn apply_pdf_navigation_request(
                             .map_err(|_| ExecError::PdfObjectCapacity)?,
                     };
                     modes
-                        .current_list_mut()
+                        .current_list_mutation()
                         .push(Node::Whatsit(Whatsit::PdfAnnotation {
                             object: record.object(),
                         }));
@@ -6818,7 +6822,7 @@ fn apply_pdf_navigation_request(
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, action)?;
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfLinkStart {
                     object: record.object(),
                 }));
@@ -6840,7 +6844,7 @@ fn apply_pdf_navigation_request(
                 stores.world_mut().write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfLinkEnd {
                     object: open.record.object(),
                 }));
@@ -6862,7 +6866,7 @@ fn apply_pdf_navigation_request(
                 return Ok(ReplayStep::Continue);
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfDestination(Box::new(
                     tex_state::node::PdfDestinationNode {
                         identifier,
@@ -6886,7 +6890,7 @@ fn apply_pdf_navigation_request(
                 return Err(ExecError::PdfExtensionInDviMode(primitive));
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfThread(Box::new(
                     tex_state::node::PdfThreadNode {
                         identifier,
@@ -6902,7 +6906,7 @@ fn apply_pdf_navigation_request(
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfEndThread));
         }
     }
@@ -7040,7 +7044,7 @@ fn apply_pdf_graphics_request(
             Node::Whatsit(Whatsit::PdfColorStack { id, action })
         }
     };
-    modes.current_list_mut().push(node);
+    modes.current_list_mutation().push(node);
     Ok(ReplayStep::Continue)
 }
 
@@ -7123,7 +7127,7 @@ fn apply_pdf_form_request(
                 .and_then(|object| stores.pdf_form(object))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfRefXForm {
                     object: form.object(),
                     width: form.width(),
@@ -8363,7 +8367,7 @@ fn begin_replay_alignment_cell(
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind));
-        modes.current_list_mut().push(Node::Glue {
+        modes.current_list_mutation().push(Node::Glue {
             spec: active
                 .tabskips
                 .first()
@@ -8404,12 +8408,12 @@ fn capture_replay_alignment_cell(
         // appends them after the packaged row. A `\valign` column is
         // `vpackage`d with `adjust_tail` null and migrates nothing.
         let material =
-            crate::math::finish_math_lists_owned(stores, cell.list_mut().take_nodes(), false);
+            crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
         let (retained, migrated) = crate::assignments::split_hpack_migrations(stores, material);
         active.row_migrations.extend(migrated);
         retained
     } else {
-        cell.list_mut().take_nodes()
+        cell.list_mutation().take_nodes()
     };
     let material = stores.freeze_node_list(&material);
     active
@@ -8425,8 +8429,8 @@ fn capture_replay_alignment_cell(
         crate::align::packaging::cell_unset_kind(active.kind),
         active.cell_span,
     )?;
-    modes.current_list_mut().push(cell);
-    modes.current_list_mut().push(Node::Glue {
+    modes.current_list_mutation().push(cell);
+    modes.current_list_mutation().push(Node::Glue {
         spec: active
             .tabskips
             .get(active.column.saturating_add(1))
@@ -8450,7 +8454,7 @@ fn finish_replay_alignment_row(
     }
 
     let mut row = crate::assignments::commit_current_list(modes, stores)?;
-    let children = stores.freeze_node_list(&row.list_mut().take_nodes());
+    let children = stores.freeze_node_list(&row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
         children,
@@ -8496,7 +8500,7 @@ fn finish_replay_alignment(
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores)?;
     let mut alignment = crate::assignments::commit_current_list(modes, stores)?;
-    let rows = alignment.list_mut().take_nodes();
+    let rows = alignment.list_mutation().take_nodes();
     let columns = active
         .columns
         .iter()
@@ -8530,7 +8534,7 @@ fn finish_replay_alignment(
         // Preserve §812's `(p,q,aux_save)` handoff until the closing `$$`
         // has run §§1206–1207's assignment and delimiter scan.
         modes
-            .current_list_mut()
+            .current_list_mutation()
             .set_display_alignment(finished, aux_prev_depth);
     } else {
         crate::align::append_finished_alignment(
@@ -8705,7 +8709,7 @@ fn apply_scanned_step(
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            modes.current_list_mut().push(Node::Glue {
+            modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(value),
                 kind: GlueKind::Normal,
                 leader: None,
@@ -8723,7 +8727,7 @@ fn apply_scanned_step(
             // also never starts a paragraph but does call `build_page` in
             // outer vertical mode).
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            modes.current_list_mut().push(Node::Kern {
+            modes.current_list_mutation().push(Node::Kern {
                 amount,
                 kind: KernKind::Explicit,
             });
@@ -8767,7 +8771,7 @@ fn apply_scanned_step(
                     // overridden here (unlike hmode's italic-correction kern,
                     // or an explicit `\kern`), so it must not become a legal
                     // kern-then-glue line-break point.
-                    modes.current_list_mut().push(Node::Kern {
+                    modes.current_list_mutation().push(Node::Kern {
                         amount: Scaled::from_raw(0),
                         kind: KernKind::Font,
                     });
@@ -8791,7 +8795,7 @@ fn apply_scanned_step(
         ScannedStep::NonScript => {
             // TeX82 §1171: a zero glue with the `cond_math_glue` subtype.
             let spec = stores.intern_glue(GlueSpec::ZERO);
-            modes.current_list_mut().push(Node::Glue {
+            modes.current_list_mutation().push(Node::Glue {
                 spec,
                 kind: GlueKind::NonScript,
                 leader: None,
@@ -8831,7 +8835,7 @@ fn apply_scanned_step(
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .set_no_boundary(suppress_left_boundary);
             crate::assignments::append_canonical_character(
                 modes,
@@ -8848,7 +8852,7 @@ fn apply_scanned_step(
                     // (§1041) appends real interword glue in math mode, unlike
                     // an ordinary `mmode+spacer`, which §1045 makes a no-op.
                     let spec = crate::assignments::control_space_glue_spec(stores);
-                    modes.current_list_mut().push(Node::Glue {
+                    modes.current_list_mutation().push(Node::Glue {
                         spec: stores.intern_glue(spec),
                         kind: GlueKind::Normal,
                         leader: None,
@@ -8869,7 +8873,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                modes.current_list_mut().set_prev_depth(value);
+                modes.current_list_mutation().set_prev_depth(value);
             } else {
                 // TeX82 §1243's `alter_aux`: `if cur_chr<>abs(mode) then
                 // report_illegal_case`, which prints "You can't use
@@ -8892,7 +8896,7 @@ fn apply_scanned_step(
             // out-of-range value is diagnosed and left unchanged rather than
             // clamped.
             if (1..=32767).contains(&value) {
-                modes.current_list_mut().set_space_factor(value);
+                modes.current_list_mutation().set_space_factor(value);
             } else {
                 stores.world_mut().write_text(
                     PrintSink::TerminalAndLog,
@@ -8949,7 +8953,7 @@ fn apply_scanned_step(
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            modes.current_list_mut().push(Node::Glue {
+            modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive)),
                 kind: GlueKind::Normal,
                 leader: None,
@@ -9333,7 +9337,7 @@ fn apply_scanned_step(
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             let dimensions = image.dimensions();
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfRefXImage {
                     object: image.id().raw(),
                     width: dimensions.width,
@@ -9354,7 +9358,7 @@ fn apply_scanned_step(
                 .filter(|object| stores.pdf_raw_object(*object).is_some())
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfReferenceObject { object }));
             Ok(ReplayStep::Continue)
         }
@@ -9417,7 +9421,7 @@ fn apply_scanned_step(
         }
         ScannedStep::DeferredOpenOut { stream, file_name } => {
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::OpenOut {
                     slot: replay_stream_slot(stream, stores),
                     path: file_name,
@@ -9426,7 +9430,7 @@ fn apply_scanned_step(
         }
         ScannedStep::DeferredCloseOut { stream } => {
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::CloseOut {
                     slot: stream.stream_slot(),
                 }));
@@ -9434,7 +9438,7 @@ fn apply_scanned_step(
         }
         ScannedStep::DeferredWrite { stream, tokens } => {
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
                     tokens: tokens.token_list(),
@@ -9447,7 +9451,7 @@ fn apply_scanned_step(
                 tex_expand::append_token_string_text(stores, token, &mut text);
             }
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::Special {
                     class: "dvi".to_owned(),
                     payload: tex_byte_text(&text),
@@ -9473,7 +9477,7 @@ fn apply_scanned_step(
             let clang = u8::try_from(language).unwrap_or(0);
             crate::assignments::flush_pending_hchars(modes, stores)?;
             modes
-                .current_list_mut()
+                .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::Language {
                     language: clang,
                     left_hyphen_min: crate::assignments::norm_min(
@@ -9483,7 +9487,7 @@ fn apply_scanned_step(
                         stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
                     ),
                 }));
-            modes.current_list_mut().set_hyphen_language(clang);
+            modes.current_list_mutation().set_hyphen_language(clang);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalSetLanguage { token } => {
@@ -10266,10 +10270,12 @@ fn apply_scanned_step(
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
-                modes.current_list_mut().push(Node::MathNoad(MathNoad::new(
-                    NoadKind::VCenter,
-                    MathField::SubBox(boxed),
-                )));
+                modes
+                    .current_list_mutation()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::VCenter,
+                        MathField::SubBox(boxed),
+                    )));
                 return Ok(ReplayStep::Continue);
             }
             if let Some(kind) = box_state.leader_kind {
@@ -10295,7 +10301,7 @@ fn apply_scanned_step(
                 // exactly like `\box<n>` (`box_end`'s `BoxContext::Append`
                 // above): baseline-skip insertion, migration extraction, and
                 // (in outer vertical mode) page-builder contribution all
-                // apply. A bare `modes.current_list_mut().push(node)` here
+                // apply. A bare `modes.current_list_mutation().push(node)` here
                 // bypassed all of that, silently dropping every standalone
                 // `\hbox`/`\vbox`/`\vtop` (and macros built on them, such as
                 // plain.tex's `\centerline`) appended directly in vertical
@@ -10381,7 +10387,7 @@ fn apply_scanned_step(
                 AlignmentKind::HAlign
             }));
             if let Some(prev_depth) = enclosing_prev_depth {
-                modes.current_list_mut().set_prev_depth(prev_depth);
+                modes.current_list_mutation().set_prev_depth(prev_depth);
             }
             Ok(ReplayStep::Continue)
         }
@@ -10720,7 +10726,7 @@ fn apply_scanned_step(
                         start_canonical_paragraph(command.state, modes, stores, true)?;
                     }
                     modes
-                        .current_list_mut()
+                        .current_list_mutation()
                         .set_no_boundary(suppress_left_boundary);
                     crate::assignments::append_canonical_character(modes, stores, ch, origin)?;
                 }
@@ -11267,7 +11273,7 @@ fn apply_scanned_rule(
         }
         crate::vertical::append_vertical_contribution(modes, stores, node);
         modes
-            .current_list_mut()
+            .current_list_mutation()
             .set_prev_depth(crate::mode::ignored_depth(stores));
         // TeX82 §1056's `append_rule` stops after `tail_append` and resetting
         // `prev_depth` in vertical mode. Unlike §1075's box append and §1103's
@@ -11285,7 +11291,7 @@ fn apply_scanned_rule(
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
         crate::assignments::flush_pending_hchars(modes, stores)?;
-        modes.current_list_mut().push(node);
+        modes.current_list_mutation().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
         // the rule: it must inherit 1000, not sentence spacing from text
@@ -11294,7 +11300,7 @@ fn apply_scanned_rule(
             modes.current_mode(),
             Mode::Horizontal | Mode::RestrictedHorizontal
         ) {
-            modes.current_list_mut().set_space_factor(1000);
+            modes.current_list_mutation().set_space_factor(1000);
         }
     }
     Ok(ReplayStep::Continue)
@@ -11340,8 +11346,8 @@ fn apply_accent_nodes(
         Some((character, origin, metrics))
     });
     let Some((character, base_origin, base_metrics)) = base else {
-        modes.current_list_mut().push(accent_node);
-        modes.current_list_mut().set_space_factor(1000);
+        modes.current_list_mutation().push(accent_node);
+        modes.current_list_mutation().set_space_factor(1000);
         return Ok(ReplayStep::Continue);
     };
     let accent_x_height = stores.font_parameter(accent_font, 5);
@@ -11355,12 +11361,12 @@ fn apply_accent_nodes(
         accent_x_height,
         accent_slant,
     );
-    modes.current_list_mut().push(Node::Kern {
+    modes.current_list_mutation().push(Node::Kern {
         amount: delta,
         kind: KernKind::Accent,
     });
     if base_metrics.height == accent_x_height {
-        modes.current_list_mut().push(accent_node);
+        modes.current_list_mutation().push(accent_node);
     } else {
         let children = stores.freeze_node_list(&[accent_node]);
         let mut boxed =
@@ -11368,18 +11374,18 @@ fn apply_accent_nodes(
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
-        modes.current_list_mut().push(Node::HList(boxed));
+        modes.current_list_mutation().push(Node::HList(boxed));
     }
-    modes.current_list_mut().push(Node::Kern {
+    modes.current_list_mutation().push(Node::Kern {
         amount: Scaled::from_raw(-accent_metrics.width.raw() - delta.raw()),
         kind: KernKind::Accent,
     });
-    modes.current_list_mut().push(Node::Char {
+    modes.current_list_mutation().push(Node::Char {
         font: base_font,
         ch: char::from(character),
         origin: base_origin,
     });
-    modes.current_list_mut().set_space_factor(1000);
+    modes.current_list_mutation().set_space_factor(1000);
     Ok(ReplayStep::Continue)
 }
 

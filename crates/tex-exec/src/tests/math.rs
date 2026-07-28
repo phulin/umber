@@ -1934,7 +1934,7 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
             }
             list.push(Node::MathNoad(first));
             let target = crate::canonical_main_control::reserve_canonical_script_target(
-                &mut list,
+                crate::mode::ModeListMutation::for_test(&mut list),
                 &mut stores,
                 kind,
             );
@@ -1946,7 +1946,7 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
                 MathField::Empty,
             )));
             crate::canonical_main_control::fill_canonical_script_target(
-                &mut list,
+                crate::mode::ModeListMutation::for_test(&mut list),
                 target,
                 MathField::MathChar(tex_state::math::MathChar {
                     family: 0,
@@ -1976,7 +1976,7 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
             leader: None,
         });
         let target = crate::canonical_main_control::reserve_canonical_script_target(
-            &mut list,
+            crate::mode::ModeListMutation::for_test(&mut list),
             &mut stores,
             kind,
         );

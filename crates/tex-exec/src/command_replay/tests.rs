@@ -7235,7 +7235,7 @@ fn canonical_spacefactor_out_of_range_values_are_diagnosed_and_leave_state_uncha
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         control.modes.push(Mode::Horizontal);
-        control.modes.current_list_mut().set_space_factor(1234);
+        control.modes.current_list_mutation().set_space_factor(1234);
         register_source(&mut control, format!("\\spacefactor={value} ").as_bytes());
         run_to_end(&mut control, &mut universe);
 
@@ -7649,7 +7649,7 @@ fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise()
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.push(Mode::InternalVertical);
-    control.modes.current_list_mut().push(Node::Kern {
+    control.modes.current_list_mutation().push(Node::Kern {
         amount: Scaled::from_raw(65536 * 3),
         kind: tex_state::node::KernKind::Explicit,
     });
@@ -7721,7 +7721,7 @@ fn canonical_last_skip_reads_an_explicit_mskip_at_mu_val_level() {
         width: Scaled::from_raw(65536 * 2),
         ..GlueSpec::ZERO
     });
-    control.modes.current_list_mut().push(Node::Glue {
+    control.modes.current_list_mutation().push(Node::Glue {
         spec: glue_spec,
         kind: tex_state::node::GlueKind::MuSkip,
         leader: None,

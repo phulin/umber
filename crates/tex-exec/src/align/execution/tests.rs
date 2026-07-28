@@ -26,7 +26,7 @@ fn alignment_nest(kind: AlignmentKind) -> (ModeNest, usize) {
     let mut nest = ModeNest::new();
     nest.push(alignment_mode(kind));
     let level = nest.depth() - 1;
-    nest.current_list_mut().set_align_state(state(kind));
+    nest.current_list_mutation().set_align_state(state(kind));
     (nest, level)
 }
 
@@ -207,7 +207,7 @@ fn execute_test_row(
     nest.push(alignment_mode(kind));
     let align_level = nest.depth() - 1;
     let state = row_state(&mut stores, kind, column_count, loop_start);
-    nest.current_list_mut().set_align_state(state);
+    nest.current_list_mutation().set_align_state(state);
     init_row(align_level, &mut nest).expect("row initialization succeeds");
     let mut execution = crate::ExecutionContext::new("texput");
     let first = next_non_space_protected(&mut input, &mut stores, &mut execution)
@@ -312,7 +312,8 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut nest = ModeNest::new();
         nest.push(enclosing);
-        nest.current_list_mut().set_prev_depth(Scaled::from_raw(7));
+        nest.current_list_mutation()
+            .set_prev_depth(Scaled::from_raw(7));
         append_finished_alignment(
             &mut nest,
             &mut stores,
