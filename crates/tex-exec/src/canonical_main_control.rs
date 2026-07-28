@@ -2310,9 +2310,6 @@ impl CanonicalMainControl {
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
         }
-        if result.is_ok() && fires_afterassignment {
-            schedule_afterassignment(&mut self.command, stores);
-        }
         if result.is_ok() {
             self.fire_pending_page_output(stores)?;
         }
@@ -2395,6 +2392,12 @@ impl CanonicalMainControl {
             }
             records.append(&mut self.page_output_observations);
             self.observe_committed(records);
+        }
+        // TeX82 §1211 commits the assignment inside its case arm, then
+        // reaches §1269's `done:` and `back_input`. Publish the mutation
+        // before the replay-level push for that saved token.
+        if result.is_ok() && fires_afterassignment {
+            schedule_afterassignment(&mut self.command, stores);
         }
         self.page_output_observations.clear();
         result
@@ -4851,12 +4854,17 @@ fn scan_command(
             | UnexpandablePrimitive::CloseIn
             | UnexpandablePrimitive::Read
             | UnexpandablePrimitive::ReadLine),
-        ) => Ok(ScannedStep::InputStream {
-            request: processor
-                .scan_input_stream_request(primitive)
-                .map_err(command_error)?,
-            resource: None,
-        }),
+        ) => {
+            // §1214 fixes the effective scope before §1225 calls
+            // `read_toks`; carry that scope across the typed apply seam.
+            let read_global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
+            Ok(ScannedStep::InputStream {
+                request: processor
+                    .scan_input_stream_request(primitive, read_global)
+                    .map_err(command_error)?,
+                resource: None,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
             // TeX82 §1257's `define(u,set_font,null_font)` precedes the file
             // name scan, so like §1224's provisional `\relax` it takes the
@@ -7374,10 +7382,28 @@ fn applied_mutation_observation(
         // stays silent.
         ScannedStep::FontDefinition { .. } => return None,
         // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
-        // `read_toks`, but the scanned step carries no `\global` prefix to
-        // report a scope with. Tracked as umber2-johp.127 rather than emitted
-        // with a guessed scope.
-        ScannedStep::InputStream { .. } => return None,
+        // `read_toks`. Open/close mutate stream state rather than `eqtb`;
+        // read installs §482's collected list as a parameterless macro.
+        ScannedStep::InputStream {
+            request:
+                InputStreamRequest::Read {
+                    target,
+                    global,
+                    tokens,
+                    ..
+                },
+            ..
+        } => MutationRecord {
+            target: "meaning",
+            value: "macro definition".into(),
+            key: Some(stores.resolve(*target).to_owned()),
+            tokens: Some(observed_read_body(tokens.token_list(), stores)),
+            global: *global,
+        },
+        ScannedStep::InputStream {
+            request: InputStreamRequest::Open { .. } | InputStreamRequest::Close { .. },
+            ..
+        } => return None,
         // -- Steps that perform no assignment at all: mode and list building,
         // box and alignment structure, grouping, diagnostics, recovery, and
         // the pdfTeX extension requests. None of them reaches §1211's
@@ -7740,6 +7766,20 @@ fn observed_macro_body(
         })
         .collect::<Vec<_>>();
     tokens.push(ObservedToken::MacroEndMatch);
+    tokens.extend(
+        stores
+            .tokens(replacement_text)
+            .iter()
+            .copied()
+            .map(|token| observed_macro_token(token, stores)),
+    );
+    tokens
+}
+
+/// §482 constructs a parameterless macro body for §1225's `define`.
+#[cfg(any(test, feature = "instrumentation"))]
+fn observed_read_body(replacement_text: TokenListId, stores: &Universe) -> Vec<ObservedToken> {
+    let mut tokens = vec![ObservedToken::MacroEndMatch];
     tokens.extend(
         stores
             .tokens(replacement_text)
@@ -8852,6 +8892,7 @@ fn apply_scanned_step(
                 // report and the definition.
                 InputStreamRequest::Read {
                     target,
+                    global,
                     missing_to,
                     tokens,
                     ..
@@ -8865,10 +8906,13 @@ fn apply_scanned_step(
                         report.error();
                     }
                     let parameters = stores.intern_token_list(&[]);
-                    stores.set_macro_meaning(
-                        target,
-                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list()),
-                    );
+                    let meaning =
+                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list());
+                    if global {
+                        stores.set_macro_meaning_global(target, meaning);
+                    } else {
+                        stores.set_macro_meaning(target, meaning);
+                    }
                 }
             }
             Ok(ReplayStep::Continue)

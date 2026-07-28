@@ -769,6 +769,9 @@ pub enum InputStreamRequest {
     Read {
         stream: i32,
         target: Symbol,
+        /// Effective TeX82 §1214 scope selected by `prefixed_command`
+        /// before §1225 enters `read_toks`.
+        global: bool,
         /// tex.web §1225's `if not scan_keyword("to")`, which reports
         /// "Missing `to' inserted" and then scans the target anyway.
         missing_to: bool,
@@ -1706,6 +1709,7 @@ impl CommandProcessor<'_> {
     pub fn scan_input_stream_request(
         &mut self,
         primitive: tex_state::meaning::UnexpandablePrimitive,
+        read_global: bool,
     ) -> Result<InputStreamRequest, CommandError> {
         use tex_state::meaning::UnexpandablePrimitive;
 
@@ -1741,6 +1745,7 @@ impl CommandProcessor<'_> {
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
+                    global: read_global,
                     missing_to,
                     tokens,
                 })

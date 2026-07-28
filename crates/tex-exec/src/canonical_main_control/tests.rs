@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use tex_command::{CommandObservation, CommandObserver, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandObservation, CommandObserver, InputReason, RegisteredSourceKind, SourceRegistration,
+};
 use tex_state::token::{Catcode, Token};
 
 use super::*;
@@ -194,6 +196,122 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
         }
     );
     assert!(stores.input_stream_eof(tex_state::StreamSlot::new(3)));
+}
+
+#[test]
+fn read_to_definition_preserves_effective_scope_and_replay() {
+    // TeX82 §§1214/1225 select scope before `read_toks`, then install its
+    // parameterless macro after collection. Exercise explicit prefixes and
+    // both `\globaldefs` overrides through ordinary replay.
+    let mut stores = Universe::new_with_plain_catcodes();
+    for line in ["local", "explicit", "forced-global", "forced-local"] {
+        stores
+            .world_mut()
+            .push_memory_terminal_line(line)
+            .expect("memory terminal accepts a line");
+    }
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\local{old}{\read-1to\local}\def\explicit{old}{\global\read-1to\explicit}\globaldefs=1\def\forcedglobal{old}{\read-1to\forcedglobal}\globaldefs=-1\gdef\forcedlocal{old}{\global\read-1to\forcedlocal}\globaldefs=0\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        macro_tokens(&stores, "local")[0],
+        Token::Char {
+            ch: 'o',
+            cat: Catcode::Letter,
+        }
+    );
+    assert_eq!(
+        macro_tokens(&stores, "explicit")[0],
+        Token::Char {
+            ch: 'e',
+            cat: Catcode::Letter,
+        }
+    );
+    assert_eq!(
+        macro_tokens(&stores, "forcedglobal")[0],
+        Token::Char {
+            ch: 'f',
+            cat: Catcode::Letter,
+        }
+    );
+    assert_eq!(
+        macro_tokens(&stores, "forcedlocal")[0],
+        Token::Char {
+            ch: 'o',
+            cat: Catcode::Letter,
+        }
+    );
+}
+
+#[test]
+fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() {
+    // TeX82 §1225 commits `define(p,call,cur_val)` before §1211 reaches
+    // §1269's `done:` and backs up the saved afterassignment token.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("alpha")
+        .expect("memory terminal accepts a line");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\target{old}\afterassignment\relax\global\read-1to\target\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        if matches!(
+            control
+                .step_with_observer(&mut stores, &mut observations)
+                .expect("read and its replay execute"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    let mutation_index = observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Mutation(record)
+                    if record.key.as_deref() == Some("target")
+                        && record.value == "macro definition"
+                        && record.global
+            )
+        })
+        .expect("read meaning mutation is observed");
+    let replay_index = observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if matches!(record.reason, InputReason::UmberReplay(_))
+            )
+        })
+        .expect("afterassignment replay is observed");
+    assert!(mutation_index < replay_index, "{:?}", observations.0);
+    let CommandObservation::Mutation(mutation) = &observations.0[mutation_index] else {
+        unreachable!()
+    };
+    assert!(matches!(
+        mutation.tokens.as_deref(),
+        Some([
+            tex_command::ObservedToken::MacroEndMatch,
+            tex_command::ObservedToken::Character {
+                character: 'a',
+                catcode: Catcode::Letter,
+            },
+            ..
+        ])
+    ));
 }
 
 #[test]

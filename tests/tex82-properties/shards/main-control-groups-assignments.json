@@ -883,18 +883,36 @@
     {
       "id": "tex82.assignment.read-to-definition",
       "sections": [1225],
-      "claim": "Read-to scans a stream number, recovers a missing `to`, scans a target, and installs the read token list as a macro.",
+      "claim": "Read-to scans a stream number, recovers a missing `to`, scans a target, and installs the read token list as a parameterless macro at the effective prefixed-command scope.",
       "preconditions": ["A read-to command is current and stream state exists."],
       "stimulus": [
-        "Phase 2 white-box unit `read_to_definition_scans_stream_keyword_target_and_installs_tokens` covers file, terminal, and closed streams."
+        "White-box units cover file, terminal, and closed streams plus local/global/globaldefs scope, exact meaning observation, afterassignment ordering, and replay."
       ],
-      "expected_observations": ["The target receives exactly the token list returned by read_toks."],
+      "expected_observations": [
+        "After read_toks, the target receives one call meaning whose parameter text is empty and whose replacement is exactly the collected list; its mutation precedes afterassignment replay."
+      ],
       "postconditions": ["Stream and scanner status reach canonical post-read state."],
-      "equivalence_cases": ["Present/missing `to`, direct/replayed targets, and all stream classes."],
+      "equivalence_cases": [
+        "Present/missing `to`, direct/replayed targets, all stream classes, explicit local/global prefixes, and positive/negative globaldefs."
+      ],
       "recovery_cases": ["Missing `to` diagnoses then continues; invalid targets recover through get_r_token."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
+      "test_level": "rust-unit+semantic-minifixture+strict-semantic-xfail",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "read_to_definition_preserves_effective_scope_and_replay"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": ["main-control/read-mutation-order"]
+        }
+      ],
       "status": "gap",
       "gap_bead": "umber2-vq14",
       "planned_coverage": [
