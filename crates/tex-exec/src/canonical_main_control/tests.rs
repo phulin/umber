@@ -587,8 +587,10 @@ fn openin_supplies_the_default_tex_extension() {
             _ => None,
         })
         .collect();
-    // The trailing `\r` is TeX82 §240's `\endlinechar`, appended to the line.
-    assert_eq!(text, "body\r");
+    // TeX82 §240's `\endlinechar` is appended to the line, but §348's
+    // ⟨Finish line, emit a space⟩ tokenizes it as `cur_cmd:=spacer;
+    // cur_chr:=" "` -- the trailing token is a space, never the raw byte.
+    assert_eq!(text, "body ");
 }
 
 #[test]
