@@ -224,23 +224,24 @@
       "expected": [
         "box:0/0:vlist",
         "box:0/0/0:hlist",
+        "box:0/0/0/0:glue",
+        "box:0/0/0/1:hlist",
+        "box:0/0/0/2:glue",
         "box:0/0/1:glue",
-        "box:0/0/2:hlist",
-        "box:0/0/3:glue",
-        "box:0/0/4:hlist",
-        "box:0/0/4/0:glue",
-        "box:0/0/4/1:hlist",
-        "box:0/0/4/2:glue"
+        "box:0/0/2:glue",
+        "box:0/0/3:hlist",
+        "box:0/0/3/0:hlist",
+        "box:0/0/3/1:penalty",
+        "box:0/0/3/2:glue",
+        "box:0/0/3/3:glue",
+        "box:0/0/4:glue",
+        "box:0/0/5:hlist",
+        "box:0/0/5/0:glue",
+        "box:0/0/5/1:hlist",
+        "box:0/0/5/2:glue"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-usol",
-        "mismatch": {
-          "index": 1,
-          "kind": "observation",
-          "expected": "box:0/0/0:hlist",
-          "actual": "box:0/0/0:unset"
-        }
+        "kind": "pass"
       }
     }
   ]

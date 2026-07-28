@@ -31,6 +31,11 @@ pub(super) fn execute_noalign(
         // that the next row's append_to_vlist observes.
         crate::assignments::normal_paragraph(nest, stores);
         scan_noalign_group(nest, input, stores, execution)?;
+        // TeX82 §1133's `no_align_group` case of `handle_right_brace` is
+        // `end_graf; unsave; align_peek`: a paragraph the body started is
+        // line-broken onto the alignment's own vertical list before the
+        // group closes (`umber2-usol`).
+        crate::assignments::end_paragraph(nest, stores)?;
         leave_group(input, stores, tex_state::GroupKind::NoAlign)?;
         execution.paragraph_group_exited(stores);
         Ok(())

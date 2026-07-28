@@ -9873,6 +9873,17 @@ fn apply_scanned_step(
             active.noalign_depth = None;
             active.align_peek_pending = true;
             active.align_peek_after_noalign = true;
+            // TeX82 §1133's whole `no_align_group` case of `handle_right_brace`
+            // is `end_graf; unsave; align_peek`. A `\noalign` body is ordinary
+            // internal vertical material, so anything horizontal in it (a
+            // character, an `\hskip`, an `\indent`) starts a paragraph through
+            // §1090 exactly as it would anywhere else in vertical mode, and the
+            // closing brace is what line-breaks it back onto the alignment's own
+            // vertical list. Without `end_graf` the paragraph stayed open across
+            // the brace, so the following rows were built on the horizontal
+            // level and `fin_align` popped that level instead of the alignment
+            // (`umber2-usol`).
+            crate::assignments::end_paragraph(modes, stores)?;
             stores
                 .leave_group_with_kind(GroupKind::NoAlign)
                 .map_err(|_| ExecError::MissingToken {
