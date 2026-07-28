@@ -51,13 +51,14 @@ PASSES = (
         # repository compiles, and one selected by no pass is one the lint
         # policy does not actually apply to (umber2-johp.201).
         "summary": "every workspace member, all targets, dev-dependency feature union",
-        "args": ("--workspace", "--all-targets"),
+        "args": ("--workspace", "--all-targets", "--features", "umber/instrumentation"),
         "select": "workspace",
         "features": {
+            "parity-harness": ["trip-instrumentation"],
             "tex-command": ["instrumentation"],
             "tex-exec": ["instrumentation"],
             "tex-state": ["default", "testing"],
-            "umber": ["default"],
+            "umber": ["default", "instrumentation"],
         },
         "quarantine": {},
     },

@@ -708,6 +708,7 @@ fn compare_trip_phase(
 }
 
 #[cfg(feature = "instrumentation")]
+#[allow(clippy::disallowed_methods)] // Host-side oracle and triage artifact boundary.
 fn compare_trip_failure(
     root: &Path,
     fixture_name: &str,
@@ -784,6 +785,7 @@ fn compare_trip_failure(
 }
 
 #[cfg(feature = "instrumentation")]
+#[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
 fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
     let root = &gate.repo_root;
     let fixture_name = gate.name;
