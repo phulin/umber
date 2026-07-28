@@ -79,6 +79,10 @@ rerun passes. It also records the default-disabled replay activation decision.
 snapshot/replay protocol, typed resource sites, lifecycle, cumulative fuel and
 cancellation rules, and the migration from whole-attempt retries.
 
+`mode_list_rollback_journal.md` records the measured retained-COW mode-list
+cost, the required nested inverse-journal invariants, and the mutation-boundary
+gate that must be satisfied before replacing the aggregate rollback root.
+
 `incremental_memoization.md` defines the changed-document slow path: stable
 source alignment plus an ordered accepted-history paragraph replay cursor,
 per-paragraph dependency validation, accepted-history-owned shared finished-line

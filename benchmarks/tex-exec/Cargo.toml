@@ -37,3 +37,7 @@ harness = false
 [[bench]]
 name = "dvi_page_snapshot"
 harness = false
+
+[[bench]]
+name = "mode_list_rollback"
+harness = false
