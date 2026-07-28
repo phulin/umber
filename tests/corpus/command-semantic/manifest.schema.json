@@ -121,6 +121,11 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "alignment_transitions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "box_registers": {
           "type": "array",
           "uniqueItems": true,
