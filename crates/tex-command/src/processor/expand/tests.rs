@@ -729,6 +729,49 @@ fn noexpand_suppresses_one_macro_delivery_without_changing_its_spelling() {
     assert_eq!(processor.command.expansion.cumulative_expansions, 1);
 }
 
+/// TeX82 §379 tests `cur_cmd > max_command`, not merely whether a meaning
+/// names an expandable primitive or macro. The `undefined_cs` command is in
+/// that range too, so `\noexpand` must replay a newly entered undefined name
+/// as the one-shot `relax`/`no_expand_flag` command.
+#[test]
+fn noexpand_suppresses_an_undefined_control_sequence() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let noexpand = universe.intern("noexpand").symbol();
+    universe.set_meaning(
+        noexpand,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand),
+    );
+    let undefined = universe.intern("undefined").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(noexpand)),
+            traced(Token::Cs(undefined)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let delivered = processor
+        .get_x_token()
+        .expect("noexpand completes")
+        .expect("undefined target");
+    assert_eq!(delivered.spelling().semantic_token(), Token::Cs(undefined));
+    assert_eq!(delivered.meaning(), Meaning::Relax);
+    assert_eq!(
+        delivered.identity(),
+        crate::command::CommandIdentity::NoExpandFrozenRelax
+    );
+    assert_eq!(
+        processor.observed_command_spelling(&delivered),
+        crate::observation::ObservedToken::ControlSequence("undefined".into())
+    );
+}
+
 #[test]
 fn expandafter_expands_second_token_before_replaying_first() {
     let mut command = CommandState::default();

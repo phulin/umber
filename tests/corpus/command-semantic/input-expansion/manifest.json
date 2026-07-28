@@ -4,6 +4,28 @@
   "property_domain": "input-tokenization-control-sequences-expansion",
   "cases": [
     {
+      "id": "etex-noexpand-undefined",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "profile": "etex-initex",
+      "source": "etex-noexpand-undefined.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [379]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["command"],
+        "commands": ["relax"],
+        "count_registers": []
+      },
+      "expected": [
+        "command:raw:cs:missing:relax:257",
+        "command:expanded:cs:missing:relax:257"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "command-code-boundaries",
       "property_id": "tex82.input.command-code-boundaries",
       "source": "command-code-boundaries.tex",

@@ -236,7 +236,7 @@ impl CurrentCommand {
     pub(crate) fn suppress_expandable(&mut self) {
         if matches!(
             self.meaning,
-            Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
         ) {
             self.meaning = Meaning::Relax;
             self.identity = CommandIdentity::NoExpandFrozenRelax;
