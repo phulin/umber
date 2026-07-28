@@ -1237,7 +1237,8 @@
         "An alignment-sensitive command escaped normal zero-depth interception or appears outside its admitted lifecycle point."
       ],
       "stimulus": [
-        "Existing unit `recovery_inserted_left_brace_updates_active_alignment_state`; Phase 2 unit `alignment_misplaced_command_recovery_matrix` and semantic case `alignment-delimiter-recovery`."
+        "Existing unit `recovery_inserted_left_brace_updates_active_alignment_state`; Phase 2 unit `alignment_misplaced_command_recovery_matrix` and semantic case `alignment-delimiter-recovery`.",
+        "Committed command-semantic case `misplaced-delimiter-recovery` observes the §1127 inserted-right-brace branch as a strict xfail linked to umber2-55mp: canonical reports one alignment recovery at align_state 1 where Umber reports none."
       ],
       "expected_observations": [
         "Backup correction, inserted brace delivery, restored zero depth, replayed delimiter interception, or misplaced-command discard is observed in canonical order."
@@ -1283,7 +1284,7 @@
       ],
       "stimulus": [
         "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 unit `do_endv_validates_template_and_group_matrix` and semantic case `alignment-endv-off-save`.",
-        "Committed command-semantic case `endv-off-save` observes the remaining boundary as a strict xfail linked to umber2-rt66."
+        "No committed command-semantic case can reach this boundary: effective endv arrives only from the frozen end-template, which ordinary INITEX source cannot name, so a brace-mismatched alignment reaches §1127 align_error instead. The pinned instrumented TeX82 oracle confirms the former `endv-off-save` source produced align_error and no fatal, and that source now owns tex82.align.misplaced-delimiter-omit-noalign-recovery. The Rust unit is the sole planned owner here."
       ],
       "expected_observations": [
         "Input-stack validation precedes end_graf and fin_col, and fin_row is called exactly when fin_col returns true."
@@ -1296,11 +1297,10 @@
         "Boundary: nonempty intervening level, absent v_template, align_group, another save group, and bottom-level off_save."
       ],
       "recovery_cases": [
-        "Recovery: absent/nonempty v_template ancestry raises interwoven-preamble failure; a wrong current group follows TeX82 off_save behavior, and bottom-level handling is defined by off_save rather than this section.",
-        "The strict xfail pins the first canonical-versus-current mismatch and rejects XPASS or changed failure."
+        "Recovery: absent/nonempty v_template ancestry raises interwoven-preamble failure; a wrong current group follows TeX82 off_save behavior, and bottom-level handling is defined by off_save rather than this section."
       ],
       "semantic_owner": "tex-exec::align",
-      "test_level": "planned-rust-unit+strict-semantic-xfail",
+      "test_level": "planned-rust-unit",
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-rt66",
@@ -1308,15 +1308,6 @@
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
           "test": "do_endv_validates_template_and_group_matrix"
-        },
-        {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "endv-off-save strict xfail",
-            "linked to umber2-rt66",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
         }
       ]
     },
