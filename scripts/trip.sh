@@ -4,16 +4,23 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 guard="$root/scripts/run-umber-guarded.py"
 progress="$root/target/trip-watchdog.progress"
-timeout=${UMBER_TRIP_TIMEOUT_SECONDS:-120}
+timeout=${UMBER_TRIP_TIMEOUT_SECONDS:-1800}
 rss=${UMBER_TRIP_MAX_RSS_MIB:-6144}
-progress_timeout=${UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS:-30}
+progress_timeout=${UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS:-180}
 grace=${UMBER_TRIP_TERM_GRACE_SECONDS:-5}
 
 mkdir -p "$root/target"
 : > "$progress"
 
 if (($# == 0)); then
-  set -- cargo test -q -p umber --test it e2e_conformance_ -- --nocapture
+  set -- bash -c '
+    scripts/test-tex82-trip-observer.sh
+    scripts/test-etex26-trip-observer.sh
+    cargo test -q -p umber --features instrumentation --test it \
+      e2e_conformance_trip -- --ignored --nocapture
+    cargo test -q -p umber --features instrumentation --test it \
+      e2e_conformance_etrip -- --ignored --nocapture
+  '
 fi
 
 export UMBER_ENGINE_FUEL=${UMBER_ENGINE_FUEL:-100000000}

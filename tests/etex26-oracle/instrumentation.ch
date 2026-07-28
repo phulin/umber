@@ -10,6 +10,8 @@
 @!umber_trace_file:alpha_file;
 @!umber_trace_opened:boolean;
 @!umber_trace_sequence:integer;
+@!umber_trip_profile:boolean;
+@!umber_geometry_profile:boolean;
 @!umber_recovery_insert:boolean;
 @!umber_alignment_depth:integer;
 @!umber_mutation_command:boolean;
@@ -102,6 +104,28 @@ end;
 procedure umber_trace_begin;
 begin write(umber_trace_file,'{"sequence":',umber_trace_sequence:1,
   ',"semantic":'); incr(umber_trace_sequence);
+end;
+
+procedure umber_trace_geometry_box(@!transition:integer;@!p:pointer);
+begin
+if not umber_geometry_profile then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"geometry","data":{"transition":"');
+if transition=0 then write(umber_trace_file,'hpack')
+else write(umber_trace_file,'vpack');
+write_ln(umber_trace_file,'","width_sp":',width(p):1,
+  ',"height_sp":',height(p):1,',"depth_sp":',depth(p):1,'}}}');
+end;
+
+procedure umber_trace_geometry_shipout(@!p:pointer);
+begin
+if not umber_geometry_profile then return;
+umber_trace_begin;
+write_ln(umber_trace_file,'{"event":"geometry","data":{"transition":"shipout","page_width_sp":',
+  width(p):1,',"page_height_sp":',height(p)+depth(p):1,
+  ',"counts":[',count(0):1,',',count(1):1,',',count(2):1,',',count(3):1,',',
+  count(4):1,',',count(5):1,',',count(6):1,',',count(7):1,',',count(8):1,',',
+  count(9):1,']}}}');
 end;
 
 procedure umber_trace_command_name(@!c:integer);
@@ -919,12 +943,17 @@ end;
 procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
 umber_alignment_depth:=0; umber_mutation_command:=false;
+umber_trip_profile:=false;
+umber_geometry_profile:=false;
 umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
   rewrite(umber_trace_file,'etex26-events.jsonl');
 umber_trace_opened:=true;
-if umber_trace_opened then write_ln(umber_trace_file,
- '{"schema":1,"manifest":',
+if umber_trace_opened then begin
+if umber_geometry_profile then write(umber_trace_file,'{"schema":2,"manifest":')
+else write(umber_trace_file,'{"schema":1,"manifest":');
+write_ln(umber_trace_file,
  '"0000000000000000000000000000000000000000000000000000000000000000"}');
+end;
 end;
 
 procedure umber_trace_finish;
@@ -1567,7 +1596,26 @@ dvi_out(eop); incr(total_pages); cur_s:=-1;
 @y
 dvi_out(eop); incr(total_pages);
 umber_trace_effect(4,0,2,total_pages);
+umber_trace_geometry_shipout(p);
 cur_s:=-1;
+@z
+
+@x [33] Observe every finalized horizontal package at the single return seam.
+exit: if TeXXeT_en then @<Check for LR anomalies at the end of |hpack|@>;
+hpack:=r;
+end;
+@y
+exit: if TeXXeT_en then @<Check for LR anomalies at the end of |hpack|@>;
+umber_trace_geometry_box(0,r); hpack:=r;
+end;
+@z
+
+@x [33] Observe every finalized vertical package at the single return seam.
+exit: vpackage:=r;
+end;
+@y
+exit: umber_trace_geometry_box(1,r); vpackage:=r;
+end;
 @z
 
 @x [45] Observe nested alignment suspension and ownership.

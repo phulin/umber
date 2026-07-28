@@ -1,12 +1,17 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "instrumentation")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use parity_harness::run_named_fixture_document;
+#[cfg(feature = "instrumentation")]
 use parity_harness::{
-    TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
-    run_named_fixture_document, write_trip_triage_artifact,
+    TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
+    write_trip_triage_artifact,
 };
+#[cfg(feature = "instrumentation")]
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_command::FontResource;
@@ -25,6 +30,7 @@ mod assets;
 
 use assets::GateAssets;
 
+#[cfg(feature = "instrumentation")]
 fn target_dir(repo_root: &Path) -> PathBuf {
     env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -42,9 +48,16 @@ fn target_dir(repo_root: &Path) -> PathBuf {
 
 struct InProcessRun {
     dvi: Option<Vec<u8>>,
+    #[cfg(feature = "instrumentation")]
     format: Option<Vec<u8>>,
     provenance: ProvenanceStats,
     macro_provenance: MacroInvocationProvenanceStats,
+    #[cfg(feature = "instrumentation")]
+    terminal: Vec<u8>,
+    #[cfg(feature = "instrumentation")]
+    log: Vec<u8>,
+    #[cfg(feature = "instrumentation")]
+    observers: TripObservers,
 }
 
 struct NoCheckpoints;
@@ -133,6 +146,13 @@ fn run_file_in_process(
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
     let mut host = StagedDirResourceHost { base_dir };
+    #[cfg(feature = "instrumentation")]
+    let mut observers = TripObservers::default();
+    #[cfg(feature = "instrumentation")]
+    let run = session
+        .run_with_observer(&mut host, &mut NoCheckpoints, &mut observers)
+        .map_err(|error| canonical_error_message(&session, &error))?;
+    #[cfg(not(feature = "instrumentation"))]
     let run = session
         .run(&mut host, &mut NoCheckpoints)
         .map_err(|error| canonical_error_message(&session, &error))?;
@@ -150,6 +170,7 @@ fn run_file_in_process(
     } else {
         Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
     };
+    #[cfg(feature = "instrumentation")]
     let format = if run.dumped_format {
         Some(stores.dump_format().map_err(|error| error.to_string())?)
     } else {
@@ -157,11 +178,30 @@ fn run_file_in_process(
     };
     let provenance = stores.provenance_stats();
     let macro_provenance = stores.macro_invocation_provenance_stats();
+    #[cfg(feature = "instrumentation")]
+    let terminal = stores
+        .world()
+        .memory_terminal_output()
+        .unwrap_or_default()
+        .to_vec();
+    #[cfg(feature = "instrumentation")]
+    let log = stores
+        .world()
+        .memory_log_output()
+        .unwrap_or_default()
+        .to_vec();
     Ok(InProcessRun {
         dvi,
+        #[cfg(feature = "instrumentation")]
         format,
         provenance,
         macro_provenance,
+        #[cfg(feature = "instrumentation")]
+        terminal,
+        #[cfg(feature = "instrumentation")]
+        log,
+        #[cfg(feature = "instrumentation")]
+        observers,
     })
 }
 
@@ -467,6 +507,82 @@ fn e2e_conformance_gentle_canonical() {
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
+#[cfg(feature = "instrumentation")]
+fn compare_trip_phase(
+    root: &Path,
+    fixture_name: &str,
+    phase: &str,
+    run: &InProcessRun,
+    expected_identity: &str,
+    actual_identity: &str,
+    dvi_pair: Option<(&[u8], &[u8])>,
+) {
+    let oracle_root = target_dir(root).join("trip-oracles").join(fixture_name);
+    let artifact_root = target_dir(root)
+        .join("conformance-artifacts")
+        .join(fixture_name);
+    fs::create_dir_all(&artifact_root).expect("create event artifact directory");
+    let expected_command =
+        fs::read(oracle_root.join(format!("{phase}-command.jsonl"))).expect("command oracle");
+    let expected_geometry =
+        fs::read(oracle_root.join(format!("{phase}-geometry.jsonl"))).expect("geometry oracle");
+    let expected_terminal =
+        fs::read(oracle_root.join(format!("{phase}-terminal.txt"))).expect("terminal oracle");
+    let expected_log = fs::read(oracle_root.join(format!("{phase}.log"))).expect("log oracle");
+    let actual_command = run
+        .observers
+        .command
+        .canonical_json_lines(&expected_command)
+        .expect("encode command-event stream");
+    let actual_geometry = run
+        .observers
+        .geometry
+        .canonical_json_lines(&expected_geometry)
+        .expect("encode geometry-event stream");
+    fs::write(
+        artifact_root.join(format!("{phase}-command.jsonl")),
+        &actual_command,
+    )
+    .expect("write command events");
+    fs::write(
+        artifact_root.join(format!("{phase}-geometry.jsonl")),
+        &actual_geometry,
+    )
+    .expect("write geometry events");
+    let label = format!("{fixture_name}-{phase}");
+    write_trip_triage_artifact(
+        &target_dir(root).join("conformance-triage"),
+        TripTriageInput {
+            label: &label,
+            phase,
+            expected_source: TripTriageSource {
+                name: &format!("target/trip-oracles/{fixture_name}/{phase}"),
+                identity: expected_identity,
+            },
+            actual_source: TripTriageSource {
+                name: "umber in-process canonical run",
+                identity: actual_identity,
+            },
+            expected: TripTriageChannels {
+                command_events: Some(&expected_command),
+                geometry_events: Some(&expected_geometry),
+                transcript: &expected_terminal,
+                log: &expected_log,
+                dvi: dvi_pair.map(|(expected, _)| expected),
+            },
+            actual: TripTriageChannels {
+                command_events: Some(&actual_command),
+                geometry_events: Some(&actual_geometry),
+                transcript: &run.terminal,
+                log: &run.log,
+                dvi: dvi_pair.map(|(_, actual)| actual),
+            },
+        },
+    )
+    .expect("write bounded TRIP triage artifact");
+}
+
+#[cfg(feature = "instrumentation")]
 fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
     let root = &gate.repo_root;
     let fixture_name = gate.name;
@@ -507,11 +623,23 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         .unwrap_or_else(|error| panic!("{fixture_name} format creation failed: {error}"));
     let format = initial
         .format
+        .clone()
         .unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
+    let initex_identity = format!("sha256:{:x}", Sha256::digest(&format));
+    compare_trip_phase(
+        root,
+        fixture_name,
+        "initex",
+        &initial,
+        &initex_identity,
+        &initex_identity,
+        None,
+    );
     let loaded = run_file_in_process(&input, Some(&format), engine)
         .unwrap_or_else(|error| panic!("{fixture_name} format-loaded run failed: {error}"));
     let dvi = loaded
         .dvi
+        .clone()
         .unwrap_or_else(|| panic!("{fixture_name} did not produce DVI"));
     let actual = target_dir(root)
         .join("conformance-artifacts")
@@ -523,39 +651,17 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     let actual_dvi = fs::read(&actual).expect("read conformance DVI artifact");
     let expected_normalized =
         normalized_dvi_for_comparison(&expected_dvi).expect("normalize conformance DVI oracle");
-    let expected_name = format!("{}/{fixture_name}.expected.dvi", assets::ORACLE_DIR);
     let expected_identity = format!("sha256:{:x}", Sha256::digest(&expected_normalized));
     let actual_identity = format!("sha256:{:x}", Sha256::digest(&format));
-    write_trip_triage_artifact(
-        &target_dir(root).join("conformance-triage"),
-        TripTriageInput {
-            label: fixture_name,
-            phase: "format-loaded",
-            expected_source: TripTriageSource {
-                name: &expected_name,
-                identity: &expected_identity,
-            },
-            actual_source: TripTriageSource {
-                name: "umber in-process format-loaded run",
-                identity: &actual_identity,
-            },
-            expected: TripTriageChannels {
-                command_events: None,
-                geometry_events: None,
-                transcript: b"",
-                log: b"",
-                dvi: Some(&expected_dvi),
-            },
-            actual: TripTriageChannels {
-                command_events: None,
-                geometry_events: None,
-                transcript: b"",
-                log: b"",
-                dvi: Some(&actual_dvi),
-            },
-        },
-    )
-    .expect("write bounded TRIP triage artifact");
+    compare_trip_phase(
+        root,
+        fixture_name,
+        "format-loaded",
+        &loaded,
+        &expected_identity,
+        &actual_identity,
+        Some((&expected_dvi, &actual_dvi)),
+    );
     compare_dvi_files(
         fixture,
         &actual,
@@ -566,6 +672,8 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
 }
 
 #[test]
+#[cfg(feature = "instrumentation")]
+#[ignore = "manual full-document TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_trip() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture("trip.tex", "trip.tex", false, gate);
@@ -573,6 +681,8 @@ fn e2e_conformance_trip() {
 }
 
 #[test]
+#[cfg(feature = "instrumentation")]
+#[ignore = "manual full-document e-TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_etrip() {
     assets::with_gate("etrip", |gate| {
         run_two_phase_fixture("etrip.tex", "etrip-local.tex", true, gate);

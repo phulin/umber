@@ -20,6 +20,7 @@ bin_dir="${out_dir}/bin"
 clean_executable="${bin_dir}/umber-tex82-oracle"
 instrumentable_executable="${bin_dir}/umber-tex82-oracle-instrumentable"
 trip_profile_executable="${bin_dir}/umber-tex82-oracle-trip-profile"
+trip_geometry_profile_executable="${bin_dir}/umber-tex82-oracle-trip-geometry-profile"
 geometry_profile_executable="${bin_dir}/umber-tex82-oracle-geometry-profile"
 instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
@@ -136,6 +137,14 @@ write_geometry_profile_change() {
   geometry_profile_change="${out_dir}/geometry-profile-instrumentation.ch"
   sed 's/umber_geometry_profile:=false;/umber_geometry_profile:=true;/' \
     "$instrumentation_change" >"$geometry_profile_change"
+}
+
+write_trip_geometry_profile_change() {
+  trip_geometry_profile_change="${out_dir}/trip-geometry-profile-instrumentation.ch"
+  sed \
+    -e 's/umber_trip_profile:=false;/umber_trip_profile:=true;/' \
+    -e 's/umber_geometry_profile:=false;/umber_geometry_profile:=true;/' \
+    "$instrumentation_change" >"$trip_geometry_profile_change"
 }
 
 extract_source() {
@@ -351,6 +360,8 @@ write_build_record() {
     printf 'instrumentation-change-sha256 %s\n' "$(sha_digest 256 "$instrumentation_change")"
     printf 'trip-profile-change-sha256 %s\n' "$(sha_digest 256 "$trip_profile_change")"
     printf 'geometry-profile-change-sha256 %s\n' "$(sha_digest 256 "$geometry_profile_change")"
+    printf 'trip-geometry-profile-change-sha256 %s\n' \
+      "$(sha_digest 256 "$trip_geometry_profile_change")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
     printf 'tool-sha256 web2c %s\n' \
@@ -387,6 +398,9 @@ write_build_record() {
     printf 'executable geometry-profile %s %s\n' \
       "${geometry_profile_executable#"${repo_root}/"}" \
       "$(sha_digest 256 "$geometry_profile_executable")"
+    printf 'executable trip-geometry-profile %s %s\n' \
+      "${trip_geometry_profile_executable#"${repo_root}/"}" \
+      "$(sha_digest 256 "$trip_geometry_profile_executable")"
     printf 'smoke-ordinary-log-sha256 clean %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/clean/ordinary.log")"
     printf 'smoke-ordinary-log-sha256 instrumentable %s\n' \
@@ -415,6 +429,7 @@ extract_source
 configure_tools
 write_trip_profile_change
 write_geometry_profile_change
+write_trip_geometry_profile_change
 build_variant "$clean_executable"
 cp "${web_build_dir}/tex-final.ch" "${out_dir}/clean-final.ch"
 build_variant "$instrumentable_executable" "$instrumentation_change"
@@ -454,6 +469,7 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
     fail "transition trace is missing $family/$boundary from $fixture at $seam"
 done < "$semantic_event_matrix"
 build_variant "$trip_profile_executable" "$trip_profile_change"
+build_variant "$trip_geometry_profile_executable" "$trip_geometry_profile_change"
 build_variant "$geometry_profile_executable" "$geometry_profile_change"
 run_geometry "$geometry_profile_executable" geometry-profile
 run_geometry "$geometry_profile_executable" geometry-profile-repeat

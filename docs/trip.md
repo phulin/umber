@@ -1,6 +1,6 @@
 # Knuth TRIP Harness
 
-Status: local-oracle-presence-conditional end-to-end conformance test.
+Status: manual two-phase semantic and output parity harness.
 
 The TeX82 TRIP and e-TeX V2 e-TRIP tests are pinned separately from the
 external document corpus and share the same strict final-DVI oracle as Story
@@ -9,8 +9,8 @@ and Gentle. Run them with:
 ```bash
 scripts/fetch-conformance-inputs.sh
 scripts/fetch-conformance-inputs.sh --offline
-cargo test -p umber --test it e2e_conformance_trip -- --nocapture
-cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
+cargo test -p umber --features instrumentation --test it e2e_conformance_trip -- --ignored --nocapture
+cargo test -p umber --features instrumentation --test it e2e_conformance_etrip -- --ignored --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
 scripts/setup-conformance-tests.sh
@@ -18,13 +18,15 @@ scripts/trip.sh
 ```
 
 `scripts/trip.sh` is the canonical guarded entry point for hang and
-memory-growth work. It defaults to a 120-second wall limit, 6144 MiB aggregate
-RSS limit, 30-second output-progress limit, and five-second TERM grace, then
+memory-growth work. It defaults to a 1,800-second wall limit, 6144 MiB aggregate
+RSS limit, 180-second output-progress limit, and five-second TERM grace, then
 kills and reaps the complete process group. Override these with
 `UMBER_TRIP_TIMEOUT_SECONDS`, `UMBER_TRIP_MAX_RSS_MIB`,
 `UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS`, and `UMBER_TRIP_TERM_GRACE_SECONDS`.
-Arguments replace its default filtered TRIP/e-TRIP Cargo command. The helper selects the
-finite default expansion-fuel budget explicitly. The format-loaded TRIP path
+Arguments replace its default oracle-generation and manual TRIP/e-TRIP
+commands. Full documents are intentionally ignored Cargo tests and never run
+in the routine native suite. The helper selects the finite default
+expansion-fuel budget explicitly. The format-loaded TRIP path
 contains a deliberate nested `\message` construction at line 419: `\the` of
 a token register must stay unexpanded while the complete message text is being
 expanded, as in TeX82's `scan_toks(..., xpand=true)`. Expanding that replay a
@@ -126,18 +128,24 @@ preamble-comment-normalized DVI. It never copies an output channel, an event
 stream, or an unbounded log into the artifact.
 
 Channels are compared in semantic diagnostic order: canonical schema-v1
-command events (including manifest/header identity), transcript, log, then
-normalized DVI. `earliest.channel`, `earliest.position`,
+command events (including manifest/header identity), an identity-separated
+schema-v2 geometry stream, transcript, log, then normalized DVI. Geometry
+contains ordered `hpack`, `vpack`, and `shipout` records; shipout includes
+TeX82 section 617's exact `count0..count9` BOP registers. INITEX records DVI as
+explicitly absent rather than feeding an empty byte slice to the DVI
+normalizer. `earliest.channel`, `earliest.position`,
 `earliest.expected`, and `earliest.actual` describe only the first difference
 in that order. Event context is a serialized `NormalizedEvent`; textual and
 DVI context is escaped and bounded, and EOF is explicit. This makes a report
 reproducible from the same comparison inputs while preserving the distinction
 between a command-semantic failure and later output evidence.
 
-The in-process two-phase TRIP gate currently supplies its pinned DVI fixture
-and loaded-format identities; external/profile harnesses can additionally
-supply the canonical event, transcript, and log channels through the same
-writer. A successful comparison removes any stale TRIP-specific artifact and
+The TeX82 and e-TeX oracle scripts publish deterministic two-phase command-v1,
+geometry-v2, transcript, log, and loaded-format DVI channels under
+`target/trip-oracles/<trip|etrip>/`. The in-process harness captures both event
+channels from one ordinary `CanonicalEngineSession::run_with_observer` call;
+the observer does not use replay or a legacy input-stack projection. A
+successful comparison removes any stale TRIP-specific artifact and
 emits no new triage output.
 
 ## Umber format images

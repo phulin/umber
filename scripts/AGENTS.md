@@ -100,6 +100,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   and shipout records.
 - `test-tex82-trip-observer.sh`: offline two-phase clean and bounded-profile
   TeX82 TRIP comparison, schema validation, and profile repeatability gate.
+- `test-etex26-trip-observer.sh`: offline two-phase clean, schema-v1 command,
+  and schema-v2 geometry e-TeX 2.6 e-TRIP oracle generation and repeatability
+  check.
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition
   and reproducible clean/instrumented Web2C builds; compatibility and extended
   INITEX profiles are separately named, smoke- and schema-v1 base-command

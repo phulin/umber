@@ -5,12 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 trip_root="${repo_root}/third_party/trip"
-texmfcnf="${repo_root}/third_party/texlive-source/src/texk/web2c/triptrap"
+source_root="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}"
+[[ "$source_root" == /* ]] || source_root="${repo_root}/${source_root}"
+texmfcnf="${source_root}/src/texk/web2c/triptrap"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 oracle_bin="${target_dir}/tex82-oracle/bin"
 
-[[ -f "${trip_root}/trip.tex" && -f "${trip_root}/trip.tfm" ]] || {
+[[ -f "${trip_root}/trip.tex" && -f "${trip_root}/trip.tfm" &&
+  -f "${trip_root}/tripos.tex" ]] || {
   printf 'test-tex82-trip-observer: missing pinned TRIP inputs; run scripts/fetch-conformance-inputs.sh\n' >&2
   exit 1
 }
@@ -22,7 +25,8 @@ trap 'rm -rf "$work_root"' EXIT
 
 run_phase() {
   local executable="$1" directory="$2" prefix="$3"
-  cp "${trip_root}/trip.tex" "${trip_root}/trip.tfm" "$directory/"
+  cp "${trip_root}/trip.tex" "${trip_root}/trip.tfm" \
+    "${trip_root}/tripos.tex" "$directory/"
   (
     cd "$directory"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -30,6 +34,7 @@ run_phase() {
       "$executable" -ini -interaction=nonstopmode trip.tex >"${prefix}-initex-terminal.txt" 2>&1
     printf '%s\n' "$?" >"${prefix}-initex-status.txt"
     cp tex82-events.jsonl "${prefix}-initex-events.jsonl" 2>/dev/null || :
+    cp trip.log "${prefix}-initex.log"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
       SOURCE_DATE_EPOCH=1783604160 FORCE_SOURCE_DATE=1 TEXMFCNF="$texmfcnf" \
       "$executable" -interaction=nonstopmode '&trip' trip.tex >"${prefix}-trip-terminal.txt" 2>&1
@@ -82,10 +87,29 @@ compare_normalized_dvi() {
     <(dd if="$profile_dvi" bs=1 skip="$comment_end" status=none)
 }
 
-mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b"
+project_geometry() {
+  local input="$1" output="$2"
+  {
+    sed -n '1p' "$input"
+    awk '
+      /"event":"geometry"/ {
+        sub(/"sequence":[0-9]+/, "\"sequence\":" (sequence + 0))
+        print
+        sequence++
+      }
+    ' "$input"
+  } >"$output"
+}
+
+mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
+  "$work_root/geometry-a" "$work_root/geometry-b"
 run_phase "${oracle_bin}/umber-tex82-oracle" "$work_root/clean" clean
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-a" profile
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-b" profile
+run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
+  "$work_root/geometry-a" geometry
+run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
+  "$work_root/geometry-b" geometry
 
 for profile in profile-a profile-b; do
   cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
@@ -110,4 +134,34 @@ for profile in profile-a profile-b; do
 done
 cmp "$work_root/profile-a/profile-initex-events.jsonl" "$work_root/profile-b/profile-initex-events.jsonl"
 cmp "$work_root/profile-a/profile-trip-events.jsonl" "$work_root/profile-b/profile-trip-events.jsonl"
+for phase in initex trip; do
+  project_geometry \
+    "$work_root/geometry-a/geometry-${phase}-events.jsonl" \
+    "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
+  project_geometry \
+    "$work_root/geometry-b/geometry-${phase}-events.jsonl" \
+    "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
+  cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+    "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
+  grep -Fq '"event":"geometry"' \
+    "$work_root/geometry-a/geometry-${phase}-projected.jsonl" || {
+      printf 'TeX82 TRIP %s geometry stream is empty\n' "$phase" >&2
+      exit 1
+    }
+  cmp "$work_root/geometry-a/geometry-${phase}-projected.jsonl" \
+    "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
+done
+
+artifact_root="${target_dir}/trip-oracles/trip"
+mkdir -p "$artifact_root"
+cp "$work_root/profile-a/profile-initex-events.jsonl" "$artifact_root/initex-command.jsonl"
+cp "$work_root/profile-a/profile-trip-events.jsonl" "$artifact_root/format-loaded-command.jsonl"
+cp "$work_root/geometry-a/geometry-initex-projected.jsonl" "$artifact_root/initex-geometry.jsonl"
+cp "$work_root/geometry-a/geometry-trip-projected.jsonl" "$artifact_root/format-loaded-geometry.jsonl"
+cp "$work_root/clean/clean-initex-terminal.txt" "$artifact_root/initex-terminal.txt"
+cp "$work_root/clean/clean-initex.log" "$artifact_root/initex.log"
+cp "$work_root/clean/clean-trip-terminal.txt" "$artifact_root/format-loaded-terminal.txt"
+cp "$work_root/clean/trip.log" "$artifact_root/format-loaded.log"
+cp "$work_root/clean/trip.dvi" "$artifact_root/format-loaded.dvi"
+cp "${target_dir}/tex82-oracle/build-record.txt" "$artifact_root/oracle-build-record.txt"
 printf 'TeX82 bounded TRIP observer passed\n'

@@ -31,6 +31,8 @@ cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
 offline=0
+trip_profile_change="${out_dir}/trip-profile-instrumentation.ch"
+trip_geometry_profile_change="${out_dir}/trip-geometry-profile-instrumentation.ch"
 
 usage() {
   cat <<'EOF'
@@ -224,6 +226,41 @@ build_variant() {
   chmod +x "$destination"
 }
 
+write_trip_profile_changes() {
+  local filtered="${out_dir}/trip-profile-filtered.ch"
+  sed \
+    -e 's/umber_trip_profile:=false;/umber_trip_profile:=true;/' \
+    -e 's/if not umber_trace_opened then return;/if (not umber_trace_opened)or(umber_trip_profile) then return;/' \
+    -e 's/or(not umber_mutation_command)/or(umber_trip_profile)or(not umber_mutation_command)/' \
+    "$instrumentation_change" >"$filtered"
+  awk '
+    /^procedure umber_trace_input\(/ { mode="input" }
+    /^procedure umber_trace_effect\(/ { mode="effect" }
+    /^procedure umber_trace_finish;/ { mode="finish" }
+    $0 == "if (not umber_trace_opened)or(umber_trip_profile) then return;" {
+      if (mode == "input") {
+        print "if not umber_trace_opened then return;"
+        print "if umber_trip_profile and (transition<>2) then return;"
+        next
+      }
+      if (mode == "effect") {
+        print "if not umber_trace_opened then return;"
+        print "if umber_trip_profile and (effect_kind<>4) then return;"
+        next
+      }
+      if (mode == "finish") {
+        print "if not umber_trace_opened then return;"
+        next
+      }
+    }
+    { print }
+    $0 == "umber_trace_begin;" { mode="" }
+  ' "$filtered" >"$trip_profile_change"
+  sed 's/umber_geometry_profile:=false;/umber_geometry_profile:=true;/' \
+    "$trip_profile_change" >"$trip_geometry_profile_change"
+  rm -f "$filtered"
+}
+
 profile_executable() {
   local build_profile="$1" engine_profile="$2"
   printf '%s/umber-etex26-%s-oracle-%s' \
@@ -390,6 +427,10 @@ write_build_record() {
       "${instrumentation_change#"${repo_root}/"}"
     printf 'instrumentation-change-sha256 %s\n' \
       "$(sha_digest 256 "$instrumentation_change")"
+    printf 'trip-profile-change-sha256 %s\n' \
+      "$(sha_digest 256 "$trip_profile_change")"
+    printf 'trip-geometry-profile-change-sha256 %s\n' \
+      "$(sha_digest 256 "$trip_geometry_profile_change")"
     printf 'profile compatibility invocation-input smoke.tex\n'
     printf 'profile extended invocation-input *smoke.tex\n'
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
@@ -419,6 +460,14 @@ write_build_record() {
       "$(sha_digest 256 "${out_dir}/clean-final.ch")"
     printf 'generated-instrumented-final-change-sha256 %s\n' \
       "$(sha_digest 256 "${out_dir}/instrumented-final.ch")"
+    for build_profile in trip-profile trip-geometry-profile; do
+      for engine_profile in compatibility extended; do
+        executable="$(profile_executable "$build_profile" "$engine_profile")"
+        printf 'executable %s %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "${executable#"${repo_root}/"}" "$(sha_digest 256 "$executable")"
+      done
+    done
     for build_profile in clean instrumented; do
       for engine_profile in compatibility extended; do
         executable="$(profile_executable "$build_profile" "$engine_profile")"
@@ -473,12 +522,17 @@ fetch_source
 extract_source
 configure_tools
 generate_canonical_web
+write_trip_profile_changes
 build_variant "${out_dir}/etex-clean"
 cp "${web_build_dir}/etex-final.ch" "${out_dir}/clean-final.ch"
 publish_variant "${out_dir}/etex-clean" clean
 build_variant "${out_dir}/etex-instrumented" "$instrumentation_change"
 cp "${web_build_dir}/etex-final.ch" "${out_dir}/instrumented-final.ch"
 publish_variant "${out_dir}/etex-instrumented" instrumented
+build_variant "${out_dir}/etex-trip-profile" "$trip_profile_change"
+publish_variant "${out_dir}/etex-trip-profile" trip-profile
+build_variant "${out_dir}/etex-trip-geometry-profile" "$trip_geometry_profile_change"
+publish_variant "${out_dir}/etex-trip-geometry-profile" trip-geometry-profile
 for build_profile in clean instrumented; do
   for engine_profile in compatibility extended; do
     run_smoke "$(profile_executable "$build_profile" "$engine_profile")" \
