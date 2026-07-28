@@ -341,6 +341,40 @@ impl<'a> CanonicalEngineSession<'a> {
         }
     }
 
+    /// Observed variant of [`Self::advance_until_waiting`].
+    ///
+    /// This drives the same retained production control and differs only by
+    /// forwarding its committed semantic observations to a non-fallible
+    /// observer. Resource suspensions remain atomic and therefore publish no
+    /// observations until their retry commits.
+    #[cfg(feature = "instrumentation")]
+    pub fn advance_until_waiting_with_observer(
+        &mut self,
+        checkpoints: &mut dyn CheckpointSink,
+        observer: &mut dyn tex_command::CommandObserver,
+    ) -> Result<CanonicalSessionState, CanonicalSessionError> {
+        if !self.root_registered {
+            return Err(CanonicalSessionError::RootNotRegistered);
+        }
+        if !self.started {
+            self.started = true;
+            self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
+        }
+        loop {
+            match self.control.advance_with_observer(self.stores, observer)? {
+                CanonicalStepResult::Suspended(need) => {
+                    return Ok(CanonicalSessionState::NeedResource(need));
+                }
+                CanonicalStepResult::Progress(step) => {
+                    self.publish_completed_boundaries(checkpoints)?;
+                    if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                        return self.finish();
+                    }
+                }
+            }
+        }
+    }
+
     /// Installs an answer only when it exactly matches the active suspension.
     pub fn fulfill(
         &mut self,
@@ -395,6 +429,40 @@ impl<'a> CanonicalEngineSession<'a> {
         let mut declined: u8 = 0;
         loop {
             match self.advance_until_waiting(checkpoints)? {
+                CanonicalSessionState::Complete(result) => return Ok(result),
+                CanonicalSessionState::NeedResource(need) => {
+                    let fulfillment = {
+                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        host.fulfill(&mut world, &need)
+                    };
+                    let Some(fulfillment) = fulfillment else {
+                        declined = declined.saturating_add(1);
+                        if declined >= self.no_progress_limit {
+                            return Err(CanonicalSessionError::NoProgress {
+                                need,
+                                attempts: declined,
+                            });
+                        }
+                        continue;
+                    };
+                    self.fulfill(&need, fulfillment)?;
+                    declined = 0;
+                }
+            }
+        }
+    }
+
+    /// Observed variant of [`Self::run`] over the same production session.
+    #[cfg(feature = "instrumentation")]
+    pub fn run_with_observer(
+        &mut self,
+        host: &mut dyn CanonicalResourceHost,
+        checkpoints: &mut dyn CheckpointSink,
+        observer: &mut dyn tex_command::CommandObserver,
+    ) -> Result<RunResult, CanonicalSessionError> {
+        let mut declined: u8 = 0;
+        loop {
+            match self.advance_until_waiting_with_observer(checkpoints, observer)? {
                 CanonicalSessionState::Complete(result) => return Ok(result),
                 CanonicalSessionState::NeedResource(need) => {
                     let fulfillment = {
@@ -492,11 +560,26 @@ fn canonical_font_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "instrumentation")]
+    use tex_command::{CommandObservation, CommandObserver};
     use tex_exec::EngineBoundary;
+    #[cfg(feature = "instrumentation")]
+    use tex_state::World;
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     struct WorldHost;
+
+    #[cfg(feature = "instrumentation")]
+    #[derive(Default)]
+    struct ObservationRecorder(Vec<CommandObservation>);
+
+    #[cfg(feature = "instrumentation")]
+    impl CommandObserver for ObservationRecorder {
+        fn committed(&mut self, observation: CommandObservation) {
+            self.0.push(observation);
+        }
+    }
 
     impl CanonicalResourceHost for WorldHost {
         fn fulfill(
@@ -573,6 +656,51 @@ mod tests {
         tex_expand::install_expandable_primitives(&mut stores);
         tex_exec::install_unexpandable_primitives(&mut stores);
         (stores, Arc::from(source))
+    }
+
+    #[test]
+    #[cfg(feature = "instrumentation")]
+    fn retained_observer_captures_fresh_and_format_loaded_production_runs() {
+        let source: Arc<[u8]> = Arc::from(&b"\\message{observed}\\end"[..]);
+        let mut base = Universe::new_with_plain_catcodes();
+        tex_expand::install_expandable_primitives(&mut base);
+        tex_exec::install_unexpandable_primitives(&mut base);
+        let format = base.dump_format().expect("base format dumps");
+
+        for loaded in [false, true] {
+            let mut stores = if loaded {
+                Universe::from_format(World::memory(), &format).expect("format restores")
+            } else {
+                let mut stores = Universe::new_with_plain_catcodes();
+                tex_expand::install_expandable_primitives(&mut stores);
+                tex_exec::install_unexpandable_primitives(&mut stores);
+                stores
+            };
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session
+                .register_authored_root("observer", Arc::clone(&source))
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
+            let run = session
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                .expect("observed run completes");
+
+            assert_eq!(run.terminal_text, "observed");
+            assert!(
+                observations
+                    .0
+                    .iter()
+                    .any(|event| matches!(event, CommandObservation::Command(_))),
+                "loaded={loaded}: command delivery is observed"
+            );
+            assert!(
+                observations
+                    .0
+                    .iter()
+                    .any(|event| matches!(event, CommandObservation::Effect(_))),
+                "loaded={loaded}: committed effects are observed"
+            );
+        }
     }
 
     #[test]

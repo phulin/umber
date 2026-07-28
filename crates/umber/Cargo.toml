@@ -12,6 +12,7 @@ bench = false
 
 [features]
 default = []
+instrumentation = ["tex-command/instrumentation", "tex-exec/instrumentation"]
 shadow = ["tex-state/shadow"]
 profiling-runner = []
 profiling-stats = [
