@@ -2193,11 +2193,12 @@ impl CanonicalMainControl {
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
                 let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
-                let aftergroup = stores
-                    .leave_group_with_kind(GroupKind::MathLeft)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "math left group",
-                    })?;
+                let aftergroup =
+                    stores
+                        .leave_group_with_kind(GroupKind::MathLeft)
+                        .map_err(|_| ExecError::MissingToken {
+                            context: "math left group",
+                        })?;
                 schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
                 let mut nodes: Vec<_> = stores
                     .nodes(content)
