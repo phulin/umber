@@ -47,21 +47,6 @@ fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
     }
 }
 
-/// Like `run_to_end`, but for the small set of `ExecError`s (such as
-/// `CannotDeleteFromCurrentPage`) that abort the run rather than being
-/// printed as an ordinary `Universe` diagnostic and continuing.
-fn run_to_error(control: &mut CanonicalMainControl, universe: &mut Universe) -> ExecError {
-    loop {
-        match control.step(universe) {
-            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
-                panic!("expected the run to abort with an error before completion")
-            }
-            Ok(MainControlStep::Continue) => {}
-            Err(err) => return err,
-        }
-    }
-}
-
 /// Runs TeX82 §1054's two-delivery `\end` when the run typeset material.
 ///
 /// `its_all_over` is true only when the current page and the contribution
@@ -7382,11 +7367,14 @@ fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_g
         leader: None,
     });
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\unskip");
-    let err = run_to_error(&mut control, &mut universe);
+    register_source(&mut control, br"\unskip\count0=23\end");
+    run_to_end(&mut control, &mut universe);
+    assert!(terminal_text(&universe).contains("You can't use `\\unskip' in vertical mode"));
+    assert!(terminal_text(&universe).contains("Try `I\\vskip-\\lastskip' instead."));
     assert_eq!(
-        err.to_string(),
-        "You can't use `\\unskip' in vertical mode."
+        universe.count(0),
+        23,
+        "§1105's error resumes at the following token"
     );
 
     let mut universe = Universe::new_with_plain_catcodes();
@@ -7398,6 +7386,191 @@ fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_g
         !terminal_text(&universe).contains("You can't"),
         "\\unskip is silent when the last page item was not glue: {}",
         terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_delete_last_outer_vertical_diagnostics_recover_for_all_three_commands() {
+    // TeX82 §1105 selects the second help line by `cur_chr`, calls `error`,
+    // and resumes. In particular, this is not a fatal executor boundary.
+    for (source, command, help) in [
+        (
+            br"\unpenalty\count0=17\end".as_slice(),
+            "\\unpenalty",
+            "Perhaps you can make the output routine do it.",
+        ),
+        (
+            br"\unkern\count0=17\end".as_slice(),
+            "\\unkern",
+            "Try `I\\kern-\\lastkern' instead.",
+        ),
+        (
+            br"\unskip\count0=17\end".as_slice(),
+            "\\unskip",
+            "Try `I\\vskip-\\lastskip' instead.",
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        if command == "\\unskip" {
+            let spec = universe.intern_glue(GlueSpec::ZERO);
+            universe.update_page_last_from_node(&Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+                leader: None,
+            });
+        }
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut universe);
+
+        let terminal = terminal_text(&universe);
+        assert!(
+            terminal.contains(&format!("You can't use `{command}' in vertical mode")),
+            "{terminal}"
+        );
+        assert!(terminal.contains(help), "{terminal}");
+        assert_eq!(universe.count(0), 17);
+    }
+}
+
+#[test]
+fn canonical_delete_last_removes_matching_unswept_page_contribution_tails() {
+    // TeX82 §1105 permits outer-vertical removal only while the node is still
+    // on the contribution list (`tail<>head`). Once swept, the page builder's
+    // memo drives the apology branch covered above.
+    for (source, tail) in [
+        (br"\unpenalty\end".as_slice(), Node::Penalty(50)),
+        (
+            br"\unkern\end".as_slice(),
+            Node::Kern {
+                amount: Scaled::from_raw(Scaled::UNITY),
+                kind: KernKind::Explicit,
+            },
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.append_page_contribution(tail);
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut universe);
+
+        assert!(universe.page_contributions().is_empty());
+        assert!(!terminal_text(&universe).contains("You can't"));
+    }
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let spec = universe.intern_glue(GlueSpec::ZERO);
+    universe.append_page_contribution(Node::Glue {
+        spec,
+        kind: GlueKind::Normal,
+        leader: None,
+    });
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\unskip\end");
+    run_to_end(&mut control, &mut universe);
+    assert!(universe.page_contributions().is_empty());
+    assert!(!terminal_text(&universe).contains("You can't"));
+}
+
+#[test]
+fn canonical_delete_last_is_mode_complete_and_preserves_mismatched_tails() {
+    // TeX82 §1105's `any_mode(remove_item)` applies unchanged in restricted
+    // hmode, internal vmode, inline math, and display math. Matching tails
+    // disappear; empty and mismatched tails are silent no-ops.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\kern1pt\unpenalty\unkern\unskip}
+           \setbox1=\vbox{\penalty7\unkern\unpenalty\unskip}
+           \setbox2=\hbox{$\kern2pt\unpenalty\unkern\unskip$}
+           \setbox3=\hbox{$$\kern3pt\unpenalty\unkern\unskip$$}
+           \count0=41\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    for index in 0..=3 {
+        let box_node = universe
+            .box_reg(index)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("box register stores a box");
+        let children = match box_node {
+            Node::HList(node) | Node::VList(node) => universe.nodes(node.children).to_vec(),
+            node => panic!("register {index} stores {node:?}"),
+        };
+        assert!(
+            !children
+                .iter()
+                .any(|node| matches!(node, Node::Kern { .. } | Node::Penalty(_))),
+            "matching tail survives in register {index}: {children:?}"
+        );
+    }
+    assert_eq!(universe.count(0), 41);
+}
+
+#[test]
+fn canonical_delete_last_does_not_enter_discretionary_replacement_lists() {
+    // TeX82 §1105 advances over a discretionary's `replace_count` nodes while
+    // finding the predecessor of the physical tail. If those replacement
+    // nodes end at `tail`, it returns without deleting them. Umber stores the
+    // replacement as the discretionary node's child list, so the equivalent
+    // invariant is that `delete_last` never descends into that child.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\discretionary{}{}{\kern4pt}\unkern}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("hbox exists");
+    let Node::HList(hbox) = hbox else {
+        panic!("register 0 stores {hbox:?}");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    let [Node::Disc { replace, .. }] = children.as_slice() else {
+        panic!(
+            "hbox must retain its discretionary: {:?}",
+            universe.nodes(hbox.children)
+        );
+    };
+    assert!(matches!(
+        universe.nodes(*replace).testing_decoded(),
+        [Node::Kern {
+            amount,
+            kind: KernKind::Explicit
+        }] if *amount == Scaled::from_raw(4 * Scaled::UNITY)
+    ));
+}
+
+#[test]
+fn canonical_delete_last_rejects_prefix_then_executes_without_consuming_following_token() {
+    // TeX82 §§1211-1212 diagnose a prefix on this non-prefixed command,
+    // discard the prefix, and execute `remove_item` normally. §1105 scans no
+    // operand, so the immediately following assignment remains untouched.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\kern1pt\global\unkern\global\count0=29}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(terminal_text(&universe).contains("You can't use a prefix with `\\unkern'."));
+    assert_eq!(universe.count(0), 29);
+    let Node::HList(hbox) = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("hbox exists")
+    else {
+        panic!("register 0 must store an hbox");
+    };
+    assert!(
+        universe.nodes(hbox.children).is_empty(),
+        "prefixed \\unkern must still remove the matching tail"
     );
 }
 

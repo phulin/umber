@@ -3530,14 +3530,17 @@ fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
     for (source, command) in [("\\unpenalty", "\\unpenalty"), ("\\unkern", "\\unkern")] {
         let mut stores = Universe::new_with_plain_catcodes();
         install_unexpandable_primitives(&mut stores);
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let err = Executor::new()
+        let mut input = InputStack::new(MemoryInput::new(format!("{source}\\count0=23")));
+        Executor::new()
             .run(&mut input, &mut stores)
-            .expect_err("empty outer delete should error");
-        assert_eq!(
-            err.to_string(),
-            format!("You can't use `{command}' in vertical mode.")
+            .expect("outer delete apology is recoverable");
+        assert!(
+            support::terminal_effect_text(&stores)
+                .contains(&format!("You can't use `{command}' in vertical mode")),
+            "{}",
+            support::terminal_effect_text(&stores)
         );
+        assert_eq!(stores.count(0), 23, "following assignment must execute");
     }
 }
 

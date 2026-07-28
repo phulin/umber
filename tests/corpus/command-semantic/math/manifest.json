@@ -4,6 +4,30 @@
   "property_domain": "math-box-list-and-mode-semantics",
   "cases": [
     {
+      "id": "remove-last-node",
+      "property_id": "tex82.lists.structured-material",
+      "source": "remove-last-node.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [1105]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["command"],
+        "commands": ["remove_item"]
+      },
+      "expected": [
+        "command:raw:cs:unskip:remove_item:10",
+        "command:expanded:cs:unskip:remove_item:10",
+        "command:raw:cs:unkern:remove_item:11",
+        "command:expanded:cs:unkern:remove_item:11",
+        "command:raw:cs:unpenalty:remove_item:12",
+        "command:expanded:cs:unpenalty:remove_item:12"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "clean-box-delimiters-mu",
       "property_id": "tex82.math.clean-box-delimiters-mu",
       "source": "clean-box-delimiters-mu.tex",

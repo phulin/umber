@@ -492,19 +492,8 @@ pub(crate) fn execute_delete_last(
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
     if is_outer_vertical(nest) {
-        return execute_delete_last_outer_vertical(primitive, stores);
-    }
-    if nest.current_mode() == Mode::Vertical && nest.current_list().is_empty() {
-        return match primitive {
-            UnexpandablePrimitive::UnSkip => Ok(()),
-            UnexpandablePrimitive::UnPenalty => Err(ExecError::CannotDeleteFromCurrentPage {
-                command: "\\unpenalty",
-            }),
-            UnexpandablePrimitive::UnKern => Err(ExecError::CannotDeleteFromCurrentPage {
-                command: "\\unkern",
-            }),
-            _ => unreachable!("caller restricts delete_last primitives"),
-        };
+        execute_delete_last_outer_vertical(primitive, stores);
+        return Ok(());
     }
     let matches_target = matches!(
         (primitive, nest.current_list().nodes().last()),
@@ -518,10 +507,7 @@ pub(crate) fn execute_delete_last(
     Ok(())
 }
 
-fn execute_delete_last_outer_vertical(
-    primitive: UnexpandablePrimitive,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
+fn execute_delete_last_outer_vertical(primitive: UnexpandablePrimitive, stores: &mut Universe) {
     let Some(tail) = stores.page_contribution_tail() else {
         // TeX82 §1105: `(mode=vmode)and(tail=head)` -- the contribution list
         // is empty because `build_page` has already swept every prior item
@@ -533,21 +519,10 @@ fn execute_delete_last_outer_vertical(
         // memo (§996) shows the most recently placed page item really was
         // glue; otherwise it is `\unskip` "following non-glue" and silently
         // succeeds, matching the one case tex.web exempts from the apology.
-        return match primitive {
-            UnexpandablePrimitive::UnSkip if stores.page_has_last_glue() => {
-                Err(ExecError::CannotDeleteFromCurrentPage {
-                    command: "\\unskip",
-                })
-            }
-            UnexpandablePrimitive::UnSkip => Ok(()),
-            UnexpandablePrimitive::UnPenalty => Err(ExecError::CannotDeleteFromCurrentPage {
-                command: "\\unpenalty",
-            }),
-            UnexpandablePrimitive::UnKern => Err(ExecError::CannotDeleteFromCurrentPage {
-                command: "\\unkern",
-            }),
-            _ => unreachable!("caller restricts delete_last primitives"),
-        };
+        if primitive != UnexpandablePrimitive::UnSkip || stores.page_has_last_glue() {
+            report_cannot_delete_from_page(primitive, stores);
+        }
+        return;
     };
     let matches_target = matches!(
         (primitive, tail),
@@ -558,7 +533,36 @@ fn execute_delete_last_outer_vertical(
     if matches_target {
         let _ = stores.pop_page_contribution_tail();
     }
-    Ok(())
+}
+
+/// TeX82 §1105's recoverable
+/// `@<Apologize for inability to do the operation now...@>` error.
+///
+/// This must not escape as an `ExecError`: tex.web calls `error` and resumes
+/// main control with the following token. The final help line is selected by
+/// the requested node type.
+fn report_cannot_delete_from_page(primitive: UnexpandablePrimitive, stores: &mut Universe) {
+    let command = match primitive {
+        UnexpandablePrimitive::UnSkip => "unskip",
+        UnexpandablePrimitive::UnKern => "unkern",
+        UnexpandablePrimitive::UnPenalty => "unpenalty",
+        _ => unreachable!("caller restricts delete_last primitives"),
+    };
+    let last_help = match primitive {
+        UnexpandablePrimitive::UnSkip => "Try `I\\vskip-\\lastskip' instead.",
+        UnexpandablePrimitive::UnKern => "Try `I\\kern-\\lastkern' instead.",
+        UnexpandablePrimitive::UnPenalty => "Perhaps you can make the output routine do it.",
+        _ => unreachable!("caller restricts delete_last primitives"),
+    };
+    let mut report = stores.print_err("You can't use `");
+    report
+        .print_esc(command)
+        .print("' in vertical mode")
+        .help(&[
+            "Sorry...I usually can't take things from the current page.",
+            last_help,
+        ]);
+    report.error();
 }
 
 fn execute_vertical_skip(
