@@ -9724,14 +9724,21 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {
+            // TeX82 §1038's main-loop lookahead ends the current ligature
+            // run when the next expanded command is not a character. A brace
+            // is therefore a real text boundary on both entry and exit:
+            // `{f}i` must not form `fi` across the closing brace.
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             stores.enter_group_with_kind(GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             stores.enter_group_with_kind(GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndSemiSimpleGroup => {
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::SemiSimple)
                 .map_err(|_| ExecError::MissingToken {
@@ -9783,6 +9790,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
                 .map_err(|_| ExecError::MissingToken {

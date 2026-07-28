@@ -395,6 +395,23 @@ fn e2e_conformance_story_canonical() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
+fn canonical_ligature_group_boundaries_match_reference_dvi() {
+    let setup = test_support::dvi::DviCaseSetup::new("dvi", "ligature_group_boundaries");
+    let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
+    let expected = fs::read(
+        test_support::corpus_root()
+            .join("dvi")
+            .join("ligature_group_boundaries.expected.dvi"),
+    )
+    .expect("reference DVI");
+    assert_eq!(
+        normalized_dvi_for_comparison(&actual).expect("normalize actual"),
+        normalized_dvi_for_comparison(&expected).expect("normalize reference")
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
 fn canonical_math_group_singleton_ord_matches_reference_dvi() {
     let setup = test_support::dvi::DviCaseSetup::new("math", "mathopen_boxed_delimiter");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
