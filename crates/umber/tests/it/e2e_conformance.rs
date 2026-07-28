@@ -1,8 +1,7 @@
+#[cfg(feature = "instrumentation")]
 use std::env;
 use std::fs;
-use std::path::Path;
-#[cfg(feature = "instrumentation")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parity_harness::run_named_fixture_document;

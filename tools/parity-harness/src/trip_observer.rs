@@ -245,7 +245,7 @@ mod tests {
         }));
         observer.committed(CommandObservation::Effect(EffectRecord {
             kind: "shipout",
-            detail: "dvi\01".into(),
+            detail: "dvi\0\u{31}".into(),
             tokens: None,
         }));
         observer.committed(CommandObservation::Input(InputRecord {
