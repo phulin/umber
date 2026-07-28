@@ -8600,6 +8600,46 @@ fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
 }
 
 #[test]
+fn canonical_display_equation_number_missing_second_shift_restores_vertical_mode() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\noindent A \char'202$$\leqno\kern1009pt$\par\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert!(
+        terminal_text(&universe).contains("Display math should end with $$"),
+        "TeX82 §1194 diagnoses and backs up the non-shift after the equation number"
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(universe.innermost_group_kind(), None);
+}
+
+#[test]
+fn canonical_nested_malformed_display_equation_number_restores_group_ownership() {
+    // TRIP's nested display/equation-number recovery reaches a `$` with two
+    // `\left` groups still open. TeX82 §§1191–1193 give each `\left` both a
+    // math mode and `math_left_group` save level, so §1027 inserts two
+    // `\right.` delimiters before §1194 may finish the equation number.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\noindent$$\vtop{\noindent$$Aa$\ifvmode$\fi}\hss\leqno A\/\left(\over\left($$\par\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        terminal_text(&universe)
+            .matches("Missing \\right. inserted")
+            .count(),
+        2
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(universe.innermost_group_kind(), None);
+}
+
+#[test]
 fn canonical_interaction_mode_assignment_is_ungrouped() {
     // `interaction` is a plain global Pascal variable outside `eqtb`
     // (tex.web's globals), so `\batchmode` inside a group is never undone at

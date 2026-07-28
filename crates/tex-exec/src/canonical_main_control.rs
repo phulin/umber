@@ -2153,6 +2153,11 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         match boundary.kind {
             MathDelimiterBoundaryKind::Left => {
+                // TeX82 §1191's `push_math(math_left_group)` opens both a
+                // mode level and a save-stack level. Keeping those owners
+                // paired lets §1193 route a premature `$` through §1027's
+                // `off_save`, which inserts `\right.` before retrying it.
+                stores.enter_group_with_kind(GroupKind::MathLeft);
                 self.modes.push(Mode::Math);
                 self.modes
                     .current_list_mutation()
@@ -2188,6 +2193,12 @@ impl CanonicalMainControl {
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
                 let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+                let aftergroup = stores
+                    .leave_group_with_kind(GroupKind::MathLeft)
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "math left group",
+                    })?;
+                schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
                 let mut nodes: Vec<_> = stores
                     .nodes(content)
                     .into_iter()
