@@ -4,7 +4,7 @@ use tex_state::SourceId;
 
 use crate::profile::{CharacterCode, CharacterMode};
 
-use super::source::SourceCursor;
+use super::source::{LineBackingRegistry, RegisteredSource, SourceCursor};
 
 /// A half-open range in one immutable registered source.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -335,9 +335,10 @@ impl SourceCursor {
         if line.endline.is_some() {
             return SourceRange::new(line.physical.source, end, end);
         }
+        let backing = self.current_backing();
         let start = final_character_start(
-            &self.backing.bytes,
-            self.backing.mode,
+            &backing.bytes,
+            backing.mode,
             line.physical.content.start,
             end,
         );
@@ -348,6 +349,9 @@ impl SourceCursor {
         if self.line.is_some() {
             return self.line.as_mut();
         }
+        // A physical line is always loaded from the file itself; only §363
+        // may substitute backing, and only for the line already loaded.
+        self.line_backing = None;
         let len = u64::try_from(self.backing.bytes.len()).expect("registration checked length");
         if self.next_physical_offset >= len {
             return None;
@@ -405,8 +409,90 @@ impl SourceCursor {
         self.line.as_mut()
     }
 
+    /// Runs TeX82 §363's `firm_up_the_line` over the line just loaded.
+    ///
+    /// §363 is the whole of `\pausing`: `limit:=last; if pausing>0 then if
+    /// interaction>nonstop_mode then begin ... print the buffered line;
+    /// first:=limit; prompt_input("=>"); if last>first then move the typed
+    /// line down into the buffer and reset limit; end`. Every one of those
+    /// decisions belongs to the caller's live engine state, so the tokenizer
+    /// only supplies the line as `limit` bounds it and installs whatever
+    /// replacement comes back. A replacement that cannot be given an identity
+    /// is no replacement: §363's `last>first` test simply fails and the
+    /// file's line stands.
+    pub(crate) fn firm_up_the_line(
+        &mut self,
+        endlinechar: i32,
+        queries: &mut dyn super::tokenizer::SourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
+    ) {
+        let Some(line) = self.line.as_ref() else {
+            return;
+        };
+        let backing = self.current_backing();
+        let start = usize::try_from(line.physical.content.start).expect("offset fits usize");
+        let end = usize::try_from(line.retained_end).expect("offset fits usize");
+        let Some(text) = backing.bytes.get(start..end) else {
+            return;
+        };
+        let text = String::from_utf8_lossy(text).into_owned();
+        let Some(replacement) = queries.firm_up_the_line(&text) else {
+            return;
+        };
+        let Some(backing) = lines.register(replacement) else {
+            return;
+        };
+        self.replace_current_line(backing, endlinechar);
+    }
+
+    /// Replaces the loaded line's characters, per TeX82 §363.
+    ///
+    /// `firm_up_the_line` moves a typed line down into `buffer` at `start`
+    /// and sets `limit:=start+last-first`; the input level, its line number,
+    /// and `first`/`loc` bookkeeping are untouched, and §362 goes on to store
+    /// `\endlinechar` at the new `limit`. The replacement is therefore one
+    /// complete line with no terminator of its own, tokenized from column
+    /// zero in `state=new_line` -- exactly what §363 leaves behind.
+    ///
+    /// Trailing blanks were already removed by §31's `input_ln`; stripping
+    /// them again here is idempotent and keeps `retained_end` the single
+    /// definition of `limit` for every line, however it was acquired.
+    pub(crate) fn replace_current_line(&mut self, backing: RegisteredSource, endlinechar: i32) {
+        let Some(line) = self.line.as_ref() else {
+            return;
+        };
+        let end = u64::try_from(backing.bytes.len()).expect("registration checked length");
+        let mut retained_end = end;
+        while retained_end > 0 {
+            let index = usize::try_from(retained_end - 1).expect("backing offset fits usize");
+            if backing.bytes[index] != b' ' {
+                break;
+            }
+            retained_end -= 1;
+        }
+        let endline = endline_character(backing.mode, endlinechar);
+        let physical = PhysicalLine {
+            source: backing.id,
+            number: line.physical.number,
+            content: SourceRange::new(backing.id, 0, end),
+            terminator: SourceRange::new(backing.id, end, end),
+            terminator_kind: LineTerminator::Missing,
+        };
+        self.line = Some(SourceLineState {
+            physical,
+            retained_end,
+            byte_cursor: 0,
+            scalar_cursor: 0,
+            endline,
+            endline_delivered: false,
+        });
+        self.line_backing = Some(backing);
+        self.lexer_state = super::tokenizer::LexerState::NewLine;
+    }
+
     pub(crate) fn finish_line(&mut self) {
         self.line = None;
+        self.line_backing = None;
     }
 }
 

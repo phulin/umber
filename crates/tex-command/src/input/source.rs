@@ -111,6 +111,35 @@ impl SourceRegistration {
     }
 }
 
+/// Allocates backing identity for a line acquired while tokenizing.
+///
+/// TeX82 writes an acquired line straight into `buffer`; Umber's lines are
+/// ranges into immutable registered backing, so a line that did not come from
+/// the file needs a source identity of its own before it can be read or
+/// reported. Only the identity counter is borrowed: a replacement line is
+/// held by the cursor reading it and is never added to the registry
+/// [`crate::CommandState::open_registered_source`] searches, because no
+/// input level may be opened on it.
+pub(crate) struct LineBackingRegistry<'a> {
+    pub(crate) profile: CommandProfile,
+    pub(crate) next_identity: &'a mut u64,
+}
+
+impl LineBackingRegistry<'_> {
+    /// Registers acquired line bytes, or refuses when no identity remains.
+    pub(crate) fn register(
+        &mut self,
+        registration: SourceRegistration,
+    ) -> Option<RegisteredSource> {
+        let raw = u32::try_from(*self.next_identity).ok()?;
+        let source =
+            RegisteredSource::register(tex_state::SourceId::new(raw), self.profile, registration)
+                .ok()?;
+        *self.next_identity += 1;
+        Some(source)
+    }
+}
+
 /// The exact byte range implicated by malformed Unicode registration.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MalformedUnicodeRange {
@@ -226,6 +255,17 @@ impl RegisteredSource {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceCursor {
     pub(crate) backing: RegisteredSource,
+    /// Backing for the loaded line alone, when it is not the physical one.
+    ///
+    /// TeX82 §363's `firm_up_the_line` moves a line typed at the terminal
+    /// down into `buffer` over the line the file supplied, so the level, its
+    /// line number, and its `\endinput` accounting all survive while the
+    /// characters do not. Umber's lines are ranges into immutable backing
+    /// rather than a mutable buffer, so the replacement is registered as its
+    /// own source and recorded here: every read of the _current line's_
+    /// bytes goes through [`Self::current_backing`], while
+    /// [`Self::load_next_line`] keeps advancing through the physical file.
+    pub(crate) line_backing: Option<RegisteredSource>,
     pub(crate) next_physical_offset: u64,
     pub(crate) next_line_number: u64,
     pub(crate) line: Option<SourceLineState>,
@@ -237,11 +277,20 @@ impl SourceCursor {
     pub(crate) fn new(backing: RegisteredSource) -> Self {
         Self {
             backing,
+            line_backing: None,
             next_physical_offset: 0,
             next_line_number: 1,
             line: None,
             lexer_state: LexerState::NewLine,
             end_after_line: false,
+        }
+    }
+
+    /// The backing the loaded line's characters are read from.
+    pub(crate) const fn current_backing(&self) -> &RegisteredSource {
+        match self.line_backing.as_ref() {
+            Some(replacement) => replacement,
+            None => &self.backing,
         }
     }
 }

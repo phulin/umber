@@ -414,7 +414,7 @@ const INT_PARAMS: &[(&str, u16)] = &[
     ("showboxdepth", 25),
     ("hbadness", 26),
     ("vbadness", 27),
-    ("pausing", 28),
+    ("pausing", IntParam::PAUSING.raw()),
     ("tracingonline", IntParam::TRACING_ONLINE.raw()),
     ("tracingmacros", 30),
     ("tracingstats", 31),

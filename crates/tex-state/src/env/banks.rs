@@ -153,6 +153,11 @@ impl IntParam {
     /// Initial `\skewchar` value assigned to newly loaded fonts.
     pub const DEFAULT_SKEW_CHAR: Self = Self::new(42);
 
+    /// TeX's `\pausing` interactive line-replacement parameter (tex.web
+    /// §236). A positive value makes §363's `firm_up_the_line` display and
+    /// offer to replace every line before it is tokenized.
+    pub const PAUSING: Self = Self::new(28);
+
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
 

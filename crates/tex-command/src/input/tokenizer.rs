@@ -12,7 +12,7 @@ use tex_state::token::Catcode;
 use crate::profile::{CharacterCode, CharacterMode};
 
 use super::lines::{SourceCharacter, SourceProvenance, SourceRange, SourceScalarRange};
-use super::source::SourceCursor;
+use super::source::{LineBackingRegistry, SourceCursor, SourceRegistration};
 
 /// TeX's source-line lexical state (`mid_line`, `skip_blanks`, `new_line`).
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -131,18 +131,58 @@ enum SuperscriptPolicy {
     UnicodeExtended,
 }
 
+/// The live engine reads the source tokenizer makes as it advances.
+///
+/// Both are TeX82 state the tokenizer neither owns nor caches: §207's
+/// category codes, queried once per classified character, and §363's
+/// `firm_up_the_line`, queried once per loaded physical line. They travel in
+/// one trait because they are one borrow of live state, not because the two
+/// reads are otherwise related -- a tokenizer that took them as two closures
+/// would need the same state borrowed mutably twice at once.
+pub trait SourceStepQueries {
+    /// TeX82 §207's `cat_code(c)`.
+    fn catcode(&mut self, code: CharacterCode) -> Catcode;
+
+    /// TeX82 §363's `firm_up_the_line`, offered for each loaded line.
+    ///
+    /// `line` is the normalized line as `limit` bounds it. `Some` is §363's
+    /// `last>first` branch, where a line typed at the terminal is moved down
+    /// over the file's; `None` covers both `pausing<=0` and a bare carriage
+    /// return, which §363 treats identically -- the line stands as it is.
+    ///
+    /// §363 is reached from §362 (a continuing file's refill) and from §538
+    /// (a newly opened file's first line), which are the same two moments the
+    /// tokenizer loads a line, so offering it here is what makes `\pausing`
+    /// apply to every line rather than to the first one a caller observes.
+    fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+        let _ = line;
+        None
+    }
+}
+
+/// Category codes alone: TeX82 §363's replacement can never fire.
+pub struct CatcodeQueries<F>(pub F);
+
+impl<F: FnMut(CharacterCode) -> Catcode> SourceStepQueries for CatcodeQueries<F> {
+    fn catcode(&mut self, code: CharacterCode) -> Catcode {
+        (self.0)(code)
+    }
+}
+
 impl SourceCursor {
     /// Delivers one exact-byte tokenization step.
     pub(crate) fn next_exact_byte_step(
         &mut self,
         endlinechar: i32,
-        catcode: impl FnMut(CharacterCode) -> Catcode,
+        queries: &mut dyn SourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         self.next_source_step(
             endlinechar,
             CharacterMode::EightBitExact,
             SuperscriptPolicy::ExactByte,
-            catcode,
+            queries,
+            lines,
         )
     }
 
@@ -150,13 +190,15 @@ impl SourceCursor {
     pub(crate) fn next_unicode_step(
         &mut self,
         endlinechar: i32,
-        catcode: impl FnMut(CharacterCode) -> Catcode,
+        queries: &mut dyn SourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         self.next_source_step(
             endlinechar,
             CharacterMode::UnicodeExtended,
             SuperscriptPolicy::UnicodeExtended,
-            catcode,
+            queries,
+            lines,
         )
     }
 
@@ -165,15 +207,23 @@ impl SourceCursor {
         endlinechar: i32,
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
-        mut catcode: impl FnMut(CharacterCode) -> Catcode,
+        queries: &mut dyn SourceStepQueries,
+        lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         debug_assert_eq!(self.backing.mode, mode);
-        let bytes = Arc::clone(&self.backing.bytes);
 
         loop {
-            if self.line.is_none() && self.load_next_line(endlinechar).is_none() {
-                return SourceTokenizationStep::End;
+            if self.line.is_none() {
+                if self.load_next_line(endlinechar).is_none() {
+                    return SourceTokenizationStep::End;
+                }
+                self.firm_up_the_line(endlinechar, queries, lines);
             }
+            // The replacement §363 installs has backing of its own, so the
+            // current line's bytes must be taken after it has run, not once
+            // for the whole level.
+            let bytes = Arc::clone(&self.current_backing().bytes);
+            let mut catcode = |code: CharacterCode| queries.catcode(code);
 
             let Some(character) =
                 self.next_reduced_character(&bytes, mode, superscript, &mut catcode)

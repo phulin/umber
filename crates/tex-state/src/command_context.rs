@@ -309,6 +309,67 @@ impl CommandContext<'_> {
         self.universe.world().input_stream_eof(stream)
     }
 
+    /// Acquires one input line, exactly as tex.web §31's `input_ln` does.
+    ///
+    /// This is the command core's only line-acquisition operation. tex.web
+    /// reads every line that is not already in a registered file through
+    /// `input_ln`: §363's `firm_up_the_line` replacement, §360's `*` prompt,
+    /// and §484-§486's `\read` lines all funnel into it, and §71's
+    /// `prompt_input(#)` is defined as `print(#); term_input`, where
+    /// `term_input` is `input_ln(term_in,true)` plus its transcript echo.
+    /// Modelling that one procedure once is what keeps §363 and §483 from
+    /// each growing a private line path.
+    ///
+    /// The returned line has its trailing blanks removed, per §31 ("either
+    /// `last=first` ... or `buffer[last-1]<>" "`"). `None` is §31's `false`
+    /// return: for [`CommandLineSource::Terminal`] the terminal is at end of
+    /// file, which §71 turns into `fatal_error("End of file on the
+    /// terminal!")`; for [`CommandLineSource::Stream`] the stream is not open
+    /// at all, which is §483's `read_open[m]=closed` and selects §484's
+    /// terminal branch instead. A stream whose last line has already been
+    /// consumed returns `Some("")` and closes itself, which is §486's
+    /// appended empty line, not an absence of one.
+    ///
+    /// Acquisition is bounded by construction: every line source is owned by
+    /// [`Universe`], so the command core performs no I/O of its own, never
+    /// opens a file or a stream, and observes only what the aggregate already
+    /// holds or what the driver's own terminal reader hands back.
+    pub fn input_ln(&mut self, source: CommandLineSource<'_>) -> Option<String> {
+        let line = match source {
+            CommandLineSource::Terminal { prompt } => {
+                // §71: `prompt_input(#) == wake_up_terminal; print(#);
+                // term_input`. The prompt is printed by this operation so
+                // that the command core never acquires a print channel of
+                // its own just to ask for a line.
+                if !prompt.is_empty() {
+                    self.universe
+                        .world_mut()
+                        .write_text(crate::world::PrintSink::TerminalAndLog, prompt);
+                }
+                self.universe.world_mut().read_terminal_line()
+            }
+            CommandLineSource::Stream(stream) => self.universe.world_mut().read_stream_line(stream),
+        };
+        // §31 has no error return: a source that cannot deliver a line is
+        // indistinguishable from one that has been entirely read.
+        let mut line = line.ok().flatten()?;
+        line.truncate(line.trim_end_matches(' ').len());
+        Some(line)
+    }
+
+    /// Reads tex.web's `interaction>nonstop_mode` test.
+    ///
+    /// §363, §360, and §484 all gate terminal acquisition on it, and §71
+    /// states outright that `prompt_input` "is never called when
+    /// `interaction<scroll_mode`".
+    #[must_use]
+    pub fn interaction_permits_terminal_input(&self) -> bool {
+        matches!(
+            self.universe.interaction_mode(),
+            crate::InteractionMode::Scroll | crate::InteractionMode::ErrorStop
+        )
+    }
+
     /// Reads one box-register dimension through the aggregate state boundary.
     ///
     /// A void box has no dimension; TeX's internal-quantity scanner maps
@@ -534,6 +595,20 @@ impl CommandContext<'_> {
     }
 }
 
+/// The line source one [`CommandContext::input_ln`] acquisition names.
+///
+/// tex.web's `input_ln` takes the Pascal file to read; Umber names the two
+/// the command core can reach instead, because neither is a file it may open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandLineSource<'a> {
+    /// tex.web §71's `term_in`, reached through `prompt_input(#)`: `print(#)`
+    /// runs first, then `term_input` reads and echoes one line. An empty
+    /// prompt is §484's `prompt_input("")`, which prints nothing.
+    Terminal { prompt: &'a str },
+    /// tex.web §480's `read_file[m]`, read by §31's `input_ln` directly.
+    Stream(crate::world::StreamSlot),
+}
+
 /// Aggregate classification used by the command conditional boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandBoxKind {
@@ -546,5 +621,100 @@ impl Universe {
     /// canonical command processor.
     pub fn command_context(&mut self) -> CommandContext<'_> {
         CommandContext { universe: self }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandLineSource;
+    use crate::{InteractionMode, Universe, world::StreamSlot};
+
+    #[test]
+    fn input_ln_removes_trailing_blanks_from_an_acquired_terminal_line() {
+        // tex.web §31: "Trailing blanks are removed from the line; thus,
+        // either `last=first` ... or `buffer[last-1]<>" "`."
+        let mut universe = Universe::new();
+        universe
+            .world_mut()
+            .push_memory_terminal_line("typed   ")
+            .expect("memory world accepts terminal input");
+
+        assert_eq!(
+            universe
+                .command_context()
+                .input_ln(CommandLineSource::Terminal { prompt: "=>" }),
+            Some("typed".to_owned())
+        );
+    }
+
+    #[test]
+    fn input_ln_reports_an_exhausted_terminal_as_section_31s_false_return() {
+        let mut universe = Universe::new();
+
+        assert_eq!(
+            universe
+                .command_context()
+                .input_ln(CommandLineSource::Terminal { prompt: "" }),
+            None
+        );
+    }
+
+    #[test]
+    fn input_ln_reads_stream_lines_and_appends_section_486s_empty_line() {
+        // §486: "An empty line is appended at the end of a `read_file`."
+        // tex.web reaches it through `input_ln` returning false with
+        // `last=first`; the aggregate reports the same thing as one final
+        // empty line that also closes the stream.
+        let mut universe = Universe::new();
+        universe
+            .world_mut()
+            .set_memory_file("stream.tex", b"one  \ntwo\n".to_vec())
+            .expect("memory world accepts a seeded file");
+        let slot = StreamSlot::new(1);
+        universe
+            .world_mut()
+            .open_in(slot, "stream.tex")
+            .expect("stream opens");
+
+        let mut context = universe.command_context();
+        assert_eq!(
+            context.input_ln(CommandLineSource::Stream(slot)),
+            Some("one".to_owned())
+        );
+        assert_eq!(
+            context.input_ln(CommandLineSource::Stream(slot)),
+            Some("two".to_owned())
+        );
+        assert_eq!(
+            context.input_ln(CommandLineSource::Stream(slot)),
+            Some(String::new())
+        );
+        assert!(context.read_stream_at_eof(slot));
+        // §483 reads `read_open[m]=closed` before acquiring anything, so a
+        // closed stream is `None` rather than a further empty line.
+        assert_eq!(context.input_ln(CommandLineSource::Stream(slot)), None);
+    }
+
+    #[test]
+    fn nonstop_and_batch_modes_refuse_terminal_acquisition() {
+        // §71: `prompt_input` "is never called when
+        // `interaction<scroll_mode`"; §363 and §484 both test
+        // `interaction>nonstop_mode` before asking for a line.
+        let mut universe = Universe::new();
+        for (mode, permitted) in [
+            (InteractionMode::Batch, false),
+            (InteractionMode::Nonstop, false),
+            (InteractionMode::Scroll, true),
+            (InteractionMode::ErrorStop, true),
+        ] {
+            universe.set_interaction_mode(mode);
+            assert_eq!(
+                universe
+                    .command_context()
+                    .interaction_permits_terminal_input(),
+                permitted,
+                "{mode:?}"
+            );
+        }
     }
 }

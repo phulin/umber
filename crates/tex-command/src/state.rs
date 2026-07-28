@@ -878,9 +878,26 @@ impl CommandState {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
             return None;
         };
-        let mode = level.cursor.backing.mode;
-        let bytes = std::sync::Arc::clone(&level.cursor.backing.bytes);
+        let backing = level.cursor.current_backing();
+        let mode = backing.mode;
+        let bytes = std::sync::Arc::clone(&backing.bytes);
         level.cursor.line.as_mut()?.next_character(mode, &bytes)
+    }
+
+    /// Names the backing TeX82 §363 installed over the active line, if any.
+    ///
+    /// A replacement line is real immutable input with an identity of its
+    /// own, so the aggregate source map has to learn about it before any
+    /// token located in it is reported. Returning `None` is the ordinary
+    /// case: the line came from the file, which is registered already.
+    pub(crate) fn active_line_backing(
+        &self,
+    ) -> Option<(tex_state::SourceId, tex_state::source_map::SourceDescriptor)> {
+        let Some(InputLevel::Source(level)) = self.input.levels.last() else {
+            return None;
+        };
+        let backing = level.cursor.line_backing.as_ref()?;
+        Some((backing.id, backing.source_descriptor()))
     }
 
     /// Retires the active normalized line so the next physical line may load.
@@ -904,17 +921,18 @@ impl CommandState {
     pub fn next_exact_source_step(
         &mut self,
         endlinechar: i32,
-        catcode: impl FnMut(crate::CharacterCode) -> tex_state::token::Catcode,
+        queries: &mut dyn crate::SourceStepQueries,
     ) -> SourceTokenizationStep {
+        let profile = self.profile();
         assert_eq!(
-            self.profile().character_mode(),
+            profile.character_mode(),
             crate::CharacterMode::EightBitExact,
             "exact-byte tokenization requires an exact-byte command profile"
         );
-        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
+        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
             return SourceTokenizationStep::End;
         };
-        level.cursor.next_exact_byte_step(endlinechar, catcode)
+        cursor.next_exact_byte_step(endlinechar, queries, &mut lines)
     }
 
     /// Tokenizes one Unicode-scalar source step using the caller's live code
@@ -931,17 +949,42 @@ impl CommandState {
     pub fn next_unicode_source_step(
         &mut self,
         endlinechar: i32,
-        catcode: impl FnMut(crate::CharacterCode) -> tex_state::token::Catcode,
+        queries: &mut dyn crate::SourceStepQueries,
     ) -> SourceTokenizationStep {
+        let profile = self.profile();
         assert_eq!(
-            self.profile().character_mode(),
+            profile.character_mode(),
             crate::CharacterMode::UnicodeExtended,
             "Unicode tokenization requires a UnicodeExtended command profile"
         );
-        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
+        let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
             return SourceTokenizationStep::End;
         };
-        level.cursor.next_unicode_step(endlinechar, catcode)
+        cursor.next_unicode_step(endlinechar, queries, &mut lines)
+    }
+
+    /// Borrows the active source cursor beside the source-identity counter.
+    ///
+    /// TeX82 §363's replacement line needs an identity allocated while the
+    /// cursor that will read it is already borrowed, so the two disjoint
+    /// fields are handed out together rather than the cursor alone.
+    fn active_source_cursor(
+        &mut self,
+        profile: CommandProfile,
+    ) -> (
+        Option<&mut crate::input::SourceCursor>,
+        crate::input::LineBackingRegistry<'_>,
+    ) {
+        let input = &mut self.input;
+        let lines = crate::input::LineBackingRegistry {
+            profile,
+            next_identity: &mut input.next_source_identity,
+        };
+        let cursor = match input.levels.last_mut() {
+            Some(InputLevel::Source(level)) => Some(&mut level.cursor),
+            _ => None,
+        };
+        (cursor, lines)
     }
 
     /// Returns the immutable profile selected when this job was created.

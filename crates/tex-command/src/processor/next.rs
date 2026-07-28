@@ -19,7 +19,9 @@ use crate::input::{
 // tex.web §303's `name` classification only reaches an observation payload.
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::input::SourceNameClass;
+use crate::input::{RegisteredSourceKind, SourceRegistration};
 use crate::profile::{CharacterCode, CharacterMode};
+use tex_state::CommandLineSource;
 use crate::{
     AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
     SourceProvenance, SourceToken, SourceTokenizationStep,
@@ -1190,6 +1192,7 @@ impl CommandProcessor<'_> {
                     self.ensure_source_registration(&source.cursor.backing);
                     match self.next_source_step() {
                         SourceTokenizationStep::Token(token) => {
+                            self.ensure_replacement_line_registration();
                             let spelling =
                                 self.source_spelling(&token, allow_control_sequence_creation);
                             return Ok(Some(DeliveredToken {
@@ -1373,14 +1376,16 @@ impl CommandProcessor<'_> {
         // the line, so assignments affect the next refill but cannot rewrite
         // a partially consumed line.
         let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
-        let catcode = |code: CharacterCode| self.state.catcode(character_from_code(code));
+        let mut queries = LiveSourceQueries {
+            state: &mut self.state,
+        };
         match profile.character_mode() {
-            CharacterMode::EightBitExact => {
-                self.command.next_exact_source_step(endlinechar, catcode)
-            }
-            CharacterMode::UnicodeExtended => {
-                self.command.next_unicode_source_step(endlinechar, catcode)
-            }
+            CharacterMode::EightBitExact => self
+                .command
+                .next_exact_source_step(endlinechar, &mut queries),
+            CharacterMode::UnicodeExtended => self
+                .command
+                .next_unicode_source_step(endlinechar, &mut queries),
         }
     }
 
@@ -1388,6 +1393,18 @@ impl CommandProcessor<'_> {
         let _ = self
             .state
             .register_source(source.id, source.source_descriptor());
+    }
+
+    /// Registers the backing TeX82 §363 installed over the active line.
+    ///
+    /// The line the file supplied is registered before tokenization starts;
+    /// a `\pausing` replacement only exists once §363 has run inside that
+    /// step, so its identity is registered as soon as the step yields a token
+    /// located in it.
+    fn ensure_replacement_line_registration(&mut self) {
+        if let Some((source, descriptor)) = self.command.active_line_backing() {
+            let _ = self.state.register_source(source, descriptor);
+        }
     }
 
     /// Resolves one scanned source token into its semantic spelling.
@@ -1880,6 +1897,53 @@ fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
         | TokenBehavior::BackedUp(_)
         | TokenBehavior::UTemplate => true,
         TokenBehavior::VTemplate => false,
+    }
+}
+
+/// The live engine reads TeX82 §341's `get_next` makes while it reads source.
+///
+/// One borrow of live state answers both: §207's category codes, and §363's
+/// `firm_up_the_line`. Splitting them into two closures would need
+/// [`tex_state::CommandContext`] borrowed mutably twice at once, which is
+/// what forced them into one trait rather than any relationship between the
+/// two reads.
+struct LiveSourceQueries<'a, 'b> {
+    state: &'a mut tex_state::CommandContext<'b>,
+}
+
+impl crate::SourceStepQueries for LiveSourceQueries<'_, '_> {
+    fn catcode(&mut self, code: CharacterCode) -> Catcode {
+        self.state.catcode(character_from_code(code))
+    }
+
+    /// TeX82 §363's `firm_up_the_line`.
+    ///
+    /// `if pausing>0 then if interaction>nonstop_mode then begin
+    /// wake_up_terminal; print_ln; if start<limit then print the buffered
+    /// line; first:=limit; prompt_input("=>"); if last>first then move the
+    /// typed line down into the buffer ... end`. §71's `prompt_input(#)` is
+    /// `print(#); term_input`, so the `print_ln`, the echoed line, and the
+    /// `=>` are one printed prompt and one acquired line -- exactly what the
+    /// single line-acquisition capability performs.
+    fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+        if self.state.int_param(IntParam::PAUSING) <= 0
+            || !self.state.interaction_permits_terminal_input()
+        {
+            return None;
+        }
+        let prompt = format!("\n{line}=>");
+        let replacement = self
+            .state
+            .input_ln(CommandLineSource::Terminal { prompt: &prompt })?;
+        // §363's `if last>first`: a bare carriage return types no line at
+        // all, and the line the file supplied stands as it is.
+        if replacement.is_empty() {
+            return None;
+        }
+        Some(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            replacement.into_bytes(),
+        ))
     }
 }
 

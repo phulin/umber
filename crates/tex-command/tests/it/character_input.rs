@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tex_command::{
-    Catcode, CharacterCode, CommandDialect, CommandHostCapabilities, CommandHostContext,
+    Catcode, CatcodeQueries, CharacterCode, CommandDialect, CommandHostCapabilities, CommandHostContext,
     CommandProcessor, CommandProfile, CommandRuntime, CommandState, RegisteredSourceKind,
     SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
 };
@@ -67,7 +67,7 @@ fn canonical_token_projection(profile: CommandProfile) -> Vec<(u16, Catcode)> {
 
     let mut tokens = Vec::new();
     loop {
-        match state.next_exact_source_step(13, fixture_catcode) {
+        match state.next_exact_source_step(13, &mut CatcodeQueries(fixture_catcode)) {
             SourceTokenizationStep::Token(SourceToken::Character { code, catcode, .. }) => {
                 tokens.push((u16::from(code.to_byte().expect("exact byte")), catcode));
             }

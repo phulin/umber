@@ -5,8 +5,8 @@ use tex_state::token::Catcode;
 
 use super::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
 use crate::{
-    CharacterCode, CommandDialect, CommandProfile, CommandState, RegisteredSourceKind,
-    SourceRegistration,
+    CatcodeQueries, CharacterCode, CommandDialect, CommandProfile, CommandState,
+    RegisteredSourceKind, SourceRegistration,
 };
 
 fn state(bytes: &[u8]) -> CommandState {
@@ -156,19 +156,19 @@ fn m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines() {
     };
 
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'A', Catcode::Letter, 0, 1)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'B', Catcode::Letter, 3, 4)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 4, 4)
     );
     assert_eq!(
-        control(state.next_exact_source_step(13, catcode)),
+        control(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (
             b"par".to_vec(),
             SourceControlSequenceKind::Paragraph,
@@ -177,23 +177,23 @@ fn m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines() {
         )
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'C', Catcode::Letter, 21, 22)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 22, 23)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'D', Catcode::Letter, 23, 24)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 24, 24)
     );
     assert_eq!(
-        state.next_exact_source_step(13, catcode),
+        state.next_exact_source_step(13, &mut CatcodeQueries(catcode)),
         SourceTokenizationStep::End
     );
 }
@@ -207,19 +207,19 @@ fn blank_line_par_is_anchored_at_the_normalized_line_end() {
     let mut state = state(b" \nA\n");
 
     assert_eq!(
-        control(state.next_exact_source_step(13, classic_catcode)),
+        control(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
         (b"par".to_vec(), SourceControlSequenceKind::Paragraph, 0, 0)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, classic_catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
         (b'A', Catcode::Letter, 2, 3)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, classic_catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
         (b' ', Catcode::Space, 3, 3)
     );
     assert_eq!(
-        state.next_exact_source_step(13, classic_catcode),
+        state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode)),
         SourceTokenizationStep::End
     );
 }
@@ -236,27 +236,27 @@ fn explicit_car_ret_character_finishes_its_line() {
     let mut state = state(b"aXb\nXb\nc\n");
 
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'a', Catcode::Letter, 0, 1)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 3, 3)
     );
     assert_eq!(
-        control(state.next_exact_source_step(13, catcode)),
+        control(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b"par".to_vec(), SourceControlSequenceKind::Paragraph, 6, 6)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b'c', Catcode::Letter, 7, 8)
     );
     assert_eq!(
-        character(state.next_exact_source_step(13, catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 8, 8)
     );
     assert_eq!(
-        state.next_exact_source_step(13, catcode),
+        state.next_exact_source_step(13, &mut CatcodeQueries(catcode)),
         SourceTokenizationStep::End
     );
 }
@@ -273,19 +273,19 @@ fn inactive_endlinechar_anchors_car_ret_at_the_last_retained_character() {
     let mut state = state(b"aXb\nc\n");
 
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b'a', Catcode::Letter, 0, 1)
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 2, 3)
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b'c', Catcode::Letter, 4, 5)
     );
     assert_eq!(
-        state.next_exact_source_step(-1, catcode),
+        state.next_exact_source_step(-1, &mut CatcodeQueries(catcode)),
         SourceTokenizationStep::End
     );
 }
@@ -302,25 +302,25 @@ fn constructs_words_symbols_active_characters_and_null_names_with_exact_ranges()
     };
 
     assert_eq!(
-        control(command.next_exact_source_step(13, catcode)),
+        control(command.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b"foo".to_vec(), SourceControlSequenceKind::Word, 0, 4)
     );
     assert_eq!(
-        control(command.next_exact_source_step(13, catcode)),
+        control(command.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b"!".to_vec(), SourceControlSequenceKind::Symbol, 6, 8)
     );
     assert_eq!(
-        control(command.next_exact_source_step(13, catcode)),
+        control(command.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b"~".to_vec(), SourceControlSequenceKind::Active, 8, 9)
     );
     assert_eq!(
-        control(command.next_exact_source_step(13, catcode)),
+        control(command.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b"abc".to_vec(), SourceControlSequenceKind::Word, 9, 16)
     );
 
     let mut null_state = state(b"\\");
     assert_eq!(
-        control(null_state.next_exact_source_step(-1, classic_catcode)),
+        control(null_state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
         (Vec::new(), SourceControlSequenceKind::Null, 0, 1)
     );
 }
@@ -329,7 +329,7 @@ fn constructs_words_symbols_active_characters_and_null_names_with_exact_ranges()
 fn canonical_superscript_forms_use_lowercase_hex_and_complete_ranges() {
     let mut state = state(b"^^41^^7a^^8^^5A");
 
-    let first = token(state.next_exact_source_step(-1, classic_catcode));
+    let first = token(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode)));
     assert_eq!(
         first.provenance().location().byte(),
         3,
@@ -354,19 +354,19 @@ fn canonical_superscript_forms_use_lowercase_hex_and_complete_ranges() {
         (b'A', Catcode::Letter, 0, 4),
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, classic_catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
         (b'z', Catcode::Letter, 4, 8)
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, classic_catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
         (b'x', Catcode::Letter, 8, 11)
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, classic_catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
         (b'u', Catcode::Letter, 11, 14)
     );
     assert_eq!(
-        character(state.next_exact_source_step(-1, classic_catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
         (b'A', Catcode::Letter, 14, 15)
     );
 }
@@ -382,7 +382,7 @@ fn invalid_reduced_character_is_consumed_once_before_delivery_restarts() {
         }
     };
 
-    match state.next_exact_source_step(-1, catcode) {
+    match state.next_exact_source_step(-1, &mut CatcodeQueries(catcode)) {
         SourceTokenizationStep::InvalidCharacter(invalid) => {
             assert_eq!(invalid.code().to_byte(), Ok(b'?'));
             assert_eq!((invalid.range().start(), invalid.range().end()), (0, 4));
@@ -390,7 +390,7 @@ fn invalid_reduced_character_is_consumed_once_before_delivery_restarts() {
         other => panic!("expected invalid-character step, found {other:?}"),
     }
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b'B', Catcode::Letter, 4, 5)
     );
 }
@@ -406,12 +406,12 @@ fn catcode_changes_are_observed_at_the_next_token_boundary() {
     };
 
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b'a', Catcode::Other, 0, 1)
     );
     second_is_letter.set(true);
     assert_eq!(
-        character(state.next_exact_source_step(-1, catcode)),
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
         (b'b', Catcode::Letter, 1, 2)
     );
 }
@@ -432,7 +432,7 @@ fn every_exact_byte_value_survives_source_token_construction() {
                 Catcode::Other
             }
         };
-        let (actual, actual_catcode, _, _) = character(state.next_exact_source_step(-1, catcode));
+        let (actual, actual_catcode, _, _) = character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode)));
         assert_eq!(actual, expected);
         assert_eq!(actual_catcode, Catcode::Other);
     }
@@ -447,7 +447,7 @@ fn all_canonical_dialects_share_the_exact_byte_state_machine() {
     ] {
         let mut state = state_for_profile(b"^^7a", CommandProfile::exact(dialect));
         assert_eq!(
-            character(state.next_exact_source_step(-1, classic_catcode)),
+            character(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode))),
             (b'z', Catcode::Letter, 0, 4)
         );
     }
@@ -470,7 +470,7 @@ fn ordinary_token_catcodes_are_observed_without_reclassification() {
     for expected in ordinary {
         let mut state = state(b"x");
         assert_eq!(
-            character(state.next_exact_source_step(-1, |_| expected)),
+            character(state.next_exact_source_step(-1, &mut CatcodeQueries(|_| expected))),
             (b'x', expected, 0, 1)
         );
     }
@@ -480,15 +480,15 @@ fn ordinary_token_catcodes_are_observed_without_reclassification() {
 fn snapshots_restore_the_lexer_state_and_exact_source_cursor() {
     let mut state = state(b"A\n");
     assert_eq!(
-        character(state.next_exact_source_step(13, classic_catcode)),
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
         (b'A', Catcode::Letter, 0, 1)
     );
     let snapshot = state.snapshot();
-    let expected = state.next_exact_source_step(13, classic_catcode);
+    let expected = state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode));
     assert_eq!(character(expected.clone()), (b' ', Catcode::Space, 1, 1));
 
     state.rollback(snapshot).expect("same-profile snapshot");
-    assert_eq!(state.next_exact_source_step(13, classic_catcode), expected);
+    assert_eq!(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode)), expected);
 }
 
 #[test]
@@ -500,19 +500,19 @@ fn unicode_words_symbols_active_and_combining_scalars_keep_both_ranges() {
     };
 
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        unicode_control(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (vec!['λ', 'é'], SourceControlSequenceKind::Word, 0, 5, 0, 3)
     );
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        unicode_control(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (vec!['🦀'], SourceControlSequenceKind::Symbol, 7, 12, 5, 7)
     );
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        unicode_control(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (vec!['🙂'], SourceControlSequenceKind::Active, 12, 16, 7, 8)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('\u{301}', Catcode::Other, 16, 18, 8, 9)
     );
 }
@@ -522,15 +522,15 @@ fn unicode_m_n_s_states_use_unicode_domain_space_par_and_endline() {
     let mut state = unicode_state("é  \n\n λ\tπ\n");
 
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         ('é', Catcode::Letter, 0, 2, 0, 1)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         (' ', Catcode::Space, 2, 2, 1, 2)
     );
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_control(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         (
             vec!['p', 'a', 'r'],
             SourceControlSequenceKind::Paragraph,
@@ -541,15 +541,15 @@ fn unicode_m_n_s_states_use_unicode_domain_space_par_and_endline() {
         )
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         ('λ', Catcode::Letter, 7, 9, 1, 2)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         (' ', Catcode::Space, 9, 10, 2, 3)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(13, &mut CatcodeQueries(unicode_catcode))),
         ('π', Catcode::Other, 10, 12, 3, 4)
     );
 }
@@ -567,12 +567,12 @@ fn unicode_catcode_mutation_is_observable_and_defaults_remain_external() {
     };
 
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('🦀', Catcode::Other, 0, 4, 0, 1)
     );
     active.set(true);
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        unicode_control(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (vec!['🙂'], SourceControlSequenceKind::Active, 4, 8, 1, 2)
     );
 }
@@ -582,23 +582,23 @@ fn unicode_superscript_policy_accepts_unicode_forms_and_exact_ranges() {
     let mut state = unicode_state("^^^^00E9 ^^4A ^^é");
 
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(unicode_catcode))),
         ('é', Catcode::Letter, 0, 8, 0, 8)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(unicode_catcode))),
         (' ', Catcode::Space, 8, 9, 8, 9)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(unicode_catcode))),
         ('J', Catcode::Letter, 9, 13, 9, 13)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(unicode_catcode))),
         (' ', Catcode::Space, 13, 14, 13, 14)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(unicode_catcode))),
         ('©', Catcode::Other, 14, 18, 14, 17)
     );
 }
@@ -615,15 +615,15 @@ fn unicode_superscript_introducer_is_selected_only_by_live_catcode() {
     };
 
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('J', Catcode::Letter, 0, 8, 0, 4)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (' ', Catcode::Space, 8, 9, 4, 5)
     );
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('é', Catcode::Letter, 9, 25, 5, 13)
     );
 }
@@ -642,11 +642,11 @@ fn unicode_categories_never_supply_implicit_catcodes() {
     };
 
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('\u{2003}', Catcode::Other, 0, 3, 0, 1)
     );
     assert_eq!(
-        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        unicode_control(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         (vec!['λ'], SourceControlSequenceKind::Active, 3, 5, 1, 2)
     );
     assert!(observed.get() >= 2);
@@ -663,7 +663,7 @@ fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
         }
     };
 
-    match state.next_unicode_source_step(-1, catcode) {
+    match state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode)) {
         SourceTokenizationStep::InvalidCharacter(invalid) => {
             assert_eq!(invalid.code().to_char(), Ok('☺'));
             assert_eq!((invalid.range().start(), invalid.range().end()), (0, 8));
@@ -675,7 +675,7 @@ fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
         other => panic!("expected invalid-character step, found {other:?}"),
     }
     assert_eq!(
-        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        unicode_character(state.next_unicode_source_step(-1, &mut CatcodeQueries(catcode))),
         ('λ', Catcode::Letter, 8, 10, 8, 9)
     );
 }
@@ -684,12 +684,83 @@ fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
 #[should_panic(expected = "exact-byte tokenization requires an exact-byte command profile")]
 fn unicode_profile_cannot_enter_exact_byte_tokenizer() {
     let mut state = unicode_state("x");
-    let _ = state.next_exact_source_step(-1, unicode_catcode);
+    let _ = state.next_exact_source_step(-1, &mut CatcodeQueries(unicode_catcode));
 }
 
 #[test]
 #[should_panic(expected = "Unicode tokenization requires a UnicodeExtended command profile")]
 fn exact_profile_cannot_enter_unicode_tokenizer() {
     let mut state = state(b"x");
-    let _ = state.next_unicode_source_step(-1, |_| Catcode::Other);
+    let _ = state.next_unicode_source_step(-1, &mut CatcodeQueries(|_| Catcode::Other));
+}
+
+/// Live queries whose §363 replacement is a fixed script of typed lines.
+struct ScriptedPausing {
+    typed: Vec<&'static str>,
+    displayed: Vec<String>,
+}
+
+impl crate::SourceStepQueries for ScriptedPausing {
+    fn catcode(&mut self, code: CharacterCode) -> Catcode {
+        classic_catcode(code)
+    }
+
+    fn firm_up_the_line(&mut self, line: &str) -> Option<SourceRegistration> {
+        self.displayed.push(line.to_owned());
+        let typed = self.typed.remove(0);
+        (!typed.is_empty()).then(|| {
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(typed.as_bytes()),
+            )
+        })
+    }
+}
+
+#[test]
+fn pausing_replaces_the_firmed_line_before_tokenization() {
+    // TeX82 §363: the line is displayed as `limit` bounds it -- trailing
+    // blanks already stripped -- and the typed line is what gets tokenized.
+    let mut state = state(b"AB  \nCD\n");
+    let mut queries = ScriptedPausing {
+        typed: vec!["XY", ""],
+        displayed: Vec::new(),
+    };
+
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'X', Catcode::Letter, 0, 1)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'Y', Catcode::Letter, 1, 2)
+    );
+    // §363 runs at every refill, not only the first: the second line is
+    // offered too, and a bare carriage return leaves the file's line alone.
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'C', Catcode::Letter, 5, 6)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'D', Catcode::Letter, 6, 7)
+    );
+    assert_eq!(queries.displayed, vec!["AB".to_owned(), "CD".to_owned()]);
+}
+
+#[test]
+fn zero_pausing_leaves_every_line_exactly_as_the_file_supplied_it() {
+    // §363's replacement is the whole of `\pausing`; with it declined the
+    // tokenizer must be byte-identical to a run that never offered one.
+    let mut state = state(b"AB\n");
+    let mut queries = CatcodeQueries(classic_catcode);
+
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'A', Catcode::Letter, 0, 1)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut queries)),
+        (b'B', Catcode::Letter, 1, 2)
+    );
 }
