@@ -3207,6 +3207,8 @@ enum ScannedStep {
     /// target `InteractionMode` is selected from the delivered primitive at
     /// apply time, mirroring `DeleteLast` above.
     SetInteractionMode(UnexpandablePrimitive),
+    /// e-TeX 2.6 etex.ch §3736's assignable `\interactionmode` primitive.
+    SetInteractionModeValue(i32),
     /// TeX82 §1112's `hmode+ital_corr: append_italic_correction` (the
     /// procedure itself is §1113) or its math-mode twin (§1112's
     /// `mmode+ital_corr: tail_append(new_kern(0))`); which applies is
@@ -5027,6 +5029,11 @@ fn scan_command(
             | UnexpandablePrimitive::ScrollMode
             | UnexpandablePrimitive::ErrorStopMode),
         ) => Ok(ScannedStep::SetInteractionMode(primitive)),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::SetInteractionModeValue(value))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 let _ = processor.scan_optional_equals().map_err(command_error)?;
@@ -6162,6 +6169,7 @@ fn scan_unclassified_primitive(
         | P::Immediate
         | P::Indent
         | P::Insert
+        | P::InteractionMode
         | P::Kern
         | P::LastBox
         | P::LcCode
@@ -6385,7 +6393,6 @@ fn scan_unclassified_primitive(
         | P::GlueStretchOrder
         | P::GlueToMu
         | P::InterLinePenalties
-        | P::InteractionMode
         | P::LetterspaceFont
         | P::Marks
         | P::MuExpr
@@ -7765,7 +7772,8 @@ fn applied_mutation_observation(
         | ScannedStep::FontDimen { .. }
         | ScannedStep::FontInteger { .. }
         | ScannedStep::HyphenationData { .. }
-        | ScannedStep::SetInteractionMode(..) => return None,
+        | ScannedStep::SetInteractionMode(..)
+        | ScannedStep::SetInteractionModeValue(..) => return None,
         // -- §1257's `new_font` commits its only `eq_define`,
         // `define(u,set_font,null_font)`, *before* it scans the file name and
         // `at`/`scaled` size, so the command-owned `scan_font_definition`
@@ -8864,6 +8872,20 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::ScrollMode => tex_state::InteractionMode::Scroll,
                 UnexpandablePrimitive::ErrorStopMode => tex_state::InteractionMode::ErrorStop,
                 _ => unreachable!("only the four interaction-mode primitives are scanned"),
+            };
+            stores.set_interaction_mode(mode);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::SetInteractionModeValue(value) => {
+            let mode = match value {
+                0 => tex_state::InteractionMode::Batch,
+                1 => tex_state::InteractionMode::Nonstop,
+                2 => tex_state::InteractionMode::Scroll,
+                3 => tex_state::InteractionMode::ErrorStop,
+                value => {
+                    crate::diagnostics::report_bad_interaction_mode(stores, value);
+                    return Ok(ReplayStep::Continue);
+                }
             };
             stores.set_interaction_mode(mode);
             Ok(ReplayStep::Continue)

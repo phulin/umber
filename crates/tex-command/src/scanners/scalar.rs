@@ -1809,6 +1809,13 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
                 InternalValue::Integer(i32::try_from(self.state.paragraph_shape_len()).unwrap_or(0))
             }
+            // e-TeX 2.6 etex.ch §3736 extends TeX82's `set_page_int`
+            // internal-value fetch: chr_code 2 returns the live global
+            // `interaction` scalar before the same primitive's assignment
+            // form scans a replacement.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
+                InternalValue::Integer(self.state.interaction_mode_value())
+            }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
                 self.state

@@ -417,6 +417,17 @@ impl CommandContext<'_> {
         )
     }
 
+    /// Returns e-TeX's numeric interaction-mode internal quantity.
+    #[must_use]
+    pub fn interaction_mode_value(&self) -> i32 {
+        match self.universe.interaction_mode() {
+            crate::InteractionMode::Batch => 0,
+            crate::InteractionMode::Nonstop => 1,
+            crate::InteractionMode::Scroll => 2,
+            crate::InteractionMode::ErrorStop => 3,
+        }
+    }
+
     /// Reads one box-register dimension through the aggregate state boundary.
     ///
     /// A void box has no dimension; TeX's internal-quantity scanner maps

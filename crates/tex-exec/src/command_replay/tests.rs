@@ -8530,6 +8530,32 @@ fn canonical_interaction_mode_assignment_is_ungrouped() {
     );
 }
 
+#[test]
+fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
+    // e-TeX 2.6 etex.ch §3736 adds chr_code 2 to `set_page_int`: the same
+    // primitive fetches the live interaction scalar in an integer scan and
+    // assigns a scanned replacement when delivered by main control.
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut universe);
+    tex_expand::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control =
+        CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\count20=\interactionmode \interactionmode=1 \count21=\interactionmode\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(20), 3);
+    assert_eq!(universe.count(21), 1);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::Nonstop
+    );
+}
+
 /// TeX82 §1210 files `prefix` under `any_mode`, and §1211's
 /// `while cur_cmd=prefix` loop runs inside `prefixed_command` -- reached from
 /// the same `main_control` big case an alignment cell's body runs through.
