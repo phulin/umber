@@ -1581,11 +1581,7 @@ impl CanonicalMainControl {
             )),
             MathFieldBody::OpenGroup => {
                 let list = self.execute_live_math_group(GroupKind::Math, stores)?;
-                // TeX82 §1153 stores the completed group with
-                // `math_type(p):=sub_mlist`, even when its mlist happens to
-                // contain one undecorated Ord noad. Only §1151's unbraced
-                // scalar cases produce `math_char`.
-                Ok(MathField::SubMlist(list))
+                Ok(collapse_singleton_math_group(stores, list))
             }
         }
     }
@@ -2768,6 +2764,25 @@ fn finish_canonical_math_list(
         })];
     }
     Ok(stores.freeze_node_list(&output))
+}
+
+/// TeX82 §1186's `math_group` singleton-Ord simplification.
+///
+/// After §1153 has tentatively classified a braced field as `sub_mlist`,
+/// `handle_right_brace` removes braces around exactly one undecorated Ord
+/// noad by copying its nucleus field into the destination. This preserves an
+/// author box as `sub_box` instead of wrapping it in a second natural hpack.
+fn collapse_singleton_math_group(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
+    let mut nodes = stores.nodes(list).into_iter();
+    if let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.next()
+        && nodes.next().is_none()
+        && noad.kind == NoadKind::Normal(NoadClass::Ord)
+        && matches!(noad.subscript, MathField::Empty)
+        && matches!(noad.superscript, MathField::Empty)
+    {
+        return noad.nucleus.clone();
+    }
+    MathField::SubMlist(list)
 }
 
 fn take_finished_canonical_math_list(

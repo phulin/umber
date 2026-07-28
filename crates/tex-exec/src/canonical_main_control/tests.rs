@@ -942,3 +942,53 @@ fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
         "{output}"
     );
 }
+
+#[test]
+fn math_group_collapses_only_one_undecorated_ord_nucleus() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let empty_list = stores.freeze_node_list(&[]);
+    let ch = MathChar {
+        family: 0,
+        character: 'x',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    };
+    for nucleus in [
+        MathField::Empty,
+        MathField::MathChar(ch),
+        MathField::SubBox(empty_list),
+        MathField::SubMlist(empty_list),
+    ] {
+        let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            nucleus.clone(),
+        ))]);
+        assert_eq!(collapse_singleton_math_group(&stores, list), nucleus);
+    }
+
+    let scripted = stores.freeze_node_list(&[Node::MathNoad(MathNoad {
+        kind: NoadKind::Normal(NoadClass::Ord),
+        nucleus: MathField::MathChar(ch),
+        subscript: MathField::MathChar(ch),
+        superscript: MathField::Empty,
+    })]);
+    let non_ord = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Open),
+        MathField::MathChar(ch),
+    ))]);
+    let multiple = stores.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(ch),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(ch),
+        )),
+    ]);
+    for list in [scripted, non_ord, multiple] {
+        assert_eq!(
+            collapse_singleton_math_group(&stores, list),
+            MathField::SubMlist(list)
+        );
+    }
+}
