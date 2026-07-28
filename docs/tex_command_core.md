@@ -696,7 +696,7 @@ effective `\global`/`\globaldefs` scope for TeX82's provisional
 restricted-code diagnostic where required, and commits the resulting character
 or math-character meaning without raw input.
 
-TeX82 §1221 `\countdef`, `\dimendef`, `\skipdef`, `\muskipdef`, and
+TeX82 §1224 `\countdef`, `\dimendef`, `\skipdef`, `\muskipdef`, and
 `\toksdef` follow the same split. `CommandProcessor` installs the scoped
 provisional `\relax`, then owns target delivery, optional-equals handling,
 and the `scan_eight_bit_int` register selector. `CanonicalMainControl` maps

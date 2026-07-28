@@ -7645,7 +7645,7 @@ fn canonical_mkern_outside_math_mode_inserts_missing_dollar_sign() {
 
 #[test]
 fn canonical_globaldefs_forces_and_suppresses_global_assignments() {
-    // TeX82 §1221's `prefixed_command` resolves every assignment's effective
+    // TeX82 §1211's `prefixed_command` resolves every assignment's effective
     // global bit from the live `\globaldefs` value before mutating, the same
     // `assignment_global` helper already used by ordinary register/parameter
     // assignments (canonical_main_control.rs) -- regression test for

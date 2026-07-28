@@ -9355,7 +9355,7 @@ fn apply_scanned_step(
                 parameter_text.origin_list(),
                 replacement_text.origin_list(),
             );
-            // TeX82 §1221's generic `prefixed_command` global-scope
+            // TeX82 §1211's generic `prefixed_command` global-scope
             // resolution (the same `\globaldefs` override every other
             // assignment receives from §1214) applies to
             // `\def`/`\edef`/`\gdef`/`\xdef` exactly like any other
@@ -9403,7 +9403,7 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::SkipDef => Meaning::SkipRegister(index),
                 UnexpandablePrimitive::MuskipDef => Meaning::MuskipRegister(index),
                 UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
-                _ => unreachable!("register-definition step carries only §1221 primitives"),
+                _ => unreachable!("register-definition step carries only §1224 primitives"),
             };
             if global {
                 stores.set_meaning_global(target, meaning);

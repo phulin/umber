@@ -93,7 +93,7 @@ pub struct ScannedCharacterDefinition {
     pub recovered: bool,
 }
 
-/// A completed TeX82 §1221 register-definition assignment.
+/// A completed TeX82 §1224 register-definition assignment.
 ///
 /// The processor owns the raw target, its provisional `\relax` meaning,
 /// optional equals sign, and bounded classical register index. Main control
@@ -893,7 +893,7 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Scans TeX82 §1221's complete register-definition operand.
+    /// Scans TeX82 §1224's complete register-definition operand.
     ///
     /// As in §1224, TeX temporarily gives the target `\relax` before the
     /// index scan. This makes a repeated target terminate its own integer
