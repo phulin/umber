@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
@@ -34,20 +34,26 @@ fn mode_list_rollback(c: &mut Criterion) {
         )
     });
 
-    group.bench_function("length_watermark_successful_appends", |b| {
-        b.iter_batched(
-            || retained.clone(),
-            |mut live| {
-                for index in 0..STEPS {
-                    let rollback_length = live.len();
-                    live.push(node(index));
-                    black_box(rollback_length);
-                }
-                black_box(live)
+    for prefix_len in [0, RETAINED_NODES, RETAINED_NODES * 4] {
+        group.bench_with_input(
+            BenchmarkId::new("journal_successful_appends", prefix_len),
+            &prefix_len,
+            |b, &prefix_len| {
+                b.iter_batched(
+                    || (0..prefix_len).map(node).collect::<Vec<_>>(),
+                    |mut live| {
+                        for index in 0..STEPS {
+                            let rollback_length = live.len();
+                            live.push(node(index));
+                            black_box(rollback_length);
+                        }
+                        black_box(live)
+                    },
+                    criterion::BatchSize::SmallInput,
+                )
             },
-            criterion::BatchSize::SmallInput,
-        )
-    });
+        );
+    }
     group.finish();
 }
 

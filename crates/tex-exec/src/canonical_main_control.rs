@@ -291,7 +291,7 @@ pub enum CanonicalStepResult {
 /// checkpoint can be restored.
 struct CanonicalStepSnapshot {
     command: CommandStateSnapshot,
-    modes: ModeNest,
+    mode_savepoint: crate::mode::ModeSavepoint,
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
@@ -303,10 +303,10 @@ struct CanonicalStepSnapshot {
 }
 
 impl CanonicalStepSnapshot {
-    fn capture(control: &CanonicalMainControl, stores: &mut Universe) -> Self {
+    fn capture(control: &mut CanonicalMainControl, stores: &mut Universe) -> Self {
         Self {
             command: control.command.snapshot(),
-            modes: control.modes.clone(),
+            mode_savepoint: control.modes.begin_journal(),
             next_alignment_identity: control.next_alignment_identity,
             active_alignment: control.active_alignment.clone(),
             boxes: control.boxes.clone(),
@@ -332,7 +332,10 @@ impl CanonicalStepSnapshot {
         // profiling cannot become semantic or durable state. Its fresh value
         // is therefore the canonical retry restoration form.
         control.runtime = CommandRuntime::default();
-        control.modes = self.modes;
+        control
+            .modes
+            .rollback_journal(self.mode_savepoint)
+            .expect("canonical step owns the innermost mode savepoint");
         control.next_alignment_identity = self.next_alignment_identity;
         control.active_alignment = self.active_alignment;
         control.boxes = self.boxes;
@@ -340,6 +343,13 @@ impl CanonicalStepSnapshot {
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
+    }
+
+    fn commit(self, control: &mut CanonicalMainControl) {
+        control
+            .modes
+            .commit_journal(self.mode_savepoint)
+            .expect("canonical step owns the innermost mode savepoint");
     }
 }
 
@@ -727,8 +737,12 @@ impl CanonicalMainControl {
         }
     }
 
-    fn snapshot_step(&self, stores: &mut Universe) -> CanonicalStepSnapshot {
+    fn snapshot_step(&mut self, stores: &mut Universe) -> CanonicalStepSnapshot {
         CanonicalStepSnapshot::capture(self, stores)
+    }
+
+    fn commit_step(&mut self, snapshot: CanonicalStepSnapshot) {
+        snapshot.commit(self);
     }
 
     /// Lends the whole command machine at once, for helpers that build their
@@ -922,10 +936,20 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         let snapshot = self.snapshot_step(stores);
         let result = self.alignment_step_once(alignment, stores);
-        if result.is_err() {
-            self.rollback_step(snapshot, stores);
+        match result {
+            Ok(step) => {
+                self.commit_step(snapshot);
+                Ok(step)
+            }
+            Err(error) => {
+                if error.as_fatal().is_some() {
+                    self.commit_step(snapshot);
+                } else {
+                    self.rollback_step(snapshot, stores);
+                }
+                Err(error)
+            }
         }
-        result
     }
 
     fn alignment_step_once(
@@ -1197,9 +1221,13 @@ impl CanonicalMainControl {
         }
         let snapshot = self.snapshot_step(stores);
         match self.step_once(stores, None) {
-            Ok(step) => Ok(CanonicalStepResult::Progress(step)),
+            Ok(step) => {
+                self.commit_step(snapshot);
+                Ok(CanonicalStepResult::Progress(step))
+            }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
+                    self.commit_step(snapshot);
                     return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
                 }
                 self.rollback_step(snapshot, stores);
@@ -2207,6 +2235,7 @@ impl CanonicalMainControl {
         }
         match stepped {
             Ok(step) => {
+                self.commit_step(snapshot);
                 pending.flush_into(observer);
                 Ok(CanonicalStepResult::Progress(step))
             }
@@ -2215,6 +2244,7 @@ impl CanonicalMainControl {
                     // §81 `jump_out` does not undo anything the job already
                     // committed, so the partial step stands; the observations
                     // it published are flushed ahead of the fatal record.
+                    self.commit_step(snapshot);
                     pending.flush_into(observer);
                     let step = self.succumb(fatal);
                     observer.committed(CommandObservation::Diagnostic(fatal.record()));

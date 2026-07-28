@@ -14,6 +14,7 @@ use tex_state::{EngineBoundaryHasher, Universe};
 use crate::ExecError;
 
 mod journal;
+pub(crate) use journal::Cursor as ModeSavepoint;
 
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
@@ -1073,7 +1074,7 @@ impl Clone for ModeNest {
     fn clone(&self) -> Self {
         Self {
             levels: self.levels.clone(),
-            journal: journal::ModeJournal::disabled(),
+            journal: journal::ModeJournal::enabled(self.levels.len()),
         }
     }
 }
@@ -1110,7 +1111,7 @@ impl ModeNest {
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
             levels: Arc::new(levels),
-            journal: journal::ModeJournal::disabled(),
+            journal: journal::ModeJournal::enabled(1),
         }
     }
 
@@ -1120,8 +1121,8 @@ impl ModeNest {
             return Err(ExecError::EmptyModeNestSummary);
         }
         Ok(Self {
+            journal: journal::ModeJournal::enabled(summary.levels.len()),
             levels: summary.levels,
-            journal: journal::ModeJournal::disabled(),
         })
     }
 

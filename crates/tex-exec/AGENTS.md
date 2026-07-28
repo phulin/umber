@@ -62,7 +62,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata; alignment brace depth belongs exclusively to `tex-lex`, not this execution-state projection.
-- `src/mode/journal.rs`: production-disabled, generation-checked nested inverse journal behind the typed mode-list mutation boundary; retained-COW rollback remains authoritative until promotion.
+- `src/mode/journal.rs`: production generation-checked nested inverse journal behind the typed mode-list mutation boundary and the authoritative canonical aggregate mode rollback path.
 - `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.

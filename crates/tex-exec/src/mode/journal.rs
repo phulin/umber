@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Promotion is deliberately deferred to umber2-johp.300.3.
-
 use std::sync::Arc;
 
 use tex_state::node::Node;
@@ -91,14 +89,14 @@ enum Inverse {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Cursor {
+pub(crate) struct Cursor {
     generation: u64,
     frame_id: u64,
     cursor: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum CursorError {
+pub(crate) enum CursorError {
     Disabled,
     NotInnermost,
     WrongGeneration,
@@ -115,13 +113,14 @@ pub(super) struct ModeJournal {
 }
 
 impl ModeJournal {
-    pub(super) fn disabled() -> Self {
+    pub(super) fn enabled(level_count: usize) -> Self {
+        let level_ids = (1..=level_count as u64).collect();
         Self {
-            enabled: false,
-            generation: 0,
-            next_level_id: 1,
+            enabled: true,
+            generation: 1,
+            next_level_id: level_count as u64 + 1,
             next_frame_id: 1,
-            level_ids: Vec::new(),
+            level_ids,
             frames: Vec::new(),
             inverses: Vec::new(),
         }
@@ -135,23 +134,27 @@ impl ModeJournal {
     }
 
     pub(super) fn record_level_push(&mut self) {
-        if !self.enabled || self.frames.is_empty() {
+        if !self.enabled {
             return;
         }
         let id = self.allocate_level_id();
         self.level_ids.push(id);
-        self.inverses.push(Inverse::Push { level_id: id });
+        if !self.frames.is_empty() {
+            self.inverses.push(Inverse::Push { level_id: id });
+        }
     }
 
     pub(super) fn record_level_pop(&mut self, level: ModeLevelSummary) {
-        if !self.enabled || self.frames.is_empty() {
+        if !self.enabled {
             return;
         }
         let level_id = self.level_ids.pop().expect("journal level identity exists");
-        self.inverses.push(Inverse::Pop {
-            level_id,
-            level: Box::new(level),
-        });
+        if !self.frames.is_empty() {
+            self.inverses.push(Inverse::Pop {
+                level_id,
+                level: Box::new(level),
+            });
+        }
     }
 
     fn allocate_level_id(&mut self) -> u64 {
@@ -195,9 +198,8 @@ impl ListJournal<'_> {
 
 impl ModeNest {
     #[cfg(test)]
-    pub(super) fn enable_journal_for_test(&mut self) {
+    pub(super) fn reset_journal_for_test(&mut self) {
         assert!(self.journal.frames.is_empty());
-        self.journal.enabled = true;
         self.journal.generation = self.journal.generation.wrapping_add(1);
         self.journal.level_ids.clear();
         for _ in 0..self.levels.len() {
@@ -206,8 +208,7 @@ impl ModeNest {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn begin_journal_for_test(&mut self) -> Cursor {
+    pub(crate) fn begin_journal(&mut self) -> Cursor {
         assert!(self.journal.enabled);
         let cursor = self.journal.inverses.len();
         let frame_id = self.journal.next_frame_id;
@@ -244,8 +245,7 @@ impl ModeNest {
         self.journal.inverses.len()
     }
 
-    #[cfg(test)]
-    pub(super) fn commit_journal_for_test(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+    pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
         self.journal.frames.pop();
         if self.journal.frames.is_empty() {
@@ -254,8 +254,7 @@ impl ModeNest {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(super) fn rollback_journal_for_test(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+    pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
         let frame = self.journal.frames.pop().expect("validated frame exists");
         let inverses = self.journal.inverses.split_off(frame.cursor);
@@ -294,7 +293,6 @@ impl ModeNest {
         Ok(())
     }
 
-    #[cfg(test)]
     fn validate_cursor(&self, cursor: Cursor) -> Result<(), CursorError> {
         if !self.journal.enabled {
             return Err(CursorError::Disabled);
@@ -311,7 +309,6 @@ impl ModeNest {
         Ok(())
     }
 
-    #[cfg(test)]
     fn level_index(&self, id: u64) -> usize {
         self.journal
             .level_ids
@@ -320,7 +317,6 @@ impl ModeNest {
             .expect("journal inverse level identity remains live")
     }
 
-    #[cfg(test)]
     fn level_by_id_mut(&mut self, id: u64) -> &mut ModeLevelSummary {
         let index = self.level_index(id);
         &mut Arc::make_mut(&mut self.levels)[index]

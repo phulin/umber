@@ -1,6 +1,6 @@
 # Mode-list rollback journal
 
-Status: implemented behind test-only activation; production journal disabled
+Status: production rollback representation
 
 Scope: canonical aggregate operations in `tex-exec`. This document does not
 change TeX semantics or the atomic boundary in
@@ -66,7 +66,7 @@ Semantic hashing and named checkpoints read only live mode state. Journal
 cursors, inverse capacity, and spare allocation are operational state and must
 not enter semantic equality, traces, formats, or durable summaries.
 
-## Disabled implementation
+## Implementation
 
 The typed-boundary phase removed the mutable aggregate escape hatch before any
 journal behavior was enabled. Its final production census reduced five
@@ -78,19 +78,28 @@ closure write barriers that cannot return their mutable borrow. The capability
 does not implement `DerefMut`, `AsMut`, or `BorrowMut`, and it has no generic
 raw-list mutation closure.
 
-`mode/journal.rs` now implements the complete disabled representation. Entry
+`mode/journal.rs` implements the complete representation. Entry
 frames capture stack identities, node-length watermarks, and scalar
 projections. Destructive node, reconstitution, alignment, ownership-transfer,
 and level operations add generation-checked inverses; append-only operations
 add none. Nested commit retains the inverse suffix required by its parent,
 while rollback validates the exact innermost frame before replay.
 
-Production construction leaves the journal disabled. Cloning a `ModeNest`
-also produces a disabled journal, and journal generation, cursors, log length,
-and capacity are excluded from `Debug`, equality, summaries, semantic hashes,
-formats, and durable checkpoints. `CanonicalStepSnapshot` still retains the
-`ModeNest` root and remains the authoritative rollback path until the separate
-promotion and profiling phase.
+Every live `ModeNest` owns an enabled journal. Cloning or rehydrating a
+`ModeNest` creates a fresh operational journal over the cloned live levels;
+journal generation, cursors, log length, and capacity remain excluded from
+`Debug`, equality, summaries, semantic hashes, formats, and durable
+checkpoints.
+
+`CanonicalStepSnapshot` begins an opaque mode savepoint after capturing the
+command root and before execution. On success it commits that savepoint before
+publishing observers, geometry, prepared pages, effects, artifacts, or named
+checkpoints. On ordinary error or typed resource suspension it first rolls
+back `Universe`, then command state, then the mode savepoint, and finally the
+remaining aggregate fields; no restored provenance identifier is observable
+against a newer universe timeline. TeX82 §81 fatal propagation commits the
+mode savepoint and partial aggregate state before publishing buffered
+observations and the fatal diagnostic.
 
 ## Implementation sequence
 
@@ -100,12 +109,12 @@ comparable to the final exact-use census. The source-boundary gate now rejects
 the four retired accessor families, mutable aggregate return signatures,
 generic raw-list closures, and standard mutable-dereference escape traits.
 
-The completed first phase replaced direct `&mut Node` access by index and at
+The first phase replaced direct `&mut Node` access by index and at
 the tail with closure-scoped write barriers, then moved every remaining mode
-list mutation behind the typed capability. This establishes the shape required
-for future inverse recording without enabling any journal semantics. Remaining
-work is ordered in `umber2-johp.300.2` and `umber2-johp.300.3`: implement and
-exhaustively test a disabled journal, then promote and profile it atomically.
+list mutation behind the typed capability. The second phase implemented and
+exhaustively tested the disabled journal. The final promotion removed the
+retained `ModeNest` clone from `CanonicalStepSnapshot`; production now has one
+authoritative rollback path.
 
 The acceptance baseline is the integrated five-fixture command-stream report:
 `CLEAN`, zero ordered divergences, and zero root sites. The older

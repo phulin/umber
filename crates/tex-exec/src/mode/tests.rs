@@ -214,8 +214,8 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
     let mut nest = ModeNest::new();
     nest.current_list_mutation().push(kern(1));
     let before = nest.summary();
-    nest.enable_journal_for_test();
-    let cursor = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
 
     {
         let mut list = nest.current_list_mutation();
@@ -245,7 +245,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
     }
 
     assert_eq!(nest.journal_inverse_len_for_test(), 0);
-    nest.rollback_journal_for_test(cursor).expect("rollback");
+    nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 }
 
@@ -256,8 +256,8 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
         .append([kern(10), kern(20), kern(30)]);
     nest.current_list_mutation().set_align_state(align_state());
     let before = nest.summary();
-    nest.enable_journal_for_test();
-    let cursor = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
 
     nest.current_list_mutation()
         .with_node_mut(0, |node| *node = kern(11));
@@ -279,7 +279,7 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
     let _ = nest.current_list_mutation().take_nodes();
 
     assert!(nest.journal_inverse_len_for_test() >= 8);
-    nest.rollback_journal_for_test(cursor).expect("rollback");
+    nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 }
 
@@ -303,15 +303,15 @@ fn journal_math_and_display_ownership_transfers_restore() {
         });
     }
     let before = nest.summary();
-    nest.enable_journal_for_test();
-    let cursor = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
     {
         let mut list = nest.current_list_mutation();
         assert!(list.take_incomplete_fraction().is_some());
         assert!(list.take_display_interrupt().is_some());
         assert!(list.take_display_eq_no().is_some());
     }
-    nest.rollback_journal_for_test(cursor).expect("rollback");
+    nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 
     let mut display = ModeNest::new();
@@ -319,8 +319,8 @@ fn journal_math_and_display_ownership_transfers_restore() {
         .current_list_mutation()
         .set_display_alignment(vec![kern(7), kern(8)], Some(Scaled::from_raw(9)));
     let before = display.summary();
-    display.enable_journal_for_test();
-    let cursor = display.begin_journal_for_test();
+    display.reset_journal_for_test();
+    let cursor = display.begin_journal();
     assert_eq!(
         display
             .current_list_mutation()
@@ -329,40 +329,34 @@ fn journal_math_and_display_ownership_transfers_restore() {
             .0,
         vec![kern(7), kern(8)]
     );
-    display
-        .rollback_journal_for_test(cursor)
-        .expect("display rollback");
+    display.rollback_journal(cursor).expect("display rollback");
     assert_eq!(display.summary(), before);
 }
 
 #[test]
 fn journal_nested_commit_and_rollback_compose() {
     let mut outer_rollback = ModeNest::new();
-    outer_rollback.enable_journal_for_test();
-    let outer = outer_rollback.begin_journal_for_test();
+    outer_rollback.reset_journal_for_test();
+    let outer = outer_rollback.begin_journal();
     outer_rollback.current_list_mutation().push(kern(1));
-    let inner = outer_rollback.begin_journal_for_test();
+    let inner = outer_rollback.begin_journal();
     outer_rollback.current_list_mutation().push(kern(2));
+    outer_rollback.commit_journal(inner).expect("inner commit");
     outer_rollback
-        .commit_journal_for_test(inner)
-        .expect("inner commit");
-    outer_rollback
-        .rollback_journal_for_test(outer)
+        .rollback_journal(outer)
         .expect("outer rollback");
     assert!(outer_rollback.current_list().is_empty());
 
     let mut outer_commit = ModeNest::new();
-    outer_commit.enable_journal_for_test();
-    let outer = outer_commit.begin_journal_for_test();
+    outer_commit.reset_journal_for_test();
+    let outer = outer_commit.begin_journal();
     outer_commit.current_list_mutation().push(kern(1));
-    let inner = outer_commit.begin_journal_for_test();
+    let inner = outer_commit.begin_journal();
     outer_commit.current_list_mutation().push(kern(2));
     outer_commit
-        .rollback_journal_for_test(inner)
+        .rollback_journal(inner)
         .expect("inner rollback");
-    outer_commit
-        .commit_journal_for_test(outer)
-        .expect("outer commit");
+    outer_commit.commit_journal(outer).expect("outer commit");
     assert_eq!(outer_commit.current_list().nodes(), &[kern(1)]);
 }
 
@@ -372,21 +366,19 @@ fn journal_level_identity_handles_push_pop_replacement_and_nested_edits() {
     nest.push(Mode::Horizontal);
     nest.current_list_mutation().push(kern(1));
     let before = nest.summary();
-    nest.enable_journal_for_test();
-    let outer = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let outer = nest.begin_journal();
 
     let removed = nest.pop().expect("pop horizontal");
     nest.push(Mode::Math);
     nest.current_list_mutation().push(kern(2));
-    let inner = nest.begin_journal_for_test();
+    let inner = nest.begin_journal();
     nest.push(Mode::InternalVertical);
     nest.current_list_mutation().push(kern(3));
-    nest.rollback_journal_for_test(inner)
-        .expect("inner rollback");
+    nest.rollback_journal(inner).expect("inner rollback");
     assert_eq!(nest.current_mode(), Mode::Math);
     drop(removed);
-    nest.rollback_journal_for_test(outer)
-        .expect("outer rollback");
+    nest.rollback_journal(outer).expect("outer rollback");
     assert_eq!(nest.summary(), before);
 }
 
@@ -395,36 +387,32 @@ fn journal_rejects_non_innermost_and_stale_generation_cursors() {
     use super::journal::CursorError;
 
     let mut nest = ModeNest::new();
-    nest.enable_journal_for_test();
-    let outer = nest.begin_journal_for_test();
-    let inner = nest.begin_journal_for_test();
-    assert_eq!(
-        nest.commit_journal_for_test(outer),
-        Err(CursorError::NotInnermost)
-    );
-    nest.rollback_journal_for_test(inner)
-        .expect("inner rollback");
-    nest.commit_journal_for_test(outer).expect("outer commit");
+    nest.reset_journal_for_test();
+    let outer = nest.begin_journal();
+    let inner = nest.begin_journal();
+    assert_eq!(nest.commit_journal(outer), Err(CursorError::NotInnermost));
+    nest.rollback_journal(inner).expect("inner rollback");
+    nest.commit_journal(outer).expect("outer commit");
 
-    nest.enable_journal_for_test();
-    let current = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let current = nest.begin_journal();
     assert_eq!(
-        nest.rollback_journal_for_test(outer),
+        nest.rollback_journal(outer),
         Err(CursorError::WrongGeneration)
     );
-    nest.rollback_journal_for_test(current)
+    nest.rollback_journal(current)
         .expect("current generation rollback");
 }
 
 #[test]
 fn journal_fatal_commit_model_and_operational_invisibility_hold() {
     let mut nest = ModeNest::new();
-    nest.enable_journal_for_test();
-    let cursor = nest.begin_journal_for_test();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
     let semantic_before = nest.clone();
     let debug_before = format!("{nest:?}");
     nest.current_list_mutation().push(kern(42));
-    nest.commit_journal_for_test(cursor)
+    nest.commit_journal(cursor)
         .expect("fatal path commits partial semantic state");
 
     assert_ne!(nest, semantic_before);
