@@ -429,6 +429,23 @@ fn canonical_rule_space_factor_reset_matches_reference_dvi() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
+fn canonical_display_equation_number_preserves_formula_dvi() {
+    let setup = test_support::dvi::DviCaseSetup::new("math", "display_eqnos");
+    let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
+    let expected = fs::read(
+        test_support::corpus_root()
+            .join("math")
+            .join("display_eqnos.expected.dvi"),
+    )
+    .expect("reference DVI");
+    assert_eq!(
+        normalized_dvi_for_comparison(&actual).expect("normalize actual"),
+        normalized_dvi_for_comparison(&expected).expect("normalize reference")
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
 fn canonical_math_group_singleton_ord_matches_reference_dvi() {
     let setup = test_support::dvi::DviCaseSetup::new("math", "mathopen_boxed_delimiter");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");

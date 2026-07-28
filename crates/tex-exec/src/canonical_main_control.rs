@@ -1877,7 +1877,10 @@ impl CanonicalMainControl {
                 context: "equation number group",
             })?;
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        self.finish_canonical_display_math(stores, Some(finished))
+        // TeX82 §1194's equation-number branch assigns `p:=fin_mlist(null)`
+        // a second time after boxing `a`: the display must be finished from
+        // the saved outer formula, not from the now-empty display mode list.
+        self.finish_canonical_display_math_content(stores, eq.display, Some(finished))
     }
 
     fn finish_canonical_display_math(
@@ -1886,6 +1889,15 @@ impl CanonicalMainControl {
         eq_no: Option<crate::math::display::FinishedEqNo>,
     ) -> Result<(), ExecError> {
         let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        self.finish_canonical_display_math_content(stores, content, eq_no)
+    }
+
+    fn finish_canonical_display_math_content(
+        &mut self,
+        stores: &mut Universe,
+        content: tex_state::ids::NodeListId,
+        eq_no: Option<crate::math::display::FinishedEqNo>,
+    ) -> Result<(), ExecError> {
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let interrupt =
             level
