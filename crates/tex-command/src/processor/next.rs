@@ -1885,7 +1885,6 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
         Stored::Mark => InputReason::Mark,
         Stored::Write => InputReason::Write,
         Stored::Discretionary => InputReason::UmberReplay(UmberReplayKind::Discretionary),
-        Stored::AfterAssignment => InputReason::UmberReplay(UmberReplayKind::AfterAssignment),
     }
 }
 

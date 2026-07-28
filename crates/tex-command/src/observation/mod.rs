@@ -453,8 +453,6 @@ pub enum InputReason {
 pub enum UmberReplayKind {
     /// A `\discretionary` part (tex.web §1117 reads each part live).
     Discretionary,
-    /// The `\afterassignment` token (tex.web §1269 `back_input`s it).
-    AfterAssignment,
 }
 
 /// One input transition with its deterministic aggregate provenance.

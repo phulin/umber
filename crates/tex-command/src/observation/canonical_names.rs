@@ -240,7 +240,6 @@ pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
         InputReason::Mark => "mark",
         InputReason::Write => "write",
         InputReason::UmberReplay(UmberReplayKind::Discretionary) => "umber:discretionary",
-        InputReason::UmberReplay(UmberReplayKind::AfterAssignment) => "umber:after_assignment",
     })
 }
 

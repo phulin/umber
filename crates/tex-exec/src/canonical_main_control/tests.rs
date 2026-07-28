@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use tex_command::{
-    CommandObservation, CommandObserver, InputReason, RegisteredSourceKind, SourceRegistration,
+    CommandObservation, CommandObserver, InputReason, InputTransition, RegisteredSourceKind,
+    SourceRegistration,
 };
 use tex_state::token::{Catcode, Token};
 
@@ -449,13 +450,17 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
     let replay_index = observations
         .0
         .iter()
+        .enumerate()
+        .skip(mutation_index + 1)
         .position(|observation| {
             matches!(
-                observation,
+                observation.1,
                 CommandObservation::Input(record)
-                    if matches!(record.reason, InputReason::UmberReplay(_))
+                    if record.transition == InputTransition::Backup
+                        && record.reason == InputReason::Backup
             )
         })
+        .map(|offset| mutation_index + 1 + offset)
         .expect("afterassignment replay is observed");
     assert!(mutation_index < replay_index, "{:?}", observations.0);
     let CommandObservation::Mutation(mutation) = &observations.0[mutation_index] else {

@@ -200,6 +200,53 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "afterassignment-back-input",
+      "property_id": "tex82.assignment.afterassignment",
+      "source": "afterassignment-back-input.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [325, 1269]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["input", "recovery"]
+      },
+      "expected": [
+        "input:backup:backup",
+        "recovery:backup:char:other_char:61",
+        "input:retire:backup",
+        "input:backup:backup",
+        "recovery:backup:cs:relax",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "afterassignment-no-token",
+      "property_id": "tex82.assignment.afterassignment",
+      "source": "afterassignment-no-token.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [325, 1269]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["input", "recovery"]
+      },
+      "expected": [
+        "input:backup:backup",
+        "recovery:backup:char:other_char:61",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "command-terminator",
       "property_id": "tex82.assignment.command-terminator",
       "source": "command-terminator.tex",

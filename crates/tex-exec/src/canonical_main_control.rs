@@ -979,7 +979,13 @@ impl CanonicalMainControl {
         )?;
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
-            schedule_afterassignment(&mut self.command, stores);
+            schedule_afterassignment(
+                &mut self.command,
+                &mut self.runtime,
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            )?;
         }
         Ok(result)
     }
@@ -1314,7 +1320,13 @@ impl CanonicalMainControl {
         )?;
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
-            schedule_afterassignment(&mut self.command, stores);
+            schedule_afterassignment(
+                &mut self.command,
+                &mut self.runtime,
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            )?;
         }
         self.fire_pending_page_output(stores)?;
         #[cfg(any(test, feature = "instrumentation"))]
@@ -2474,7 +2486,13 @@ impl CanonicalMainControl {
         // reaches §1269's `done:` and `back_input`. Publish the mutation
         // before the replay-level push for that saved token.
         if result.is_ok() && fires_afterassignment {
-            schedule_afterassignment(&mut self.command, stores);
+            schedule_afterassignment(
+                &mut self.command,
+                &mut self.runtime,
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            )?;
         }
         self.page_output_observations.clear();
         result
@@ -10537,18 +10555,26 @@ fn schedule_aftergroup(
 }
 
 /// Releases the single pending after-assignment token only after the typed
-/// assignment has committed. Its replay remains entirely command-owned.
-fn schedule_afterassignment(command: &mut CommandState, stores: &mut Universe) {
+/// assignment has committed. TeX82 §1269 assigns it to `cur_tok` and invokes
+/// §325 `back_input`, so it must use the ordinary canonical backup level.
+fn schedule_afterassignment(
+    command: &mut CommandState,
+    runtime: &mut CommandRuntime,
+    capabilities: &mut CommandHostCapabilities,
+    observations: &mut ObservationSlot,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let Some(token) = stores.take_afterassignment() else {
-        return;
+        return Ok(());
     };
     let origin = stores.inserted_origin(
         tex_state::provenance::InsertedOriginKind::AfterAssignment,
         token,
         tex_state::token::OriginId::UNKNOWN,
     );
-    let traced = [tex_state::token::TracedTokenWord::pack(token, origin)];
-    let _ = command.push_afterassignment(stores.finish_traced_token_list(&traced));
+    command_processor(command, runtime, capabilities, observations, stores)
+        .back_input_token(tex_state::token::TracedTokenWord::pack(token, origin))
+        .map_err(command_error)
 }
 
 fn assignment_global(explicit_global: bool, stores: &Universe) -> bool {

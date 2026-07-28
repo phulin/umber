@@ -237,7 +237,6 @@ pub(crate) enum StoredReplayReason {
     /// §307 `write_text=15`.
     Write,
     Discretionary,
-    AfterAssignment,
 }
 
 /// Canonical explanations for a materialized transient insertion that is not
