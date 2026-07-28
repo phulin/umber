@@ -1110,13 +1110,14 @@ impl CommandProcessor<'_> {
                         .saturating_mul(i32::from(radix))
                         .saturating_add(i32::from(Self::radix_digit(ch).expect("digit checked")))
                 }
-                // TeX's numeric scanner absorbs one trailing space after a
-                // decimal constant; replay must not manufacture a backup
-                // transition before publishing the completed integer.
-                Meaning::CharToken { ch: ' ', .. } => break,
+                // §444's `else if cur_cmd<>spacer then back_input`: a numeric
+                // constant absorbs one terminating space, so replay must not
+                // manufacture a backup transition before publishing it.
                 _ => {
-                    self.last_integer_terminator = Some(command.copy_for_backup());
-                    self.back_input(command)?;
+                    let terminator = command.copy_for_backup();
+                    if self.back_input_unless_spacer(command)? {
+                        self.last_integer_terminator = Some(terminator);
+                    }
                     break;
                 }
             }
@@ -1159,12 +1160,7 @@ impl CommandProcessor<'_> {
                 return Ok(0);
             }
         };
-        let Some(command) = self.get_x_token()? else {
-            return Ok(value);
-        };
-        if !matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
-            self.back_input(command)?;
-        }
+        self.scan_optional_space()?;
         Ok(value)
     }
 
@@ -1183,8 +1179,13 @@ impl CommandProcessor<'_> {
                 };
                 match command.meaning() {
                     Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => fraction.push(ch),
+                    // §452's closing `if cur_cmd<>spacer then back_input`: a
+                    // fraction absorbs the space that ends it exactly as
+                    // §444's integer constant does, so `.5 in` reaches the
+                    // unit scan with `i` still unread rather than with a
+                    // backed-up space in front of it.
                     _ => {
-                        self.back_input(command)?;
+                        self.back_input_unless_spacer(command)?;
                         break;
                     }
                 }
@@ -1399,14 +1400,43 @@ impl CommandProcessor<'_> {
         Ok(unit)
     }
 
+    /// TeX82 §443's `⟨Scan an optional space⟩`:
+    /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
         let Some(command) = self.get_x_token()? else {
             return Ok(());
         };
-        if !matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
-            self.back_input(command)?;
-        }
+        self.back_input_unless_spacer(command)?;
         Ok(())
+    }
+
+    /// TeX82's `if cur_cmd<>spacer then back_input`, applied to a terminator
+    /// the caller already holds. Reports whether the command was backed up.
+    ///
+    /// This is one mechanism, not a coincidence repeated three times: §443's
+    /// `⟨Scan an optional space⟩`, §444's `⟨Scan a numeric constant⟩`, and
+    /// §452's `⟨Scan decimal fraction⟩` all end a numeric scan by absorbing a
+    /// terminating `spacer` and backing anything else up. A scan that backs
+    /// the space up instead publishes a spurious backup input level and then
+    /// re-reads the space, which the next scanner sees as an extra token.
+    ///
+    /// The test is on the command, so it is the token's category code and not
+    /// its character: §207 makes `spacer` the command a category-10 character
+    /// carries, and §349's "Enter `skip_blanks` state, emit a space" is what
+    /// normalizes such a character's `cur_chr` to a space inside §341's
+    /// `get_next`.
+    fn back_input_unless_spacer(&mut self, command: CurrentCommand) -> Result<bool, CommandError> {
+        if matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(false);
+        }
+        self.back_input(command)?;
+        Ok(true)
     }
 
     fn scan_infinite_unit(&mut self, mut order: Order) -> Result<DimensionUnit, CommandError> {

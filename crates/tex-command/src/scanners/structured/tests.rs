@@ -1338,10 +1338,13 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
             .iter()
             .map(|byte| Token::Char {
                 ch: char::from(*byte),
-                cat: if byte.is_ascii_alphabetic() {
-                    Catcode::Letter
-                } else {
-                    Catcode::Other
+                // A space is category 10: §407's `scan_keyword` skips a
+                // leading `spacer`, so spelling the separators as
+                // `other_char` would exercise a token no tokenizer produces.
+                cat: match byte {
+                    b if b.is_ascii_alphabetic() => Catcode::Letter,
+                    b' ' => Catcode::Space,
+                    _ => Catcode::Other,
                 },
             })
             .collect::<Vec<_>>();

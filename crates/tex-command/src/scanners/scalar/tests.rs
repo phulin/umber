@@ -34,23 +34,26 @@ fn push(command: &mut CommandState, tokens: Vec<Token>) {
     );
 }
 
-/// A category-code-10 space. `char_token` gives every non-letter category
-/// code 12, and TeX82 §407's `cur_cmd<>spacer` test is on the category code.
-fn space_token() -> Token {
-    Token::Char {
-        ch: ' ',
-        cat: Catcode::Space,
-    }
-}
-
 fn char_token(ch: char) -> Token {
     Token::Char {
         ch,
-        cat: if ch.is_ascii_alphabetic() {
-            Catcode::Letter
-        } else {
-            Catcode::Other
-        },
+        cat: catcode(ch),
+    }
+}
+
+/// The plain-TeX category code of a test character.
+///
+/// A space is category 10, not category 12: tex.web's numeric scanners test
+/// `cur_cmd<>spacer` (§443, §444, §452) and §407's `scan_keyword` skips a
+/// leading `spacer`, so a fixture that spells a space as `other_char` is
+/// exercising a token no tokenizer produces.
+fn catcode(ch: char) -> Catcode {
+    if ch.is_ascii_alphabetic() {
+        Catcode::Letter
+    } else if ch == ' ' {
+        Catcode::Space
+    } else {
+        Catcode::Other
     }
 }
 
@@ -720,7 +723,7 @@ fn an_internal_dimension_unit_may_be_preceded_by_a_space() {
         &mut command,
         vec![
             Token::Cs(coefficient),
-            space_token(),
+            char_token(' '),
             Token::Cs(dimen),
             char_token('2'),
         ],
@@ -931,6 +934,80 @@ fn leading_decimal_dimension_replays_the_point_before_scanning_its_fraction() {
             .expect("following token remains available")
             .value,
         42
+    );
+}
+
+#[test]
+fn a_decimal_fraction_absorbs_the_space_that_ends_it() {
+    // tex.web §452's `<Scan decimal fraction>` ends with
+    //
+    //     if cur_cmd<>spacer then back_input;
+    //
+    // the same terminator rule §443's `<Scan an optional space>` and §444's
+    // `<Scan a numeric constant>` use. So `.5 in` reaches §453's unit scan
+    // with `i` as the very next token. Backing the space up instead installs
+    // a backup input level, re-delivers the space, and leaves every later
+    // delivery one step behind the oracle (umber2-johp.267).
+    let mut command = CommandState::default();
+    push(&mut command, ".5 in42".chars().map(char_token).collect());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        assert_eq!(
+            processor
+                .scan_dimension()
+                .expect("fractional dimension scans")
+                .value
+                .raw(),
+            2_368_143
+        );
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("following token remains available")
+                .value,
+            42
+        );
+    }
+
+    let raw_characters = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record)
+                if record.boundary == crate::CommandDeliveryBoundary::Raw =>
+            {
+                match record.spelling {
+                    ObservedToken::Character { character, .. } => Some(character),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        raw_characters.iter().filter(|&&ch| ch == ' ').count(),
+        1,
+        "the fraction's terminating space is delivered once and absorbed: {raw_characters:?}"
+    );
+    let space = raw_characters
+        .iter()
+        .position(|&ch| ch == ' ')
+        .expect("the terminating space is delivered");
+    assert_eq!(
+        raw_characters.get(space + 1),
+        Some(&'i'),
+        "the unit scan sees the unit's first letter next: {raw_characters:?}"
     );
 }
 
@@ -1947,8 +2024,8 @@ fn a_keyword_scan_drops_leading_spaces_and_rejects_interior_ones() {
     let leading = scan_with(
         &mut universe,
         vec![
-            space_token(),
-            space_token(),
+            char_token(' '),
+            char_token(' '),
             char_token('x'),
             char_token('y'),
         ],
@@ -1968,7 +2045,7 @@ fn a_keyword_scan_drops_leading_spaces_and_rejects_interior_ones() {
 
     let interior = scan_with(
         &mut universe,
-        vec![char_token('p'), space_token(), char_token('t')],
+        vec![char_token('p'), char_token(' '), char_token('t')],
         |processor| {
             assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
             let mut replayed = Vec::new();
