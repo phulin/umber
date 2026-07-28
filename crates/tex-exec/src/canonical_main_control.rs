@@ -2003,7 +2003,7 @@ impl CanonicalMainControl {
         };
         let finishes_alignment_cell = match &scanned {
             ScannedStep::AlignmentCellFinish { alignment } => {
-                self.command.alignment_cell_finish_observations(*alignment)
+                self.command.alignment_cell_finish_observation(*alignment)
             }
             _ => None,
         };
@@ -2099,12 +2099,7 @@ impl CanonicalMainControl {
                 records.push(CommandObservation::Alignment(recovery));
             }
             if let Some(finish) = finishes_alignment_cell {
-                records.push(CommandObservation::Alignment(finish.state_change));
-                if let Some(retirement) = finish.backed_up_endv_retirement {
-                    records.push(CommandObservation::Input(retirement));
-                }
-                records.push(CommandObservation::Input(finish.v_template_retirement));
-                records.push(CommandObservation::Alignment(finish.template_retirement));
+                records.push(CommandObservation::Alignment(finish));
             }
             if let Some(finish) = finishes_alignment {
                 records.push(CommandObservation::Alignment(finish));

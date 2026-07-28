@@ -46,12 +46,10 @@ pub use observation::{
     ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord,
     TokenListRecord, parameter_mutation_key,
 };
-#[cfg(any(test, feature = "instrumentation"))]
-pub use processor::AlignmentCellFinishObservations;
 pub use processor::{
-    AlignmentCellCompletion, AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery,
-    AlignmentDeliveryEvent, AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble,
-    AlignmentRequest, AlignmentRequestResult, CommandProcessor, FinishedAlignmentCell,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
+    AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
+    AlignmentRequestResult, CommandProcessor, FinishedAlignmentCell,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

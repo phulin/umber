@@ -1283,10 +1283,21 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
         }
+        // The pinned observer names a retiring alignment template from the
+        // token list the level holds, exactly as tex.web's `end_token_list`
+        // distinguishes `start=omit_template` from a column's ⟨v_j⟩ part.
+        // A retained v-template has not left the stack yet, so it is not
+        // named here.
         #[cfg(any(test, feature = "instrumentation"))]
-        if retirement.reason == InputRetirementReason::AlignmentUTemplate {
+        if let Some(transition) = match retirement.reason {
+            _ if matches!(action, InputRetirementAction::VTemplateRetained) => None,
+            InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
+            InputRetirementReason::AlignmentVTemplate => Some("v_template_retire"),
+            InputRetirementReason::AlignmentOmitTemplate => Some("omit_template_retire"),
+            _ => None,
+        } {
             self.observe(CommandObservation::Alignment(AlignmentRecord {
-                transition: "u_template_retire",
+                transition,
                 alignment: self
                     .command
                     .alignment
@@ -1786,7 +1797,11 @@ fn observed_retirement_reason(
         (_, InputRetirementReason::Macro) => InputReason::Macro,
         (_, InputRetirementReason::Parameter) => InputReason::Parameter,
         (_, InputRetirementReason::AlignmentUTemplate) => InputReason::AlignmentUTemplate,
-        (_, InputRetirementReason::AlignmentVTemplate) => InputReason::AlignmentVTemplate,
+        (
+            _,
+            InputRetirementReason::AlignmentVTemplate
+            | InputRetirementReason::AlignmentOmitTemplate,
+        ) => InputReason::AlignmentVTemplate,
         (_, InputRetirementReason::Recovery) => InputReason::Recovery,
         (_, InputRetirementReason::TokenList(stored)) => stored_input_reason(stored),
         (_, InputRetirementReason::Source) => InputReason::Source,
@@ -3253,8 +3268,10 @@ mod tests {
             let finished = processor
                 .command
                 .finish_alignment_cell(alignment)
-                .expect("do_endv retires the exact retained frame once");
+                .expect("do_endv proves the exact retained frame");
             assert_eq!(finished.delimiter, crate::AlignmentCellDelimiter::Tab);
+            // tex.web §1131 pops nothing, so the frame is still on the stack
+            // here; §357's `end_token_list` retires it in the next fetch.
             assert!(
                 processor
                     .get_next()
@@ -3287,6 +3304,7 @@ mod tests {
             })
             .expect("end-v is observed as expanded delivery");
         assert!(end_template < endv);
+        let endv_index = endv;
         let CommandObservation::Command(end_template) = &recorder.0[end_template] else {
             unreachable!("filtered to raw command delivery")
         };
@@ -3301,12 +3319,26 @@ mod tests {
             endv.spelling,
             crate::observation::ObservedToken::ControlSequence(ref name) if name == "endtemplate"
         ));
-        assert!(!recorder.0.iter().any(|observation| matches!(
-            observation,
-            CommandObservation::Input(input)
-                if input.transition == InputTransition::Retire
-                    && input.reason == InputReason::AlignmentVTemplate
-        )));
+        // tex.web §1131's `do_endv` only inspects the input stack; §357's
+        // `end_token_list` pops the depleted v-template on the next fetch,
+        // and that is where it is observed -- after `endv`, never before it.
+        let v_retirement = recorder
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Input(input)
+                        if input.transition == InputTransition::Retire
+                            && input.reason == InputReason::AlignmentVTemplate
+                )
+            })
+            .expect("the depleted v-template retires through get_next");
+        assert!(endv_index < v_retirement);
+        assert!(matches!(
+            &recorder.0[v_retirement + 1],
+            CommandObservation::Alignment(record) if record.transition == "v_template_retire"
+        ));
         // §380's `get_x_token` disposes of `end_template` itself, so nothing
         // is backed up and there is no raw `endv` delivery at all.
         assert!(!recorder.0.iter().any(|observation| matches!(

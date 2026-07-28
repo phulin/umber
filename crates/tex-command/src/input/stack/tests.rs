@@ -111,7 +111,7 @@ fn retirement_validates_exact_level_identity_before_mutating() {
 }
 
 #[test]
-fn exhausted_v_template_is_retained_once_until_explicit_do_endv_retirement() {
+fn exhausted_v_template_reports_its_boundary_before_the_next_fetch_pops_it() {
     let mut state = CommandState::default();
     let identity = state.push_token_level(
         transient_payload(&[]),
@@ -120,6 +120,9 @@ fn exhausted_v_template_is_retained_once_until_explicit_do_endv_retirement() {
         ReplayTrace::VTemplate,
     );
 
+    // tex.web §§325/390 refuse to drain a v-template for stack conservation,
+    // and §1131's `do_endv` expects to find this frame live, so the first
+    // exhaustion only reports the frozen `end_template` boundary.
     assert_eq!(
         state
             .retire_exhausted_input(identity)
@@ -128,14 +131,13 @@ fn exhausted_v_template_is_retained_once_until_explicit_do_endv_retirement() {
         InputRetirementAction::VTemplateRetained
     );
     assert_eq!(state.input.levels.len(), 1);
-    assert_eq!(
-        state.retire_exhausted_input(identity),
-        Err(InputRetirementError::VTemplateAlreadyRetained)
-    );
+    // tex.web §357: once that boundary is reported the frame is an ordinary
+    // depleted token list, so the next `get_next` that reaches it runs
+    // `end_token_list`.  Nothing at the `do_endv` call site pops it.
     assert_eq!(
         state
-            .retire_retained_v_template(identity)
-            .expect("successful do_endv retires the retained template")
+            .retire_exhausted_input(identity)
+            .expect("the next fetch pops the depleted template")
             .action,
         InputRetirementAction::VTemplatePopped
     );

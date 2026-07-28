@@ -1803,6 +1803,92 @@ fn halign_replays_everycr_at_init_align_and_at_every_row_end() {
     );
 }
 
+/// tex.web §1131's `do_endv` inspects the input stack and pops nothing; §357's
+/// `end_token_list` retires the depleted v-template the next time `get_next`
+/// reaches it. §799's `fin_row` pushes `\everycr` *before* `align_peek`, so a
+/// non-empty hook buries the depleted frame: `align_peek` reads `\noalign`
+/// from the hook, and the frame survives the whole `\noalign` group, retiring
+/// only at the `align_peek` §1133's `no_align_group` brace runs.
+///
+/// Retiring it at the `do_endv` call site instead put the retirement between
+/// the hook's push and its first command, which is the whole divergence.
+#[test]
+fn a_noalign_from_everycr_is_delivered_before_the_v_template_retires() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\everycr{\noalign{\kern1pt}}\halign{#\cr\kern2pt\cr}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let script: Vec<&'static str> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Input(record)
+                if record.reason == InputReason::EveryCr
+                    && record.transition == InputTransition::Push =>
+            {
+                Some("push everycr")
+            }
+            CommandObservation::Input(record)
+                if record.reason == InputReason::EveryCr
+                    && record.transition == InputTransition::Retire =>
+            {
+                Some("retire everycr")
+            }
+            CommandObservation::Input(record)
+                if record.reason == InputReason::AlignmentVTemplate
+                    && record.transition == InputTransition::Retire =>
+            {
+                Some("retire v_template")
+            }
+            CommandObservation::Command(delivery)
+                if delivery.boundary == CommandDeliveryBoundary::Raw
+                    && delivery.command == "no_align" =>
+            {
+                Some("raw noalign")
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        script
+            .iter()
+            .filter(|event| **event == "retire v_template")
+            .count(),
+        1,
+        "the single cell installs and retires one v-template: {script:?}"
+    );
+    assert_eq!(
+        &script[script.len() - 4..],
+        [
+            // §799 `fin_row` pushes the hook, then §785 `align_peek` reads
+            // `\noalign` out of it -- with the depleted v-template still
+            // buried underneath, unretired.
+            "push everycr",
+            "raw noalign",
+            // §325's `back_input` drains the depleted hook but stops at the
+            // v-template, which the `align_peek` after §1133's
+            // `no_align_group` brace finally reaches.
+            "retire everycr",
+            "retire v_template",
+        ],
+        "full script: {script:?}"
+    );
+}
+
 /// `\everycr` is an ordinary token parameter, so a later assignment governs
 /// the next alignment and an empty value makes both guards `null` again --
 /// plain.tex's `\ialign` and `\@lign` both rely on exactly that.
@@ -4912,41 +4998,65 @@ fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order(
             .expect("command-owned end-v"),
         ReplayStep::Continue
     );
+    // TeX82 §1131's `do_endv` inspects the input stack and pops nothing, so
+    // this step ends at §791 `fin_col`'s `align_state:=1000000`.
     assert!(
-        observations.0.windows(5).any(|events| {
+        observations.0.windows(3).any(|events| {
             matches!(
                 events,
                 [
                     CommandObservation::Command(raw),
                     CommandObservation::Command(expanded),
                     CommandObservation::Alignment(state_change),
-                    CommandObservation::Input(retirement),
-                    CommandObservation::Alignment(template_retire),
                 ] if raw.command == "end_template"
                     && expanded.command == "endv"
                     && state_change.transition == "state_change"
                     && state_change.align_state == 1_000_000
-                    && retirement.transition == InputTransition::Retire
-                    && retirement.reason == InputReason::AlignmentVTemplate
-                    && template_retire.transition == "v_template_retire"
-                    && template_retire.align_state == 1_000_000
             )
         }),
         "unexpected observations: {:?}",
+        observations.0
+    );
+    assert!(
+        !observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(retirement)
+                if retirement.transition == InputTransition::Retire
+                    && retirement.reason == InputReason::AlignmentVTemplate
+        )),
+        "do_endv must not retire the v-template: {:?}",
         observations.0
     );
 
     control
         .apply_alignment_request(AlignmentRequest::Finish(alignment))
         .expect("alignment lifecycle finishes through command core");
+    let after_endv = observations.0.len();
     // TeX82 §1051's `privileged`: this replay ends inside the alignment's
     // internal vertical mode, so `\end` reports an illegal case rather than
-    // ending the job.
+    // ending the job. Reaching it needs a token, and TeX82 §357's
+    // `end_token_list` retires the depleted v-template on the way.
     assert_eq!(
         control
-            .step(&mut universe)
+            .step_with_observer(&mut universe, &mut observations)
             .expect("stop is not privileged in internal vertical mode"),
         ReplayStep::Continue
+    );
+    assert!(
+        observations.0[after_endv..].windows(2).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Input(retirement),
+                    CommandObservation::Alignment(template_retire),
+                ] if retirement.transition == InputTransition::Retire
+                    && retirement.reason == InputReason::AlignmentVTemplate
+                    && template_retire.transition == "v_template_retire"
+                    && template_retire.align_state == 1_000_000
+            )
+        }),
+        "unexpected observations: {:?}",
+        &observations.0[after_endv..]
     );
     assert!(terminal_text(&universe).contains("You can't use `\\end'"));
 }

@@ -35,6 +35,11 @@ pub(crate) enum InputRetirementReason {
     Parameter,
     AlignmentUTemplate,
     AlignmentVTemplate,
+    /// tex.web §789's constant `omit_template`, installed in place of a
+    /// column's ⟨v_j⟩ part. It is still `token_type=v_template` (§307); only
+    /// the list differs, which is exactly how `end_token_list` tells the two
+    /// apart when it names the level.
+    AlignmentOmitTemplate,
     Recovery,
     /// A stored token list, carrying which one it is: tex.web names an input
     /// level by its §307 `token_type`, so a retirement that reported only
@@ -65,7 +70,6 @@ pub(crate) enum InputRetirementError {
         expected: MacroActivationId,
         actual: Option<MacroActivationId>,
     },
-    VTemplateAlreadyRetained,
     NotRetainedVTemplate,
 }
 
@@ -235,9 +239,20 @@ impl CommandState {
     /// level. All popped payloads drop here, so transient allocations live
     /// exactly as long as their last cursor/snapshot owner; stored payloads
     /// drop only their immutable store handles. Macro-body retirement removes
-    /// precisely its `param_start` activation. The v-template split mirrors
-    /// TeX.web §§325 and 1131: exhaustion leaves the frame reachable until
-    /// successful `do_endv`, which then performs the final pop.
+    /// precisely its `param_start` activation.
+    ///
+    /// The v-template split mirrors tex.web §§325/§390 and §1131. An exhausted
+    /// v-part first reports its frozen `end_template` boundary and stays
+    /// reachable, because §325's `back_input` and §390's `macro_call` write
+    /// `while (state=token_list)and(loc=null)and(token_type<>v_template) do
+    /// end_token_list` -- v-template is their sole exception -- and §1131's
+    /// `do_endv` walks the stack expecting to find that frame still live.
+    /// After that boundary the frame is an ordinary depleted token list:
+    /// §1131 only inspects it, and §357's `else begin end_token_list; goto
+    /// restart; end` pops it the next time `get_next` reaches it. That is
+    /// why the retained frame pops here rather than at a `do_endv` call site:
+    /// with a non-empty `\everycr`, §799's `begin_token_list(every_cr,
+    /// every_cr_text)` buries it and it survives the whole `\noalign` body.
     pub(crate) fn retire_exhausted_input(
         &mut self,
         expected: InputLevelId,
@@ -261,9 +276,6 @@ impl CommandState {
                 trace: None,
             });
         };
-        if cursor.retirement == RetirementBehavior::AwaitingVTemplateRetirement {
-            return Err(InputRetirementError::VTemplateAlreadyRetained);
-        }
         if cursor.retirement == RetirementBehavior::RetainExhaustedVTemplate {
             if !matches!(cursor.behavior, TokenBehavior::VTemplate) {
                 return Err(InputRetirementError::NotRetainedVTemplate);
@@ -300,52 +312,19 @@ impl CommandState {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::CloseScantokens => InputRetirementAction::ScantokensClosed,
-            RetirementBehavior::RetainExhaustedVTemplate
-            | RetirementBehavior::AwaitingVTemplateRetirement => {
+            // tex.web §357: a v-template that has already reported its frozen
+            // `end_template` boundary is an ordinary depleted token list, so
+            // the next `get_next` that reaches it runs `end_token_list`.
+            RetirementBehavior::AwaitingVTemplateRetirement => {
+                InputRetirementAction::VTemplatePopped
+            }
+            RetirementBehavior::RetainExhaustedVTemplate => {
                 unreachable!("retained templates returned before popping")
             }
         };
         Ok(InputRetirement {
             identity: expected,
             action,
-            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
-            trace: Some(cursor.trace),
-        })
-    }
-
-    /// Retires the exact exhausted v-template after successful `do_endv`.
-    pub(crate) fn retire_retained_v_template(
-        &mut self,
-        expected: InputLevelId,
-    ) -> Result<InputRetirement, InputRetirementError> {
-        let level = self
-            .input
-            .levels
-            .last()
-            .ok_or(InputRetirementError::NoInput)?;
-        let actual = input_level_identity(level);
-        if actual != expected {
-            return Err(InputRetirementError::LevelChanged { expected, actual });
-        }
-        let InputLevel::Tokens(TokenCursor {
-            retirement: RetirementBehavior::AwaitingVTemplateRetirement,
-            behavior: TokenBehavior::VTemplate,
-            ..
-        }) = level
-        else {
-            return Err(InputRetirementError::NotRetainedVTemplate);
-        };
-        let InputLevel::Tokens(cursor) = self
-            .input
-            .levels
-            .pop()
-            .expect("the inspected retained template remains live")
-        else {
-            unreachable!("the inspected level was a token cursor");
-        };
-        Ok(InputRetirement {
-            identity: expected,
-            action: InputRetirementAction::VTemplatePopped,
             reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
             trace: Some(cursor.trace),
         })
@@ -428,7 +407,13 @@ impl CommandState {
 fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputRetirementReason {
     match behavior {
         TokenBehavior::UTemplate => return InputRetirementReason::AlignmentUTemplate,
-        TokenBehavior::VTemplate => return InputRetirementReason::AlignmentVTemplate,
+        TokenBehavior::VTemplate => {
+            return if matches!(trace, ReplayTrace::OmitTemplate) {
+                InputRetirementReason::AlignmentOmitTemplate
+            } else {
+                InputRetirementReason::AlignmentVTemplate
+            };
+        }
         TokenBehavior::Ordinary
         | TokenBehavior::Recovery
         | TokenBehavior::MacroBody(_)
@@ -439,7 +424,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
         ReplayTrace::BackedUp => InputRetirementReason::Backup,
         ReplayTrace::MacroReplacement => InputRetirementReason::Macro,
         ReplayTrace::MacroParameter { .. } => InputRetirementReason::Parameter,
-        ReplayTrace::UTemplate | ReplayTrace::VTemplate => {
+        ReplayTrace::UTemplate | ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
             unreachable!("alignment template behavior must accompany its replay trace")
         }
         ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputRetirementReason::Recovery,

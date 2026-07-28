@@ -139,7 +139,10 @@ pub(crate) enum RetirementBehavior {
     Pop,
     StopAtEnd,
     RetainExhaustedVTemplate,
-    /// The exhausted v-template has reported its end and awaits `do_endv`.
+    /// The exhausted v-template has reported its frozen `end_template`
+    /// boundary. tex.web §§325/390 still refuse to drain it for stack
+    /// conservation and §1131's `do_endv` still expects to find it, but
+    /// §357's `end_token_list` pops it as soon as `get_next` reaches it.
     AwaitingVTemplateRetirement,
     CloseScantokens,
 }
@@ -169,6 +172,13 @@ pub(crate) enum ReplayTrace {
     BackedUp,
     UTemplate,
     VTemplate,
+    /// tex.web §789's `begin_token_list(omit_template,v_template)`: an
+    /// `\omit` entry installs the shared constant list `omit_template`
+    /// instead of the column's ⟨v_j⟩ part. Both are `token_type=v_template`
+    /// (§307), so this is a trace distinction only -- exactly the one the
+    /// pinned observer makes with `start=omit_template` when it names a
+    /// retiring level.
+    OmitTemplate,
 }
 
 /// Canonical explanations for immutable stored token-list replay.

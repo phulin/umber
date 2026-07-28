@@ -17,9 +17,9 @@ use crate::input::{
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{
-    AlignmentCellCompletion, AlignmentCellDelimiter, AlignmentCellTemplates,
-    AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError, AlignmentRequest,
-    AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState, ScannerState,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE,
+    ExpansionState, ScannerState,
 };
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
@@ -554,11 +554,20 @@ impl CommandState {
         delimiter: AlignmentCellDelimiter,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.v_template(alignment)?;
+        // tex.web §789: `if cur_cmd=omit then begin_token_list(omit_template,
+        // v_template) else begin_token_list(v_part(cur_align),v_template)`.
+        // Both levels are `token_type=v_template`; only the list differs, and
+        // that is what names the level in the pinned observer's trace.
+        let omit = self.alignment.active_cell_is_omit(alignment);
         let level = self.push_alignment_template(
             template,
             TokenBehavior::VTemplate,
             RetirementBehavior::RetainExhaustedVTemplate,
-            ReplayTrace::VTemplate,
+            if omit {
+                ReplayTrace::OmitTemplate
+            } else {
+                ReplayTrace::VTemplate
+            },
         );
         self.alignment.begin_v_template(alignment, level, delimiter)
     }
@@ -613,46 +622,35 @@ impl CommandState {
             })
     }
 
-    /// Retires the exact exhausted v-template after a delivered frozen end-v.
-    /// The caller is the executor's `do_endv` boundary; no token classifier or
-    /// template loop exists outside the command input stack.
+    /// Completes one alignment entry at the executor's `do_endv` boundary.
+    ///
+    /// tex.web §1131's `do_endv` only *inspects* the input stack: it walks
+    /// `base_ptr` down past exhausted token lists to prove that the frame it
+    /// reaches is the v-template, and `fatal_error`s otherwise. It pops
+    /// nothing. §357's `end_token_list` pops the exhausted v-template the
+    /// next time `get_next` reaches it, which with a non-empty `\everycr` is
+    /// not until §799's every-cr list and the whole `\noalign` body it may
+    /// contain have been read.
     pub fn finish_alignment_cell(
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
         let level = self.alignment.active_v_template_level(alignment)?;
-        let completion = self.alignment_endv_completion(level)?;
-        // TeX82 §772 changes `align_state` in `fin_col` before `get_next`
-        // reaches the exhausted scanner backup and retained v-template. The
-        // shape is proven above, so these command-owned retirements cannot
-        // fail after the structural state transition.
-        let mut finished = self.alignment.finish_cell(alignment, level)?;
-        if matches!(
-            completion,
-            AlignmentCellCompletion::BackedUpEndVThenRetainedVTemplate
-        ) {
-            let backup = match self.input.levels.last() {
-                Some(InputLevel::Tokens(cursor)) => cursor.identity,
-                _ => unreachable!("completion proof requires a backup token level"),
-            };
-            self.retire_exhausted_input(backup)
-                .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
-        }
-        self.retire_retained_v_template(level)
-            .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
-        finished.completion = completion;
-        Ok(finished)
+        self.prove_endv_input_shape(level)?;
+        // TeX82 §791 changes `align_state` in `fin_col` before `get_next`
+        // reaches the exhausted scanner backup and retained v-template.
+        self.alignment.finish_cell(alignment, level)
     }
 
-    /// Proves the only command-input shapes that can complete TeX82 `do_endv`.
+    /// Performs TeX82 §1131 `do_endv`'s input-stack walk.
     ///
     /// The optional upper level is the exhausted one-token `back_input`
-    /// replay produced by a scanner. It remains command-core state rather
-    /// than becoming executor-visible input.
-    fn alignment_endv_completion(
-        &self,
-        v_level: InputLevelId,
-    ) -> Result<AlignmentCellCompletion, AlignmentLifecycleError> {
+    /// replay produced by a scanner: §1131 skips exactly such frames
+    /// (`loc_field=null`, `state_field=token_list`) on its way down. It
+    /// remains command-core state rather than becoming executor-visible
+    /// input, and it is retired by the same §357 pop that retires the
+    /// v-template beneath it.
+    fn prove_endv_input_shape(&self, v_level: InputLevelId) -> Result<(), AlignmentLifecycleError> {
         let retained_v_template = |level: &InputLevel| {
             matches!(level,
                 InputLevel::Tokens(cursor)
@@ -665,7 +663,7 @@ impl CommandState {
             return Err(AlignmentLifecycleError::VTemplateNotExhausted);
         };
         if retained_v_template(top) {
-            return Ok(AlignmentCellCompletion::RetainedVTemplate);
+            return Ok(());
         }
         let exhausted_backed_up_endv = matches!(top,
             InputLevel::Tokens(cursor)
@@ -679,68 +677,37 @@ impl CommandState {
                 .get(self.input.levels.len().saturating_sub(2))
                 .is_some_and(retained_v_template)
         {
-            Ok(AlignmentCellCompletion::BackedUpEndVThenRetainedVTemplate)
+            Ok(())
         } else {
             Err(AlignmentLifecycleError::VTemplateNotExhausted)
         }
     }
 
-    /// Returns the canonical observations emitted after typed `do_endv`
-    /// completion has committed.  The executor obtains this proof before the
-    /// request so the eventual v-template retirement remains command-state
-    /// owned, but publishes it only after `FinishCell` succeeds.
+    /// Returns TeX82 §791 `fin_col`'s `align_state:=1000000`, published after
+    /// `FinishCell` commits.
+    ///
+    /// The retirement of the exhausted v-template is _not_ published here.
+    /// §1131's `do_endv` pops nothing; §357's `end_token_list` retires the
+    /// frame whenever `get_next` next reaches it, and observes it there.
     #[cfg(any(test, feature = "instrumentation"))]
     #[must_use]
-    pub fn alignment_cell_finish_observations(
+    pub fn alignment_cell_finish_observation(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Option<crate::AlignmentCellFinishObservations> {
+    ) -> Option<crate::AlignmentRecord> {
         let cell = self.alignment.active_cell.as_ref()?;
         if cell.alignment != alignment || cell.v_level.is_none() {
             return None;
         }
-        let backed_up_endv = matches!(self.input.levels.last(),
-            Some(InputLevel::Tokens(cursor))
-                if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && matches!(&cursor.payload, TokenPayload::BackedUp(tokens) if tokens.get(cursor.index).is_none())
-        );
-        Some(crate::AlignmentCellFinishObservations {
-            state_change: crate::AlignmentRecord {
-                transition: "state_change",
-                alignment: Some(alignment.raw()),
-                // `finish_cell` assigns the v-template sentinel after
-                // `do_endv` has proven the retained input shape. This
-                // observation is captured before that typed request commits.
-                align_state: 1_000_000,
-                delimiter: None,
-                previous_align_state: None,
-            },
-            backed_up_endv_retirement: match self.input.levels.last()? {
-                InputLevel::Tokens(cursor) if backed_up_endv => Some(crate::InputRecord {
-                    transition: crate::InputTransition::Retire,
-                    reason: crate::InputReason::Backup,
-                    level: cursor.identity.0,
-                    position: 0,
-                }),
-                _ => None,
-            },
-            v_template_retirement: crate::InputRecord {
-                transition: crate::InputTransition::Retire,
-                reason: crate::InputReason::AlignmentVTemplate,
-                level: cell.v_level?.0,
-                position: 0,
-            },
-            template_retirement: crate::AlignmentRecord {
-                transition: if cell.omit {
-                    "omit_template_retire"
-                } else {
-                    "v_template_retire"
-                },
-                alignment: Some(alignment.raw()),
-                align_state: 1_000_000,
-                delimiter: None,
-                previous_align_state: None,
-            },
+        Some(crate::AlignmentRecord {
+            transition: "state_change",
+            alignment: Some(alignment.raw()),
+            // `finish_cell` assigns the v-template sentinel after `do_endv`
+            // has proven the retained input shape. This observation is
+            // captured before that typed request commits.
+            align_state: 1_000_000,
+            delimiter: None,
+            previous_align_state: None,
         })
     }
 
