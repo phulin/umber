@@ -11,7 +11,9 @@ use tex_state::token::Catcode;
 
 use crate::profile::{CharacterCode, CharacterMode};
 
-use super::lines::{SourceCharacter, SourceProvenance, SourceRange, SourceScalarRange};
+use super::lines::{
+    SourceCharacter, SourceLocation, SourceProvenance, SourceRange, SourceScalarRange,
+};
 use super::source::{LineBackingRegistry, SourceCursor, SourceRegistration};
 
 /// TeX's source-line lexical state (`mid_line`, `skip_blanks`, `new_line`).
@@ -57,6 +59,7 @@ pub enum SourceToken {
         kind: SourceControlSequenceKind,
         range: SourceRange,
         scalar_range: SourceScalarRange,
+        location: SourceLocation,
     },
 }
 
@@ -82,7 +85,12 @@ impl SourceToken {
     /// Raw span and canonical TeX82 location for this decoded spelling.
     #[must_use]
     pub fn provenance(&self) -> SourceProvenance {
-        SourceProvenance::from_range(self.range())
+        match self {
+            Self::Character { range, .. } => SourceProvenance::from_range(*range),
+            Self::ControlSequence {
+                range, location, ..
+            } => SourceProvenance::from_range_and_location(*range, *location),
+        }
     }
 }
 
@@ -266,6 +274,7 @@ impl SourceCursor {
                         kind: SourceControlSequenceKind::Active,
                         range: character.range(),
                         scalar_range,
+                        location: character.range().terminal_location(),
                     });
                 }
                 Catcode::Space => match self.lexer_state {
@@ -311,6 +320,7 @@ impl SourceCursor {
                                 kind: SourceControlSequenceKind::Paragraph,
                                 range,
                                 scalar_range,
+                                location: range.terminal_location(),
                             });
                         }
                     }
@@ -342,6 +352,7 @@ impl SourceCursor {
                 kind: SourceControlSequenceKind::Null,
                 range: escape.range(),
                 scalar_range: self.spelling_scalar_range(escape),
+                location: escape.range().terminal_location(),
             };
         };
         let first_catcode = catcode(first.code());
@@ -353,6 +364,7 @@ impl SourceCursor {
 
         let mut name = vec![first.code()];
         let mut end = first.range().end();
+        let mut location = first.range().terminal_location();
         let kind = if first_catcode == Catcode::Letter {
             loop {
                 let saved = self.line.clone().expect("control sequence has a line");
@@ -366,6 +378,7 @@ impl SourceCursor {
                 }
                 name.push(next.code());
                 end = next.range().end();
+                location = next.range().terminal_location();
             }
             SourceControlSequenceKind::Word
         } else {
@@ -382,6 +395,7 @@ impl SourceCursor {
                     .as_ref()
                     .map_or(first.scalar_offset() + 1, |line| line.scalar_cursor),
             ),
+            location,
         }
     }
 

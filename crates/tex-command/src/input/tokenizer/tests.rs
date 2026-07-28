@@ -130,6 +130,7 @@ fn unicode_control(
             kind,
             range,
             scalar_range,
+            ..
         } => (
             name.into_iter()
                 .map(|code| code.to_char().expect("Unicode scalar"))

@@ -119,6 +119,13 @@ impl SourceProvenance {
         }
     }
 
+    pub(crate) const fn from_range_and_location(
+        range: SourceRange,
+        location: SourceLocation,
+    ) -> Self {
+        Self { range, location }
+    }
+
     /// Exact raw spelling range.
     #[must_use]
     pub const fn range(self) -> SourceRange {

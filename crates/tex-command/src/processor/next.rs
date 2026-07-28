@@ -2661,6 +2661,73 @@ mod tests {
     }
 
     #[test]
+    fn escape_before_synthetic_endline_keeps_the_endline_location() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\ \n".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.set_catcode('\r', Catcode::Active);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let endline = processor
+            .get_next()
+            .expect("control symbol delivers")
+            .expect("source is live");
+        assert!(matches!(endline.spelling().semantic_token(), Token::Cs(_)));
+        assert_eq!(
+            endline.source_location(),
+            Some(crate::SourceLocation::new(source, 1)),
+            "TeX82 §354 scans the §362 synthetic buffer[limit] after the escape"
+        );
+    }
+
+    #[test]
+    fn ordinary_control_symbol_and_word_keep_their_final_physical_locations() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\!\\word".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor =
+            processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let symbol = processor
+            .get_token()
+            .expect("control symbol delivers")
+            .expect("source is live");
+        assert_eq!(
+            symbol.source_location(),
+            Some(crate::SourceLocation::new(source, 1))
+        );
+        let word = processor
+            .get_token()
+            .expect("control word delivers")
+            .expect("source is live");
+        assert_eq!(
+            word.source_location(),
+            Some(crate::SourceLocation::new(source, 6))
+        );
+    }
+
+    #[test]
     fn observer_projects_hfil_as_hskip_at_raw_and_expanded_boundaries() {
         let mut command = CommandState::default();
         let source = command
