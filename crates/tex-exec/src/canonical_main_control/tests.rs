@@ -544,3 +544,84 @@ fn succumbing_commits_a_fatal_diagnostic_observation() {
         Some(&CommandObservation::Diagnostic(fatal.record())),
     );
 }
+
+#[test]
+fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
+    // TeX82 §1214's `<Adjust for the setting of \globaldefs>` runs inside
+    // `prefixed_command`, so a positive `\globaldefs` makes an unprefixed
+    // `\setbox` global and a negative one makes `\global\setbox` local.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\globaldefs=1 {\setbox0=\hbox{\kern1pt}}\globaldefs=-1 {\global\setbox1=\hbox{\kern1pt}}\globaldefs=0 \end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert!(stores.box_reg(0).is_some(), "positive globaldefs is global");
+    assert!(stores.box_reg(1).is_none(), "negative globaldefs is local");
+}
+
+#[test]
+fn openin_supplies_the_default_tex_extension() {
+    // TeX82 §1275's `if cur_ext="" then cur_ext:=".tex"; pack_cur_name`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"body"[..])),
+    );
+    register_source(&mut control, br"\openin1=child \read1 to \line\end");
+    run_to_end(&mut control, &mut stores);
+
+    let line = stores.intern("line");
+    let replacement = stores
+        .macro_meaning(line)
+        .expect("read defined its target")
+        .replacement_text();
+    let text: String = stores
+        .tokens(replacement)
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    // The trailing `\r` is TeX82 §240's `\endlinechar`, appended to the line.
+    assert_eq!(text, "body\r");
+}
+
+#[test]
+fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
+    // TeX82 §578 resolves `n<=0` to the scratch `fmem_ptr`; §579 reports it
+    // and §1253 still consumes `=<dimen>`, so the next command runs.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\fontdimen0\nullfont=1pt \count0=1\end");
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! Font \\nullfont has only 7 fontdimen parameters."),
+        "{output}"
+    );
+}
+
+#[test]
+fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
+    // TeX82 §1236 returns before `word_define` when `arith_error` is set.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\count0=2000000000 \multiply\count0 by2 \count1=7 \divide\count1 by0 \count2=1\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 2_000_000_000);
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(stores.count(2), 1);
+    let output = terminal_text(&stores);
+    assert_eq!(output.matches("! Arithmetic overflow.").count(), 2, "{output}");
+}

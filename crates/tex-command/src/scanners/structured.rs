@@ -747,6 +747,9 @@ pub enum InputStreamRequest {
         stream: i32,
         target: Symbol,
         raw_catcodes: bool,
+        /// tex.web §1225's `if not scan_keyword("to")`, which reports
+        /// "Missing `to' inserted" and then scans the target anyway.
+        missing_to: bool,
     },
 }
 
@@ -1694,9 +1697,14 @@ impl CommandProcessor<'_> {
             }
             UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close { stream }),
             UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
-                if !self.scan_keyword("to")?.value {
-                    return Err(CommandError::input_invariant());
-                }
+                // tex.web §1225 reports a missing `to` and inserts it, then
+                // runs `get_r_token` regardless: the keyword is recovered,
+                // not required.
+                let missing_to = !self.scan_keyword("to")?.value;
+                // §1215's `get_r_token`. A frozen or non-control-sequence
+                // target still needs §1215's "Missing control sequence
+                // inserted" recovery, which Umber cannot yet name because it
+                // has no `Symbol` for `frozen_protection` (umber2-vq14).
                 let target = self
                     .next_non_space_raw()?
                     .and_then(|command| command.control_sequence())
@@ -1705,6 +1713,7 @@ impl CommandProcessor<'_> {
                     stream,
                     target,
                     raw_catcodes: primitive == UnexpandablePrimitive::ReadLine,
+                    missing_to,
                 })
             }
             _ => Err(CommandError::input_invariant()),

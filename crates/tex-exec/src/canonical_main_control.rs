@@ -487,20 +487,32 @@ impl CanonicalMainControl {
         scanned: ScannedStep,
     ) -> Result<ScannedStep, ExecError> {
         let ScannedStep::InputStream {
-            request,
+            mut request,
             resource: _,
         } = scanned
         else {
             return Ok(scanned);
         };
-        let resource = match &request {
-            InputStreamRequest::Open { file_name, .. } => Some(
-                self.capabilities
-                    .input_resource(&file_name.name)
-                    .ok_or_else(|| ExecError::MissingCanonicalInput {
-                        name: file_name.name.clone(),
-                    })?,
-            ),
+        let resource = match &mut request {
+            InputStreamRequest::Open { file_name, .. } => {
+                // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
+                // pack_cur_name`. The packed name is what is opened, so it is
+                // written back into the request rather than recomputed.
+                file_name.name = packed_input_file_name(&file_name.name);
+                // §1275's `if a_open_in(read_file[n])` leaves the stream
+                // closed when the file does not open, but Umber resolves
+                // inputs through the host first: an unregistered name
+                // suspends the step so the driver can acquire it, and only a
+                // host that reports the file absent reaches the closed-stream
+                // outcome.
+                Some(
+                    self.capabilities
+                        .input_resource(&file_name.name)
+                        .ok_or_else(|| ExecError::MissingCanonicalInput {
+                            name: file_name.name.clone(),
+                        })?,
+                )
+            }
             InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
         };
         Ok(ScannedStep::InputStream { request, resource })
@@ -3003,7 +3015,10 @@ enum ScannedStep {
     PdfNavigation(PdfNavigationRequest),
     FontDimen {
         font: FontId,
-        number: u32,
+        /// tex.web §578's `n`, unrecovered. A number at or below zero
+        /// resolves to §578's scratch `fmem_ptr` and is reported by §579, so
+        /// the scan must carry it rather than reject it.
+        number: i32,
         value: Scaled,
     },
     FontInteger {
@@ -3119,6 +3134,10 @@ enum ScannedStep {
     /// no operand: `begin_diagnostic; show_activities`. The mode is carried
     /// so the committed effect can name the nest it reported.
     ShowLists {
+        #[cfg_attr(
+            not(any(test, feature = "instrumentation")),
+            expect(dead_code, reason = "read only by the committed effect observation")
+        )]
         mode: Mode,
     },
     VSplit(ScannedVSplit),
@@ -3825,6 +3844,7 @@ fn dispatch_main_control_command(
 
 /// The canonical hyphenated name of one mode, as committed observations and
 /// the semantic corpus spell it.
+#[cfg(any(test, feature = "instrumentation"))]
 fn canonical_mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Vertical => "vertical",
@@ -4882,13 +4902,12 @@ fn scan_command(
             selector: command.control_sequence(),
             global,
         }),
+        // tex.web §578's `find_font_dimen` scans the number *and* the font
+        // identifier before it decides the number is unusable, and §1253 then
+        // scans `=<dimen>` either way; the whole assignment is consumed even
+        // when §579 rejects it.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
             let number = processor.scan_integer().map_err(command_error)?.value;
-            let number =
-                u32::try_from(number).map_err(|_| ExecError::RegisterNumberOutOfRange(number))?;
-            if number == 0 {
-                return Err(ExecError::RegisterNumberOutOfRange(0));
-            }
             let font = processor.scan_font_selector().map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
@@ -6785,6 +6804,19 @@ fn apply_pdf_form_request(
     Ok(ReplayStep::Continue)
 }
 
+/// tex.web §1275's `if cur_ext="" then cur_ext:=".tex"` followed by
+/// `pack_cur_name`.
+///
+/// §537's `start_input` applies the same default to `\input`; the rule is the
+/// file-name default, not a per-command one, so it lives in one place.
+fn packed_input_file_name(name: &str) -> String {
+    if std::path::Path::new(name).extension().is_some() {
+        name.to_owned()
+    } else {
+        format!("{name}.tex")
+    }
+}
+
 fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
     if (0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
         return StreamSlot::new(value as u8);
@@ -6841,21 +6873,24 @@ fn canonical_read_line_tokens(line: &str, raw_catcodes: bool, stores: &Universe)
 /// acquisition. The result is an immutable replacement list; neither a live
 /// cursor nor an input level crosses the canonical replay boundary.
 fn canonical_read_tokens(
-    slot: StreamSlot,
+    slot: Option<StreamSlot>,
+    prompt: bool,
     target: Symbol,
     raw_catcodes: bool,
     stores: &mut Universe,
 ) -> Result<Vec<Token>, ExecError> {
     let mut tokens = Vec::new();
     let mut depth = 0_u32;
-    let mut first_terminal_line = true;
+    let mut first_terminal_line = prompt;
     loop {
-        let stream_open = stores
-            .world()
-            .stream_bufs()
-            .read_stream_target(slot)
-            .is_some();
-        let line = if stream_open {
+        let stream_open = slot.is_some_and(|slot| {
+            stores
+                .world()
+                .stream_bufs()
+                .read_stream_target(slot)
+                .is_some()
+        });
+        let line = if let Some(slot) = slot.filter(|_| stream_open) {
             stores.world_mut().read_stream_line(slot)?
         } else {
             match stores.interaction_mode() {
@@ -6924,11 +6959,13 @@ fn canonical_read_tokens(
             return Ok(tokens);
         }
         if stream_open
-            && stores
-                .world()
-                .stream_bufs()
-                .read_stream_target(slot)
-                .is_none()
+            && slot.is_some_and(|slot| {
+                stores
+                    .world()
+                    .stream_bufs()
+                    .read_stream_target(slot)
+                    .is_none()
+            })
         {
             stores
                 .world_mut()
@@ -8883,8 +8920,12 @@ fn apply_scanned_step(
             match request {
                 InputStreamRequest::Open { stream, file_name } => {
                     let slot = replay_stream_slot(stream, stores);
-                    let resource =
-                        resource.expect("openin resource resolves after processor borrow");
+                    // §1275 closes any stream already open on `n` before it
+                    // tries to open the new file, whichever command this is.
+                    stores.world_mut().close_in(slot);
+                    let Some(resource) = resource else {
+                        return Ok(ReplayStep::Continue);
+                    };
                     stores
                         .world_mut()
                         .set_memory_file(&file_name.name, resource.bytes().to_vec())?;
@@ -8902,9 +8943,25 @@ fn apply_scanned_step(
                     stream,
                     target,
                     raw_catcodes,
+                    missing_to,
                 } => {
-                    let slot = replay_stream_slot(stream, stores);
-                    let tokens = canonical_read_tokens(slot, target, raw_catcodes, stores)?;
+                    if missing_to {
+                        let mut report = stores.print_err("Missing `to' inserted");
+                        report.help(&[
+                            "You should have said `\\read<number> to \\cs'.",
+                            "I'm going to look for the \\cs now.",
+                        ]);
+                        report.error();
+                    }
+                    // §482's `if (n<0)or(n>15) then m:=16`: an out-of-range
+                    // `\read` stream is the always-closed terminal stream, not
+                    // §435's "Bad number" recovery, and §484 prompts only when
+                    // the stream number was nonnegative.
+                    let slot = (0..tex_state::world::STREAM_SLOT_COUNT as i32)
+                        .contains(&stream)
+                        .then(|| StreamSlot::new(stream as u8));
+                    let tokens =
+                        canonical_read_tokens(slot, stream >= 0, target, raw_catcodes, stores)?;
                     let replacement = stores.intern_token_list(&tokens);
                     let parameters = stores.intern_token_list(&[]);
                     stores.set_macro_meaning(
@@ -9003,7 +9060,22 @@ fn apply_scanned_step(
             number,
             value,
         } => {
-            stores.set_font_dimen(font, number, value)?;
+            // tex.web §578's `find_font_dimen` resolves an unusable parameter
+            // number to the scratch location `fmem_ptr`; §579 then reports
+            // "Font x has only n fontdimen parameters" and §1253 still runs
+            // `scan_optional_equals; scan_normal_dimen; font_info[k].sc:=
+            // cur_val` into that scratch cell, so the font is unchanged and
+            // the job continues. Only §580's grow path, which
+            // `set_font_dimen` implements, can add a parameter.
+            match u32::try_from(number).ok().filter(|number| *number > 0) {
+                // §578's `if n<=0 then cur_val:=fmem_ptr`.
+                None => report_font_parameter_recovery(stores, font),
+                Some(number) => {
+                    if stores.set_font_dimen(font, number, value).is_err() {
+                        report_font_parameter_recovery(stores, font);
+                    }
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FontInteger { font, skew, value } => {
@@ -9326,7 +9398,13 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::SetBox(target) => {
+        ScannedStep::SetBox(mut target) => {
+            // §1214's `<Adjust for the setting of \globaldefs>` runs inside
+            // `prefixed_command`, before §1241 scans the box, so `global` in
+            // §1241's `if global then n:=256+cur_val` is the *effective*
+            // scope. Resolving it at `box_end` instead would read
+            // `\globaldefs` as the box body left it.
+            target.global = assignment_global(target.global, stores);
             boxes.pending_setbox = Some(target);
             Ok(ReplayStep::Continue)
         }
@@ -11269,6 +11347,28 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
             }
         }
     }
+}
+
+/// Reports TeX82 §579's `<Issue an error message if cur_val=fmem_ptr>`.
+///
+/// Every `FontParameterError` is a way of landing on §578's `fmem_ptr`
+/// fallback -- a number at or below zero, a number past the font's table when
+/// the font is not the last one loaded, or a capacity bound -- so all of them
+/// report the same §579 message and leave the font untouched.
+fn report_font_parameter_recovery(stores: &mut Universe, font: tex_state::ids::FontId) {
+    let name = stores.font_name(font).to_owned();
+    let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
+    let mut report = stores.print_err("Font ");
+    report
+        .print_esc(&name)
+        .print(" has only ")
+        .print_int(count)
+        .print(" fontdimen parameters");
+    report.help(&[
+        "To increase the number of font parameters, you must",
+        "use \\fontdimen immediately after the \\font is loaded.",
+    ]);
+    report.error();
 }
 
 /// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.
