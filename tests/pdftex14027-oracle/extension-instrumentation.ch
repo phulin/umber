@@ -290,9 +290,11 @@ else write(umber_trace_file,'stream:',channel:1);
 
 @x [18] Initialize the volatile-enquiry guard.
 umber_alignment_depth:=0; umber_mutation_command:=false;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
   rewrite(umber_trace_file,'pdftex14027-events.jsonl');
 @y
 umber_alignment_depth:=0; umber_mutation_command:=false;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 umber_pdf_timer_enquiry:=false;
 umber_pdf_object_tokens:=false;
   rewrite(umber_trace_file,'pdftex14027-events.jsonl');

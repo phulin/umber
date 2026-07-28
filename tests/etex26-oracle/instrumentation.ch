@@ -13,6 +13,12 @@
 @!umber_recovery_insert:boolean;
 @!umber_alignment_depth:integer;
 @!umber_mutation_command:boolean;
+@!umber_line_shift:integer;
+@!umber_shift_tail:integer;
+@!umber_shift_pos:integer;
+@!umber_shift_stack:array[1..sup_max_in_open] of integer;
+@!umber_tail_stack:array[1..sup_max_in_open] of integer;
+@!umber_pos_stack:array[1..sup_max_in_open] of integer;
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -37,21 +43,38 @@ end;
 procedure umber_trace_hex(@!c:integer);
 var d:integer;
 begin
+{|xchr|, not |chr|: web2c compiles Pascal's identity |chr| away, so
+|write(f,chr(n))| emits the decimal number |n| instead of that character.}
 d:=c div 16;
-if d<10 then write(umber_trace_file,chr(d+48))
-else write(umber_trace_file,chr(d+87));
+if d<10 then write(umber_trace_file,xchr[d+48])
+else write(umber_trace_file,xchr[d+87]);
 d:=c mod 16;
-if d<10 then write(umber_trace_file,chr(d+48))
-else write(umber_trace_file,chr(d+87));
+if d<10 then write(umber_trace_file,xchr[d+48])
+else write(umber_trace_file,xchr[d+87]);
 end;
 
+{JSON has exactly one canonical spelling per character, and the fixture
+contract requires the stream to round-trip through it byte for byte: the two
+mandatory escapes, the five short control escapes, |\u00xx| for the remaining
+C0 controls, and the character itself otherwise. |DEL| needs no escape, and
+codes 128-255 denote U+0080-U+00FF, whose canonical form is their two-byte
+UTF-8 encoding rather than a |\u00xx| escape.}
 procedure umber_trace_char(@!c:integer);
 begin
 if c=34 then write(umber_trace_file,'\"')
 else if c=92 then write(umber_trace_file,'\\')
-else if (c<32)or(c>126) then
+else if c=8 then write(umber_trace_file,'\b')
+else if c=9 then write(umber_trace_file,'\t')
+else if c=10 then write(umber_trace_file,'\n')
+else if c=12 then write(umber_trace_file,'\f')
+else if c=13 then write(umber_trace_file,'\r')
+else if c<32 then
   begin write(umber_trace_file,'\u00'); umber_trace_hex(c mod 256); end
-else write(umber_trace_file,xchr[c]);
+else if c<128 then write(umber_trace_file,xchr[c])
+else begin
+  write(umber_trace_file,xchr[192+((c mod 256) div 64)]);
+  write(umber_trace_file,xchr[128+(c mod 64)]);
+  end;
 end;
 
 procedure umber_trace_string_contents(@!s:str_number);
@@ -227,6 +250,17 @@ othercases write(umber_trace_file,'"escape"')
 endcases;
 end;
 
+function umber_source_column(@!p:integer):integer;
+begin
+if p>=umber_shift_pos then umber_source_column:=p+umber_line_shift
+else umber_source_column:=p+umber_line_shift-umber_shift_tail;
+end;
+
+{The emitted |byte| is a column of the immutable source line, not an index
+into |buffer|. \S355 reduces an expanded code inside a control-sequence name
+in place and shifts later bytes down by |d|. The accumulated shift is added
+back for a byte at or after the reduced code, but not for a command ending
+before a collapse performed only by \S356 lookahead.}
 procedure umber_trace_command(@!expanded:boolean);
 begin
 if not umber_trace_opened then return;
@@ -245,7 +279,8 @@ if (state<>0)and(name>17) then
   begin write(umber_trace_file,',"location":{"source":');
   umber_trace_string(name);
   write(umber_trace_file,',"line":',line:1,',"byte":');
-  if loc>start then write(umber_trace_file,loc-start-1:1)
+  if loc>start then
+    write(umber_trace_file,umber_source_column(loc-start-1):1)
   else write(umber_trace_file,'0');
   write(umber_trace_file,'}'); end;
 write_ln(umber_trace_file,'}}}}');
@@ -884,6 +919,7 @@ end;
 procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
 umber_alignment_depth:=0; umber_mutation_command:=false;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
   rewrite(umber_trace_file,'etex26-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
@@ -1038,6 +1074,10 @@ name:=0; {|terminal_input| is now |true|}
 end;
 @y
 name:=0; {|terminal_input| is now |true|}
+umber_shift_stack[index]:=umber_line_shift;
+umber_tail_stack[index]:=umber_shift_tail;
+umber_pos_stack[index]:=umber_shift_pos;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 umber_trace_input(0,0,0);
 @<Prepare terminal input {\sl Sync\TeX} information@>;
 end;
@@ -1054,6 +1094,9 @@ end;
 @p procedure end_file_reading;
 begin umber_trace_input(1,0,0);
 first:=start; line:=line_stack[index];
+umber_line_shift:=umber_shift_stack[index];
+umber_shift_tail:=umber_tail_stack[index];
+umber_shift_pos:=umber_pos_stack[index];
 if (name=18)or(name=19) then pseudo_close else
 if name>17 then a_close(cur_file); {forget it}
 pop_input; decr(in_open);
@@ -1126,6 +1169,16 @@ skip_blanks+right_brace,new_line+right_brace: begin
   end;
 @z
 
+@x [24] Record the source-column effect before \S355 shifts the buffer.
+    else if c<@'100 then buffer[k-1]:=c+@'100
+    else buffer[k-1]:=c-@'100;
+@y
+    else if c<@'100 then buffer[k-1]:=c+@'100
+    else buffer[k-1]:=c-@'100;
+    umber_line_shift:=umber_line_shift+d; umber_shift_tail:=d;
+    umber_shift_pos:=k-1-start;
+@z
+
 @x [24] Observe token-list brace accounting.
     case cur_cmd of
     left_brace: incr(align_state);
@@ -1145,6 +1198,15 @@ skip_blanks+right_brace,new_line+right_brace: begin
     begin cur_cmd:=0; cur_chr:=0; umber_trace_command(false);
     umber_trace_input(2,0,0); return;
     end;
+@z
+
+@x [24] A freshly read line has collapsed no bytes yet.
+first:=limit+1; loc:=start; {ready to read}
+end
+@y
+first:=limit+1; loc:=start; {ready to read}
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
+end
 @z
 
 @x [25] noexpand scanner status.

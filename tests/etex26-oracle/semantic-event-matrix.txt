@@ -2,6 +2,10 @@
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
 command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
 command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"
+command|nonprintable control-sequence name escape|transitions.tex|umber_trace_char and umber_trace_hex JSON escaping|"control_sequence":"\u000b"
+command|short control-sequence name escape|transitions.tex|umber_trace_char short JSON control escapes|"control_sequence":"\t"
+command|DEL control-sequence name remains unescaped|transitions.tex|umber_trace_char DEL JSON encoding|"control_sequence":""
+command|eight-bit control-sequence name uses UTF-8|transitions.tex|umber_trace_char UTF-8 JSON encoding|"control_sequence":""
 input|source push|transitions.tex and transitions-child.tex|begin_file_reading|"transition":"push","reason":"source"
 input|source retirement|transitions-child.tex|end_file_reading|"transition":"retire","reason":"source"
 input|terminal stop|transitions-child.tex|get_next terminal read stop|"transition":"stop","reason":"source"
