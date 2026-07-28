@@ -6862,155 +6862,6 @@ fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
     StreamSlot::new(0)
 }
 
-/// Converts one World-provided physical line to the immutable replacement
-/// text of `\\read`/`\\readline`.  World owns the stream cursor; this helper
-/// has no input level or file handle and therefore cannot become an alternate
-/// source-consumption path.
-fn canonical_read_line_tokens(line: &str, raw_catcodes: bool, stores: &Universe) -> Vec<Token> {
-    let mut tokens = line
-        .chars()
-        .map(|ch| Token::Char {
-            ch,
-            cat: if raw_catcodes {
-                if ch == ' ' {
-                    Catcode::Space
-                } else {
-                    Catcode::Other
-                }
-            } else {
-                stores.catcode(ch)
-            },
-        })
-        .collect::<Vec<_>>();
-    if let Ok(code) = u32::try_from(stores.int_param(IntParam::END_LINE_CHAR))
-        && let Some(ch) = char::from_u32(code)
-    {
-        tokens.push(Token::Char {
-            ch,
-            cat: if raw_catcodes {
-                if ch == ' ' {
-                    Catcode::Space
-                } else {
-                    Catcode::Other
-                }
-            } else {
-                stores.catcode(ch)
-            },
-        });
-    }
-    tokens
-}
-
-/// Collects TeX82's balanced `read_toks` text using only World-owned line
-/// acquisition. The result is an immutable replacement list; neither a live
-/// cursor nor an input level crosses the canonical replay boundary.
-fn canonical_read_tokens(
-    slot: Option<StreamSlot>,
-    prompt: bool,
-    target: Symbol,
-    raw_catcodes: bool,
-    stores: &mut Universe,
-) -> Result<Vec<Token>, ExecError> {
-    let mut tokens = Vec::new();
-    let mut depth = 0_u32;
-    let mut first_terminal_line = prompt;
-    loop {
-        let stream_open = slot.is_some_and(|slot| {
-            stores
-                .world()
-                .stream_bufs()
-                .read_stream_target(slot)
-                .is_some()
-        });
-        let line = if let Some(slot) = slot.filter(|_| stream_open) {
-            stores.world_mut().read_stream_line(slot)?
-        } else {
-            match stores.interaction_mode() {
-                tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop => {
-                    return Err(ExecError::ReadNotImplemented);
-                }
-                tex_state::InteractionMode::Scroll | tex_state::InteractionMode::ErrorStop => {}
-            }
-            if first_terminal_line {
-                let prompt = tex_expand::token_text(stores, Token::Cs(target));
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, &format!("\n{prompt}="));
-                first_terminal_line = false;
-            }
-            Some(
-                stores
-                    .world_mut()
-                    .read_terminal_line()?
-                    .ok_or(ExecError::TerminalReadEof)?,
-            )
-        };
-        let Some(line) = line else {
-            return Err(ExecError::ReadNotImplemented);
-        };
-        let line_tokens = canonical_read_line_tokens(&line, raw_catcodes, stores);
-        if raw_catcodes {
-            return Ok(line_tokens);
-        }
-        for token in line_tokens {
-            let meaning = match token {
-                Token::Cs(symbol) => stores.meaning(symbol),
-                _ => Meaning::Undefined,
-            };
-            if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER))
-            {
-                tokens.extend((0..depth).map(|_| Token::Char {
-                    ch: '}',
-                    cat: Catcode::EndGroup,
-                }));
-                return Ok(tokens);
-            }
-            match token {
-                Token::Char {
-                    cat: Catcode::BeginGroup,
-                    ..
-                } => {
-                    depth += 1;
-                    tokens.push(token);
-                }
-                Token::Char {
-                    cat: Catcode::EndGroup,
-                    ..
-                } if depth == 0 => return Ok(tokens),
-                Token::Char {
-                    cat: Catcode::EndGroup,
-                    ..
-                } => {
-                    depth -= 1;
-                    tokens.push(token);
-                }
-                _ => tokens.push(token),
-            }
-        }
-        if depth == 0 {
-            return Ok(tokens);
-        }
-        if stream_open
-            && slot.is_some_and(|slot| {
-                stores
-                    .world()
-                    .stream_bufs()
-                    .read_stream_target(slot)
-                    .is_none()
-            })
-        {
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, "\n! File ended within \\read.\n");
-            tokens.extend((0..depth).map(|_| Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            }));
-            return Ok(tokens);
-        }
-    }
-}
-
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
 /// §1350's `new_write_whatsit` has already normalized into `0..=17`.
 ///
@@ -8988,11 +8839,14 @@ fn apply_scanned_step(
                     let slot = replay_stream_slot(stream, stores);
                     stores.world_mut().close_in(slot);
                 }
+                // TeX82 §482 has already collected the list inside the
+                // command core; §1225's remaining work is its recovery
+                // report and the definition.
                 InputStreamRequest::Read {
-                    stream,
                     target,
-                    raw_catcodes,
                     missing_to,
+                    tokens,
+                    ..
                 } => {
                     if missing_to {
                         let mut report = stores.print_err("Missing `to' inserted");
@@ -9002,20 +8856,10 @@ fn apply_scanned_step(
                         ]);
                         report.error();
                     }
-                    // §482's `if (n<0)or(n>15) then m:=16`: an out-of-range
-                    // `\read` stream is the always-closed terminal stream, not
-                    // §435's "Bad number" recovery, and §484 prompts only when
-                    // the stream number was nonnegative.
-                    let slot = (0..tex_state::world::STREAM_SLOT_COUNT as i32)
-                        .contains(&stream)
-                        .then(|| StreamSlot::new(stream as u8));
-                    let tokens =
-                        canonical_read_tokens(slot, stream >= 0, target, raw_catcodes, stores)?;
-                    let replacement = stores.intern_token_list(&tokens);
                     let parameters = stores.intern_token_list(&[]);
                     stores.set_macro_meaning(
                         target,
-                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, replacement),
+                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list()),
                     );
                 }
             }

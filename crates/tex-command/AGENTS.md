@@ -16,6 +16,16 @@ never enter snapshots, formats, durable summaries, or owned command state.
 Private state-machine modules must not be widened for compatibility with
 `tex-lex` or `tex-expand`.
 
+Line acquisition is **not** a host capability. tex.web §31's `input_ln` is
+`tex_state::CommandContext::input_ln`, alongside `\ifeof`'s §501
+`read_stream_at_eof`, because a terminal line and a `\read` stream are
+`Universe` state rather than a host acquisition keyed by request, and because
+`tests/it/boundaries.rs` forbids `CommandHostContext` from every file on the
+line path. It is the one line source for both of tex.web's callers -- §363's
+`firm_up_the_line` and §483-§486's `\read` -- and §71's `prompt_input(#)`
+prints its own prompt inside the acquisition, so the command core has no
+print channel of its own.
+
 ## File Map
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
@@ -113,7 +123,13 @@ Private state-machine modules must not be widened for compatibility with
 - `src/conditionals.rs`: private independent condition-stack machine.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
-  recovery tests.
+  recovery tests. It also owns TeX82 §482's `read_toks`, which is deliberately
+  _not_ a `scan_toks` mode: it collects whole lines rather than a
+  brace-balanced group, holds `align_state` at `1000000` for its whole
+  duration, and continues across a brace imbalance instead of ending at a
+  closing brace. §486 does not balance a runaway `\read` by inventing
+  braces; its whole recovery is `align_state:=1000000; limit:=0` plus the
+  error, so the stored list keeps exactly the tokens the file supplied.
 - `src/provenance.rs`: private command provenance construction.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the
   record union and the exhaustive `Meaning`-level command classification;

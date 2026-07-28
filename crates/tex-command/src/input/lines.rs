@@ -353,7 +353,8 @@ impl SourceCursor {
         // may substitute backing, and only for the line already loaded.
         self.line_backing = None;
         let len = u64::try_from(self.backing.bytes.len()).expect("registration checked length");
-        if self.next_physical_offset >= len {
+        let acquired = std::mem::take(&mut self.pending_acquired_line);
+        if self.next_physical_offset >= len && !acquired {
             return None;
         }
 

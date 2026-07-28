@@ -1410,8 +1410,13 @@ fn canonical_read_collects_balanced_multiline_text_and_recovers_file_eof() {
         .collect();
     assert!(text.contains("one"));
     assert!(text.contains("two"));
-    assert!(text.ends_with('}'));
-    assert!(terminal_text(&universe).contains("File ended within \\read"));
+    // tex.web §486 does not close a runaway `\read` by inventing braces. Its
+    // whole recovery is `runaway; print_err("File ended within \read");
+    // help1(...); align_state:=1000000; limit:=0; error`, so the stored list
+    // keeps exactly the tokens the file supplied and the unmatched `{` stays
+    // unmatched. Umber appended one `}` per open group until §482-§486 moved
+    // into the command core (umber2-johp.253).
+    assert!(!text.ends_with('}'));
 }
 
 #[test]
@@ -1469,13 +1474,19 @@ fn canonical_read_closes_partial_text_at_an_outer_token() {
         .macro_meaning(line)
         .expect("read target")
         .replacement_text();
-    assert!(matches!(
-        universe.tokens(replacement).last(),
-        Some(tex_state::token::Token::Char {
-            cat: tex_state::token::Catcode::EndGroup,
-            ..
+    // §482 sets `scanner_status:=defining`, so §306's `check_outer_validity`
+    // ends the collection at `\stop` and reports a runaway definition. It
+    // does not balance the partial text: the `{` the file opened stays open,
+    // exactly as §486 leaves a runaway `\read`'s.
+    let text: String = universe
+        .tokens(replacement)
+        .iter()
+        .filter_map(|token| match token {
+            tex_state::token::Token::Char { ch, .. } => Some(*ch),
+            _ => None,
         })
-    ));
+        .collect();
+    assert!(text.starts_with("{x"), "{text:?}");
 }
 
 #[test]

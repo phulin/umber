@@ -1441,3 +1441,128 @@ fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
         }]
     );
 }
+
+fn read_stream(universe: &mut Universe, bytes: &[u8]) -> tex_state::world::StreamSlot {
+    universe
+        .world_mut()
+        .set_memory_file("stream.tex", bytes.to_vec())
+        .expect("memory world accepts a seeded file");
+    let slot = tex_state::world::StreamSlot::new(1);
+    universe
+        .world_mut()
+        .open_in(slot, "stream.tex")
+        .expect("stream opens");
+    slot
+}
+
+fn read_text(processor: &CommandProcessor<'_>, list: &TracedTokenList) -> String {
+    processor
+        .state
+        .tokens(list.token_list())
+        .iter()
+        .map(|token| match token {
+            Token::Char { ch, .. } => *ch,
+            _ => '\u{0}',
+        })
+        .collect()
+}
+
+#[test]
+fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
+    // TeX82 §482: `repeat <input and store one line> until
+    // align_state=1000000`, so an unmatched `{` continues onto the next line.
+    // §486 closes the stream at end of file and appends one empty line, which
+    // §483 tokenizes into the `\par` an active `\endlinechar` produces.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let slot = read_stream(&mut universe, b"{one\ntwo}\n");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let target = processor.state.intern_control_sequence("line");
+
+    let list = processor
+        .read_toks(1, target, false)
+        .expect("read collects");
+
+    // The trailing space is line two's own `\endlinechar`, which
+    // §483 stores in `buffer[limit]` before tokenizing the line.
+    assert_eq!(read_text(&processor, &list), "{one two} ");
+    // §482 restores `align_state`, so the collection leaves no alignment
+    // state behind for the caller.
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+    );
+    // §486 appends its empty line only when `input_ln` actually fails, so
+    // a `\read` that balanced on the file's last line leaves the stream
+    // open for the next one.
+    assert!(!processor.state.read_stream_at_eof(slot));
+
+    let second = processor
+        .read_toks(1, target, false)
+        .expect("read collects the appended empty line");
+    // §486: the stream closes and one empty line is appended. §483 still
+    // tokenizes it, and an empty line in `state=new_line` is §351's `\par`.
+    let par = processor.state.intern_control_sequence("par");
+    assert_eq!(processor.state.tokens(second.token_list()), [Token::Cs(par)]);
+    assert!(processor.state.read_stream_at_eof(slot));
+}
+
+#[test]
+fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
+    // TeX82 §482: `if (n<0)or(n>15) then m:=16 else m:=n`. Stream 16 is never
+    // open, so §483's `read_open[m]=closed` selects §484's terminal branch
+    // for every out-of-range number, and for an in-range stream nobody
+    // opened. §484 prompts once and then sets `n` negative, so a second line
+    // is read with `prompt_input("")`.
+    for stream in [-1_i32, 99, 3] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        for line in ["{first", "second}"] {
+            universe
+                .world_mut()
+                .push_memory_terminal_line(line)
+                .expect("terminal input registers");
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let target = processor.state.intern_control_sequence("line");
+
+        let list = processor
+            .read_toks(stream, target, false)
+            .expect("terminal read collects");
+
+        assert_eq!(read_text(&processor, &list), "{first second} ", "{stream}");
+    }
+}
+
+#[test]
+fn read_toks_disables_alignment_delimiters_and_restores_scanner_state() {
+    // §482: `s:=align_state; align_state:=1000000` for the collection's whole
+    // duration, so an alignment tab in the line is stored as an ordinary
+    // token instead of ending a cell, and `align_state` and `scanner_status`
+    // are both returned to what the caller had.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let slot = read_stream(&mut universe, b"a&b\n");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let target = processor.state.intern_control_sequence("line");
+
+    let list = processor.read_toks(1, target, false).expect("read collects");
+
+    assert_eq!(read_text(&processor, &list), "a&b ");
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+    );
+    assert!(matches!(
+        processor.command.scanner.status(),
+        crate::processor::status::ScannerStatus::Normal
+    ));
+    assert!(!processor.state.read_stream_at_eof(slot));
+}

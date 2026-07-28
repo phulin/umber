@@ -37,6 +37,24 @@ pub(crate) struct SourceLevel {
     /// of the macro being expanded, which is why this lives on `SourceLevel`
     /// and not on [`InputLevel`].
     pub(crate) name_class: SourceNameClass,
+    pub(crate) retirement: SourceRetirement,
+}
+
+/// What exhausting a source level does, per tex.web §360.
+///
+/// §360 branches on `name`, the level's file identity: `if name>17 then
+/// <read the next line, or end the file>` and otherwise, for a `\read`
+/// pseudo-file, `if not terminal_input then {\read line has ended} begin
+/// cur_cmd:=0; cur_chr:=0; return; end`.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) enum SourceRetirement {
+    /// §362's `name>17`: `end_file_reading` and resume the enclosing level.
+    #[default]
+    Pop,
+    /// §483's `name:=m+1`: one acquired line, whose exhaustion is §360's
+    /// `cur_tok=0` and ends the `\read` collection rather than falling
+    /// through to whatever was being read before.
+    EndReadLine,
 }
 
 /// One token-list cursor.

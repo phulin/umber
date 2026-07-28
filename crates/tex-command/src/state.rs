@@ -813,14 +813,57 @@ impl CommandState {
             .find(|registered| registered.id == source)
             .cloned()
             .ok_or(UnknownRegisteredSource(source))?;
+        self.push_source_level(registered, name_class, crate::input::SourceRetirement::Pop);
+        Ok(())
+    }
+
+    /// Opens one acquired line as tex.web §483's `\read` pseudo-file.
+    ///
+    /// §483 runs `begin_file_reading; name:=m+1` around a single line, then
+    /// `state:=new_line` and `loop get_token` until the line ends. The level
+    /// is an ordinary source level -- live category codes, control-sequence
+    /// spelling, and `^^` notation all apply -- and differs only in what its
+    /// exhaustion means (§360's `cur_tok=0`), which is why the difference is
+    /// carried as its retirement and nothing else.
+    pub(crate) fn open_read_line(
+        &mut self,
+        registration: SourceRegistration,
+        name_class: SourceNameClass,
+    ) -> Result<InputLevelId, SourceRegistrationError> {
+        let source = self.register_source(registration)?;
+        let registered = self
+            .input
+            .registered_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .cloned()
+            .expect("a source registered above is present");
+        let identity = self.push_source_level(
+            registered,
+            name_class,
+            crate::input::SourceRetirement::EndReadLine,
+        );
+        if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {
+            level.cursor.pending_acquired_line = true;
+        }
+        Ok(identity)
+    }
+
+    fn push_source_level(
+        &mut self,
+        registered: RegisteredSource,
+        name_class: SourceNameClass,
+        retirement: crate::input::SourceRetirement,
+    ) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         self.input.levels.push(InputLevel::Source(SourceLevel {
             identity,
             cursor: SourceCursor::new(registered),
             name_class,
+            retirement,
         }));
-        Ok(())
+        identity
     }
 
     /// Applies TeX's `\endinput` retirement request to the active physical

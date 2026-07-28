@@ -632,8 +632,13 @@ fn read_to_definition_scans_stream_keyword_target_and_installs_tokens() {
         br"\openin1=child.tex \read1 to \fileline \closein1 \read1 to \closedline \end",
     );
     run_to_end(&mut control, &mut stores);
-    assert_eq!(macro_text(&stores, "fileline"), "file\r");
-    assert_eq!(macro_text(&stores, "closedline"), "terminal\r");
+    // §483 stores `\endlinechar` in `buffer[limit]` and then tokenizes the
+    // line, so the line ends in whatever §348 makes of a category-5
+    // character in `mid_line` state -- a space. The raw carriage return
+    // reached these lists only while `\read` bypassed the tokenizer
+    // (umber2-johp.253).
+    assert_eq!(macro_text(&stores, "fileline"), "file ");
+    assert_eq!(macro_text(&stores, "closedline"), "terminal ");
     assert!(stores.input_stream_eof(StreamSlot::new(1)));
 }
 

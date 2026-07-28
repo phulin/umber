@@ -58,6 +58,10 @@ pub(crate) enum InputRetirementAction {
     SourcePopped,
     TokenListPopped,
     TerminalStop,
+    /// tex.web §360's `\read` pseudo-file: the level's one line has ended,
+    /// which `get_next` reports as `cur_cmd:=cur_chr:=0` rather than by
+    /// resuming the enclosing level.
+    ReadLineEnded,
     ScantokensClosed,
     VTemplateRetained,
     VTemplatePopped,
@@ -277,10 +281,11 @@ impl CommandState {
                 unreachable!("the inspected top level was not a token cursor");
             };
             let name_class = source.name_class;
+            let action = source_retirement_action(source.retirement);
             self.input.levels.pop();
             return Ok(InputRetirement {
                 identity: expected,
-                action: InputRetirementAction::SourcePopped,
+                action,
                 reason: InputRetirementReason::Source,
                 name_class: Some(name_class),
                 trace: None,
@@ -359,9 +364,10 @@ impl CommandState {
             let InputLevel::Source(source) = level else {
                 unreachable!("the popped level was not a token cursor");
             };
+            let action = source_retirement_action(source.retirement);
             return Some(InputRetirement {
                 identity,
-                action: InputRetirementAction::SourcePopped,
+                action,
                 reason: InputRetirementReason::Source,
                 name_class: Some(source.name_class),
                 trace: None,
@@ -458,3 +464,13 @@ pub(crate) fn input_level_identity(level: &InputLevel) -> InputLevelId {
 
 #[cfg(test)]
 mod tests;
+
+/// Names the canonical effect of exhausting one source level (tex.web §360).
+const fn source_retirement_action(
+    retirement: super::SourceRetirement,
+) -> InputRetirementAction {
+    match retirement {
+        super::SourceRetirement::Pop => InputRetirementAction::SourcePopped,
+        super::SourceRetirement::EndReadLine => InputRetirementAction::ReadLineEnded,
+    }
+}

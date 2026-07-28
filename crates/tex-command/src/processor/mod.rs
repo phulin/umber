@@ -1,6 +1,6 @@
 //! Ephemeral command-processor orchestration.
 
-mod alignment;
+pub(crate) mod alignment;
 pub(crate) mod expand;
 mod next;
 mod observe;
@@ -74,6 +74,13 @@ pub struct CommandProcessor<'a> {
     next_delivery_sequence: u64,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
+    /// tex.web §360 has just ended a `\\read` pseudo-file's only line.
+    ///
+    /// §360 answers that with `cur_cmd:=0; cur_chr:=0; return` -- a plain
+    /// return from `get_next`, with no `check_outer_validity` and no runaway
+    /// report. Ordinary end of input is a different thing entirely, so the
+    /// two must not share one `None`.
+    pub(crate) read_line_ended: bool,
     pub(crate) outer_recovered_while_matching: bool,
     /// Set only when terminal EOF invokes TeX82's `check_outer_validity`
     /// recovery while a scalar macro matcher is live. The inserted frozen
@@ -104,6 +111,7 @@ impl<'a> CommandProcessor<'a> {
             replay_completion: None,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
+            read_line_ended: false,
             outer_recovered_while_matching: false,
             eof_recovered_while_matching: false,
         }

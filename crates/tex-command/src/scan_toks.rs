@@ -12,10 +12,12 @@ use tex_state::TracedTokenList;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
-use crate::{CommandError, CommandProcessor};
+use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
+use tex_state::CommandLineSource;
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{CommandObservation, TokenListRecord};
@@ -515,6 +517,220 @@ fn is_end_group(token: Token) -> bool {
             ..
         }
     )
+}
+
+/// TeX82 §482's `read_toks`, the `\read`/`\readline` collector.
+///
+/// `read_toks` is deliberately not a `scan_toks` mode: it collects whole
+/// _lines_ rather than a brace-balanced group, disables alignment delimiters
+/// for its whole duration, and continues across a brace imbalance instead of
+/// ending at a closing brace. It shares only the frozen-list result.
+impl CommandProcessor<'_> {
+    /// Collects TeX82 §482's `read_toks` list.
+    ///
+    /// `begin scanner_status:=defining; warning_index:=r; def_ref:=get_avail;
+    /// token_ref_count(def_ref):=null; p:=def_ref; store_new_token(
+    /// end_match_token); if (n<0)or(n>15) then m:=16 else m:=n; s:=align_state;
+    /// align_state:=1000000; repeat <Input and store tokens from the next line
+    /// of the file>; until align_state=1000000; cur_val:=def_ref;
+    /// scanner_status:=normal; align_state:=s; end`.
+    ///
+    /// The result is a parameterless macro body: §482 stores `end_match_token`
+    /// as the whole parameter text, which is Umber's empty parameter list.
+    pub(crate) fn read_toks(
+        &mut self,
+        stream: i32,
+        target: tex_state::interner::Symbol,
+        raw_catcodes: bool,
+    ) -> Result<TracedTokenList, CommandError> {
+        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
+        self.command.transient.next_builder_identity =
+            self.command.transient.next_builder_identity.wrapping_add(1);
+        // §482: `scanner_status:=defining; warning_index:=r`.
+        let status = ScannerStatus::Defining(DefinitionContext {
+            target: Some(target),
+            builder,
+            warning: ScannerWarning(builder.0),
+        });
+        let prior = self.command.begin_scanner_status(status.clone());
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
+        // §482: `s:=align_state; align_state:=1000000` disables tab marks and
+        // `\cr` for the whole collection, and is restored whatever happens.
+        let saved_align_state = self.command.alignment.align_state;
+        self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+        let result = self.read_toks_lines(stream, target, raw_catcodes);
+        self.command.alignment.align_state = saved_align_state;
+        self.restore_scanner_status_with_observation(status, prior);
+        let tokens = result?;
+        let list = self.state.finish_traced_token_list(&tokens);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::TokenList(TokenListRecord {
+            transition: "complete",
+            purpose: "read",
+            tokens: tokens
+                .iter()
+                .copied()
+                .map(|token| self.observed_token(token))
+                .collect(),
+        }));
+        Ok(list)
+    }
+
+    /// §482's `repeat <Input and store tokens from the next line> until
+    /// align_state=1000000`.
+    fn read_toks_lines(
+        &mut self,
+        stream: i32,
+        target: tex_state::interner::Symbol,
+        raw_catcodes: bool,
+    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+        // §482: `if (n<0)or(n>15) then m:=16 else m:=n`. Stream 16 is never
+        // open, so §483 always takes §484's terminal branch for it.
+        let slot = u8::try_from(stream)
+            .ok()
+            .filter(|slot| *slot < tex_state::world::STREAM_SLOT_COUNT as u8)
+            .map(tex_state::world::StreamSlot::new);
+        let mut tokens = Vec::new();
+        // §484: "The value of `n` is set negative so that additional prompts
+        // will not be given in the case of multi-line input."
+        let mut prompted = false;
+        loop {
+            self.read_toks_line(slot, target, raw_catcodes, &mut prompted, &mut tokens)?;
+            if self.command.alignment.align_state == TEMPLATE_ALIGN_STATE {
+                return Ok(tokens);
+            }
+        }
+    }
+
+    /// §483's ⟨Input and store tokens from the next line of the file⟩.
+    fn read_toks_line(
+        &mut self,
+        slot: Option<tex_state::world::StreamSlot>,
+        target: tex_state::interner::Symbol,
+        raw_catcodes: bool,
+        prompted: &mut bool,
+        tokens: &mut Vec<TracedTokenWord>,
+    ) -> Result<(), CommandError> {
+        let (line, file_ended) = self.acquire_read_line(slot, target, prompted)?;
+        // §483: `begin_file_reading; name:=m+1; ... state:=new_line`.
+        let level = self
+            .command
+            .open_read_line(
+                SourceRegistration::new(RegisteredSourceKind::Generated, line.into_bytes()),
+                // §483's `name:=m+1`, where §482 already mapped every stream
+                // outside `0..=15` to `m:=16`.
+                crate::input::SourceNameClass::ReadStream(
+                    slot.map_or(16, tex_state::world::StreamSlot::raw),
+                ),
+            )
+            .map_err(|_| CommandError::input_invariant())?;
+        if raw_catcodes {
+            self.collect_read_line_verbatim(level, tokens)?;
+            if file_ended {
+                self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+            }
+            return Ok(());
+        }
+        // §483: `loop get_token; if cur_tok=0 then goto done; if
+        // align_state<1000000 then {unmatched `}' aborts the line} begin
+        // repeat get_token until cur_tok=0; align_state:=1000000; goto done;
+        // end; store_new_token(cur_tok); end`.
+        while let Some(command) = self.get_token()? {
+            if self.command.alignment.align_state < TEMPLATE_ALIGN_STATE {
+                while self.get_token()?.is_some() {}
+                self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+                return Ok(());
+            }
+            tokens.push(command.spelling());
+        }
+        if file_ended {
+            self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+        }
+        Ok(())
+    }
+
+    /// Collects one e-TeX `\readline` line.
+    ///
+    /// `\readline` reads the line with every character carrying category 12,
+    /// or 10 for a space, whatever the current table says, so no control
+    /// sequence, brace, or tab mark can form and §483's alignment and brace
+    /// rules have nothing to act on. §483's line still ends at its
+    /// `\endlinechar`, which is why the line is loaded and read through the
+    /// same cursor rather than out of the acquired string.
+    fn collect_read_line_verbatim(
+        &mut self,
+        level: crate::input::InputLevelId,
+        tokens: &mut Vec<TracedTokenWord>,
+    ) -> Result<(), CommandError> {
+        let endlinechar = self
+            .state
+            .int_param(tex_state::env::banks::IntParam::END_LINE_CHAR);
+        self.command.load_next_source_line(endlinechar);
+        while let Some(character) = self.command.next_source_character() {
+            let ch = character
+                .code()
+                .to_char()
+                .map_err(|_| CommandError::input_invariant())?;
+            let origin = self.state.source_token_origin(
+                character.range().source(),
+                character.range().start(),
+                character.range().end(),
+            );
+            let cat = if ch == ' ' {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            };
+            tokens.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
+        }
+        self.command
+            .retire_exhausted_input(level)
+            .map_err(|_| CommandError::input_invariant())?;
+        Ok(())
+    }
+
+    /// §483's line acquisition: §484's terminal, or §485/§486's stream.
+    ///
+    /// The flag is §486's `input_ln` returning false: the stream has just
+    /// closed, and "if align_state<>1000000 then begin runaway; print_err(
+    /// "File ended within \read"); ... align_state:=1000000; limit:=0;
+    /// error; end". The line itself is still read and tokenized -- it is
+    /// §486's one appended empty line -- so only the brace count is reset.
+    fn acquire_read_line(
+        &mut self,
+        slot: Option<tex_state::world::StreamSlot>,
+        target: tex_state::interner::Symbol,
+        prompted: &mut bool,
+    ) -> Result<(String, bool), CommandError> {
+        // §483: `if read_open[m]=closed then <terminal> else <the file>`.
+        if let Some(slot) = slot
+            && !self.state.read_stream_at_eof(slot)
+            && let Some(line) = self.state.input_ln(CommandLineSource::Stream(slot))
+        {
+            let ended = self.state.read_stream_at_eof(slot);
+            return Ok((line, ended));
+        }
+        // §484: `if interaction>nonstop_mode then if n<0 then
+        // prompt_input("") else begin wake_up_terminal; print_ln; sprint_cs(r);
+        // prompt_input("="); n:=-1; end else fatal_error(...)`.
+        if !self.state.interaction_permits_terminal_input() {
+            return Err(CommandError::input_invariant());
+        }
+        let prompt = if *prompted {
+            String::new()
+        } else {
+            *prompted = true;
+            format!("\n\\{}=", self.state.resolve(target))
+        };
+        let line = self
+            .state
+            .input_ln(CommandLineSource::Terminal { prompt: &prompt })
+            .ok_or_else(CommandError::input_invariant)?;
+        Ok((line, false))
+    }
 }
 
 #[cfg(test)]

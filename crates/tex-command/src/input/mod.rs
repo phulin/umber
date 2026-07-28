@@ -10,7 +10,8 @@ mod tokenizer;
 
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, StoredReplayReason, TokenBehavior,
+    SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceRetirement, StoredReplayReason,
+    TokenBehavior,
     TokenCursor, TokenPayload,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};

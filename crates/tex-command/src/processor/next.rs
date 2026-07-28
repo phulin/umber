@@ -1060,6 +1060,14 @@ impl CommandProcessor<'_> {
                 if let Some(episode) = self.replay_completion.take() {
                     return Ok(Some(CommandReplayDelivery::Completed(episode)));
                 }
+                // §360: a `\read` pseudo-file's line has ended, which is
+                // `cur_cmd:=0; cur_chr:=0; return` -- an ordinary end of
+                // line inside a live `read_toks`, not end of input, so
+                // `check_outer_validity` must not run and no runaway may be
+                // reported.
+                if std::mem::take(&mut self.read_line_ended) {
+                    return Ok(None);
+                }
                 if self.recover_runaway_eof()? {
                     continue;
                 }
@@ -1332,7 +1340,14 @@ impl CommandProcessor<'_> {
             }));
         }
         match action {
+            // §360's `\read` line end is `cur_cmd:=cur_chr:=0; return`: the
+            // level is gone and delivery stops, rather than resuming whatever
+            // §483's `begin_file_reading` buried.
             InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
+            InputRetirementAction::ReadLineEnded => {
+                self.read_line_ended = true;
+                Ok(RetirementRestart::Stop)
+            }
             InputRetirementAction::VTemplateRetained => {
                 // The exhausted frame remains live while `get_next` delivers
                 // frozen end-template. Its expanded `endv` is then handled by
@@ -1828,9 +1843,12 @@ fn observed_retirement_reason(
     reason: InputRetirementReason,
 ) -> InputReason {
     match (action, reason) {
-        (InputRetirementAction::SourcePopped | InputRetirementAction::TerminalStop, _) => {
-            InputReason::Source
-        }
+        (
+            InputRetirementAction::SourcePopped
+            | InputRetirementAction::TerminalStop
+            | InputRetirementAction::ReadLineEnded,
+            _,
+        ) => InputReason::Source,
         (_, InputRetirementReason::Backup) => InputReason::Backup,
         (_, InputRetirementReason::Macro) => InputReason::Macro,
         (_, InputRetirementReason::Parameter) => InputReason::Parameter,

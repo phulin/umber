@@ -760,13 +760,19 @@ pub enum InputStreamRequest {
     Close {
         stream: i32,
     },
+    /// TeX82 §482's `read_toks` has already run: the collected list is
+    /// carried here, not a stream the executor must go read itself.
+    ///
+    /// §1225 calls `read_toks(n,r)` inside `prefixed_command`, so the
+    /// collection is part of scanning `\\read` and belongs to the command
+    /// core. Replay only installs the parameterless macro §482 built.
     Read {
         stream: i32,
         target: Symbol,
-        raw_catcodes: bool,
         /// tex.web §1225's `if not scan_keyword("to")`, which reports
         /// "Missing `to' inserted" and then scans the target anyway.
         missing_to: bool,
+        tokens: tex_state::TracedTokenList,
     },
 }
 
@@ -1726,11 +1732,17 @@ impl CommandProcessor<'_> {
                     .next_non_space_raw()?
                     .and_then(|command| command.control_sequence())
                     .ok_or(CommandError::input_invariant())?;
+                // TeX82 §1225: `\\read` scans `n`, `to`, and `r`, then runs
+                // §482's `read_toks(n,r)` on the spot. The collector needs
+                // live input levels, category codes, `align_state`, and
+                // `scanner_status`, all of which are the command core's.
+                let tokens =
+                    self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
-                    raw_catcodes: primitive == UnexpandablePrimitive::ReadLine,
                     missing_to,
+                    tokens,
                 })
             }
             _ => Err(CommandError::input_invariant()),

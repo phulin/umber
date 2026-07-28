@@ -266,6 +266,15 @@ pub(crate) struct SourceCursor {
     /// bytes goes through [`Self::current_backing`], while
     /// [`Self::load_next_line`] keeps advancing through the physical file.
     pub(crate) line_backing: Option<RegisteredSource>,
+    /// This level's backing is one line tex.web §483 already acquired.
+    ///
+    /// §483 loads that line whether or not it has any characters: `limit:=
+    /// last` with `last=first` is an empty line, `buffer[limit]:=
+    /// end_line_char` still applies to it, and §486 depends on exactly that
+    /// -- its appended empty line is what §351 turns into `\par`. An empty
+    /// *file* is a different thing: §31's `input_ln` returns false before any
+    /// line exists, so no line is loaded at all.
+    pub(crate) pending_acquired_line: bool,
     pub(crate) next_physical_offset: u64,
     pub(crate) next_line_number: u64,
     pub(crate) line: Option<SourceLineState>,
@@ -278,6 +287,7 @@ impl SourceCursor {
         Self {
             backing,
             line_backing: None,
+            pending_acquired_line: false,
             next_physical_offset: 0,
             next_line_number: 1,
             line: None,
