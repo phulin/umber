@@ -296,7 +296,7 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
 /// `\tracingonline` at zero. Routing them through the redirection is a
 /// separate change to committed diagnostic corpora, not part of §1293's
 /// completion bookkeeping.
-fn end_show_diagnostic(stores: &mut Universe) {
+pub(crate) fn end_show_diagnostic(stores: &mut Universe) {
     let mut printer = stores.printer();
     printer.print_nl("");
     printer.print_ln();

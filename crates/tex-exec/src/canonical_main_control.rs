@@ -3562,6 +3562,11 @@ enum ScannedStep {
     ShowTokens {
         tokens: TracedTokenList,
     },
+    /// e-TeX 2.6 `etex.ch` [17.3703--3732]'s read-only conditional-stack
+    /// diagnostic, detached in innermost-to-outermost traversal order.
+    ShowIfs {
+        conditions: Vec<tex_command::ActiveCondition>,
+    },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
     BoxRegister {
@@ -5656,6 +5661,11 @@ fn scan_command(
                 tokens: text.tokens,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowIfs) => {
+            Ok(ScannedStep::ShowIfs {
+                conditions: processor.active_conditions(),
+            })
+        }
         // TeX82 §1290's `any_mode(xray): show_whatever` puts every \show
         // family in every mode; §1293's `show_lists_code` case reads no
         // operand at all.
@@ -6317,6 +6327,7 @@ fn scan_unclassified_primitive(
         | P::ShowLists
         | P::ShowThe
         | P::ShowTokens
+        | P::ShowIfs
         | P::SkewChar
         | P::Skip
         | P::SkipDef
@@ -6514,7 +6525,6 @@ fn scan_unclassified_primitive(
         | P::PdfTeXUnimplemented
         | P::QuitVMode
         | P::ShowGroups
-        | P::ShowIfs
         | P::SpaceFactor
         | P::SplitDiscards
         | P::VFil
@@ -7939,6 +7949,7 @@ fn applied_mutation_observation(
         | ScannedStep::ShowBox { .. }
         | ScannedStep::ShowLists { .. }
         | ScannedStep::ShowTokens { .. }
+        | ScannedStep::ShowIfs { .. }
         | ScannedStep::VSplit(..)
         | ScannedStep::ImmediateExtension(..)
         | ScannedStep::BoxRegister { .. }
@@ -8160,6 +8171,11 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                     .map(|token| observed_macro_token(token, stores))
                     .collect(),
             ),
+        }),
+        ScannedStep::ShowIfs { conditions } => Some(EffectRecord {
+            kind: "showifs",
+            detail: render_showifs(conditions),
+            tokens: None,
         }),
         ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
             Some(EffectRecord {
@@ -9961,6 +9977,12 @@ fn apply_scanned_step(
             let text = message_text(stores, tokens.token_list());
             stores.printer().print(&format!("\n> {text}"));
             crate::diagnostics::complete_show(stores, false);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ShowIfs { conditions } => {
+            stores.printer().print(&render_showifs(&conditions));
+            crate::diagnostics::end_show_diagnostic(stores);
+            crate::diagnostics::complete_show(stores, true);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
@@ -12048,6 +12070,34 @@ fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> Strin
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     crate::diagnostics::print_text_with_newlinechar(stores, &text)
+}
+
+/// e-TeX 2.6 `etex.ch` [17.3715--3732]'s exact `show_ifs` traversal.
+fn render_showifs(conditions: &[tex_command::ActiveCondition]) -> String {
+    let mut text = String::from("\n");
+    if conditions.is_empty() {
+        text.push_str("\n### no active conditionals");
+        return text;
+    }
+    let mut level = conditions.len();
+    for condition in conditions {
+        text.push_str("\n### level ");
+        text.push_str(&level.to_string());
+        text.push_str(": \\");
+        if condition.inverted() {
+            text.push_str("unless\\");
+        }
+        text.push_str(condition.kind_name());
+        if condition.else_branch() {
+            text.push_str("\\else");
+        }
+        if condition.source_line() != 0 {
+            text.push_str(" entered on line ");
+            text.push_str(&condition.source_line().to_string());
+        }
+        level -= 1;
+    }
+    text
 }
 
 /// TeX82 §1280's `<Print string s on the terminal>`.

@@ -5,7 +5,7 @@
 
 mod command;
 mod conditionals;
-pub use conditionals::IncompleteCondition;
+pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod error;
 mod fatal;
 mod host;

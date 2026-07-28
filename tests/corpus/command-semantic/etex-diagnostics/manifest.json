@@ -25,6 +25,28 @@
         "count:7=0"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "etex-showifs",
+      "property_id": "tex82.main-control.show-value",
+      "profile": "etex-initex",
+      "source": "etex-showifs.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [3703, 3715, 3720, 3732]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["effect"],
+        "count_registers": [0]
+      },
+      "expected": [
+        "effect:showifs:\n\n### level 2: \\iffalse\\else entered on line 3\n### level 1: \\iftrue entered on line 2",
+        "effect:terminate:engine\u0000",
+        "count:0=1"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

@@ -69,8 +69,11 @@ components while changing the unit type. `\fontcharwd`, `\fontcharht`, `\fontcha
 the checkpointed interaction state. `\showtokens` uses `etex.ch`
 [17.3623--3671]'s command-owned, unexpanded balanced general-text scan, removes
 the compulsory braces, and emits a detached token-bearing diagnostic effect
-before the ordinary terminal/transcript rendering. `\showgroups` and `\showifs` walk
-the live checkpointed group and conditional stacks. `\tracingassigns`,
+before the ordinary terminal/transcript rendering. `\showgroups` walks the
+live checkpointed group stack. `\showifs` uses `etex.ch` [17.3703--3732]'s
+innermost-first traversal of a typed detached conditional snapshot, including
+`\unless`, `\else`, and saved source-line rendering, without mutating command
+state. `\tracingassigns`,
 `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
 are implemented as group-scoped integer parameters. Exact diagnostic trace
 text parity for those four parameters is explicitly deferred; it is not part

@@ -5052,6 +5052,7 @@ pub(super) fn run_canonical_tex82(source: &str) -> Universe {
 fn run_canonical_etex(source: &str) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     control
         .register_root_source(SourceRegistration::new(
@@ -5107,6 +5108,58 @@ fn canonical_showtokens_is_mode_independent_and_rejects_prefixes_without_mutatio
     }
     assert!(
         terminal.contains("You can't use a prefix with `\\showtokens'"),
+        "{terminal}"
+    );
+    assert_eq!(stores.count(0), 1);
+}
+
+#[test]
+fn canonical_showifs_renders_live_stack_in_etex_order_without_mutation() {
+    // e-TeX 2.6 etex.ch [17.3703--3732]: the current frame is printed first,
+    // `fi_code` appends `\else`, and saved source lines belong to each frame.
+    let stores = run_canonical_etex(
+        "\\nonstopmode\n\
+         \\iftrue\n\
+         \\unless\\iftrue\\else\n\
+         \\iffalse\\else\\showifs\\fi\n\
+         \\fi\\fi\n\
+         \\global\\count0=1\\end",
+    );
+    let terminal = terminal_effect_text(&stores);
+    let inner = terminal
+        .find("### level 3: \\iffalse\\else entered on line 4")
+        .expect("innermost conditional");
+    let middle = terminal
+        .find("### level 2: \\unless\\iftrue\\else entered on line 3")
+        .unwrap_or_else(|| panic!("middle conditional: {terminal}"));
+    let outer = terminal
+        .find("### level 1: \\iftrue entered on line 2")
+        .expect("outermost conditional");
+    assert!(inner < middle && middle < outer, "{terminal}");
+    assert_eq!(stores.count(0), 1, "diagnostic does not alter execution");
+}
+
+#[test]
+fn canonical_showifs_handles_empty_stack_modes_and_prefix_recovery() {
+    let stores = run_canonical_etex(
+        r"\nonstopmode
+          \showifs
+          \setbox0=\hbox{\iftrue\showifs\fi}
+          $\iftrue\showifs\fi$
+          \global\showifs
+          \global\count0=1\end",
+    );
+    let terminal = terminal_effect_text(&stores);
+    assert!(
+        terminal.contains("### no active conditionals"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.matches("### level 1: \\iftrue").count() >= 2,
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("You can't use a prefix with `\\showifs'"),
         "{terminal}"
     );
     assert_eq!(stores.count(0), 1);

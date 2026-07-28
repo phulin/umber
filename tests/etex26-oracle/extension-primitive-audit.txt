@@ -59,7 +59,7 @@ savinghyphcodes|command-core|savinghyphcodes state|eq_word_define parameter comm
 savingvdiscards|command-core|savingvdiscards state|eq_word_define parameter commit
 scantokens|command-core|scantokens construction|pseudo_start general-text commit
 showgroups|executor|tex-exec diagnostic focused tests|group-stack diagnostic
-showifs|executor|tex-exec diagnostic focused tests|condition-stack diagnostic
+showifs|executor|canonical tex-command conditional snapshot plus tex-exec detached diagnostic effect and etex-diagnostics semantic microfixture|etex.ch [17.3703--3732] live condition-stack diagnostic
 showtokens|executor|canonical tex-command scan plus tex-exec detached diagnostic effect and etex-diagnostics semantic microfixture|etex.ch [17.3623--3671] unexpanded balanced-text diagnostic
 skip|command-core|sparse skip write|sa_def register commit
 splitbotmarks|executor|tex-exec mark-class focused tests|split mark enquiry

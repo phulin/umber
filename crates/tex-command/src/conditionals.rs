@@ -190,6 +190,44 @@ pub struct IncompleteCondition {
     source_line: u32,
 }
 
+/// Read-only e-TeX `\showifs` projection of one active conditional.
+///
+/// This deliberately omits the stack identity and exposes semantic values,
+/// so an executor can detach the diagnostic without retaining command state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ActiveCondition {
+    kind: ConditionalKind,
+    source_line: u32,
+    inverted: bool,
+    else_branch: bool,
+}
+
+impl ActiveCondition {
+    /// `print_cmd_chr(if_test, cur_if)`'s spelling without the escape.
+    #[must_use]
+    pub const fn kind_name(self) -> &'static str {
+        self.kind.canonical_name()
+    }
+
+    /// The saved `if_line`; zero suppresses the `entered on line` clause.
+    #[must_use]
+    pub const fn source_line(self) -> u32 {
+        self.source_line
+    }
+
+    /// Whether e-TeX's `\unless` negated this conditional.
+    #[must_use]
+    pub const fn inverted(self) -> bool {
+        self.inverted
+    }
+
+    /// Whether `if_limit=fi_code`, rendered by e-TeX as `\else`.
+    #[must_use]
+    pub const fn else_branch(self) -> bool {
+        self.else_branch
+    }
+}
+
 impl IncompleteCondition {
     /// TeX82's `print_cmd_chr(if_test,cur_if)` spelling without the escape.
     #[must_use]
@@ -272,6 +310,19 @@ impl ConditionStack {
         }
     }
 
+    fn active_conditions(&self) -> Vec<ActiveCondition> {
+        self.frames
+            .iter()
+            .rev()
+            .map(|frame| ActiveCondition {
+                kind: frame.kind,
+                source_line: frame.source_line,
+                inverted: frame.inverted,
+                else_branch: frame.limit == IfLimit::Fi,
+            })
+            .collect()
+    }
+
     /// Changes the exact frame selected before recursive operand expansion.
     pub(crate) fn change_if_limit(&mut self, identity: ConditionId, limit: IfLimit) -> bool {
         let Some(frame) = self
@@ -312,6 +363,14 @@ impl ConditionStack {
             condition: identity,
             delimiter,
         })
+    }
+}
+
+impl CommandProcessor<'_> {
+    /// Detaches the active stack from innermost to outermost for `\showifs`.
+    #[must_use]
+    pub fn active_conditions(&self) -> Vec<ActiveCondition> {
+        self.command.conditions.active_conditions()
     }
 }
 
