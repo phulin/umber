@@ -5209,6 +5209,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             runtime: &mut control.runtime,
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
+            initex: control.initex,
         },
         &mut control.boxes,
         &mut control.prepared_dvi_pages,
@@ -5239,6 +5240,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             runtime: &mut control.runtime,
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
+            initex: control.initex,
         },
         &mut control.boxes,
         &mut control.prepared_dvi_pages,
@@ -6325,21 +6327,18 @@ fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
     );
     run_to_end(&mut control, &mut universe);
 
-    let error_effects = universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter(|effect| {
-            matches!(
-                effect,
-                EffectRecord::StreamWrite {
-                    sink: tex_state::PrintSink::TerminalAndLog,
-                    text,
-                } if text == "\n! canonical diagnostic.\n"
-            )
-        })
-        .count();
-    assert_eq!(error_effects, 1, "diagnostic must be a World output effect");
+    // Every character reaches the World through the §54 selector's sink, so
+    // the report is a run of `StreamWrite` effects rather than one.
+    assert!(
+        universe.world().effect_records().iter().any(|effect| matches!(
+            effect,
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::TerminalAndLog,
+                ..
+            }
+        )),
+        "diagnostic must be a World output effect"
+    );
 
     let text = terminal_text(&universe);
     assert!(text.contains("! canonical diagnostic."), "{text}");

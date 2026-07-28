@@ -283,16 +283,7 @@
         "count_registers": [0]
       },
       "expected": ["terminal-check:Patterns can be loaded only by INITEX=true", "count:0=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-ktj0",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:Patterns can be loaded only by INITEX=true",
-          "actual": "terminal-check:Patterns can be loaded only by INITEX=false"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "font-parameters",
@@ -317,18 +308,16 @@
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [1256, 1257, 1258, 1259, 1260]
       },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["Improper"], "count_registers": [0] },
-      "expected": ["terminal-check:Improper=true", "count:0=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-jrvz",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:Improper=true",
-          "actual": "terminal-check:Improper=false"
-        }
-      }
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": ["! Illegal magnification has been changed to 1000 (0)."],
+        "count_registers": [0]
+      },
+      "expected": [
+        "terminal-check:! Illegal magnification has been changed to 1000 (0).=true",
+        "count:0=1"
+      ],
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "interaction-mode",
@@ -377,16 +366,7 @@
       },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["a b"], "count_registers": [0] },
       "expected": ["terminal-check:a b=true", "count:0=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-19aw",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:a b=true",
-          "actual": "terminal-check:a b=false"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "errmessage-help",
@@ -399,16 +379,7 @@
       },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["user help"], "count_registers": [0] },
       "expected": ["terminal-check:user help=true", "count:0=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-djge",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:user help=true",
-          "actual": "terminal-check:user help=false"
-        }
-      }
+      "expectation": { "kind": "pass" }
     },
     {
       "id": "case-shift",
@@ -470,16 +441,7 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1298] },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["? "], "count_registers": [1] },
       "expected": ["terminal-check:? =true", "count:1=1"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-74vb",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:? =true",
-          "actual": "terminal-check:? =false"
-        }
-      },
+      "expectation": { "kind": "pass" },
       "terminal_lines": ["s"]
     },
     {
@@ -490,16 +452,7 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1335] },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["performed only by INITEX"] },
       "expected": ["terminal-check:performed only by INITEX=true"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-xfj3",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:performed only by INITEX=true",
-          "actual": "terminal-check:performed only by INITEX=false"
-        }
-      }
+      "expectation": { "kind": "pass" }
     }
   ]
 }

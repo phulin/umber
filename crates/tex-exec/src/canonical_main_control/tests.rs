@@ -625,3 +625,78 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     let output = terminal_text(&stores);
     assert_eq!(output.matches("! Arithmetic overflow.").count(), 2, "{output}");
 }
+
+#[test]
+fn message_spacing_follows_the_texweb_1280_offset_rule() {
+    // TeX82 §1280 separates consecutive `\message` texts with one space when
+    // a line is already open.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\message{a}\message{b}\end");
+    run_to_end(&mut control, &mut stores);
+
+    assert!(terminal_text(&stores).contains("a b"), "{}", terminal_text(&stores));
+}
+
+#[test]
+fn errmessage_prefers_errhelp_over_the_builtin_help() {
+    // TeX82 §1283: `if err_help<>null then use_err_help:=true`, and §90 shows
+    // it on the transcript.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\errhelp={user help}\errmessage{bad}\count0=1\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    let output = terminal_text(&stores);
+    assert!(output.contains("! bad."), "{output}");
+    assert!(output.contains("user help"), "{output}");
+    assert!(!output.contains("Hercule Poirot"), "{output}");
+}
+
+#[test]
+fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
+    // TeX82 §1252 and §1335 are both `init`-guarded.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let _initex = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = CanonicalMainControl::new();
+    register_source(&mut control, br"\patterns{a1b}\count0=1\dump");
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! Patterns can be loaded only by INITEX."),
+        "{output}"
+    );
+    assert!(
+        output.contains("(\\dump is performed only by INITEX)"),
+        "{output}"
+    );
+}
+
+#[test]
+fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
+    // TeX82 §1293's `common_ending: ...; error`, whose §83 dialog prompts
+    // `?␣` and whose §86 `S` answer switches to scroll mode.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts a line");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\showthe\count0 \count1=1\end");
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(1), 1);
+    let output = terminal_text(&stores);
+    assert!(output.contains("> 0."), "{output}");
+    assert!(output.contains("? "), "{output}");
+    assert_eq!(
+        stores.interaction_mode(),
+        tex_state::InteractionMode::Scroll
+    );
+}

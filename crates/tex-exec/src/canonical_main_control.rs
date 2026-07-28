@@ -79,6 +79,15 @@ pub struct CanonicalMainControl {
     /// step, so the prologue is carried as a one-shot on the first step rather
     /// than by a distinct entry call every driver would have to remember.
     main_control_entered: bool,
+    /// tex.web's `init`/`tini` compile-time split as a session flag.
+    ///
+    /// tex.web builds INITEX and production TeX from the same source with
+    /// `init`-guarded code removed from the latter, so §1252's `\patterns`
+    /// and §1335's `\dump` have entirely different behavior in the two
+    /// binaries. Umber has one binary, so the distinction is the session's:
+    /// [`CanonicalMainControl::tex82_initex`] builds an INITEX session and
+    /// every other constructor a production one.
+    initex: bool,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     #[cfg(any(test, feature = "instrumentation"))]
@@ -339,6 +348,10 @@ struct CommandMachine<'a> {
     runtime: &'a mut CommandRuntime,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
+    /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
+    /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
+    /// commands whose whole behavior it selects.
+    initex: bool,
 }
 
 impl CommandMachine<'_> {
@@ -409,6 +422,7 @@ impl CanonicalMainControl {
         Self {
             command: CommandState::new(CommandProfile::TEX82),
             next_alignment_identity: 1,
+            initex: true,
             ..Self::default()
         }
     }
@@ -681,6 +695,7 @@ impl CanonicalMainControl {
             runtime: &mut self.runtime,
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
+            initex: self.initex,
         }
     }
 
@@ -935,6 +950,7 @@ impl CanonicalMainControl {
                 runtime: &mut self.runtime,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                initex: self.initex,
             },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
@@ -1242,6 +1258,7 @@ impl CanonicalMainControl {
                 runtime: &mut self.runtime,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                initex: self.initex,
             },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
@@ -2234,6 +2251,7 @@ impl CanonicalMainControl {
                 runtime: &mut self.runtime,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                initex: self.initex,
             },
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
@@ -2775,7 +2793,12 @@ enum ScannedStep {
     /// exit from `main_control`. §1335's `final_cleanup` has already unwound
     /// the abandoned input stack, so the job-termination effect is this
     /// step's, not a later input-exhaustion step's.
-    End,
+    ///
+    /// §1335's `c` -- 0 for `\end`, 1 for `\dump` -- selects the whole tail
+    /// of `final_cleanup`, so it is carried rather than discarded.
+    End {
+        dump: bool,
+    },
     /// TeX82 §1051's `privileged` failure for `\\end`/`\\dump` in internal
     /// vertical mode (`mode<0`): `report_illegal_case`, and the job keeps
     /// running. Shares the recovery shape of `IllegalBoxShift` and friends.
@@ -4449,7 +4472,12 @@ fn scan_command(
                 // §1335's `final_cleanup` unwinds the input stack that
                 // `main_control`'s return has abandoned.
                 processor.final_cleanup();
-                return Ok(ScannedStep::End);
+                return Ok(ScannedStep::End {
+                    dump: matches!(
+                        command.meaning(),
+                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump)
+                    ),
+                });
             }
             processor.back_input(command).map_err(command_error)?;
             Ok(ScannedStep::EjectResidualPage)
@@ -5481,12 +5509,14 @@ fn scan_command(
             // `scan_left_brace` and then classify a `get_x_token` loop's
             // deliveries (§961, §935) as word characters, word boundaries, or
             // the closing brace. Neither absorbs a balanced text, so neither
-            // enters §473's `absorbing` scanner status. `plain.tex`'s `\input
-            // hyphen` loads this data directly, so Umber treats both
-            // primitives as always legal here (matching TeX82's INITEX-only
-            // legality, since Umber has no non-INITEX format-loaded
-            // distinction) rather than raising §1252's "Patterns can be loaded
-            // only by INITEX" diagnostic.
+            // enters §473's `absorbing` scanner status.
+            //
+            // §1252's INITEX-only guard on `\patterns` is applied at the
+            // apply seam, not here: its production branch flushes the same
+            // braced group (`repeat get_token until cur_cmd=right_brace`)
+            // that the scan already consumes, and only the session -- not the
+            // command core -- knows which binary tex.web's `init`/`tini`
+            // split would have produced.
             let patterns = primitive == UnexpandablePrimitive::Patterns;
             let words = processor
                 .scan_hyphenation_data(if patterns {
@@ -6327,6 +6357,7 @@ fn scan_arithmetic_assignment(
     })
 }
 
+#[cfg(any(test, feature = "instrumentation"))]
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
     tokens
         .iter()
@@ -7497,7 +7528,7 @@ fn applied_mutation_observation(
         | ScannedStep::AlignmentTemplateEntered
         | ScannedStep::MissingMathShift
         | ScannedStep::EndOfInput
-        | ScannedStep::End
+        | ScannedStep::End { .. }
         | ScannedStep::IllegalStop { .. }
         | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
@@ -7748,7 +7779,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         // `close_files_and_terminate` run once `its_all_over` has returned
         // true, so the job-termination effect belongs to that step and to no
         // other.
-        ScannedStep::End => Some(EffectRecord {
+        ScannedStep::End { .. } => Some(EffectRecord {
             kind: "terminate",
             detail: "engine\0".into(),
             tokens: None,
@@ -8294,7 +8325,17 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
-        ScannedStep::End => Ok(ReplayStep::End),
+        ScannedStep::End { dump } => {
+            // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
+            // production binary keeps only the `print_nl` that says so. `\end`
+            // reaches neither.
+            if dump && !command.initex {
+                stores
+                    .printer()
+                    .print_nl("(\\dump is performed only by INITEX)");
+            }
+            Ok(ReplayStep::End)
+        }
         ScannedStep::Count {
             index,
             value,
@@ -8894,6 +8935,13 @@ fn apply_scanned_step(
             resource,
             global,
         } => {
+            // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
+            // continue with the replaced value; §1257 then loads the font
+            // normally. The replacement is the scanner's, the report this
+            // seam's.
+            if let Some(recovery) = request.size_recovery {
+                report_font_size_recovery(stores, recovery);
+            }
             let resource =
                 (*resource).expect("font resource is resolved after the processor borrow");
             if matches!(resource, FontResource::Unavailable) {
@@ -9290,6 +9338,16 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HyphenationData { words, patterns } => {
+            // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
+            // "Patterns can be loaded only by INITEX", flushes the braced
+            // group, and returns with the trie unchanged; `\hyphenation`
+            // stays legal in both binaries.
+            if patterns && !command.initex {
+                let mut report = stores.print_err("Patterns can be loaded only by INITEX");
+                report.help(&[]);
+                report.error();
+                return Ok(ReplayStep::Continue);
+            }
             if patterns {
                 crate::assignments::apply_patterns(stores, words);
             } else {
@@ -9341,22 +9399,24 @@ fn apply_scanned_step(
             horizontal,
         ),
         ScannedStep::Message { tokens, error } => {
-            let text = replay_text(stores.tokens(tokens.token_list()));
+            // TeX82 §1279's `issue_message` renders the scanned list through
+            // `token_show` into one string and then hands it to §1280 or
+            // §1283; neither branch formats or routes its own output.
+            let text = message_text(stores, tokens.token_list());
             if error {
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, &format!("\n! {text}.\n"));
+                issue_error_message(stores, &text);
             } else {
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, &text);
+                issue_terminal_message(stores, &text);
             }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DisplayDiagnostic(diagnostic) => {
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, &diagnostic.text);
+            // TeX82 §1294 and §1297 print their `>␣` line and then
+            // `goto common_ending`, skipping §1298; §1293's `error` supplies
+            // the terminating period and, in `error_stop_mode`, the prompt.
+            let text = diagnostic.text.trim_end_matches(['.', '\n']);
+            stores.printer().print(text);
+            crate::diagnostics::complete_show(stores, false);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowBox { index } => {
@@ -11347,6 +11407,78 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
             }
         }
     }
+}
+
+/// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
+fn report_font_size_recovery(stores: &mut Universe, recovery: tex_command::FontSizeRecovery) {
+    match recovery {
+        tex_command::FontSizeRecovery::ImproperAtSize(size) => {
+            let mut report = stores.print_err("Improper `at' size (");
+            report.print_scaled(size).print("pt), replaced by 10pt");
+            report.help(&[
+                "I can only handle fonts at positive sizes that are",
+                "less than 2048pt, so I've changed what you said to 10pt.",
+            ]);
+            report.error();
+        }
+        tex_command::FontSizeRecovery::IllegalMagnification(value) => {
+            let mut report = stores.print_err("Illegal magnification has been changed to 1000");
+            report.help(&["The magnification ratio must be between 1 and 32768."]);
+            report.int_error(value);
+        }
+    }
+}
+
+/// TeX82 §1279's `token_show(def_ref)` into `new_string`.
+fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
+    let mut text = String::new();
+    for &token in stores.tokens(tokens) {
+        crate::diagnostics::append_token_show_text(stores, token, &mut text);
+    }
+    crate::diagnostics::print_text_with_newlinechar(stores, &text)
+}
+
+/// TeX82 §1280's `<Print string s on the terminal>`.
+fn issue_terminal_message(stores: &mut Universe, text: &str) {
+    let mut printer = stores.printer();
+    if printer.terminal_offset() + text.chars().count()
+        > tex_state::print::MAX_PRINT_LINE.saturating_sub(2)
+    {
+        printer.print_ln();
+    } else if printer.terminal_offset() > 0 || printer.log_offset() > 0 {
+        printer.print_char(' ');
+    }
+    printer.print(text);
+}
+
+/// TeX82 §1283's `<Print string s as an error message>`.
+fn issue_error_message(stores: &mut Universe, text: &str) {
+    let err_help = stores.tok_param(TokParam::ERR_HELP);
+    let rendered = (!stores.tokens(err_help).is_empty()).then(|| message_text(stores, err_help));
+    let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
+    let long_help_seen = stores
+        .world_mut()
+        .error_channel_mut()
+        .take_long_help_seen(rendered.is_none() && !interactive);
+    let mut report = stores.print_err("");
+    report.print(text);
+    match rendered {
+        Some(rendered) => {
+            report.use_err_help(rendered);
+        }
+        None if long_help_seen => {
+            report.help(&["(That was another \\errmessage.)"]);
+        }
+        None => {
+            report.help(&[
+                "This error message was generated by an \\errmessage",
+                "command, so I can't give any explicit help.",
+                "Pretend that you're Hercule Poirot: Examine all clues,",
+                "and deduce the truth by order and method.",
+            ]);
+        }
+    }
+    report.error();
 }
 
 /// Reports TeX82 §579's `<Issue an error message if cur_val=fmem_ptr>`.

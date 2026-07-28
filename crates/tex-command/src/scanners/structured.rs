@@ -114,6 +114,23 @@ pub struct FontLoadRequest {
     pub target: Symbol,
     pub name: String,
     pub size: FontSizeSpec,
+    /// The recovery tex.web §1258/§1259 performed on an illegal size, if any.
+    ///
+    /// Both sections replace the stated size *and* report it; the replacement
+    /// is the scanner's, the report the stomach's, because the command core
+    /// owns no text sink.
+    pub size_recovery: Option<FontSizeRecovery>,
+}
+
+/// tex.web §1258's and §1259's illegal-size recoveries.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FontSizeRecovery {
+    /// §1259: ``Improper `at' size (<s>pt), replaced by 10pt``, for a stated
+    /// `at` size outside `0 < s < 2048pt`.
+    ImproperAtSize(Scaled),
+    /// §1258: `Illegal magnification has been changed to 1000`, reported
+    /// through §91's `int_error`, for a `scaled` factor outside `1..=32768`.
+    IllegalMagnification(i32),
 }
 
 /// Immutable, command-owned identity of one pdfTeX `\\pdfximage` lookup.
@@ -1753,20 +1770,25 @@ impl CommandProcessor<'_> {
         }));
         let _ = self.scan_optional_equals()?;
         let file_name = self.scan_file_name()?;
+        let mut size_recovery = None;
         let size = if self.scan_keyword("at")?.value {
             let requested = self.scan_dimension()?.value;
+            // §1259's `if (s<=0)or(s>=@'1000000000)`.
             FontSizeSpec::At(
                 if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
                     requested
                 } else {
+                    size_recovery = Some(FontSizeRecovery::ImproperAtSize(requested));
                     Scaled::from_raw(10 * Scaled::UNITY)
                 },
             )
         } else if self.scan_keyword("scaled")?.value {
             let requested = self.scan_integer()?.value;
+            // §1258's `if (cur_val<=0)or(cur_val>32768)`.
             FontSizeSpec::Scale(if (1..=32_768).contains(&requested) {
                 requested
             } else {
+                size_recovery = Some(FontSizeRecovery::IllegalMagnification(requested));
                 1000
             })
         } else {
@@ -1776,6 +1798,7 @@ impl CommandProcessor<'_> {
             target,
             name: file_name.name,
             size,
+            size_recovery,
         })
     }
 

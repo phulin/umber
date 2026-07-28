@@ -230,14 +230,64 @@ fn if_type_text(if_type: u8) -> &'static str {
 }
 
 pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
+    // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
+    // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
+    // or `"void"`.
     let mut text = format!("\n> \\box{index}=\n");
     if let Some(id) = stores.box_reg(index) {
         text.push_str(&dump_node_list(stores, id, DumpConfig::read(stores)));
     } else {
         text.push_str("void\n");
     }
-    text.push_str("\n! OK.\n");
     write_diagnostic(stores, &text);
+    complete_show(stores, true);
+}
+
+/// TeX82 §1298's `<Complete a potentially long \show command>` followed by
+/// §1293's `common_ending`.
+///
+/// Every `\show` family member ends here. `long` selects §1298, which only
+/// the two `begin_diagnostic` forms (`\showbox`, `\showlists`) fall through
+/// to; `\show` and `\showthe` `goto common_ending` and skip it.
+pub(crate) fn complete_show(stores: &mut Universe, long: bool) {
+    let tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
+    let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
+    if !interactive {
+        // §1293's `decr(error_count)`, undoing §82's own increment so that
+        // showing something never counts toward the 100-error limit.
+        stores.world_mut().error_channel_mut().clear_error_count();
+    }
+    let mut report = if long {
+        let mut report = stores.print_err("OK");
+        // §1298: the transcript already holds the long dump, so the terminal
+        // is told where to look instead of repeating it.
+        if report.selector() == tex_state::print::Selector::TermAndLog && tracing_online <= 0 {
+            report.set_selector(tex_state::print::Selector::TermOnly);
+            report.print(" (see the transcript file)");
+            report.set_selector(tex_state::print::Selector::TermAndLog);
+        }
+        report
+    } else {
+        stores.error_report()
+    };
+    if !interactive {
+        report.help(&[]);
+    } else if tracing_online > 0 {
+        report.help(&[
+            "This isn't an error message; I'm just \\showing something.",
+            "Type `I\\show...' to show more (e.g., \\show\\cs,",
+            "\\showthe\\count10, \\showbox255, \\showlists).",
+        ]);
+    } else {
+        report.help(&[
+            "This isn't an error message; I'm just \\showing something.",
+            "Type `I\\show...' to show more (e.g., \\show\\cs,",
+            "\\showthe\\count10, \\showbox255, \\showlists).",
+            "And type `I\\tracingonline=1\\show...' to show boxes and",
+            "lists on your terminal as well as in the transcript file.",
+        ]);
+    }
+    report.error();
 }
 
 pub(crate) fn execute_message(
@@ -340,8 +390,8 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
             Mode::Math | Mode::DisplayMath => {}
         }
     }
-    text.push_str("\n! OK.\n");
     write_diagnostic(stores, &text);
+    complete_show(stores, true);
 }
 
 fn push_page_totals(stores: &Universe, text: &mut String) {

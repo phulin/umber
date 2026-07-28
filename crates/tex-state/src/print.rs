@@ -287,6 +287,18 @@ impl<'a> ErrorReport<'a> {
         self
     }
 
+    /// The selector this report prints through, for the scoped redirections
+    /// tex.web performs mid-message (§1298's is the only one).
+    #[must_use]
+    pub const fn selector(&self) -> Selector {
+        self.printer.selector()
+    }
+
+    /// tex.web's `selector:=#` inside an open report.
+    pub const fn set_selector(&mut self, selector: Selector) {
+        self.printer.set_selector(selector);
+    }
+
     /// tex.web §79's `help1`..`help6`, in the order the lines are printed.
     pub fn help(&mut self, lines: &[&str]) -> &mut Self {
         self.help = lines.iter().map(|line| (*line).to_owned()).collect();
@@ -495,6 +507,21 @@ impl Universe {
     /// tex.web §73's `print_err`, opening a recoverable-error report.
     pub fn print_err(&mut self, text: &str) -> ErrorReport<'_> {
         ErrorReport::begin(self, text)
+    }
+
+    /// tex.web §82's `error` for a message printed *without* §73's
+    /// `print_err`.
+    ///
+    /// §1293's `\show` completion is the one such site: §1294 and §1297 print
+    /// their `>␣` line through the ordinary print routines and then reach
+    /// `common_ending`'s bare `error`.
+    pub fn error_report(&mut self) -> ErrorReport<'_> {
+        let selector = Selector::for_interaction(self.interaction_mode());
+        ErrorReport {
+            printer: Printer::new(self, selector),
+            help: Vec::new(),
+            err_help: None,
+        }
     }
 
     /// An ordinary print scope at the §75 selector the current interaction

@@ -12,7 +12,7 @@ pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
-    FontLoadRequest, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
+    FontLoadRequest, FontSizeRecovery, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind,
     MathLimitKind, MathScriptAttachment, MathScriptKind, MathStyleKind, MathTextFieldKind,
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
