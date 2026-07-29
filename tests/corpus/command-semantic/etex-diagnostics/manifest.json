@@ -4,6 +4,38 @@
   "property_domain": "main-control-groups-assignments",
   "cases": [
     {
+      "id": "etex-penalty-array-assignments",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-penalty-array-assignments.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [1248, 6336, 6361]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["command"],
+        "commands": ["set_shape"],
+        "count_registers": [0, 1, 2, 3]
+      },
+      "expected": [
+        "command:raw:cs:interlinepenalties:set_shape:1",
+        "command:expanded:cs:interlinepenalties:set_shape:1",
+        "command:raw:cs:clubpenalties:set_shape:2",
+        "command:expanded:cs:clubpenalties:set_shape:2",
+        "command:raw:cs:widowpenalties:set_shape:3",
+        "command:expanded:cs:widowpenalties:set_shape:3",
+        "command:raw:cs:displaywidowpenalties:set_shape:4",
+        "command:expanded:cs:displaywidowpenalties:set_shape:4",
+        "count:0=11",
+        "count:1=12",
+        "count:2=13",
+        "count:3=14"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-loaded-code-reassignment",
       "property_id": "tex82.assignment.parameters-registers-arithmetic",
       "profile": "etex-loaded",

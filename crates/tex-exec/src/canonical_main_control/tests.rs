@@ -31,6 +31,14 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
     }
 }
 
+fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
+    tex_command::install_tex82_expandable_primitives(stores);
+    tex_command::install_etex_expandable_primitives(stores);
+    crate::install_unexpandable_primitives(stores);
+    crate::install_etex_unexpandable_primitives(stores);
+    CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
+}
+
 fn terminal_text(stores: &Universe) -> String {
     let committed = stores
         .world()
@@ -2123,6 +2131,163 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
         stores.glue(stores.glue_param(GlueParam::new(14))).width,
         Scaled::from_raw(65_536)
     );
+}
+
+#[test]
+fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_values() {
+    // e-TeX 2.6 change [49.1248] routes all four selectors through
+    // TeX82 §1248's `set_shape`; e-TeX §§6336-6366 define the selector
+    // family and its repeated-last-value enquiry semantics.
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+    const ARRAYS: [(&str, PenaltyArrayKind); 4] = [
+        ("interlinepenalties", PenaltyArrayKind::InterLine),
+        ("clubpenalties", PenaltyArrayKind::Club),
+        ("widowpenalties", PenaltyArrayKind::Widow),
+        ("displaywidowpenalties", PenaltyArrayKind::DisplayWidow),
+    ];
+
+    for (name, kind) in ARRAYS {
+        for mode in MODES {
+            let mut stores = Universe::new_with_plain_catcodes();
+            let mut control = canonical_etex_initex(&mut stores);
+            if mode != Mode::Vertical {
+                control.modes.push(mode);
+            }
+            let source = format!(r"\{name}  =  2  101  -202 \count0=17");
+            register_source(&mut control, source.as_bytes());
+
+            assert_eq!(
+                control.step(&mut stores).expect("penalty array assignment"),
+                MainControlStep::Continue,
+                "selector {name}, mode {mode:?}"
+            );
+            assert_eq!(stores.penalty_array(kind), vec![101, -202]);
+            assert_eq!(stores.count(0), 0, "following command was not consumed");
+            assert_eq!(control.current_mode(), mode);
+
+            assert_eq!(
+                control.step(&mut stores).expect("following assignment"),
+                MainControlStep::Continue,
+                "selector {name}, mode {mode:?}"
+            );
+            assert_eq!(stores.count(0), 17, "following command stayed live");
+        }
+    }
+}
+
+#[test]
+fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_tokens() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\interlinepenalties=1 11 \interlinepenalties=0
+           \clubpenalties=1 22 \clubpenalties=-1
+           \widowpenalties=1 33 \widowpenalties=0
+           \displaywidowpenalties=1 44 \displaywidowpenalties=-2
+           \count0=19 \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    for kind in [
+        PenaltyArrayKind::InterLine,
+        PenaltyArrayKind::Club,
+        PenaltyArrayKind::Widow,
+        PenaltyArrayKind::DisplayWidow,
+    ] {
+        assert!(stores.penalty_array(kind).is_empty(), "array {kind:?}");
+    }
+    assert_eq!(
+        stores.count(0),
+        19,
+        "zero and negative counts scan no values"
+    );
+}
+
+#[test]
+fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\clubpenalties=2 200 100
+           {\clubpenalties=1 7}
+           {\global\widowpenalties=2 300 400}
+           {\globaldefs=1 \displaywidowpenalties=1 500}
+           \interlinepenalties=2 9 8
+           {\globaldefs=-1 \global\interlinepenalties=-4}
+           \def\aftermark{\global\advance\count0 by1}
+           \afterassignment\aftermark\clubpenalties=1 42
+           \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.penalty_array_value(PenaltyArrayKind::Widow, 0), 2);
+    assert_eq!(stores.penalty_array_value(PenaltyArrayKind::Widow, 1), 300);
+    assert_eq!(stores.penalty_array_value(PenaltyArrayKind::Widow, 8), 400);
+    assert_eq!(stores.penalty_array(PenaltyArrayKind::Club), vec![42]);
+    assert_eq!(
+        stores.penalty_array(PenaltyArrayKind::Widow),
+        vec![300, 400]
+    );
+    assert_eq!(
+        stores.penalty_array(PenaltyArrayKind::DisplayWidow),
+        vec![500]
+    );
+    assert_eq!(
+        stores.penalty_array(PenaltyArrayKind::InterLine),
+        vec![9, 8]
+    );
+    assert_eq!(stores.count(0), 1, "afterassignment fired exactly once");
+    assert_eq!(stores.take_afterassignment(), None);
+}
+
+#[test]
+fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(&mut control, br"\clubpenalties=2 7 5 \count0=23 \end");
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("penalty array state checkpoints");
+
+    assert_eq!(
+        control.step(&mut stores).expect("first assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.penalty_array(PenaltyArrayKind::Club), vec![7, 5]);
+    let assigned_hash = stores.testing_state_hash();
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("penalty array state restores");
+    assert!(stores.penalty_array(PenaltyArrayKind::Club).is_empty());
+    assert_eq!(stores.count(0), 0);
+
+    assert_eq!(
+        control.step(&mut stores).expect("retried assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.testing_state_hash(), assigned_hash);
+    assert_eq!(stores.penalty_array(PenaltyArrayKind::Club), vec![7, 5]);
+    assert_eq!(
+        control.step(&mut stores).expect("following assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.count(0), 23);
 }
 
 #[test]

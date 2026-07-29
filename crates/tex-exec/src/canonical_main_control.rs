@@ -46,8 +46,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
-    ExpansionState, GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PrintSink,
-    StreamSlot, TracedTokenList, Universe,
+    ExpansionState, GroupKind, InputOpenState, InputReadState, ParagraphShapeLine,
+    PenaltyArrayKind, PrintSink, StreamSlot, TracedTokenList, Universe,
 };
 use tex_typeset::PackSpec;
 
@@ -3394,6 +3394,11 @@ enum ScannedStep {
         lines: Vec<ParagraphShapeLine>,
         global: bool,
     },
+    PenaltyArray {
+        kind: PenaltyArrayKind,
+        values: Vec<i32>,
+        global: bool,
+    },
     Toks {
         index: u16,
         tokens: TracedTokenList,
@@ -3819,6 +3824,7 @@ impl ScannedStep {
                 | Self::RegisterDefinition { .. }
                 | Self::Let { .. }
                 | Self::ParagraphShape { .. }
+                | Self::PenaltyArray { .. }
                 | Self::FontSelect { .. }
                 | Self::MathFamily { .. }
                 | Self::SetBox(..)
@@ -5256,6 +5262,42 @@ fn scan_command(
             }
             Ok(ScannedStep::ParagraphShape { lines, global })
         }
+        // e-TeX 2.6 change [49.1248] extends TeX82 §1248's `set_shape`:
+        // after the optional equals and integer count, the four penalty-array
+        // selectors scan exactly `max(count, 0)` integer values. Keeping the
+        // complete scan in this typed step preserves retry atomicity.
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::InterLinePenalties
+            | UnexpandablePrimitive::ClubPenalties
+            | UnexpandablePrimitive::WidowPenalties
+            | UnexpandablePrimitive::DisplayWidowPenalties),
+        ) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let count = processor
+                .scan_integer()
+                .map_err(command_error)?
+                .value
+                .max(0) as usize;
+            let mut values = Vec::new();
+            values
+                .try_reserve_exact(count)
+                .map_err(|_| ExecError::ArithmeticOverflow)?;
+            for _ in 0..count {
+                values.push(processor.scan_integer().map_err(command_error)?.value);
+            }
+            let kind = match primitive {
+                UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
+                UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
+                UnexpandablePrimitive::WidowPenalties => PenaltyArrayKind::Widow,
+                UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
+                _ => unreachable!("outer match restricts primitive to e-TeX penalty arrays"),
+            };
+            Ok(ScannedStep::PenaltyArray {
+                kind,
+                values,
+                global,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let assignment = processor
                 .scan_token_register_assignment()
@@ -6561,6 +6603,10 @@ fn scan_unclassified_primitive(
         | P::VAdjust
         | P::SetLanguage
         | P::BatchMode
+        | P::ClubPenalties
+        | P::DisplayWidowPenalties
+        | P::InterLinePenalties
+        | P::WidowPenalties
         | P::NonstopMode
         | P::ScrollMode
         | P::ErrorStopMode => unreachable!(
@@ -6669,16 +6715,13 @@ fn scan_unclassified_primitive(
         P::NoAlign | P::Omit => Ok(ScannedStep::Continue),
         P::BeginL
         | P::BeginR
-        | P::ClubPenalties
         | P::DimExpr
         | P::DiscretionaryHyphen
-        | P::DisplayWidowPenalties
         | P::EndL
         | P::EndR
         | P::GlobalDefs
         | P::GlueExpr
         | P::GlueToMu
-        | P::InterLinePenalties
         | P::LetterspaceFont
         | P::MuExpr
         | P::MuToGlue
@@ -6713,8 +6756,7 @@ fn scan_unclassified_primitive(
         | P::VFilNeg
         | P::VFill
         | P::VSkip
-        | P::VSs
-        | P::WidowPenalties => Err(ExecError::UnimplementedPrimitive {
+        | P::VSs => Err(ExecError::UnimplementedPrimitive {
             primitive,
             mode,
             origin: command.origin(),
@@ -8094,7 +8136,8 @@ fn applied_mutation_observation(
         ScannedStep::SetBox(..)
         | ScannedStep::FontSelect { .. }
         | ScannedStep::MathFamily { .. }
-        | ScannedStep::ParagraphShape { .. } => return None,
+        | ScannedStep::ParagraphShape { .. }
+        | ScannedStep::PenaltyArray { .. } => return None,
         // -- Assignments whose committed state lives outside `eqtb` entirely,
         // so no `eq_define`/`eq_word_define` runs and no mutation is observed
         // on either side: §1247's `alter_box_dimen` (a box node's `mem`
@@ -9696,6 +9739,17 @@ fn apply_scanned_step(
             // `\globaldefs`; it was missed by both earlier sweeps because
             // `set_shape` belongs to neither definition family.
             stores.set_paragraph_shape(&lines, global);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PenaltyArray {
+            kind,
+            values,
+            global,
+        } => {
+            // e-TeX 2.6 change [49.1248] commits every selector through
+            // `define(q, shape_ref, p)`, so this uses the same save-stack and
+            // `\globaldefs`-adjusted scope bit as TeX82 §1214/§1248.
+            stores.set_penalty_array(kind, &values, global);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {
