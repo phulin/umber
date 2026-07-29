@@ -236,7 +236,7 @@ struct ActiveReplayAlignment {
     next_cell_opening_pending: bool,
     align_peek_pending: bool,
     align_peek_after_noalign: bool,
-    noalign_depth: Option<u32>,
+    noalign_open: bool,
     /// Frozen cell material retained for lifecycle diagnostics. The actual
     /// row records live on the alignment level, exactly as TeX82 §775 does.
     captured_rows: Vec<Vec<NodeListId>>,
@@ -3783,9 +3783,6 @@ enum ScannedStep {
         alignment: AlignmentIdentity,
         omit: bool,
     },
-    NoAlignBeginGroup {
-        alignment: AlignmentIdentity,
-    },
     NoAlignEndGroup {
         alignment: AlignmentIdentity,
     },
@@ -4068,7 +4065,7 @@ fn alignment_preamble(
             active.identity,
             AlignmentPreamblePhase::AlignPeek { after_noalign },
         ))
-    } else if active.noalign_depth.is_some() {
+    } else if active.noalign_open {
         Some((active.identity, AlignmentPreamblePhase::NoAlignBody))
     } else {
         Some((active.identity, AlignmentPreamblePhase::CellDelivery))
@@ -4136,13 +4133,11 @@ fn scan_noalign_body(
     };
     match command.meaning() {
         Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        } => Ok(ScannedStep::NoAlignBeginGroup { alignment }),
-        Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => Ok(ScannedStep::NoAlignEndGroup { alignment }),
+        } if innermost_group == Some(GroupKind::NoAlign) => {
+            Ok(ScannedStep::NoAlignEndGroup { alignment })
+        }
         // A `\noalign` body is ordinary main control between its braces
         // (TeX82 §785's `no_align_group`), so it dispatches through the same
         // §1030 `reswitch:`/§1211 prefix path as any other step.
@@ -8443,7 +8438,6 @@ fn applied_mutation_observation(
         | ScannedStep::OutputRoutineOpeningBrace
         | ScannedStep::EndOutputRoutine
         | ScannedStep::AlignmentPeekCell { .. }
-        | ScannedStep::NoAlignBeginGroup { .. }
         | ScannedStep::NoAlignEndGroup { .. }
         | ScannedStep::BeginBox(..)
         | ScannedStep::BeginLeaderBox { .. }
@@ -11407,7 +11401,7 @@ fn apply_scanned_step(
                 next_cell_opening_pending: false,
                 align_peek_pending: false,
                 align_peek_after_noalign: false,
-                noalign_depth: None,
+                noalign_open: false,
                 captured_rows: Vec::new(),
                 tabskips: vec![stores.glue_param(GlueParam::TAB_SKIP)],
                 default_tabskip: stores.glue_param(GlueParam::TAB_SKIP),
@@ -11523,7 +11517,7 @@ fn apply_scanned_step(
                     context: "active replay alignment",
                 })?;
             active.align_peek_pending = false;
-            active.noalign_depth = Some(1);
+            active.noalign_open = true;
             enter_canonical_group(stores, command.state, GroupKind::NoAlign);
             // TeX82 §785 leaves the alignment's own mode level in place when
             // `\noalign` opens. It calls `normal_paragraph` only for an
@@ -11588,19 +11582,6 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::NoAlignBeginGroup { alignment } => {
-            let active = active_alignment
-                .as_mut()
-                .filter(|active| active.identity == alignment)
-                .ok_or(ExecError::MissingToken {
-                    context: "active replay alignment",
-                })?;
-            let depth = active.noalign_depth.ok_or(ExecError::MissingToken {
-                context: "noalign group",
-            })?;
-            active.noalign_depth = Some(depth.saturating_add(1));
-            Ok(ReplayStep::Continue)
-        }
         ScannedStep::NoAlignEndGroup { alignment } => {
             let active = active_alignment
                 .as_mut()
@@ -11608,14 +11589,12 @@ fn apply_scanned_step(
                 .ok_or(ExecError::MissingToken {
                     context: "active replay alignment",
                 })?;
-            let depth = active.noalign_depth.ok_or(ExecError::MissingToken {
-                context: "noalign group",
-            })?;
-            if depth > 1 {
-                active.noalign_depth = Some(depth - 1);
-                return Ok(ReplayStep::Continue);
+            if !active.noalign_open {
+                return Err(ExecError::MissingToken {
+                    context: "noalign group",
+                });
             }
-            active.noalign_depth = None;
+            active.noalign_open = false;
             active.align_peek_pending = true;
             active.align_peek_after_noalign = true;
             // TeX82 §1133's whole `no_align_group` case of `handle_right_brace`

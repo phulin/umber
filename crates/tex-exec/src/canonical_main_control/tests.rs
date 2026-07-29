@@ -39,6 +39,34 @@ fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
 }
 
+#[test]
+fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
+    // TeX82 §§785, 1068-1069, and 1133: material inside `no_align_group`
+    // runs through ordinary main control. Only a right brace delivered while
+    // that group is current ends `\noalign`; braces belonging to nested math
+    // groups must close those groups first.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\valign{#\cr\noalign{$${\left.\middle.\right.}$$}}\end",
+    );
+
+    for _ in 0..256 {
+        match control
+            .step(&mut stores)
+            .expect("nested noalign math executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => return,
+            MainControlStep::Continue => {}
+        }
+    }
+    panic!("canonical noalign regression exceeded its step bound");
+}
+
 fn run_to_end_observed(
     control: &mut CanonicalMainControl,
     stores: &mut Universe,

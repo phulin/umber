@@ -6111,7 +6111,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         next_cell_opening_pending: false,
         align_peek_pending: false,
         align_peek_after_noalign: false,
-        noalign_depth: None,
+        noalign_open: false,
         captured_rows: Vec::new(),
         tabskips: vec![universe.glue_param(GlueParam::TAB_SKIP)],
         default_tabskip: universe.glue_param(GlueParam::TAB_SKIP),
