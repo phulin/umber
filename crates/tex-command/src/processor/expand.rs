@@ -447,6 +447,13 @@ impl CommandProcessor<'_> {
                 self.macro_call(command)?;
                 Ok(())
             }
+            // TeX82 §375's `end_template` case replaces the inaccessible
+            // sentinel that ended a v-template with the distinct frozen
+            // `endv` token. Neither sentinel is a user-installable primitive;
+            // §780 gives them only frozen control-sequence slots.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
+                self.insert_frozen_endv()
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => self.expand_noexpand(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
                 self.expand_expandafter()

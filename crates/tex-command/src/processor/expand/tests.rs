@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{Universe, World};
 
 use super::*;
 use crate::input::{ReplayTrace, RetirementBehavior};
@@ -117,6 +117,42 @@ fn install_expandable(
     let symbol = universe.intern(name).symbol();
     universe.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
     symbol
+}
+
+#[test]
+fn frozen_end_template_delivers_endv_fresh_and_after_format_load() {
+    // TeX82 §§375, 780: both `endtemplate` control sequences are inaccessible
+    // frozen slots. Expanding the first delivers the second as `endv`; format
+    // loading must preserve that internal meaning without exposing a named
+    // primitive to user input.
+    let fresh = Universe::new_with_plain_catcodes();
+    assert_eq!(fresh.symbol("endtemplate"), None);
+    let format = fresh.dump_format().expect("quiescent format");
+    let loaded = Universe::from_format(World::default(), &format).expect("load format");
+
+    for mut universe in [fresh, loaded] {
+        assert_eq!(universe.symbol("endtemplate"), None);
+        assert_eq!(universe.primitive_meaning("endtemplate"), None);
+        let frozen_end_template = universe.command_context().frozen_end_template_token();
+
+        let mut command = CommandState::default();
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(frozen_end_template)])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let delivered = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .get_x_token()
+            .expect("end_template expansion succeeds")
+            .expect("frozen endv is delivered");
+
+        assert_eq!(delivered.meaning(), Meaning::EndV);
+        assert!(delivered.spelling().semantic_token().is_frozen_endv());
+        assert_eq!(universe.symbol("endtemplate"), None);
+    }
 }
 
 #[test]
