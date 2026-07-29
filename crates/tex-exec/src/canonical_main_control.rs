@@ -9594,16 +9594,20 @@ fn apply_scanned_step(
             // (§1061: `tail_append(new_kern(cur_val)); subtype(tail):=s`).
             // Unlike `\hskip` (§1090's `head_for_vmode`, which is genuinely
             // `vmode+hskip`-listed), `\kern` has no mode-specific dispatch
-            // entry at all -- it is legal in every mode and always appends
-            // directly to whatever list is current, with no paragraph start
-            // and no page-builder call (contrast `\penalty`, §1103, which
-            // also never starts a paragraph but does call `build_page` in
-            // outer vertical mode).
+            // entry at all -- it is legal in every mode and appends directly,
+            // with no paragraph start and no page-builder call. The outer
+            // vertical list is represented by the page contribution queue,
+            // so it still uses the shared contribution splice (contrast
+            // `\penalty`, §1103, which also calls `build_page` there).
             crate::assignments::flush_pending_hchars(modes, stores)?;
-            modes.current_list_mutation().push(Node::Kern {
-                amount,
-                kind: KernKind::Explicit,
-            });
+            crate::vertical::append_vertical_contribution(
+                modes,
+                stores,
+                Node::Kern {
+                    amount,
+                    kind: KernKind::Explicit,
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Penalty { amount } => {

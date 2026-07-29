@@ -276,6 +276,32 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
 }
 
 #[test]
+fn outer_vertical_kern_joins_contributions_without_running_page_builder() {
+    // TeX82 §§1057 and 1061: `append_kern` tail-appends in every mode but,
+    // unlike `append_penalty`, does not call `build_page`. Canonical outer
+    // vertical material lives in the page contribution queue rather than the
+    // otherwise-empty root mode list.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::TEX82);
+    register_source(&mut control, br"\kern-50pt");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert!(control.modes.current_list().nodes().is_empty());
+    assert!(matches!(
+        stores.page_contributions().as_slices(),
+        ([Node::Kern { amount, kind: KernKind::Explicit }], [])
+            if amount.raw() == -3_276_800
+    ));
+    assert_eq!(
+        stores.page_dimension(PageDimension::Total),
+        Scaled::from_raw(0)
+    );
+}
+
+#[test]
 fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
     // e-TeX 2.6 `etex.ch` [26.424]: `make_mark` scans an extended register
     // number before TeX82 §1101's expanded mark text and appends the node in
