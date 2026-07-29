@@ -40,6 +40,94 @@ fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
 }
 
 #[test]
+fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mode() {
+    // e-TeX 2.6 etex.ch [3413--3453] registers these four read-only
+    // dimensions as `last_item`. TeX82 §1048's `any_mode(last_item)` sends a
+    // command delivered directly to main control through `report_illegal_case`;
+    // its font and character operands are scanned only when a surrounding
+    // internal-value scanner consumes it.
+    for source in [
+        br"\nonstopmode \fontcharwd a\fontcharht b\fontchardp c\fontcharic d\end".as_slice(),
+        br"\nonstopmode x\fontcharwd a\fontcharht b\fontchardp c\fontcharic d\end",
+        br"\nonstopmode \hbox{\fontcharwd a\fontcharht b\fontchardp c\fontcharic d}\end",
+        br"\nonstopmode \vbox{\fontcharwd a\fontcharht b\fontchardp c\fontcharic d}\end",
+        br"\nonstopmode $\fontcharwd a\fontcharht b\fontchardp c\fontcharic d$\end",
+        br"\nonstopmode $$\fontcharwd a\fontcharht b\fontchardp c\fontcharic d$$\end",
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = canonical_etex_initex(&mut stores);
+        control
+            .set_fuel_limit(10_000)
+            .expect("bounded canonical fuel");
+        register_source(&mut control, source);
+
+        run_to_end(&mut control, &mut stores);
+
+        let output = terminal_text(&stores);
+        for primitive in ["fontcharwd", "fontcharht", "fontchardp", "fontcharic"] {
+            assert!(
+                output.contains(&format!("You can't use `\\{primitive}' in ")),
+                "{source:?}: {output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
+    // The `last_item` command identity is serialized in an e-TeX format.
+    // Restoring a quiescent checkpoint must restore both the diagnostic
+    // effect and the unconsumed operand so a retry takes the identical path.
+    let mut initex_stores = Universe::new_with_plain_catcodes();
+    let _ = canonical_etex_initex(&mut initex_stores);
+    let format = initex_stores
+        .dump_format()
+        .expect("dump extended e-TeX format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    control
+        .set_fuel_limit(1_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, br"\nonstopmode \fontcharwd a\end");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("interaction mode executes"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("raw font enquiry checkpoints");
+
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("raw font enquiry recovers"),
+        MainControlStep::Continue
+    );
+    let first_hash = stores.testing_state_hash();
+    let first_output = terminal_text(&stores);
+    assert!(first_output.contains("You can't use `\\fontcharwd' in vertical mode"));
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("raw font enquiry state restores");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("raw font enquiry retry recovers"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(terminal_text(&stores), first_output);
+}
+
+#[test]
 fn empty_equation_number_checks_math_fonts_on_both_sides() {
     // TeX82 §1194 checks the equation-number mlist and then the saved display
     // mlist independently, even though neither one contains a math noad.

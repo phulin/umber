@@ -6634,10 +6634,6 @@ fn scan_unclassified_primitive(
         | P::EndGroup
         | P::ErrMessage
         | P::Font
-        | P::FontCharDp
-        | P::FontCharHt
-        | P::FontCharIc
-        | P::FontCharWd
         | P::FontDimen
         | P::FutureLet
         | P::Gdef
@@ -6866,6 +6862,10 @@ fn scan_unclassified_primitive(
         P::LastKern
         | P::LastPenalty
         | P::LastSkip
+        | P::FontCharWd
+        | P::FontCharHt
+        | P::FontCharDp
+        | P::FontCharIc
         | P::NumExpr
         | P::DimExpr
         | P::GlueExpr
