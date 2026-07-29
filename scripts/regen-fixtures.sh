@@ -1363,15 +1363,22 @@ regen_bibtex_area() {
     cargo test -p bib-engine --test it classic_fixture_manifest_and_inventory_are_complete_and_pinned
 }
 
-# Derives the per-channel contract for every declarative minifixture.
+# Derives the per-channel contract for every declarative minifixture against
+# the pinned instrumented pdfTeX 1.40.27 oracle.
 #
 # This runs the same `tex_command_stream::semantic` code the gate runs, so a
-# regenerated contract cannot describe a run the gate would not reproduce. It
-# needs no reference engine: the channels it records are this implementation's
-# own observed output, marked `umber-baseline` in each manifest precisely
-# because they are pinned against drift rather than adjudicated as correct.
+# regenerated contract cannot describe a run the gate would not reproduce.
+# Every committed channel file holds the reference engine's bytes, for `file`
+# and `xfail` alike (`umber2-alfh.7`); this tool decides only the disposition
+# by comparing Umber's own run against that capture. It therefore needs
+# `scripts/run-minifixture-oracle.sh --all` to have already populated
+# `target/minifixture-oracle` (which in turn needs
+# `scripts/build-pdftex14027-oracle.sh` and `UMBER_REF_TEXLIVE_SOURCE`) --
+# this function does not run either script itself, and fails loudly, listing
+# every affected case, rather than silently regenerating against a missing or
+# stale capture.
 regen_command_semantic_area() {
-  run_command 'Deriving command-semantic channel contracts' \
+  run_command 'Deriving command-semantic channel contracts against the pinned oracle' \
     cargo run -q -p tex-command-stream --bin command-semantic-channels
 }
 

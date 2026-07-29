@@ -337,9 +337,10 @@ run produces, and the gate compares all of them alongside the projection:
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
 - `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
   A committed `expected/<case-id>.<channel>` file is required for the latter
-  two. The corpus commits 274 such files today: 124 terminal, 124 log, and 26
-  dvi. Terminal and log both grew from a minority of cases to nearly every one
-  once job framing gave every run a banner, a `**` line, and a page report or
+  two, and it always holds the pinned reference engine's bytes (see below).
+  The corpus commits 280 such files today: 127 terminal, 127 log, and 26 dvi.
+  Terminal and log both grew from a minority of cases to nearly every one once
+  job framing gave every run a banner, a `**` line, and a page report or
   "No pages of output." to write, where previously only a case with its own
   diagnostic output produced either channel at all.
 
@@ -369,43 +370,27 @@ and `main-control/read-to-definition` -- and
 `only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` pins that
 set by name and re-runs each to prove it still cannot run.
 
-Every committed channel records an `authority` for its bytes. All 274 are
-`umber-baseline` today: they pin the channel against silent drift and are still
-owed an oracle adjudication, which `authority: "oracle"` records once a
-reference engine has produced them. The count is greppable, so the remaining
-work is visible rather than assumed. Promoting them is `umber2-alfh.1`, which
-job framing unblocks but does not itself perform: comparing the regenerated
-`terminal`/`log` channels against a pinned pdfTeX 1.40.27 oracle capture
-(`scripts/run-minifixture-oracle.sh`, after only the documented clock
-normalization) now finds 38 of 122 comparable log channels and 38 of 122
-comparable terminal channels byte-identical, up from 0 of 39 log channels
-before framing existed and up from an initial framed pass of 29 log/0
-terminal. That initial pass had four defects of its own: the terminal banner
-omitted `format_ident` (`" (INITEX)"`) and its terminating newline that §61
-actually prints; the log's `**` line was missing §534's trailing `print_ln`,
-merging it with the root file's own `(name`; e-TeX's "entering extended mode"
-notice was never printed on either channel; and `main-control/show-completion`
-had lost the very `terminal-check:?␣` property it exists to pin, once every
-case started running in scrollmode. All four are fixed: `begin_job` now
-prints `format_ident` and a newline on the terminal, the log's `**` line ends
-with `print_ln`, e-TeX profiles print "entering extended mode" on both
-channels immediately after the banner, and `show-completion` declares
-`interaction_mode: errorstopmode` (with a required note) so both Umber and
-the oracle run it under the mode its `?␣` prompt needs. Of the remaining
-divergences, the largest classes are `umber2-alfh.8` (missing `show_context`),
-`umber2-alfh.10` (pdfTeX's `[<count0>...]` page-shipment marker), and
-`umber2-alfh.11` (the bare `*` prompt before an extra terminal read); the rest
-are a mix of smaller pre-existing diagnostic wording and execution gaps this
-framing does not address.
+**Every committed `expected/<case-id>.<channel>` file holds the pinned
+reference engine's bytes -- that is the one meaning a committed channel file
+has, for `file` and `xfail` alike (`umber2-alfh.7`).** `StreamDisposition`
+therefore carries no `authority` field: there is exactly one place a
+committed channel's bytes can have come from, so a field that distinguished
+where they came from would carry no information. That was not always true.
+Every committed channel file used to record an `authority`, and until
+`umber2-alfh.1` all 274 of them held an unadjudicated implementation-observed
+origin: this implementation's own observed output, pinned against silent
+drift but not yet checked against anything. An `xfail` channel's committed
+file held Umber's own known-wrong bytes and the comparison was byte-identity
+against that self-pin -- indistinguishable from `file` except in name.
+`umber2-alfh.1` promoted every channel to the pinned instrumented pdfTeX
+1.40.27 oracle (`scripts/run-minifixture-oracle.sh --all`, which also builds
+the two profiles built past INITEX -- `etex-loaded` and `production` -- from
+a real `\dump`/`-fmt` roundtrip rather than skipping them) and deleted that
+unadjudicated origin from the Rust type, the JSON schema, and every manifest,
+so an unadjudicated channel can no longer be recorded at all.
 
-**A committed `expected/<case-id>.<channel>` file for an `xfail` channel is
-understood to hold the reference engine's bytes, exactly like a `file`
-channel's -- that is the one meaning a committed channel file has.** This
-replaces the disposition's earlier meaning, under which the committed bytes
-were Umber's own known-wrong output and the comparison was byte-identity
-against that self-pin, indistinguishable from `file` except in name. An
-`xfail` channel instead carries a `mismatch`: the first line at which Umber's
-own output diverges from the committed reference, both sides rendered so a
+An `xfail` channel carries a `mismatch`: the first line at which Umber's own
+output diverges from the committed reference, both sides rendered so a
 divergent channel legibly records what TeX does and what Umber does instead
 (using the literal `<end of channel>` for a side that runs out first).
 Comparing an `xfail` channel then has three outcomes, mirroring the
@@ -421,9 +406,38 @@ case-level `expectation`'s own pass/xpass/changed-failure discipline:
   divergence next to the one now observed so a shift in behavior is never
   mistaken for the one `bug` names.
 
-No committed case uses `xfail` for a stream channel today, so this is a
-contract change with no corpus edit behind it yet: the next channel pinned as
-`xfail` is the first to commit its reference bytes under the new meaning.
+The log channel's clock (tex.web §536, present on the log's first line only)
+is the one byte range no two runs of the same job can ever agree on, and the
+one normalization this corpus applies
+(`tex_command_stream::semantic::normalize_log_clock`,
+`docs/job_framing.md`): both the committed reference and Umber's freshly
+captured bytes are normalized the same way before any comparison, so the
+committed file's stored clock text is stable across regenerations regardless
+of which day the oracle was captured. Nothing else is normalized away.
+
+Final tally, measured at this commit: of 381 non-`effects` channel
+dispositions across 127 runnable cases, 165 are `file` and 115 are `xfail`
+(228 `effects`/`dvi`/etc. dispositions are `empty`; the `effects` channel
+itself has no reference-engine-comparable form at all -- it is Umber's own
+structured rendering of stream opens, closes, writes, and shell escapes, not
+a byte-for-byte reproduction of anything a real TeX writes -- so every case's
+capture is required to be empty rather than ever adjudicated). The 115
+`xfail` channels resolve to 12 bugs:
+
+- `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 48
+- `umber2-alfh.22` (Umber's DVI banner comment differs from the oracle's): 26
+- `umber2-alfh.15` (an `EtexLoaded`/`Production`-profile job is never framed):
+  10
+- `umber2-alfh.11` (the `*` prompt / terminal-read residual): 10
+- `umber2-alfh.16` (missing Underfull \hbox diagnostics): 6
+- `umber2-alfh.14` (show_context accuracy residual): 6
+- `umber2-alfh.18` (a nested `\input` misses its `./` name prefix): 2
+- `umber2-alfh.23` (long diagnostic lines are never wrapped): 2
+- `umber2-alfh.19` (`\show`'s macro meaning omits a newline): 2
+- `umber2-alfh.17` (e-TeX's pretend-you-didn't-say message omits `\protected`):
+  1
+- `umber2-alfh.21` (an `\openout` notice is never printed to the log): 1
+- `umber2-alfh.20` (Umber does not recognize `nd`/`nc` dimension units): 1
 
 Regenerate the contract with:
 
