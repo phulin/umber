@@ -2101,7 +2101,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
         &mut command,
         [
             vec![Token::Cs(pdfximage)],
-            text_tokens(" width 10pt height 20pt depth 3pt attr{x} page 2 mediabox image.pdf"),
+            text_tokens(" width 10pt height 20pt depth 3pt attr{x} page 2 mediabox {image.pdf}"),
         ]
         .concat(),
     );
@@ -2149,10 +2149,55 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
     assert_eq!(request.width, Some(Scaled::from_raw(10 * Scaled::UNITY)));
     assert_eq!(request.height, Some(Scaled::from_raw(20 * Scaled::UNITY)));
     assert_eq!(request.depth, Some(Scaled::from_raw(3 * Scaled::UNITY)));
-    assert_eq!(request.page, 2);
+    assert_eq!(request.page, PdfImagePageSelection::Number(2));
+    assert_eq!(request.color_space_object, 0);
     assert_eq!(request.page_box, PdfImagePageBox::Media);
     assert!(request.page_box_explicit);
     assert!(request.attr.is_some());
+}
+
+#[test]
+fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        text_tokens(
+            "attr{/Intent /RelativeColorimetric} named{chapter.one} colorspace -7 trimbox {image.pdf}!",
+        ),
+    );
+
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_pdf_image_request()
+            .expect("scan named-page image request")
+    };
+
+    assert_eq!(
+        request.page,
+        PdfImagePageSelection::Named(b"chapter.one".to_vec())
+    );
+    assert_eq!(request.color_space_object, -7);
+    assert_eq!(request.page_box, PdfImagePageBox::Trim);
+    assert!(request.page_box_explicit);
+    assert_eq!(request.name, "image.pdf");
+    assert!(request.attr.is_some());
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert_eq!(
+        processor
+            .get_x_token()
+            .expect("read following token")
+            .unwrap()
+            .spelling()
+            .semantic_token(),
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        }
+    );
 }
 
 #[test]

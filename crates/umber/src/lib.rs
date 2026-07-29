@@ -594,7 +594,12 @@ impl CanonicalResourceHost for FileSessionResolvers {
                     .ok()?;
                 let legacy = LegacyPdfImageRequest {
                     name: request.name.clone(),
-                    page: u32::try_from(request.page).unwrap_or_default(),
+                    page: match &request.page {
+                        tex_command::PdfImagePageSelection::Number(page) => {
+                            u32::try_from(*page).unwrap_or_default()
+                        }
+                        tex_command::PdfImagePageSelection::Named(_) => 0,
+                    },
                     page_box: match request.page_box {
                         tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
                         tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,

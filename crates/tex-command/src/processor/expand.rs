@@ -1078,6 +1078,62 @@ fn token_list_text(state: &tex_state::CommandContext<'_>, tokens: TokenListId) -
         .collect()
 }
 
+/// The string pdfTeX builds by selecting `new_string` around `show_token_list`.
+///
+/// Character tokens remain raw (with parameter characters doubled), while
+/// control-sequence spelling and its separator observe the live escape
+/// character and catcode table. The returned value owns no token-list handle,
+/// so it remains stable when an aggregate resource suspension rolls back and
+/// rescans the command.
+pub(crate) fn token_list_string_text(
+    state: &mut tex_state::CommandContext<'_>,
+    tokens: TokenListId,
+) -> String {
+    let tokens = state.tokens(tokens).to_vec();
+    let mut text = String::new();
+    for token in tokens {
+        match token {
+            Token::Char { ch, cat } => {
+                text.push(ch);
+                if cat == Catcode::Parameter {
+                    text.push(ch);
+                }
+            }
+            Token::Param(slot) => {
+                text.push('#');
+                text.push(char::from(b'0' + slot));
+            }
+            Token::Frozen(_) => text.push_str("\\endtemplate"),
+            Token::Cs(symbol) => {
+                let name = state.resolve(symbol).to_owned();
+                if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+                    text.push_str(&name);
+                    continue;
+                }
+                let escape = state.int_param(IntParam::ESCAPE_CHAR);
+                if let Ok(escape) = u8::try_from(escape) {
+                    text.push(char::from(escape));
+                }
+                if name.is_empty() {
+                    text.push_str("csname");
+                    if let Ok(escape) = u8::try_from(escape) {
+                        text.push(char::from(escape));
+                    }
+                    text.push_str("endcsname");
+                } else {
+                    text.push_str(&name);
+                }
+                let mut chars = name.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) if state.catcode(ch) != Catcode::Letter => {}
+                    _ => text.push(' '),
+                }
+            }
+        }
+    }
+    text
+}
+
 /// TeX82's `show_token_list` representation used by `\\meaning` distinguishes
 /// a printed control word from following letter tokens with one space.  That
 /// delimiter belongs to the rendered definition, not to source input.

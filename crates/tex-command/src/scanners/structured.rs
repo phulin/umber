@@ -151,7 +151,12 @@ pub struct PdfImageRequest {
     pub width: Option<Scaled>,
     pub height: Option<Scaled>,
     pub depth: Option<Scaled>,
-    pub page: i32,
+    pub page: PdfImagePageSelection,
+    /// pdftex.web §1550's signed, unchecked raster color-space object number.
+    ///
+    /// Zero selects the image's natural device color space. PDF-page
+    /// inclusion deliberately ignores this operand, as upstream does.
+    pub color_space_object: i32,
     pub page_box: PdfImagePageBox,
     /// Whether source selected `page_box` rather than leaving it to the live
     /// pdfTeX page-box parameters applied by canonical main control.
@@ -174,9 +179,17 @@ impl PdfImageRequest {
             && self.height == other.height
             && self.depth == other.depth
             && self.page == other.page
+            && self.color_space_object == other.color_space_object
             && self.page_box == other.page_box
             && self.page_box_explicit == other.page_box_explicit
     }
+}
+
+/// pdftex.web §1550's mutually exclusive page selectors.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PdfImagePageSelection {
+    Number(i32),
+    Named(Vec<u8>),
 }
 
 /// pdfTeX's `scan_pdf_box_spec` selectors.
@@ -1945,9 +1958,10 @@ impl CommandProcessor<'_> {
     /// Scans pdfTeX's `scan_image` request prefix.
     ///
     /// The ordering follows pdfTeX 1.40.27's `scan_image`: a repeated rule
-    /// specification, optional `attr` general text, optional `page`, then one
-    /// page-box selector and the filename.  Resource acquisition is expressly
-    /// outside this scanner.
+    /// specification, optional `attr` general text, mutually exclusive
+    /// `named` expanded general text or `page` integer, optional `colorspace`
+    /// integer, then one page-box selector and an expanded-general-text
+    /// filename. Resource acquisition is expressly outside this scanner.
     pub fn scan_pdf_image_request(&mut self) -> Result<PdfImageRequest, CommandError> {
         let mut width = None;
         let mut height = None;
@@ -1968,10 +1982,21 @@ impl CommandProcessor<'_> {
         } else {
             None
         };
-        let page = if self.scan_keyword("page")?.value {
+        let page = if self.scan_keyword("named")?.value {
+            let tokens = self.scan_balanced_text(true)?.tokens;
+            PdfImagePageSelection::Named(
+                crate::processor::token_list_string_text(&mut self.state, tokens.token_list())
+                    .into_bytes(),
+            )
+        } else if self.scan_keyword("page")?.value {
+            PdfImagePageSelection::Number(self.scan_integer()?.value)
+        } else {
+            PdfImagePageSelection::Number(1)
+        };
+        let color_space_object = if self.scan_keyword("colorspace")?.value {
             self.scan_integer()?.value
         } else {
-            1
+            0
         };
         let page_box = if self.scan_keyword("mediabox")?.value {
             Some(PdfImagePageBox::Media)
@@ -1986,13 +2011,16 @@ impl CommandProcessor<'_> {
         } else {
             None
         };
-        let name = self.scan_file_name()?.name;
+        let name_tokens = self.scan_balanced_text(true)?.tokens;
+        let name =
+            crate::processor::token_list_string_text(&mut self.state, name_tokens.token_list());
         Ok(PdfImageRequest {
             name,
             width,
             height,
             depth,
             page,
+            color_space_object,
             // pdfTeX's default `pdf_pagebox` is configured outside the
             // scanner; Crop is the engine's effective no-parameter default.
             page_box_explicit: page_box.is_some(),

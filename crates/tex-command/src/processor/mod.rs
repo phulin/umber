@@ -29,7 +29,7 @@ pub use alignment::{
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 pub use expand::{character_command_text, command_token_text};
-pub(crate) use expand::{meaning_text, render_the_value, string_text};
+pub(crate) use expand::{meaning_text, render_the_value, string_text, token_list_string_text};
 pub(crate) use next::stored_input_reason;
 #[cfg(test)]
 pub(crate) use status::{
