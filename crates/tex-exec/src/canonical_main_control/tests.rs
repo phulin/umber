@@ -814,6 +814,64 @@ impl CommandObserver for ObservationRecorder {
 }
 
 #[test]
+fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
+    // e-TeX §275: `eq_word_define` returns immediately when extended mode
+    // locally assigns the value already present. The negative controls pin
+    // that a changed local value and an identical global value still commit.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\endlinechar=13 \endlinechar=12 \global\endlinechar=12 \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("e-TeX integer-parameter reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "parameter" => {
+                Some((record.value.as_str(), record.global))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        mutations,
+        [
+            ("integer_parameter:48=12", false),
+            ("integer_parameter:48=12", true),
+        ]
+    );
+
+    let mut tex82 = Universe::new_with_plain_catcodes();
+    assert!(
+        !etex_redundant_local_int_parameter_assignment(&tex82, 13, 13),
+        "TeX82 has no e-TeX reassignment shortcut"
+    );
+    tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
+    assert!(etex_redundant_local_int_parameter_assignment(
+        &tex82, 13, 13
+    ));
+    assert!(!etex_redundant_local_int_parameter_assignment(
+        &tex82, 13, 12
+    ));
+}
+
+#[test]
 fn main_control_dispatch_matrix_consumes_each_command_once() {
     const MODES: [Mode; 6] = [
         Mode::Vertical,

@@ -7684,6 +7684,24 @@ fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
 ) -> Option<PendingMutation> {
+    // e-TeX's §275 `eq_word_define` returns before touching the save stack
+    // when extended mode locally reassigns an identical fullword value.
+    // Suppress the corresponding observer record at the same semantic
+    // boundary; otherwise instrumentation reports a mutation the engine did
+    // not canonically perform.
+    if let ScannedStep::IntParam {
+        index,
+        value,
+        global: false,
+    } = scanned
+        && etex_redundant_local_int_parameter_assignment(
+            stores,
+            stores.int_param(IntParam::new(*index)),
+            *value,
+        )
+    {
+        return None;
+    }
     let captured = match scanned {
         // -- Registers: §1226's `toks_register` and §1228's `register` cases,
         // whose `eqtb` slots the instrumentation names `count:<n>`,
@@ -9569,7 +9587,11 @@ fn apply_scanned_step(
             let parameter = IntParam::new(index);
             if global {
                 stores.set_int_param_global(parameter, value);
-            } else {
+            } else if !etex_redundant_local_int_parameter_assignment(
+                stores,
+                stores.int_param(parameter),
+                value,
+            ) {
                 stores.set_int_param(parameter, value);
             }
             Ok(ReplayStep::Continue)
@@ -11450,6 +11472,19 @@ fn effective_global(global_defs: i32, explicit_global: bool) -> bool {
         std::cmp::Ordering::Less => false,
         std::cmp::Ordering::Equal => explicit_global,
     }
+}
+
+/// Whether e-TeX §275's local `eq_word_define` returns as a reassignment.
+///
+/// Global definitions always execute, and TeX82 does not have the extended
+/// mode shortcut. Keeping this predicate beside assignment application makes
+/// the save-stack and observation decisions share one canonical condition.
+fn etex_redundant_local_int_parameter_assignment<T: Eq>(
+    stores: &Universe,
+    current: T,
+    replacement: T,
+) -> bool {
+    stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
 }
 
 fn checked_character_code(value: i32, context: &'static str) -> Result<u32, ExecError> {
