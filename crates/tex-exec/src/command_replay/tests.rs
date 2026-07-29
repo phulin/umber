@@ -662,7 +662,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
         match control.advance(&mut universe).expect("alignment advances") {
             CanonicalStepResult::Progress(MainControlStep::Continue) => {}
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) => {
-                assert_eq!(name, "child");
+                assert_eq!(name, "child.tex");
                 break;
             }
             other => panic!("alignment should suspend inside its cell: {other:?}"),
@@ -677,7 +677,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
         assert!(matches!(
             control.advance(&mut universe).expect("retry suspends"),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
-                if name == "child"
+                if name == "child.tex"
         ));
         assert_eq!(
             universe
@@ -689,7 +689,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
     }
 
     control.capabilities_mut().register_input(
-        "child",
+        "child.tex",
         SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
     );
     run_to_end(&mut control, &mut universe);
@@ -5833,7 +5833,7 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
     install_input(&mut universe);
     let mut control = CommandReplayControl::default();
     control.capabilities_mut().register_input(
-        "child",
+        "child.tex",
         SourceRegistration::new(
             RegisteredSourceKind::Generated,
             Arc::<[u8]>::from(&b"\\count3=9"[..]),
@@ -6388,7 +6388,7 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
         failed
             .advance_with_observer(&mut failed_universe, &mut failed_observations)
             .expect("missing input suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child"
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child.tex"
     ));
     assert_eq!(failed_universe.count(3), 0);
     assert_eq!(failed.current_mode(), Mode::Vertical);
@@ -6401,7 +6401,7 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
 
     failed
         .capabilities_mut()
-        .register_input("child", child.clone());
+        .register_input("child.tex", child.clone());
     assert_eq!(
         failed
             .advance_with_observer(&mut failed_universe, &mut failed_observations)
@@ -6418,7 +6418,7 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
     install_input(&mut fresh_universe);
     let mut fresh = CommandReplayControl::default();
     register_source(&mut fresh, br"\input child\end");
-    fresh.capabilities_mut().register_input("child", child);
+    fresh.capabilities_mut().register_input("child.tex", child);
     let mut fresh_observations = ObservationRecorder::default();
     assert_eq!(
         fresh
@@ -6459,7 +6459,7 @@ fn macro_retry_rolls_back_command_and_provenance_as_one_timeline() {
         assert!(matches!(
             control.advance(&mut universe).expect("missing nested input"),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
-                if name == "child"
+                if name == "child.tex"
         ));
         assert_eq!(
             universe.provenance_stats(),
@@ -6481,7 +6481,9 @@ fn macro_retry_rolls_back_command_and_provenance_as_one_timeline() {
         }
     }
 
-    control.capabilities_mut().register_input("child", child);
+    control
+        .capabilities_mut()
+        .register_input("child.tex", child);
     assert_eq!(
         control
             .advance(&mut universe)
@@ -8606,7 +8608,7 @@ fn canonical_ignorespaces_crosses_nested_source_retirement() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     install_input(&mut universe);
     control.capabilities_mut().register_input(
-        "spaces",
+        "spaces.tex",
         SourceRegistration::new(
             RegisteredSourceKind::World,
             Arc::<[u8]>::from(b"   ".as_slice()),

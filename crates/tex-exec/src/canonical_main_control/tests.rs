@@ -194,13 +194,13 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
         assert!(matches!(
             control.advance(&mut stores).expect("missing input suspends"),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
-                if name == "child"
+                if name == "child.tex"
         ));
         assert_eq!(terminal_text(&stores), committed);
     }
 
     control.capabilities_mut().register_input(
-        "child",
+        "child.tex",
         SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
     );
     run_to_end(&mut control, &mut stores);
