@@ -1827,12 +1827,28 @@ impl CanonicalMainControl {
             CanonicalMathRequest::TextField(kind) => {
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
-                self.modes
-                    .current_list_mutation()
-                    .push(Node::MathNoad(MathNoad::new(
-                        noad_kind_for_text(kind),
-                        field,
-                    )));
+                // TeX82 §1186's second brace simplification: when a braced
+                // field contains exactly one accent noad and is the nucleus
+                // of an Ord atom, replace that Ord atom by the accent itself.
+                // Following scripts must attach to the accent, not to a
+                // wrapper whose converted nucleus and scripts become sibling
+                // boxes.
+                if kind == MathTextFieldKind::Ord
+                    && let MathField::SubMlist(list) = field
+                    && let [Node::MathNoad(accent)] = stores.nodes(list).to_vec().as_slice()
+                    && matches!(accent.kind, NoadKind::Accent { .. })
+                {
+                    self.modes
+                        .current_list_mutation()
+                        .push(Node::MathNoad(accent.clone()));
+                } else {
+                    self.modes
+                        .current_list_mutation()
+                        .push(Node::MathNoad(MathNoad::new(
+                            noad_kind_for_text(kind),
+                            field,
+                        )));
+                }
             }
             CanonicalMathRequest::Script(script) => {
                 let target = reserve_canonical_script_target(

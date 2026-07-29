@@ -8599,6 +8599,55 @@ fn canonical_italic_correction_in_math_mode_appends_a_font_kind_zero_kern() {
 }
 
 #[test]
+fn canonical_braced_singleton_accent_receives_following_scripts() {
+    // TeX82 §1186 replaces an Ord nucleus whose braced sub-mlist is exactly
+    // one accent noad by that accent. The subscript and superscript following
+    // the brace therefore form one scripted accent box, not sibling accent
+    // and script boxes.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_math_fonts(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\r=cmr10 \font\s=cmsy10 \font\e=cmex10
+           \textfont0=\r \scriptfont0=\r \scriptscriptfont0=\r
+           \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
+           \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           \setbox0=\hbox{${\mathaccent'177 A}_B^C$}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let material = universe
+        .nodes(hbox.children)
+        .into_iter()
+        .filter(|node| {
+            !matches!(
+                node,
+                tex_state::node_arena::NodeRef::MathOn(_)
+                    | tex_state::node_arena::NodeRef::MathOff(_)
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        material.len(),
+        1,
+        "the promoted accent and its scripts lower as one box: {material:?}"
+    );
+    assert!(matches!(
+        material[0],
+        tex_state::node_arena::NodeRef::VList(_)
+    ));
+}
+
+#[test]
 fn canonical_italic_correction_in_vertical_mode_reports_illegal_case() {
     // TeX82 §1111's "Forbidden cases": `vmode+ital_corr` never starts a
     // paragraph the way most other hmode-triggering commands do; it is a
