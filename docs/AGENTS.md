@@ -19,6 +19,11 @@ Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,
 not as chronological release receipts in `docs/`.
 
+`cargo_feature_axes.md` is the contract for what a Cargo feature may mean:
+the four axes, the crate that owns each declaration, why `required-features`
+is not one of them, and why no engine crate has a non-empty `default`. Read it
+before adding a feature to any manifest.
+
 `testing_policy.md` is forward-looking guidance for test design and placement.
 `testing_infrastructure.md` inventories the current test commands, budgets,
 fixtures, corpora, and harnesses; update it when those implementation facts

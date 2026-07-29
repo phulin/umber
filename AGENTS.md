@@ -14,6 +14,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Don't worry about keeping changes "low-risk" or implementing only "narrow slices", as making clean code will sometimes require big, ambitious, cross-cutting changes, and reimplementing something from scratch means we will need to write complex new features.
 - In general, try to keep source files short (goal is under roughly 600 lines, but it's okay if a file gets somewhat larger; test files can be as long as needed, they should only be split logically).
 - When writing code, prefer principled solutions, clean architecture, and fast, optimized implementation. Avoid hacks.
+- Adding or renaming a Cargo feature: read
+  [Cargo Feature Axes](docs/cargo_feature_axes.md) first. It names the four
+  axes a feature may belong to, the one crate that owns each declaration, and
+  the gate declaration a new feature must be added to before it can pass.
 - For complex features, build design/technical documentation in advance and place in docs/ for your own planning and for reference later, but don't commit temporary task plans or notes.
 - Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. If writing tests, read `docs/testing_policy.md`.
 - Make sure you can run the test suite very quickly so we don't gate our progress on test su ite speed. Run `cargo test` with `--tests` so you don't run the doctests.

@@ -263,8 +263,8 @@ evidence hermetic.
 One `cargo clippy` invocation lints one feature resolution, and Cargo unifies
 features across every package the invocation selects. A whole-workspace
 `--all-targets` run therefore always resolves `tex-command` and `tex-exec` with
-`instrumentation` enabled, because `tools/tex-command-stream` depends on that
-feature and `tex-exec`'s dev-dependencies enable it. No command of that shape
+`observe` enabled, because `tools/tex-command-stream` depends on that feature
+and `tex-exec`'s dev-dependencies enable it. No command of that shape
 can lint the resolution a released `umber` is built in, so the gate runs a
 declared set of passes instead of one command. `scripts/check-lint-passes.py`
 holds the declaration and runs them all:
@@ -281,6 +281,11 @@ holds the declaration and runs them all:
 
 Together the passes lint every target of every workspace member in at least one
 of the two resolutions.
+
+What each feature name is allowed to mean, and which crate owns each
+declaration, is a separate contract: see
+[Cargo Feature Axes](cargo_feature_axes.md). It is what decides whether a new
+feature belongs in a pass above or in `UNCOVERED_ENABLED_FEATURES`.
 
 The declaration is verified rather than trusted. Each pass records the exact
 feature set it expects Cargo to resolve for every workspace package and checks

@@ -197,6 +197,11 @@ documented normalization. External inputs must be content-pinned and remain
 uncommitted unless their redistribution policy explicitly permits committing
 them.
 
+Cargo features are governed separately by
+[Cargo Feature Axes](cargo_feature_axes.md), which decides what a feature may
+mean and which crate declares it; a test that needs a new build configuration
+should read that contract before adding one.
+
 See `tests/AGENTS.md` for fixture layout and regeneration instructions, and
 [Testing Infrastructure](testing_infrastructure.md) (reference doc only, read
 only if necessary) for the current corpora and harness inventory.

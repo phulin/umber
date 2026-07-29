@@ -1362,7 +1362,7 @@ pub enum LiteralSpanPolicy {
 /// Feature-gated attribution counters and wall-clock timers for token-list
 /// expansion delivery.
 ///
-/// With `profiling-stats` disabled the input stack contains no counter field
+/// With `profiling` disabled the input stack contains no counter field
 /// and all snapshots returned by [`InputStack::expansion_stats`] are zero.
 /// Timer totals are diagnostic extrapolations from sparse samples: exact event
 /// counters remain available, while only one event in 1024 reads the wall
