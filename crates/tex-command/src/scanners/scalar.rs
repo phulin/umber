@@ -1579,6 +1579,18 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §415's `back_error` before the scanner publishes zero.
     fn missing_number_error(&mut self) {
+        // §380 performs an undefined-control-sequence expansion before
+        // §444 reaches its vacuous constant. The command core cannot render
+        // §370 until the borrowed processor episode returns to the executor;
+        // queue this later report behind it so the two World-facing reports
+        // retain their detection order. With no pending command diagnostic,
+        // preserve the scanner's immediate error path.
+        if !self.command.semantic_diagnostics.is_empty() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::MissingNumber);
+            return;
+        }
         let mut report = self.state.print_err("Missing number, treated as zero");
         report.help(&[
             "A number should have been here; I inserted `0'.",

@@ -5662,6 +5662,35 @@ fn canonical_undefined_diagnostic_commits_once_with_or_without_observation() {
 }
 
 #[test]
+fn canonical_number_scan_reports_expansion_error_before_missing_number() {
+    // TeX82 §§370, 380, and 440-444: scan_int's get_x_token first expands
+    // the undefined operand and reports it, then reaches \relax and reports
+    // the vacuous numeric constant. The reports retain that detection order
+    // even though the command core defers World-facing §370 output.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\foo#1{\count0=#1 \bar}\def\bar{\relax}\foo{\undefinedcs}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    let undefined = output
+        .find("Undefined control sequence")
+        .expect("undefined operand is diagnosed");
+    let missing = output
+        .find("Missing number, treated as zero")
+        .expect("vacuous number is diagnosed");
+    assert!(
+        undefined < missing,
+        "TeX82 §370 precedes §444's missing-number recovery:\n{output}"
+    );
+    assert_eq!(universe.count(0), 0);
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

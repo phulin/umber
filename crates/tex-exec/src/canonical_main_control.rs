@@ -13152,6 +13152,15 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence,
             ) => crate::diagnostics::report_undefined_control_sequence(stores),
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber) => {
+                let mut report = stores.print_err("Missing number, treated as zero");
+                report.help(&[
+                    "A number should have been here; I inserted `0'.",
+                    "(If you can't figure out why I needed to see a number,",
+                    "look up `weird error' in the index to The TeXbook.)",
+                ]);
+                report.error();
+            }
             PendingDiagnostic::RestrictedInteger(recovery) => {
                 report_restricted_integer_recovery(stores, recovery.class, recovery.scanned);
             }

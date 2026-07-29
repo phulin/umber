@@ -76,6 +76,9 @@ pub struct CommandState {
 pub enum CommandSemanticDiagnostic {
     /// TeX82 §370's undefined-control-sequence expansion error.
     UndefinedControlSequence,
+    /// TeX82 §415's missing-number recovery, deferred only when an earlier
+    /// command-owned diagnostic is already waiting for executor output.
+    MissingNumber,
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.
