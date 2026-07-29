@@ -13,7 +13,10 @@ mod input;
 mod macro_call;
 mod observation;
 mod primitives;
-pub use primitives::exceeds_max_non_prefixed_command;
+pub use primitives::{
+    exceeds_max_non_prefixed_command, install_tex82_expandable_primitives,
+    register_tex82_expandable_primitives,
+};
 mod processor;
 mod profile;
 mod provenance;

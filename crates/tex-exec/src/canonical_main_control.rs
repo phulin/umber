@@ -502,7 +502,7 @@ impl CanonicalMainControl {
     /// registries, before any fixture or host source is registered.
     #[must_use]
     pub fn tex82_initex(stores: &mut Universe) -> Self {
-        tex_expand::install_expandable_primitives(stores);
+        tex_command::install_tex82_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
         Self {
             command: CommandState::new(CommandProfile::TEX82),

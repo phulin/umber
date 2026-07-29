@@ -3652,6 +3652,36 @@ not the live delivery -- §282's saved tokens, and §372's `\csname`, whose
 `cur_tok:=cur_cs+cs_token_flag` was never delivered at all -- and it derives
 the `align_state` change from the token's own category, exactly as §325 does.
 
+### 33.10 Legacy production dependency audit
+
+The 2026-07-29 audit after the direct canonical session integrations found
+these exact normal-dependency edges:
+
+- `tex-expand -> tex-lex` remains the retired expansion engine's own input
+  path. Its TeX82 expandable primitive installation entry points now forward
+  to `tex-command`; the identity table and fresh-INITEX/format-restore policy
+  no longer have a second owner.
+- `tex-exec -> tex-expand, tex-lex` remains for the retired `Executor`, its
+  scanner/error/checkpoint types, legacy alignment and assignment modules, and
+  two canonical executor token-string formatting calls. `umber2-johp.14` owns
+  removal of those production execution consumers.
+- `tex-incr -> tex-expand, tex-lex` remains in its legacy delivery,
+  `InputStack`, expansion-context, and checkpoint integration.
+  `umber2-johp.26` owns that cutover.
+- `umber -> tex-expand, tex-lex` remains in direct/CLI and virtual compilation,
+  `lex-dump`/`expand-dump`, the profiling runner, pdfTeX registration helpers,
+  and legacy resolver/resource adapters. `umber2-johp.24`,
+  `umber2-johp.25`, and `umber2-johp.26` own the production session cutovers;
+  `umber2-johp.15` owns final adapter and crate deletion after parity.
+
+The only additional normal edge is `tools/fixturegen -> tex-lex`, which is
+live-reference fixture tooling rather than a shipped engine path and is
+deliberately retained until its regeneration contract has a canonical
+replacement. Benchmark-only consumers are likewise not production fallback.
+`tex-command` itself has no dependency on either retired crate, and
+`CanonicalMainControl::tex82_initex` now installs its expandable meanings
+directly from the command core.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:

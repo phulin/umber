@@ -1211,6 +1211,7 @@ dependencies = [
  "md-5",
  "posix-regex",
  "test-support",
+ "tex-command",
  "tex-lex",
  "tex-state",
 ]
