@@ -2409,11 +2409,21 @@ impl CommandProcessor<'_> {
         self.scan_balanced_text(false)
     }
 
-    /// TeX82 §46's expanded box-register scan for `\\showbox`.
-    pub fn scan_showbox(&mut self) -> Result<(i32, StructuredProvenance), CommandError> {
-        let index = self.scan_integer()?;
+    /// e-TeX 2.6 `etex.ch` [49.1296]'s extended box-register scan for
+    /// `\\showbox`.
+    ///
+    /// The change from TeX82's `scan_eight_bit_int` to `scan_register_num`
+    /// retains the restricted scanner's invalid-to-zero recovery before the
+    /// box lookup.
+    pub fn scan_showbox(&mut self) -> Result<(u16, StructuredProvenance), CommandError> {
+        let class = if self.command.profile().capabilities().supports_etex() {
+            RestrictedIntegerClass::Register
+        } else {
+            RestrictedIntegerClass::EightBit
+        };
+        let index = self.scan_restricted_integer(class)?;
         Ok((
-            index.value,
+            u16::try_from(index.value).expect("recovered register number is in range"),
             StructuredProvenance {
                 primary: index.provenance.primary,
             },

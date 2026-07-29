@@ -3604,6 +3604,67 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
 }
 
 #[test]
+fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero() {
+    // e-TeX 2.6 etex.ch [49.1296] replaces TeX82's `scan_eight_bit_int`
+    // with `scan_register_num`, whose restricted scan diagnoses -1, recovers
+    // it to zero, and leaves the following token for the next command.
+    let mut initex_stores = Universe::new_with_plain_catcodes();
+    let _ = canonical_etex_initex(&mut initex_stores);
+    let format = initex_stores
+        .dump_format()
+        .expect("dump extended e-TeX format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    control
+        .set_fuel_limit(1_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, br"\showbox-1\count0=23\end");
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("showbox checkpoints");
+
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("invalid showbox register recovers"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.count(0), 0, "following assignment remains unread");
+    let first_hash = stores.testing_state_hash();
+    let first_output = terminal_text(&stores);
+    assert!(
+        first_output.contains("Bad register code (-1)"),
+        "{first_output}"
+    );
+    assert!(first_output.contains("> \\box0="), "{first_output}");
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("showbox state restores");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("invalid showbox register retries identically"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(terminal_text(&stores), first_output);
+
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        stores.count(0),
+        23,
+        "following token executes after recovery"
+    );
+    assert!(control.fuel_burned() < 1_000);
+}
+
+#[test]
 fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     let mut stores = Universe::new_with_plain_catcodes();
     let nullfont = stores.intern("nullfont");

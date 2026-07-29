@@ -6029,10 +6029,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowBox) => {
             let (index, _) = processor.scan_showbox().map_err(command_error)?;
-            Ok(ScannedStep::ShowBox {
-                index: u16::try_from(index)
-                    .map_err(|_| ExecError::RegisterNumberOutOfRange(index))?,
-            })
+            Ok(ScannedStep::ShowBox { index })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
             let extension = processor
