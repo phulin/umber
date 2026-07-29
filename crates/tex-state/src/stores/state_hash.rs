@@ -470,7 +470,9 @@ impl Stores {
     }
 
     pub(crate) fn hash_font_semantic(&self, id: FontId, hasher: &mut StateHasher) {
-        self.hash_font(id, hasher);
+        hasher.tag(0x68);
+        let id = self.resolve_stored_font(id);
+        self.fonts.hash_fragment(id).apply(hasher);
     }
 
     pub(crate) fn hash_meaning_semantic(&self, meaning: Meaning, hasher: &mut StateHasher) {

@@ -243,7 +243,7 @@ fn owned_node_freeze_reuses_the_source_vector_and_preserves_identity() {
 }
 
 #[test]
-fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
+fn frozen_font_semantics_exclude_mutable_identifier_names() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let list = stores.freeze_node_list(&[Node::Char {
@@ -254,19 +254,16 @@ fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
     let semantic_id = stores.node_semantic_id(list);
     let late = stores.intern("late-font-name");
 
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        stores.set_font_identifier_symbol(NULL_FONT, late);
-    }));
-    assert!(rejected.is_err());
+    stores.set_font_identifier_symbol(NULL_FONT, late);
     assert_eq!(stores.node_semantic_id(list), semantic_id);
 
     let mut fork = stores.clone();
-    let rejected_in_fork = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        fork.set_font_identifier_symbol(NULL_FONT, late);
-    }));
-    assert!(rejected_in_fork.is_err());
+    let later = fork.intern("later-font-name");
+    fork.set_font_identifier_symbol(NULL_FONT, later);
+    assert_eq!(fork.node_semantic_id(list), semantic_id);
 
     stores.rollback(&snapshot);
+    assert_eq!(stores.font_identifier_symbol(NULL_FONT), None);
     let late = stores.intern("late-font-name");
     stores.set_font_identifier_symbol(NULL_FONT, late);
     assert_eq!(stores.font_identifier_symbol(NULL_FONT), Some(late));

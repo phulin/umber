@@ -39,18 +39,12 @@ impl Stores {
             if let Node::Char { font, .. } = nodes[index] {
                 let end = same_font_char_run_end(nodes, index, font);
                 self.assert_live_font(font);
-                let stored_font = self.resolve_stored_font(font);
-                self.fonts.seal_semantic_identity(stored_font);
                 self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
                 index = end;
             } else {
                 let node = &nodes[index];
                 needs.preflight_and_count(node);
                 self.assert_live_handles_in_node(node);
-                if let Node::Lig { font, .. } = node {
-                    let stored_font = self.resolve_stored_font(*font);
-                    self.fonts.seal_semantic_identity(stored_font);
-                }
                 identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
                 index += 1;
             }
@@ -67,16 +61,10 @@ impl Stores {
         while index < nodes.len() {
             if let Node::Char { font, .. } = nodes[index] {
                 let end = same_font_char_run_end(nodes, index, font);
-                let stored_font = self.resolve_stored_font(font);
-                self.fonts.seal_semantic_identity(stored_font);
                 self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
                 index = end;
             } else {
                 let node = &nodes[index];
-                if let Node::Lig { font, .. } = node {
-                    let stored_font = self.resolve_stored_font(*font);
-                    self.fonts.seal_semantic_identity(stored_font);
-                }
                 identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
                 index += 1;
             }

@@ -3935,6 +3935,21 @@ fn rollback_restores_font_identifier_registration() {
 }
 
 #[test]
+fn font_identifier_alias_replaces_and_rolls_back_the_previous_name() {
+    let mut universe = Universe::new();
+    let first = universe.intern("first");
+    let second = universe.intern("second");
+    let font = universe.intern_font_with_identifier(test_font("cmr10", b"same"), first);
+    let snapshot = universe.snapshot();
+
+    universe.set_font_identifier_symbol(font, second);
+    assert_eq!(universe.font_identifier_symbol(font), Some(second));
+
+    universe.rollback(&snapshot);
+    assert_eq!(universe.font_identifier_symbol(font), Some(first));
+}
+
+#[test]
 fn rollback_reuse_does_not_revive_stale_font_identity() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();

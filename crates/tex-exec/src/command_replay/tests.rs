@@ -7082,6 +7082,33 @@ fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
 }
 
 #[test]
+fn canonical_reloaded_font_uses_the_latest_identifier() {
+    // TeX82 §1257's `common_ending` assigns `font_id_text(f):=t` even when
+    // the metric program was already loaded. Thus two definitions sharing
+    // one FontId leave `\the\font` spelling the later control sequence.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\first=cmr10 \first A\font\second=cmr10 \showthe\font\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let first = universe.intern("first");
+    let second = universe.intern("second");
+    let Meaning::Font(first_font) = universe.meaning(first) else {
+        panic!("first font definition is installed");
+    };
+    let Meaning::Font(second_font) = universe.meaning(second) else {
+        panic!("second font definition is installed");
+    };
+    assert_eq!(first_font, second_font);
+    assert_eq!(universe.font_identifier_symbol(first_font), Some(second));
+    assert!(terminal_text(&universe).contains("> \\second."));
+}
+
+#[test]
 fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
     // TeX82's `issue_message` sends \errmessage through `print_err`/`error`,
     // then main control resumes normally.

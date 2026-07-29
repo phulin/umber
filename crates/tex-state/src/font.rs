@@ -91,7 +91,6 @@ pub struct MissingCharacter {
 pub(crate) struct FontStoreMark {
     pub(crate) len: u32,
     pub(crate) identifier_writes_len: u32,
-    semantic_seal_writes_len: u32,
     pub(crate) expansion_writes_len: u32,
     identities: IdentityMark,
 }
@@ -122,9 +121,7 @@ struct FontHashFragmentKey {
 pub(crate) struct FontStore {
     fonts: Vec<LoadedFont>,
     identifiers: Vec<Option<SymbolId>>,
-    identifier_writes: Vec<FontId>,
-    semantic_sealed: Vec<bool>,
-    semantic_seal_writes: Vec<FontId>,
+    identifier_writes: Vec<(FontId, Option<SymbolId>, StateHashFragment)>,
     expansion_specs: Vec<Option<FontExpansion>>,
     expansion_writes: Vec<(FontId, Option<FontExpansion>)>,
     by_key: BTreeMap<FontKey, FontId>,
@@ -145,8 +142,6 @@ impl Clone for FontStore {
             fonts: self.fonts.clone(),
             identifiers: self.identifiers.clone(),
             identifier_writes: self.identifier_writes.clone(),
-            semantic_sealed: self.semantic_sealed.clone(),
-            semantic_seal_writes: self.semantic_seal_writes.clone(),
             expansion_specs: self.expansion_specs.clone(),
             expansion_writes: self.expansion_writes.clone(),
             by_key: self.by_key.clone(),
@@ -193,8 +188,6 @@ impl FontStore {
             fonts: vec![null],
             identifiers: vec![None],
             identifier_writes: Vec::new(),
-            semantic_sealed: vec![false],
-            semantic_seal_writes: Vec::new(),
             expansion_specs: vec![None],
             expansion_writes: Vec::new(),
             by_key: BTreeMap::new(),
@@ -274,11 +267,9 @@ impl FontStore {
             font_hash_fragments.push(fragment);
         }
         Ok(Self {
-            semantic_sealed: vec![false; fonts.len()],
             fonts,
             identifiers,
             identifier_writes: Vec::new(),
-            semantic_seal_writes: Vec::new(),
             expansion_specs,
             expansion_writes: Vec::new(),
             by_key,
@@ -323,7 +314,6 @@ impl FontStore {
         );
         self.fonts.push(font);
         self.identifiers.push(None);
-        self.semantic_sealed.push(false);
         self.expansion_specs.push(None);
         self.font_hash_fragments.push(hash_fragment);
         self.complete_hash_fragments
@@ -349,46 +339,20 @@ impl FontStore {
             self.contains(id),
             "font id is not live in this Universe timeline"
         );
+        let index = id.raw() as usize;
         let identifier = self
             .identifiers
-            .get_mut(id.raw() as usize)
+            .get_mut(index)
             .expect("font id is not live in this Universe timeline");
-        if identifier.is_none() {
-            assert!(
-                !self.semantic_sealed[id.raw() as usize],
-                "font identifier must be assigned before the font enters a frozen node list"
-            );
+        if *identifier != Some(symbol) {
+            // TeX82 §1257 assigns `font_id_text(f):=t` at `common_ending`,
+            // including when an already-loaded font is found. The identifier
+            // is mutable independently of the immutable metric program.
+            self.identifier_writes
+                .push((id, *identifier, self.complete_hash_fragments[index]));
             *identifier = Some(symbol);
-            self.complete_hash_fragments[id.raw() as usize] = complete_hash_fragment;
-            self.identifier_writes.push(id);
+            self.complete_hash_fragments[index] = complete_hash_fragment;
         }
-    }
-
-    /// Prevents the rollback-coupled identifier from changing after its
-    /// complete semantics have been captured by a frozen node-list identity.
-    pub(crate) fn seal_semantic_identity(&mut self, id: FontId) {
-        assert!(
-            self.contains(id),
-            "font id is not live in this Universe timeline"
-        );
-        let sealed = &mut self.semantic_sealed[id.raw() as usize];
-        if !*sealed {
-            *sealed = true;
-            self.semantic_seal_writes.push(id);
-        }
-    }
-
-    pub(crate) fn truncate_semantic_seals_to(&mut self, mark: usize) {
-        assert!(
-            mark <= self.semantic_seal_writes.len(),
-            "font semantic-seal mark is not an ancestor"
-        );
-        for id in self.semantic_seal_writes[mark..].iter().copied() {
-            if self.contains(id) {
-                self.semantic_sealed[id.raw() as usize] = false;
-            }
-        }
-        self.semantic_seal_writes.truncate(mark);
     }
 
     #[must_use]
@@ -515,8 +479,6 @@ impl FontStore {
             len: u32::try_from(self.fonts.len()).expect("font store exceeds u32 ids"),
             identifier_writes_len: u32::try_from(self.identifier_writes.len())
                 .expect("font identifier write log exceeds u32 entries"),
-            semantic_seal_writes_len: u32::try_from(self.semantic_seal_writes.len())
-                .expect("font semantic-seal write log exceeds u32 entries"),
             expansion_writes_len: u32::try_from(self.expansion_writes.len())
                 .expect("font expansion write log exceeds u32 entries"),
             identities: self.identities.watermark(),
@@ -527,20 +489,19 @@ impl FontStore {
         self.identities
             .rollback(mark.identities)
             .expect("font-store mark is not an ancestor");
-        for id in self.identifier_writes[mark.identifier_writes_len as usize..]
+        for (id, identifier, fragment) in self.identifier_writes
+            [mark.identifier_writes_len as usize..]
             .iter()
+            .rev()
             .copied()
         {
             if id.raw() < mark.len {
-                self.identifiers[id.raw() as usize] = None;
-                let immutable = self.hash_fragments[self.font_hash_fragments[id.raw() as usize]];
-                self.complete_hash_fragments[id.raw() as usize] =
-                    complete_font_hash_fragment(immutable, None);
+                self.identifiers[id.raw() as usize] = identifier;
+                self.complete_hash_fragments[id.raw() as usize] = fragment;
             }
         }
         self.identifier_writes
             .truncate(mark.identifier_writes_len as usize);
-        self.truncate_semantic_seals_to(mark.semantic_seal_writes_len as usize);
         for (id, previous) in self.expansion_writes[mark.expansion_writes_len as usize..]
             .iter()
             .rev()
@@ -554,7 +515,6 @@ impl FontStore {
             .truncate(mark.expansion_writes_len as usize);
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
-        self.semantic_sealed.truncate(mark.len as usize);
         self.expansion_specs.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
         self.complete_hash_fragments.truncate(mark.len as usize);
