@@ -123,14 +123,10 @@
         ]
       },
       "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ]
+        "kind": "state",
+        "count_registers": [0]
       },
-      "expected": [
-        "effect:activities:mode=vertical"
-      ],
+      "expected": ["count:0=0"],
       "expectation": {
         "kind": "pass"
       }

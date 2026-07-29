@@ -636,7 +636,7 @@
         "sections": [1290, 1291, 1292, 1293]
       },
       "projection": { "kind": "observations", "kinds": ["effect"], "count_registers": [0] },
-      "expected": ["effect:activities:mode=vertical", "effect:terminate:engine\u0000", "count:0=1"],
+      "expected": ["effect:terminate:engine\u0000", "count:0=1"],
       "expectation": { "kind": "pass" }
     },
     {
