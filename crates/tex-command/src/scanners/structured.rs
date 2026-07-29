@@ -2105,9 +2105,29 @@ impl CommandProcessor<'_> {
     /// from raw source collection and cannot access an `InputStack`.
     pub fn scan_discretionary(&mut self) -> Result<ScannedDiscretionary, CommandError> {
         Ok(ScannedDiscretionary {
-            pre_break: self.scan_balanced_text(false)?,
-            post_break: self.scan_balanced_text(false)?,
-            replacement: self.scan_balanced_text(false)?,
+            pre_break: self.scan_discretionary_part()?,
+            post_break: self.scan_discretionary_part()?,
+            replacement: self.scan_discretionary_part()?,
+        })
+    }
+
+    /// Freezes one discretionary part after TeX82 §1117/§1120 has consumed
+    /// its opening brace through §403 while `scanner_status` is still normal.
+    ///
+    /// Umber's executor replays the frozen body later, but that migration
+    /// boundary must not move the brace into the body collector: doing so
+    /// publishes the collector's absorbing transition before the raw and
+    /// expanded brace deliveries.
+    fn scan_discretionary_part(&mut self) -> Result<ScannedBalancedText, CommandError> {
+        let opening = self.scan_left_brace(true)?;
+        let primary = opening.origin();
+        let scanned = self.scan_toks(ScanToksMode::GeneralAfterConsumedOpening {
+            expanded: false,
+            primary,
+        })?;
+        Ok(ScannedBalancedText {
+            tokens: scanned.replacement_text,
+            provenance: provenance(&scanned),
         })
     }
 

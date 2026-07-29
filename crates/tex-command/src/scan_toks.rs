@@ -36,6 +36,12 @@ pub(crate) enum ScanToksMode {
     /// that brace up for `scan_toks`. Every other caller enters §473 directly
     /// and must use `General`, whose absorbing transition precedes the brace.
     GeneralAfterOpening { expanded: bool, primary: OriginId },
+    /// Collect general text after the caller has already consumed the
+    /// required opening brace. TeX82 §1117's `append_discretionary` performs
+    /// `scan_left_brace` before it enters the discretionary body; the
+    /// command core freezes that body for executor replay, so its collector
+    /// must begin after the already delivered brace.
+    GeneralAfterConsumedOpening { expanded: bool, primary: OriginId },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
@@ -61,7 +67,7 @@ pub(crate) enum ScannedLeftBrace {
 }
 
 impl ScannedLeftBrace {
-    fn origin(&self) -> OriginId {
+    pub(crate) fn origin(&self) -> OriginId {
         match self {
             Self::Consumed(command) => command.origin(),
             Self::Inserted => OriginId::UNKNOWN,
@@ -100,7 +106,9 @@ impl CommandProcessor<'_> {
             self.command.transient.next_builder_identity.wrapping_add(1);
         let warning = ScannerWarning(builder.0);
         let status = match mode {
-            ScanToksMode::General { .. } | ScanToksMode::GeneralAfterOpening { .. } => {
+            ScanToksMode::General { .. }
+            | ScanToksMode::GeneralAfterOpening { .. }
+            | ScanToksMode::GeneralAfterConsumedOpening { .. } => {
                 ScannerStatus::Absorbing(AbsorbingContext {
                     owner: None,
                     builder,
@@ -134,8 +142,13 @@ impl CommandProcessor<'_> {
                     ScanToksMode::General { expanded: true }
                     | ScanToksMode::GeneralAfterOpening { expanded: true, .. } =>
                         "expanded_scan_toks",
+                    ScanToksMode::GeneralAfterConsumedOpening { expanded: true, .. } =>
+                        "expanded_scan_toks",
                     ScanToksMode::General { expanded: false }
                     | ScanToksMode::GeneralAfterOpening {
+                        expanded: false, ..
+                    }
+                    | ScanToksMode::GeneralAfterConsumedOpening {
                         expanded: false, ..
                     } => "scan_toks",
                     ScanToksMode::MacroDefinition { .. }
@@ -176,6 +189,9 @@ impl CommandProcessor<'_> {
                         return Err(CommandError::input_invariant());
                     }
                     self.observe_expanded_delivery(&opening);
+                    (expanded, Vec::new(), None, None, primary, false)
+                }
+                ScanToksMode::GeneralAfterConsumedOpening { expanded, primary } => {
                     (expanded, Vec::new(), None, None, primary, false)
                 }
                 ScanToksMode::MacroDefinition { expanded } => {

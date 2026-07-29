@@ -1181,6 +1181,64 @@ fn balanced_text_enters_absorbing_before_its_opening_brace() {
 }
 
 #[test]
+fn discretionary_delivers_each_opening_brace_before_body_collection() {
+    // TeX82 §1117 and §1120 run `scan_left_brace` before each discretionary
+    // part begins. Umber freezes the bodies for executor replay, but the
+    // collector's absorbing status must remain after the raw and expanded
+    // delivery of the brace that §403 consumed.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{a}{b}{c}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+
+    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_discretionary()
+        .expect("discretionary scans");
+
+    let mut openings = recorder.0.iter().enumerate().filter_map(|(index, event)| {
+        matches!(
+            event,
+            CommandObservation::Command(command)
+                if matches!(
+                    command.spelling,
+                    crate::ObservedToken::Character {
+                        character: '{',
+                        catcode: Catcode::BeginGroup
+                    }
+                )
+        )
+        .then_some(index)
+    });
+    let mut absorbing = recorder.0.iter().enumerate().filter_map(|(index, event)| {
+        matches!(
+            event,
+            CommandObservation::ScannerStatus(status)
+                if status.from == "normal" && status.to == "absorbing"
+        )
+        .then_some(index)
+    });
+    for _ in 0..3 {
+        let raw = openings.next().expect("raw opening delivery");
+        let expanded = openings.next().expect("expanded opening delivery");
+        let collection = absorbing.next().expect("body collection");
+        assert!(raw < expanded && expanded < collection, "{:?}", recorder.0);
+    }
+    assert!(openings.next().is_none());
+    assert!(absorbing.next().is_none());
+}
+
+#[test]
 fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
