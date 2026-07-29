@@ -7,6 +7,7 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
+use crate::processor::status::{DefinitionContext, TokenBuilderId};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandRuntime, CommandState, ConditionalMode, ConditionalState,
@@ -1973,4 +1974,93 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
             .is_none()
     );
     assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
+fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let undefined_symbol = universe.intern("ifdefined-undefined").symbol();
+    let macro_operand = macro_token(
+        &mut universe,
+        "ifdefined-macro",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('X')],
+    );
+    let mut tokens = Vec::new();
+    for (name, operand) in [
+        ("ifdefined-undefined-case", Token::Cs(undefined_symbol)),
+        ("ifdefined-macro-case", macro_operand),
+        ("ifdefined-character-case", other('q')),
+    ] {
+        append_boolean_case(
+            &mut universe,
+            &mut tokens,
+            name,
+            ExpandablePrimitive::IfDefined,
+            [operand],
+        );
+    }
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['f', 't', 't'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
+fn etex_ifdefined_temporarily_allows_an_outer_operand() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let outer = macro_token(
+        &mut universe,
+        "ifdefined-outer",
+        MeaningFlags::OUTER,
+        &[],
+        &[],
+    );
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifdefined-outer-case",
+        ExpandablePrimitive::IfDefined,
+        [outer],
+    );
+    push(&mut command, tokens);
+    let defining = ScannerStatus::Defining(DefinitionContext {
+        target: None,
+        builder: TokenBuilderId(1),
+        warning: ScannerWarning(1),
+    });
+    let _prior = command.begin_scanner_status(defining.clone());
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(next_character(&mut processor), 't');
+        assert_eq!(processor.command.scanner.status(), &defining);
+        assert!(processor.command.expansion.pending_diagnostics.is_empty());
+    }
+    let defining = command.begin_scanner_status(ScannerStatus::Normal);
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert!(
+        processor
+            .get_x_token()
+            .expect("input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+    processor.command.restore_scanner_status(defining);
 }

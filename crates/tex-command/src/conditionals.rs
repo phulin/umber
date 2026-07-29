@@ -600,13 +600,12 @@ impl CommandProcessor<'_> {
                     .state
                     .read_stream_at_eof(tex_state::world::StreamSlot::new(stream)))
             }
-            ConditionalKind::IfDefined
-            | ConditionalKind::IfCsName
+            ConditionalKind::IfDefined => self.evaluate_ifdefined(),
+            ConditionalKind::IfCsName
             | ConditionalKind::IfFontChar
             | ConditionalKind::IfInCsName
             | ConditionalKind::IfCase => {
                 Err(CommandError::UnsupportedExpandablePrimitive(match kind {
-                    ConditionalKind::IfDefined => ExpandablePrimitive::IfDefined,
                     ConditionalKind::IfCsName => ExpandablePrimitive::IfCsName,
                     ConditionalKind::IfFontChar => ExpandablePrimitive::IfFontChar,
                     ConditionalKind::IfInCsName => ExpandablePrimitive::IfInCsName,
@@ -614,6 +613,27 @@ impl CommandProcessor<'_> {
                 }))
             }
         }
+    }
+
+    /// e-TeX 2.6 etex.ch [17.4712--4763] tests one raw command with
+    /// `get_next`, temporarily setting `scanner_status := normal` so an outer
+    /// control sequence is a legal operand even inside a definition or
+    /// preamble. Unlike `get_token`, this does not enter a previously unseen
+    /// control-sequence spelling; both that dummy command and an existing
+    /// undefined meaning nevertheless carry `undefined_cs`.
+    fn evaluate_ifdefined(&mut self) -> Result<bool, CommandError> {
+        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
+        let operand = self.get_next();
+        self.observe_scanner_status_transition(
+            self.command.scanner.status().clone(),
+            prior.status().clone(),
+        );
+        self.command.restore_scanner_status(prior);
+        Ok(operand?.ok_or(CommandError::input_invariant())?.meaning() != Meaning::Undefined)
     }
 
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {

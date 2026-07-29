@@ -13,7 +13,8 @@ Canonical provenance is the `tex.web` identity pinned by
 property, tiny source, exact numbered sections, projection kind, expected
 observations, and expectation. The passing cases preserve the established
 classification, stack, skipping, branch, predicate, scalar, and token coverage,
-including e-TeX's format-loaded `\unless` frame identity.
+including e-TeX's format-loaded `\unless` frame identity and bounded
+`\ifdefined` predicate outcomes.
 
 The §505 selector-recovery case is a strict expected failure linked to
 `umber2-johp.246`. Its canonical observation list remains the expectation, and

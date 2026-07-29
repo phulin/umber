@@ -82,6 +82,25 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "etex-loaded-ifdefined",
+      "property_id": "tex82.conditionals.predicate-dispatch",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-ifdefined.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [4712, 4715, 4722, 4752, 4763]
+      },
+      "projection": { "kind": "predicate-outcomes", "count_registers": [0] },
+      "expected": [
+        "predicate:ifdefined:-:true",
+        "predicate:ifdefined:-:false",
+        "predicate:ifdefined:-:true",
+        "count:0=3"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "skipped-text",
       "property_id": "tex82.conditionals.skipped-text",
       "source": "skipped-text.tex",
