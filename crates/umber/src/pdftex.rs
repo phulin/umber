@@ -436,7 +436,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    tex_expand::install_pdftex_expandable_primitives(stores);
+    tex_command::install_pdftex_expandable_primitives(stores);
     for &name in PDFTEX_PRIMITIVE_NAMES {
         let symbol = stores.intern(name);
         stores.register_primitive_meaning(name, stores.meaning(symbol));
@@ -447,7 +447,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
 /// replacing live meanings restored from the format image.
 pub(crate) fn register_pdftex_layer(stores: &mut Universe) {
     let mut pristine = Universe::default();
-    tex_expand::install_etex_expandable_primitives(&mut pristine);
+    tex_command::install_etex_expandable_primitives(&mut pristine);
     install_pdftex_layer(&mut pristine);
     for &name in PDFTEX_PRIMITIVE_NAMES {
         stores.register_primitive_meaning(

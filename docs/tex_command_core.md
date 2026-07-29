@@ -3658,9 +3658,9 @@ The 2026-07-29 audit after the direct canonical session integrations found
 these exact normal-dependency edges:
 
 - `tex-expand -> tex-lex` remains the retired expansion engine's own input
-  path. Its TeX82 expandable primitive installation entry points now forward
-  to `tex-command`; the identity table and fresh-INITEX/format-restore policy
-  no longer have a second owner.
+  path. Its TeX82, e-TeX 2.6, and pdfTeX 1.40.27 expandable primitive
+  installation entry points now forward to `tex-command`; the identity tables
+  and fresh-INITEX/format-restore policy no longer have a second owner.
 - `tex-exec -> tex-expand, tex-lex` remains for the retired `Executor`, its
   scanner/error/checkpoint types, legacy alignment and assignment modules, and
   two canonical executor token-string formatting calls. `umber2-johp.14` owns
@@ -3669,8 +3669,10 @@ these exact normal-dependency edges:
   `InputStack`, expansion-context, and checkpoint integration.
   `umber2-johp.26` owns that cutover.
 - `umber -> tex-expand, tex-lex` remains in direct/CLI and virtual compilation,
-  `lex-dump`/`expand-dump`, the profiling runner, pdfTeX registration helpers,
-  and legacy resolver/resource adapters. `umber2-johp.24`,
+  `lex-dump`/`expand-dump`, the profiling runner, LaTeX compatibility
+  registration, and legacy resolver/resource adapters. Canonical TeX82,
+  e-TeX, and pdfTeX session/profile setup calls `tex-command` directly;
+  `umber2-johp.24`,
   `umber2-johp.25`, and `umber2-johp.26` own the production session cutovers;
   `umber2-johp.15` owns final adapter and crate deletion after parity.
 

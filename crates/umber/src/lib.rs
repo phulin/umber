@@ -973,7 +973,7 @@ impl From<WorldError> for FinalizationError {
 /// until the format source assigns them.
 pub fn prepare_initex_stores(stores: &mut Universe) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    tex_expand::install_expandable_primitives(stores);
+    tex_command::install_tex82_expandable_primitives(stores);
     tex_exec::install_unexpandable_primitives(stores);
     stores.intern("par");
 }
@@ -995,7 +995,7 @@ pub fn prepare_run_stores(stores: &mut Universe) {
 /// Installs the primitive/state setup used by `umber run --etex`.
 pub fn prepare_etex_run_stores(stores: &mut Universe) {
     prepare_run_stores(stores);
-    tex_expand::install_etex_expandable_primitives(stores);
+    tex_command::install_etex_expandable_primitives(stores);
     tex_exec::install_etex_unexpandable_primitives(stores);
 }
 
@@ -1009,8 +1009,8 @@ pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
 
 /// Restores driver-selected pdfTeX meanings after loading a format image.
 pub fn install_pdftex_format_primitives(stores: &mut Universe) {
-    tex_expand::register_expandable_primitives(stores);
-    tex_expand::register_etex_expandable_primitives(stores);
+    tex_command::register_tex82_expandable_primitives(stores);
+    tex_command::register_etex_expandable_primitives(stores);
     tex_exec::register_unexpandable_primitives(stores);
     tex_exec::register_etex_unexpandable_primitives(stores);
     pdftex::register_pdftex_layer(stores);
@@ -1018,13 +1018,13 @@ pub fn install_pdftex_format_primitives(stores: &mut Universe) {
 }
 
 fn register_tex_format_primitives(stores: &mut Universe) {
-    tex_expand::register_expandable_primitives(stores);
+    tex_command::register_tex82_expandable_primitives(stores);
     tex_exec::register_unexpandable_primitives(stores);
 }
 
 fn register_etex_format_primitives(stores: &mut Universe) {
     register_tex_format_primitives(stores);
-    tex_expand::register_etex_expandable_primitives(stores);
+    tex_command::register_etex_expandable_primitives(stores);
     tex_exec::register_etex_unexpandable_primitives(stores);
 }
 

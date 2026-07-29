@@ -14,7 +14,9 @@ mod macro_call;
 mod observation;
 mod primitives;
 pub use primitives::{
-    exceeds_max_non_prefixed_command, install_tex82_expandable_primitives,
+    exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
+    install_pdftex_expandable_primitives, install_tex82_expandable_primitives,
+    register_etex_expandable_primitives, register_pdftex_expandable_primitives,
     register_tex82_expandable_primitives,
 };
 mod processor;

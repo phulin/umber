@@ -653,7 +653,7 @@ mod tests {
 
     fn prepared_session(source: &'static [u8]) -> (Universe, Arc<[u8]>) {
         let mut stores = Universe::new_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
+        tex_command::install_tex82_expandable_primitives(&mut stores);
         tex_exec::install_unexpandable_primitives(&mut stores);
         (stores, Arc::from(source))
     }
@@ -663,7 +663,7 @@ mod tests {
     fn retained_observer_captures_fresh_and_format_loaded_production_runs() {
         let source: Arc<[u8]> = Arc::from(&b"\\message{observed}\\end"[..]);
         let mut base = Universe::new_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut base);
+        tex_command::install_tex82_expandable_primitives(&mut base);
         tex_exec::install_unexpandable_primitives(&mut base);
         let format = base.dump_format().expect("base format dumps");
 
@@ -672,7 +672,7 @@ mod tests {
                 Universe::from_format(World::memory(), &format).expect("format restores")
             } else {
                 let mut stores = Universe::new_with_plain_catcodes();
-                tex_expand::install_expandable_primitives(&mut stores);
+                tex_command::install_tex82_expandable_primitives(&mut stores);
                 tex_exec::install_unexpandable_primitives(&mut stores);
                 stores
             };
@@ -708,7 +708,7 @@ mod tests {
     fn etex_alphabetic_constants_preserve_control_symbol_spelling() {
         let source: Arc<[u8]> = Arc::from(&br"\endlinechar=`\^^M \newlinechar=`\^^J \end"[..]);
         let mut stores = Universe::new_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
+        tex_command::install_tex82_expandable_primitives(&mut stores);
         tex_exec::install_unexpandable_primitives(&mut stores);
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::ETEX26);
         session
