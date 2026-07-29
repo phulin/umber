@@ -267,6 +267,13 @@ mod tests {
             tex82.primitive_meaning("ifdefined"),
             Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined))
         );
+        assert_eq!(
+            tex82.primitive_meaning("detokenize"),
+            Some(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::Detokenize
+            )),
+            "format loading must rebuild the immutable primitive lookup"
+        );
 
         let symbol = tex82.intern("pdfprimitive");
         tex82.set_meaning(symbol, replacement);

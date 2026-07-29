@@ -470,6 +470,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 self.expand_unexpanded()
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
+                self.expand_detokenize(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
                 self.expand_scantokens()
             }
@@ -560,6 +563,20 @@ impl CommandProcessor<'_> {
             level: level.0,
             position: 0,
         }));
+        Ok(())
+    }
+
+    /// e-TeX 2.6 etex.ch §53a's `\detokenize`.
+    ///
+    /// `scan_general_text` collects without expansion, `token_show` renders
+    /// the frozen spelling exactly as for `\scantokens`, and `str_toks`
+    /// projects the resulting string to category-10 spaces and category-12
+    /// other characters.
+    fn expand_detokenize(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let scanned =
+            self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: false })?;
+        let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
 

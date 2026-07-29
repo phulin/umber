@@ -248,6 +248,119 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
     assert!(fuel.burned() <= 64);
 }
 
+#[test]
+fn etex_detokenize_projects_token_show_text_without_expansion() {
+    // e-TeX 2.6 etex.ch §53a: scan_general_text is unexpanded, token_show
+    // separates a control word, and str_toks makes only spaces category 10.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let detokenize =
+        install_expandable(&mut universe, "detokenize", ExpandablePrimitive::Detokenize);
+    let payload = install_macro(
+        &mut universe,
+        "payload",
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        },
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(detokenize)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Cs(payload)),
+            traced(Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            }),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuel::new(32).expect("finite test fuel");
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(&mut fuel);
+    let mut output = Vec::new();
+    while let Some(delivery) = processor.get_x_token().expect("detokenize expands") {
+        output.push(delivery.spelling().semantic_token());
+    }
+    let text = output
+        .iter()
+        .map(|token| match token {
+            Token::Char { ch, .. } => *ch,
+            _ => panic!("detokenize returned a non-character token"),
+        })
+        .collect::<String>();
+    assert_eq!(text, "\\payload ##{}");
+    assert!(output.iter().all(|token| matches!(
+        token,
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space
+        } | Token::Char {
+            cat: Catcode::Other,
+            ..
+        }
+    )));
+    assert!(fuel.burned() <= 32);
+}
+
+#[test]
+fn etex_detokenize_observes_live_escape_and_control_sequence_kinds() {
+    // e-TeX §53a delegates spelling to token_show: active characters have no
+    // escape, control symbols have no separator, and \csname\endcsname uses
+    // the live escape character.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'!'));
+    let detokenize =
+        install_expandable(&mut universe, "detokenize", ExpandablePrimitive::Detokenize);
+    let active = universe.intern_active_character('~').symbol();
+    let symbol = universe.intern("@").symbol();
+    let empty = universe.intern("").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(detokenize)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Cs(active)),
+            traced(Token::Cs(symbol)),
+            traced(Token::Cs(empty)),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert_eq!(rendered(&mut processor), "~!@!csname!endcsname ");
+}
+
 fn rendered(processor: &mut CommandProcessor<'_>) -> String {
     let mut text = String::new();
     while let Some(command) = processor.get_x_token().expect("conversion expands") {
