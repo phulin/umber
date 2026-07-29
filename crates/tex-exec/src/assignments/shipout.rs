@@ -46,10 +46,9 @@ pub(super) fn retry_unavailable_stream_open(
         .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
             "End of file on the terminal!",
         )))?;
-    stores.world_mut().retarget_pending_stream_open(
-        failed_path,
-        direct::terminal_output_name(&replacement),
-    )?;
+    stores
+        .world_mut()
+        .retarget_pending_stream_open(failed_path, direct::terminal_output_name(&replacement))?;
     Ok(())
 }
 

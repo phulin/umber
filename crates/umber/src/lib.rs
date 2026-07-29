@@ -2904,10 +2904,7 @@ mod tests {
             .materialize(&mut stores)
             .expect("driver materializes");
 
-        assert_eq!(
-            std::fs::read(prefix_path).expect("prefix remains"),
-            b"once"
-        );
+        assert_eq!(std::fs::read(prefix_path).expect("prefix remains"), b"once");
         assert_eq!(
             std::fs::read(replacement_path).expect("suffix commits"),
             b"suffix"
