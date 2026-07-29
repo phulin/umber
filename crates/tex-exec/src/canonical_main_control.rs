@@ -3294,6 +3294,9 @@ enum ScannedStep {
     IllegalMacroParameter {
         token: Token,
     },
+    /// TeX82 §1135's `cs_error`: a stray `\endcsname` is diagnosed and
+    /// ignored exactly once, without changing input or mode state.
+    ExtraEndCsName,
     /// TeX82 §1054's `its_all_over` false branch: the backed-up stop stays
     /// live while `\\hbox to \\hsize{}`, `\\vfill`, and
     /// `\\penalty-'10000000000` are appended to the contribution list and
@@ -6404,7 +6407,7 @@ fn scan_command(
         // exhaustive match over `Meaning` -- and, inside its `CharToken`
         // case, over `Catcode` -- so a newly added variant fails to compile
         // there instead of reaching a silent `ScannedStep::Continue` here.
-        meaning => scan_unclassified_meaning(processor, command, meaning, mode),
+        meaning => scan_unclassified_meaning(processor, command, meaning, mode, innermost_group),
     }
 }
 
@@ -6952,6 +6955,7 @@ fn scan_unclassified_meaning(
     command: tex_command::CurrentCommand,
     meaning: Meaning,
     mode: Mode,
+    innermost_group: Option<GroupKind>,
 ) -> Result<ScannedStep, ExecError> {
     match meaning {
         // TeX82 §1045's `any_mode(relax): do_nothing`. `\relax` -- and the
@@ -7034,6 +7038,9 @@ fn scan_unclassified_meaning(
         // delivered as an unexpandable command. `\endcsname` is the one
         // deliberately unexpandable `ExpandablePrimitive`; TeX82 §1135's
         // `cs_error` gives it "Extra \endcsname", which is not routed here.
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
+            Ok(ScannedStep::ExtraEndCsName)
+        }
         Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_) => {
             Err(unimplemented_meaning(&command, meaning, mode))
         }
@@ -7043,7 +7050,16 @@ fn scan_unclassified_meaning(
         // `scan_command`; an `endv` reaching main control by any other route
         // ("a devious user might force an `endv` command to occur just about
         // anywhere", §1131) has no dispatch.
-        Meaning::EndV => Err(unimplemented_meaning(&command, meaning, mode)),
+        Meaning::EndV => {
+            if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                processor
+                    .recover_missing_math_shift(command)
+                    .map_err(command_error)?;
+                Ok(ScannedStep::MissingMathShift)
+            } else {
+                scan_off_save(processor, command, innermost_group)
+            }
+        }
         // An opcode `tex-state`'s meaning decoder itself does not recognize.
         Meaning::Unknown(_) => Err(unimplemented_meaning(&command, meaning, mode)),
     }
@@ -8361,6 +8377,7 @@ fn applied_mutation_observation(
         | ScannedStep::End { .. }
         | ScannedStep::IllegalStop { .. }
         | ScannedStep::IllegalMacroParameter { .. }
+        | ScannedStep::ExtraEndCsName
         | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
         | ScannedStep::VerticalSkip { .. }
@@ -9679,6 +9696,13 @@ fn apply_scanned_step(
         }
         ScannedStep::IllegalMacroParameter { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ExtraEndCsName => {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::NoBoundary { suppress_right } => {

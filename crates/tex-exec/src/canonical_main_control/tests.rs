@@ -241,6 +241,139 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
 }
 
 #[test]
+fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode() {
+    // TeX82 §1135: `cs_error` diagnoses and ignores one stray `\endcsname`.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ] {
+        let run = |observed: bool| {
+            let mut stores = Universe::new_with_plain_catcodes();
+            let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+            control.set_fuel_limit(128).expect("bounded command fuel");
+            if mode != Mode::Vertical {
+                control.modes.push(mode);
+            }
+            register_source(&mut control, br"\endcsname\count0=17");
+            if observed {
+                let mut observations = ObservationRecorder::default();
+                for _ in 0..2 {
+                    control
+                        .step_with_observer(&mut stores, &mut observations)
+                        .expect("observed stray endcsname continues");
+                }
+            } else {
+                for _ in 0..2 {
+                    control
+                        .step(&mut stores)
+                        .expect("unobserved stray endcsname continues");
+                }
+            }
+            (
+                terminal_text(&stores),
+                stores.count(0),
+                control.fuel_burned(),
+            )
+        };
+
+        let unobserved = run(false);
+        let observed = run(true);
+        assert_eq!(observed, unobserved, "mode {mode:?}");
+        assert_eq!(
+            unobserved.0, "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            "mode {mode:?}"
+        );
+        assert_eq!(unobserved.1, 17, "mode {mode:?}");
+        assert!(unobserved.2 < 128, "mode {mode:?}");
+    }
+}
+
+#[test]
+fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
+    // TeX82 §§1130-1131: an end-v outside an alignment runs `off_save`.
+    // With no group open, §1066 diagnoses and drops that command.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let endv = stores.intern("forcedendv");
+        stores.set_meaning(endv, Meaning::EndV);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(128).expect("bounded command fuel");
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\forcedendv\count0=23");
+
+        assert_eq!(
+            control.step(&mut stores).expect("stray end-v recovers"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
+            terminal_text(&stores),
+            "\n! Extra \\forcedendv.\n",
+            "mode {mode:?}"
+        );
+        assert_eq!(
+            control
+                .step(&mut stores)
+                .expect("following command executes"),
+            MainControlStep::Continue
+        );
+        assert_eq!(stores.count(0), 23, "mode {mode:?}");
+        assert!(control.fuel_burned() < 128, "mode {mode:?}");
+    }
+}
+
+#[test]
+fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
+    // TeX82 §§1046-1047 insert `$` before the backed-up end-v. Once that
+    // closes math, §§1130-1131 see the same command again and run `off_save`.
+    for (opening, mode_name) in [
+        (br"$".as_slice(), "math"),
+        (br"$$".as_slice(), "display math"),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let endv = stores.intern("forcedendv");
+        stores.set_meaning(endv, Meaning::EndV);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(256).expect("bounded command fuel");
+        let mut source = opening.to_vec();
+        source.extend_from_slice(br"\forcedendv\par\count0=29");
+        register_source(&mut control, &source);
+
+        for _ in 0..16 {
+            control
+                .step(&mut stores)
+                .expect("math end-v recovery remains finite");
+            if stores.count(0) == 29 {
+                break;
+            }
+        }
+        let terminal = terminal_text(&stores);
+        assert_eq!(
+            terminal.matches("Missing $ inserted").count(),
+            1,
+            "{mode_name}: {terminal:?}"
+        );
+        assert_eq!(
+            terminal.matches("Extra \\forcedendv").count(),
+            1,
+            "{mode_name}: {terminal:?}"
+        );
+        assert_eq!(stores.count(0), 29, "{mode_name}: {terminal:?}");
+        assert!(control.fuel_burned() < 256, "{mode_name}");
+    }
+}
+
+#[test]
 fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
     // e-TeX 2.6 `etex.ch` [26.424]: `find_effective_tail` returns -1 for an
     // empty list, otherwise the e-TRIP node code of the real current tail.
