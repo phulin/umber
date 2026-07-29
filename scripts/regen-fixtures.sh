@@ -688,8 +688,10 @@ validate_oracle_contract() {
         ;;
     esac
     [[ -f "$manifest_path" ]] || die "missing ${engine} manifest: ${manifest_path}"
-    [[ "$(sha256_file "$manifest_path")" == "$manifest_digest" ]] ||
-      die "${engine} source manifest identity drift"
+    local generated_manifest_digest
+    generated_manifest_digest="$(sha256_file "$manifest_path")"
+    [[ "$generated_manifest_digest" == "$manifest_digest" ]] ||
+      die "${engine} source manifest identity drift: ${manifest_path}: expected ${manifest_digest}, generated ${generated_manifest_digest}"
     if [[ "$selected_engine" == all || "$selected_engine" == "$engine" ]]; then
       validate_oracle_source_manifest "$manifest_path"
     fi
