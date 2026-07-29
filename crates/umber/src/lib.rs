@@ -884,6 +884,16 @@ pub struct PlannedFinalization {
     files: Vec<DriverFile>,
 }
 
+/// A finalization effect commit that retained its downstream plan after a
+/// retry-safe host failure.
+pub enum FinalizationCommit {
+    Committed(CommittedFinalization),
+    Retry {
+        plan: PlannedFinalization,
+        error: WorldError,
+    },
+}
+
 impl PlannedFinalization {
     pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
         let mut paths = BTreeSet::new();
@@ -899,13 +909,40 @@ impl PlannedFinalization {
         self,
         stores: &mut Universe,
     ) -> Result<CommittedFinalization, FinalizationError> {
-        if stores.world().commit_mode() == WorldCommitMode::Retained {
-            debug_assert_eq!(self.effect_pos, stores.world().effect_pos());
-            stores.export_retained_effects()?;
-        } else {
-            stores.commit_effects(self.effect_pos)?;
+        match self.commit_effects_retryable(stores)? {
+            FinalizationCommit::Committed(committed) => Ok(committed),
+            FinalizationCommit::Retry { error, .. } => Err(error.into()),
         }
-        Ok(CommittedFinalization { files: self.files })
+    }
+
+    /// Commits retained effects without consuming the downstream output plan
+    /// when TeX82 §§1373--1375 permit retrying an unavailable stream open.
+    ///
+    /// `World` has already drained the successfully committed prefix in this
+    /// case. Keeping this value lets the caller prompt and retarget the failed
+    /// open, then resume the same pending suffix without rebuilding drivers or
+    /// replaying engine effects.
+    pub fn commit_effects_retryable(
+        self,
+        stores: &mut Universe,
+    ) -> Result<FinalizationCommit, FinalizationError> {
+        let result = if stores.world().commit_mode() == WorldCommitMode::Retained {
+            debug_assert_eq!(self.effect_pos, stores.world().effect_pos());
+            stores.export_retained_effects()
+        } else {
+            stores.commit_effects(self.effect_pos)
+        };
+        if let Err(error) = result {
+            if error.stream_open_unavailable().is_some()
+                && error.retry_safety() == tex_state::EffectRetrySafety::Safe
+            {
+                return Ok(FinalizationCommit::Retry { plan: self, error });
+            }
+            return Err(error.into());
+        }
+        Ok(FinalizationCommit::Committed(CommittedFinalization {
+            files: self.files,
+        }))
     }
 
     /// Explicit fixture policy: retain effect records and materialize nothing.
@@ -1854,7 +1891,7 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DriverFile, EngineSession, FinalizationError, PlannedFinalization,
+        DriverFile, EngineSession, FinalizationCommit, FinalizationError, PlannedFinalization,
         dvi_from_committed_artifacts, dvi_from_page_plans, uncommitted_terminal_text,
     };
     use std::path::{Path, PathBuf};
@@ -2814,6 +2851,68 @@ mod tests {
 
         assert!(plan.commit_effects(&mut stores).is_err());
         assert!(!driver_path.exists());
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // Verifies retry ordering against the real backend.
+    fn retryable_finalization_keeps_plan_and_does_not_replay_committed_prefix() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let prefix_path = temp.path().join("prefix.out");
+        let replacement_path = temp.path().join("replacement.out");
+        let driver_path = temp.path().join("driver.dvi");
+        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
+        let prefix_slot = StreamSlot::new(1);
+        let retry_slot = StreamSlot::new(2);
+        stores.world_mut().open_out(prefix_slot, &prefix_path);
+        stores
+            .world_mut()
+            .write_text(PrintSink::Stream(prefix_slot), "once");
+        stores.world_mut().open_out(retry_slot, temp.path());
+        stores
+            .world_mut()
+            .write_text(PrintSink::Stream(retry_slot), "suffix");
+        let plan = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![DriverFile::new(driver_path.clone(), b"driver".to_vec())],
+        )
+        .expect("plan");
+
+        let FinalizationCommit::Retry { plan, error } = plan
+            .commit_effects_retryable(&mut stores)
+            .expect("retry-safe failure is retained")
+        else {
+            panic!("directory open must suspend finalization");
+        };
+        assert_eq!(error.stream_open_unavailable(), Some(temp.path()));
+        assert_eq!(
+            std::fs::read(&prefix_path).expect("committed prefix"),
+            b"once"
+        );
+        assert!(!driver_path.exists());
+
+        stores
+            .world_mut()
+            .retarget_pending_stream_open(temp.path(), &replacement_path)
+            .expect("retarget pending open");
+        let FinalizationCommit::Committed(committed) = plan
+            .commit_effects_retryable(&mut stores)
+            .expect("replacement commits")
+        else {
+            panic!("replacement must finish the retained plan");
+        };
+        committed
+            .materialize(&mut stores)
+            .expect("driver materializes");
+
+        assert_eq!(
+            std::fs::read(prefix_path).expect("prefix remains"),
+            b"once"
+        );
+        assert_eq!(
+            std::fs::read(replacement_path).expect("suffix commits"),
+            b"suffix"
+        );
+        assert_eq!(std::fs::read(driver_path).expect("driver"), b"driver");
     }
 
     #[test]
