@@ -1998,15 +1998,19 @@ impl CommandProcessor<'_> {
             },
             Meaning::InternalInteger(integer) => {
                 let value = self.fetch_internal_integer(integer);
-                // e-TeX 2.6 etex.ch [17.4750--4758] observes
-                // `current_group_type_code` immediately after that enquiry
-                // commits `cur_group`, before §413's shared internal result.
-                // This is deliberately specific: the neighboring e-TeX
-                // enquiries have distinct canonical scanner identities and
-                // must not be normalized to this one.
-                if integer == InternalInteger::CurrentGroupType {
+                // e-TeX 2.6 etex.ch [17.4750--4758] observes the two current
+                // group enquiries immediately after they commit their
+                // respective values, before §413's shared internal result.
+                // The neighboring current-if enquiries have distinct
+                // canonical scanner identities and remain generic here.
+                let enquiry_kind = match integer {
+                    InternalInteger::CurrentGroupLevel => Some("current_group_level"),
+                    InternalInteger::CurrentGroupType => Some("current_group_type"),
+                    _ => None,
+                };
+                if let Some(kind) = enquiry_kind {
                     self.observe(CommandObservation::Scanner(ScannerRecord {
-                        kind: "current_group_type",
+                        kind,
                         value: value.to_string(),
                         tokens: None,
                     }));

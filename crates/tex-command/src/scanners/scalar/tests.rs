@@ -3044,13 +3044,14 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
 }
 
 #[test]
-fn current_group_type_has_its_canonical_scanner_identity_only() {
+fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.enter_group_with_kind(tex_state::GroupKind::HBox);
     let group_type = universe.intern("currentgrouptype").symbol();
     let group_level = universe.intern("currentgrouplevel").symbol();
+    let if_level = universe.intern("currentiflevel").symbol();
     universe.set_meaning(
         group_type,
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
@@ -3059,9 +3060,17 @@ fn current_group_type_has_its_canonical_scanner_identity_only() {
         group_level,
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupLevel),
     );
+    universe.set_meaning(
+        if_level,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentIfLevel),
+    );
     push(
         &mut command,
-        vec![Token::Cs(group_type), Token::Cs(group_level)],
+        vec![
+            Token::Cs(group_type),
+            Token::Cs(group_level),
+            Token::Cs(if_level),
+        ],
     );
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
@@ -3087,11 +3096,21 @@ fn current_group_type_has_its_canonical_scanner_identity_only() {
                 .value,
             1
         );
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("current if level scans")
+                .value,
+            0
+        );
     }
     assert_eq!(
         scanner_kinds(&recorder),
         vec![
             "current_group_type",
+            "internal",
+            "integer",
+            "current_group_level",
             "internal",
             "integer",
             "internal",
@@ -3103,6 +3122,20 @@ fn current_group_type_has_its_canonical_scanner_identity_only() {
             record,
             CommandObservation::Scanner(scanner)
                 if scanner.kind == "current_group_type" && scanner.value == "2"
+        )
+    }));
+    assert!(recorder.0.iter().any(|record| {
+        matches!(
+            record,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "current_group_level" && scanner.value == "1"
+        )
+    }));
+    assert!(!recorder.0.iter().any(|record| {
+        matches!(
+            record,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "current_if_level"
         )
     }));
 }
