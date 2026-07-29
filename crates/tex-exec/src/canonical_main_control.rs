@@ -1248,18 +1248,23 @@ impl CanonicalMainControl {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
         crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        self.open_discretionary_part(stores)?;
         self.active_discretionaries
             .push(ActiveDiscretionary { parts: Vec::new() });
-        self.open_discretionary_part(stores)?;
         Ok(ReplayStep::Continue)
     }
 
     fn open_discretionary_part(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        // TeX82 §216 checks nest capacity before saving the current semantic
+        // level. Fatal overflow is committed by canonical main control, so
+        // this fallible operation must precede both halves of the live
+        // discretionary lifecycle: no rejected opener may leave a disc_group
+        // without its restricted-horizontal mode.
+        self.modes.push(Mode::RestrictedHorizontal)?;
         stores.enter_group_with_kind_at_line(
             GroupKind::Disc,
             self.command.current_file_line_number(),
         );
-        self.modes.push(Mode::RestrictedHorizontal)?;
         Ok(())
     }
 

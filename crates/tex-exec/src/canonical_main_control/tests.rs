@@ -135,6 +135,91 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
 }
 
 #[test]
+fn nested_discretionary_preserves_aftergroup_before_the_next_part_opener() {
+    // TeX82 §§282/1120: unsave inserts aftergroup material before
+    // build_discretionary scans the next part's left brace. Make that token
+    // itself the opener; the literal brace that follows must therefore be an
+    // ordinary nested group inside the second part. The inner discretionary
+    // simultaneously proves that ActiveDiscretionary is a proper stack.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\let\opener={\noindent
+          \discretionary{
+            \discretionary{\kern1pt}{}{}
+            \aftergroup\opener
+          }{\kern2pt}}{\kern3pt}",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let outer = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .find_map(|node| match node {
+            Node::Disc {
+                pre, post, replace, ..
+            } => Some((*pre, *post, *replace)),
+            _ => None,
+        })
+        .expect("outer discretionary completes");
+    assert!(
+        stores
+            .nodes(outer.0)
+            .iter()
+            .any(|node| matches!(node.to_owned(), Node::Disc { .. })),
+        "inner discretionary remains in the outer pre-break part"
+    );
+    for (part, amount) in [(outer.1, 2 * Scaled::UNITY), (outer.2, 3 * Scaled::UNITY)] {
+        assert!(stores.nodes(part).iter().any(|node| matches!(
+            node.to_owned(),
+            Node::Kern { amount: actual, .. } if actual == Scaled::from_raw(amount)
+        )));
+    }
+    assert!(
+        !terminal_text(&stores).contains("Missing { inserted"),
+        "aftergroup token supplied the next part opener"
+    );
+    assert!(control.active_discretionaries.is_empty());
+    assert_eq!(stores.innermost_group_kind(), None);
+}
+
+#[test]
+fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
+    // TeX82 §216 rejects a semantic-nest push before saving any new level.
+    // Fatal overflow is committed rather than rolled back, so the
+    // discretionary opener must not install disc_group or its executor frame
+    // until that bounded push has succeeded.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\noindent\discretionary{}{}{}");
+    assert_eq!(
+        control.step(&mut stores).expect("paragraph starts"),
+        MainControlStep::Continue
+    );
+    while control.modes.depth() < 41 {
+        control
+            .modes
+            .push(Mode::RestrictedHorizontal)
+            .expect("fill the TeX82 semantic nest");
+    }
+
+    assert_eq!(
+        control.step(&mut stores).expect("fatal overflow succumbs"),
+        MainControlStep::End
+    );
+    assert_eq!(control.modes.depth(), 41);
+    assert_eq!(stores.innermost_group_kind(), None);
+    assert!(control.active_discretionaries.is_empty());
+}
+
+#[test]
 fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     // TeX82 §§1051--1052 run `normal_paragraph` after opening a `\vtop`.
     // The display therefore uses the box-local 100pt hsize, not the inherited
