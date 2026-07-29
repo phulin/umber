@@ -10,6 +10,7 @@ pdf_area=pdf
 e2e_area=e2e
 bib_area=bib
 bibtex_area=bibtex
+command_semantic_area=command-semantic
 tex82_oracle_area=tex82-oracle
 etex26_oracle_area=etex26-oracle
 pdftex14027_oracle_area=pdftex14027-oracle
@@ -50,6 +51,7 @@ Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align leaders
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
+  minifixtures: command-semantic  (per-channel contracts; no reference engine)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
@@ -145,6 +147,7 @@ is_known_area() {
   is_text_area "$1" || is_dvi_area "$1" || \
     [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || \
        "$1" == "$bib_area" || "$1" == "$bibtex_area" || \
+       "$1" == "$command_semantic_area" || \
        "$1" == "$tex82_oracle_area" || "$1" == "$etex26_oracle_area" || \
        "$1" == "$pdftex14027_oracle_area" || \
        "$1" == "fonts" ]]
@@ -1317,6 +1320,18 @@ regen_bibtex_area() {
     cargo test -p bib-engine --test it classic_fixture_manifest_and_inventory_are_complete_and_pinned
 }
 
+# Derives the per-channel contract for every declarative minifixture.
+#
+# This runs the same `tex_command_stream::semantic` code the gate runs, so a
+# regenerated contract cannot describe a run the gate would not reproduce. It
+# needs no reference engine: the channels it records are this implementation's
+# own observed output, marked `umber-baseline` in each manifest precisely
+# because they are pinned against drift rather than adjudicated as correct.
+regen_command_semantic_area() {
+  run_command 'Deriving command-semantic channel contracts' \
+    cargo run -q -p tex-command-stream --bin command-semantic-channels
+}
+
 regen_area() {
   local area="$1"
   is_known_area "$area" || die "unknown fixture area: ${area}"
@@ -1332,6 +1347,8 @@ regen_area() {
     regen_bib_area
   elif [[ "$area" == "$bibtex_area" ]]; then
     regen_bibtex_area
+  elif [[ "$area" == "$command_semantic_area" ]]; then
+    regen_command_semantic_area
   elif [[ "$area" == "$tex82_oracle_area" || \
           "$area" == "$etex26_oracle_area" || \
           "$area" == "$pdftex14027_oracle_area" ]]; then

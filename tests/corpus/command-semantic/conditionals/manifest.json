@@ -35,6 +35,14 @@
         "command:fi_or_else:4",
         "recovery:inserted-token:cs:fi"
       ],
+      "channels": {
+        "events": 300,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -58,6 +66,14 @@
         "condition:pop:ifnum:else:-",
         "count:0=1"
       ],
+      "channels": {
+        "events": 102,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -164,6 +180,14 @@
         "scanner-status:skipping>normal",
         "count:0=7"
       ],
+      "channels": {
+        "events": 89,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -190,6 +214,14 @@
         "count:1=1",
         "count:2=1"
       ],
+      "channels": {
+        "events": 146,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -227,6 +259,14 @@
         "count:7=1",
         "count:8=1"
       ],
+      "channels": {
+        "events": 427,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -258,6 +298,14 @@
         "count:5=1",
         "count:6=1"
       ],
+      "channels": {
+        "events": 523,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -285,6 +333,14 @@
         "count:3=1",
         "count:4=1"
       ],
+      "channels": {
+        "events": 217,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -301,6 +357,14 @@
         "predicate:ifhbox:integer=256:true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 113,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -338,6 +402,14 @@
         "count:8=1",
         "count:9=1"
       ],
+      "channels": {
+        "events": 476,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     }
   ]

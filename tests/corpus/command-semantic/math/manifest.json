@@ -23,6 +23,14 @@
         "count:1=1",
         "count:2=1"
       ],
+      "channels": {
+        "events": 500,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "terminal_lines": ["", "", ""]
     },
@@ -48,6 +56,14 @@
         "command:raw:cs:unpenalty:remove_item:12",
         "command:expanded:cs:unpenalty:remove_item:12"
       ],
+      "channels": {
+        "events": 57,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -96,6 +112,14 @@
         "command:left_right:31",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 106,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -138,6 +162,14 @@
         "command:math_comp:19",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 80,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -193,6 +225,14 @@
         "command:limit_switch:2",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 76,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -228,6 +268,14 @@
         "command:math_comp:21",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 86,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -274,6 +322,14 @@
         "mode:vertical",
         "artifact:30369f0bdea47afb1c7e5c84bffbd69033f74ab4b40c7e729978b6365db1714b"
       ],
+      "channels": {
+        "events": 88,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -325,6 +381,14 @@
         "command:math_comp:23",
         "box:0/0:hlist"
       ],
+      "channels": {
+        "events": 217,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -369,6 +433,14 @@
         "command:limit_switch:1",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 110,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -402,6 +474,14 @@
         "box:0/0/0:math-on",
         "box:0/0/1:math-off"
       ],
+      "channels": {
+        "events": 116,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -434,6 +514,14 @@
         "command:mkern:99",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 216,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -482,6 +570,14 @@
         "command:left_right:31",
         "artifact:4db73876daa858305b2f21948dfb51c7f47e569ac8354a4b44abaed67c7f34d1"
       ],
+      "channels": {
+        "events": 142,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -527,6 +623,14 @@
         "mode:vertical",
         "artifact:30369f0bdea47afb1c7e5c84bffbd69033f74ab4b40c7e729978b6365db1714b"
       ],
+      "channels": {
+        "events": 88,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }

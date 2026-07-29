@@ -1,0 +1,4 @@
+! Incompatible magnification (1300); the previous value will be retained (1200).
+I can handle only one magnification ratio per job. So I've
+reverted to the magnification you used earlier on this run.
+

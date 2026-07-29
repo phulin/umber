@@ -1,0 +1,4 @@
+meaning-skip=\skip3 meaning-count=\count4 meaning-letter=the letter Q
+> \shown=macro:->\global \count 9=1.
+
+> \aliasskip=\skip3.

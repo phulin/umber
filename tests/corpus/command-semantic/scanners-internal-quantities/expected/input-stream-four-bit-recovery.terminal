@@ -1,0 +1,18 @@
+
+! Bad number (-1).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+
+! Bad number (16).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+
+\ordinary=
+! Bad number (1000000).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+! Undefined control sequence.? Type <return> to proceed, S to scroll future error messages,
+R to run without stopping, Q to run quietly,
+I to insert something, 
+H for help, X to quit.
+! Undefined control sequence.

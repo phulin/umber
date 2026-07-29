@@ -40,6 +40,14 @@
         "command:raw:cs:missing:relax:257",
         "command:expanded:cs:missing:relax:257"
       ],
+      "channels": {
+        "events": 64,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -123,6 +131,14 @@
         "command:raw:cs:end:stop:0",
         "command:expanded:cs:end:stop:0"
       ],
+      "channels": {
+        "events": 115,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -144,6 +160,14 @@
         "count_registers": [0]
       },
       "expected": ["count:0=0"],
+      "channels": {
+        "events": 4,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -181,6 +205,14 @@
         "command:raw:cs:made:call:249984",
         "macro:activate:made:0:"
       ],
+      "channels": {
+        "events": 75,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -211,6 +243,14 @@
         "macro:activate:b:0:",
         "count:0=1"
       ],
+      "channels": {
+        "events": 93,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -261,6 +301,14 @@
         "input:retire:file",
         "input:stop:terminal"
       ],
+      "channels": {
+        "events": 39,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },
@@ -302,6 +350,14 @@
         "command:raw:char:letter:65:letter:65",
         "command:expanded:char:letter:65:letter:65"
       ],
+      "channels": {
+        "events": 13,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -340,6 +396,14 @@
         "recovery:inserted-token:char:right_brace:125",
         "scanner-status:defining>normal"
       ],
+      "channels": {
+        "events": 76,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -417,6 +481,14 @@
         "command:raw:char:letter:66:letter:66",
         "command:expanded:char:letter:66:letter:66"
       ],
+      "channels": {
+        "events": 21,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },
@@ -470,6 +542,14 @@
         "command:raw:char:letter:65:letter:65",
         "command:expanded:char:letter:65:letter:65"
       ],
+      "channels": {
+        "events": 13,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -546,6 +626,14 @@
         "input:retire:file",
         "input:stop:terminal"
       ],
+      "channels": {
+        "events": 45,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },

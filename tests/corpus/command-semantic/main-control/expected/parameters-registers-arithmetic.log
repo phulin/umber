@@ -1,0 +1,4 @@
+! Arithmetic overflow.
+I can't carry out that multiplication or division,
+since the result is out of range.
+

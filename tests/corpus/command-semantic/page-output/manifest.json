@@ -31,6 +31,14 @@
         "box:0/0:hlist",
         "box:0/0/0:whatsit"
       ],
+      "channels": {
+        "events": 81,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -61,6 +69,14 @@
         "effect:shipout:dvi\u00001",
         "effect:terminate:engine\u0000"
       ],
+      "channels": {
+        "events": 146,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -92,6 +108,14 @@
         "box:0/0:hlist",
         "box:0/0/0:whatsit"
       ],
+      "channels": {
+        "events": 90,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -120,6 +144,14 @@
         "command:leader_ship:99",
         "artifact:0ec56fdd67b5453aa3c5b5ba5508a909731dffc6f6e531e5976188bf2fc61ed6"
       ],
+      "channels": {
+        "events": 107,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -149,6 +181,14 @@
         "command:leader_ship:99",
         "artifact:1c2132a96ee7b38d2f28b946dc10b15bbf701c4df5a39daab85e059b36e38e50"
       ],
+      "channels": {
+        "events": 141,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }

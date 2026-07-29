@@ -53,6 +53,14 @@
         "scanner:internal:0:-",
         "scanner:dimension:0:-"
       ],
+      "channels": {
+        "events": 85,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -92,6 +100,14 @@
         "scanner:integer:0:-",
         "scanner:integer:7:-"
       ],
+      "channels": {
+        "events": 252,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -129,6 +145,14 @@
         "terminal-check:! Bad number (1000000).=true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 143,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },
@@ -172,6 +196,14 @@
         "scanner:integer:3:-",
         "scanner:integer:0:-"
       ],
+      "channels": {
+        "events": 153,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -201,6 +233,14 @@
         "terminal-check:A left brace was mandatory here, so I've put one in.=true",
         "terminal-check:(If you're confused by all this, try typing `I}' now.)=true"
       ],
+      "channels": {
+        "events": 59,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -237,6 +277,14 @@
         "terminal-check:! Illegal unit of measure (pt inserted).=true",
         "count:0=7"
       ],
+      "channels": {
+        "events": 200,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -267,6 +315,14 @@
         "count:3=196608",
         "count:4=262144"
       ],
+      "channels": {
+        "events": 250,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -297,6 +353,14 @@
         "count:11=393216",
         "count:12=-131072"
       ],
+      "channels": {
+        "events": 312,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -330,6 +394,14 @@
         "count:22=63",
         "count:23=-65"
       ],
+      "channels": {
+        "events": 100,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -360,6 +432,14 @@
         "count:31=-98304",
         "count:32=524288"
       ],
+      "channels": {
+        "events": 250,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -387,6 +467,14 @@
         "count:40=218453",
         "count:41=-218453"
       ],
+      "channels": {
+        "events": 207,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }

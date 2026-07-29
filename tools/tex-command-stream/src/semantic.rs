@@ -30,6 +30,13 @@ use tex_state::{
     token::Token,
 };
 
+pub mod channels;
+
+pub use channels::{
+    CapturedChannels, ChannelAuthority, ChannelContract, ChannelFailure, STREAM_CHANNELS,
+    StreamChannel, StreamDisposition,
+};
+
 pub const SCHEMA: u32 = 1;
 pub const MAX_SOURCE_BYTES: u64 = 4 * 1024;
 // TeX82 permits 255 spans before the 256-span confusion boundary, so the
@@ -62,6 +69,14 @@ pub struct Case {
     pub projection: Projection,
     pub expected: Vec<String>,
     pub expectation: Expectation,
+    /// The disposition of every channel this case's run produces.
+    ///
+    /// Parsed as optional only so the regeneration path can read a manifest it
+    /// is about to write this block into. [`validate_case`] requires it, so a
+    /// case that omits it fails the gate instead of silently asserting
+    /// nothing outside its projection.
+    #[serde(default)]
+    pub channels: Option<ChannelContract>,
     #[serde(default)]
     pub terminal_lines: Vec<String>,
     #[serde(default)]
@@ -303,15 +318,96 @@ pub fn validate_expectation(expectation: &Expectation) -> Result<(), String> {
     Ok(())
 }
 
+/// The committed expectation file for one stream channel of one case.
+#[must_use]
+pub fn channel_file(domain_dir: &Path, case_id: &str, channel: StreamChannel) -> PathBuf {
+    domain_dir
+        .join("expected")
+        .join(format!("{case_id}.{}", channel.name()))
+}
+
+/// Requires that a case account for every channel its run can produce.
+///
+/// A missing block is a validation failure rather than a defaulted-empty
+/// contract on purpose. Defaulting would let a case that ships a page or
+/// writes a log read as covered, which is the exact failure this contract
+/// exists to remove.
+pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
+    let Some(channels) = &case.channels else {
+        // A case whose engine run does not complete has no channels to
+        // record, and inventing a contract for it would be a fiction. The
+        // exemption is granted only to a case already pinned as `xfail`, so
+        // it expires with the bug: fixing the run makes the contract
+        // mandatory, and a passing case can never reach this arm.
+        if let Expectation::Xfail { bug, .. } = &case.expectation {
+            return valid_bug_id(bug).then_some(()).ok_or_else(|| {
+                format!(
+                    "case {} omits its channel contract under malformed bug {bug:?}",
+                    case.id
+                )
+            });
+        }
+        return Err(format!(
+            "case {} declares no channel contract; every case must declare \
+             events, status, terminal, log, dvi, and effects",
+            case.id
+        ));
+    };
+    if channels.status != "clean" && !channels.status.starts_with("fatal:") {
+        return Err(format!(
+            "case {} declares channel status {:?}, expected \"clean\" or \"fatal:<label>\"",
+            case.id, channels.status
+        ));
+    }
+    for channel in STREAM_CHANNELS {
+        let declared = channels.stream(channel);
+        let path = channel_file(domain_dir, &case.id, channel);
+        let present = path.exists();
+        match declared {
+            StreamDisposition::Empty if present => {
+                return Err(format!(
+                    "case {} declares channel {} empty but commits {}",
+                    case.id,
+                    channel.name(),
+                    path.display()
+                ));
+            }
+            StreamDisposition::File { .. } | StreamDisposition::Xfail { .. } if !present => {
+                return Err(format!(
+                    "case {} declares channel {} committed but {} is absent",
+                    case.id,
+                    channel.name(),
+                    path.display()
+                ));
+            }
+            _ => {}
+        }
+        if let StreamDisposition::Xfail { bug, .. } = declared
+            && !valid_bug_id(bug)
+        {
+            return Err(format!(
+                "case {} pins channel {} to malformed bug {bug:?}",
+                case.id,
+                channel.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_case(
     case: &Case,
     property_domain: &str,
     domain_dir: &Path,
     root: &Path,
     owners: &BTreeMap<String, String>,
+    policy: ChannelPolicy,
 ) -> Result<(), String> {
     if !valid_slug(&case.id) {
         return Err(format!("case id {:?} is not a lower-kebab slug", case.id));
+    }
+    if policy == ChannelPolicy::Required {
+        validate_channels(case, domain_dir)?;
     }
     match owners.get(&case.property_id) {
         Some(owner) if owner == property_domain => {}
@@ -531,7 +627,23 @@ pub fn claim_case_identity(
     Ok(())
 }
 
+/// Loads and fully validates the committed corpus.
 pub fn load_suite() -> Result<Vec<DeclaredCase>, String> {
+    load_suite_with(ChannelPolicy::Required)
+}
+
+/// Whether loading requires each case to already declare its channel contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChannelPolicy {
+    /// The gate's policy: a case without a channel contract is invalid.
+    Required,
+    /// The regeneration path's policy, used only while deriving the contract
+    /// a manifest does not yet carry.
+    Deriving,
+}
+
+/// Loads the committed corpus under an explicit channel policy.
+pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, String> {
     let root = repository_root();
     let owners = property_owners(&root)?;
     let corpus = root.join("tests/corpus/command-semantic");
@@ -590,7 +702,7 @@ pub fn load_suite() -> Result<Vec<DeclaredCase>, String> {
         }
         let mut declared_sources = BTreeSet::new();
         for case in manifest.cases {
-            validate_case(&case, property_domain, &domain_dir, &root, &owners)?;
+            validate_case(&case, property_domain, &domain_dir, &root, &owners, policy)?;
             claim_case_identity(
                 &mut case_ids,
                 &mut sources,

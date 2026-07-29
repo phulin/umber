@@ -1,0 +1,16 @@
+meaning-skip=\skip3 meaning-count=\count4 meaning-letter=the letter Q
+> \shown=macro:->\global \count 9=1.
+This isn't an error message; I'm just \showing something.
+Type `I\show...' to show more (e.g., \show\cs,
+\showthe\count10, \showbox255, \showlists).
+And type `I\tracingonline=1\show...' to show boxes and
+lists on your terminal as well as in the transcript file.
+
+
+> \aliasskip=\skip3.
+This isn't an error message; I'm just \showing something.
+Type `I\show...' to show more (e.g., \show\cs,
+\showthe\count10, \showbox255, \showlists).
+And type `I\tracingonline=1\show...' to show boxes and
+lists on your terminal as well as in the transcript file.
+

@@ -14,6 +14,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4] },
       "expected": ["count:0=7", "count:1=1", "count:2=1", "count:3=1", "count:4=1"],
+      "channels": {
+        "events": 517,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -27,6 +35,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2] },
       "expected": ["count:0=1", "count:1=1", "count:2=1"],
+      "channels": {
+        "events": 206,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -40,6 +56,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 3] },
       "expected": ["count:0=3", "count:1=1", "count:2=4", "count:3=1"],
+      "channels": {
+        "events": 251,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -49,6 +73,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [280] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=12"],
+      "channels": {
+        "events": 256,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -62,6 +94,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4] },
       "expected": ["count:0=3", "count:1=1", "count:2=1", "count:3=0", "count:4=1"],
+      "channels": {
+        "events": 281,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -75,6 +115,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4, 5] },
       "expected": ["count:0=1", "count:1=1", "count:2=1", "count:3=1", "count:4=1", "count:5=1"],
+      "channels": {
+        "events": 301,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -88,6 +136,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2] },
       "expected": ["count:0=0", "count:1=0", "count:2=1"],
+      "channels": {
+        "events": 168,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -101,6 +157,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=1", "count:1=2"],
+      "channels": {
+        "events": 43,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -110,6 +174,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1215, 1216] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 86,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -119,6 +191,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1217] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 120,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -128,6 +208,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1218] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=15"],
+      "channels": {
+        "events": 213,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -158,6 +246,14 @@
         "terminal-check:are all screwed up? I'm going to assume that you meant ##.=true",
         "count:0=0"
       ],
+      "channels": {
+        "events": 186,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -171,6 +267,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=3", "count:1=1"],
+      "channels": {
+        "events": 224,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -184,6 +288,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 7] },
       "expected": ["count:0=65", "count:1=66", "count:2=1", "count:7=3"],
+      "channels": {
+        "events": 382,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -197,6 +309,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2] },
       "expected": ["count:0=7", "count:1=1", "count:2=9"],
+      "channels": {
+        "events": 128,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -222,6 +342,14 @@
         "input:retire:file",
         "input:stop:terminal"
       ],
+      "channels": {
+        "events": 31,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -244,6 +372,14 @@
         "input:retire:file",
         "input:stop:terminal"
       ],
+      "channels": {
+        "events": 23,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -253,6 +389,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1270, 1271] },
       "projection": { "kind": "state", "count_registers": [0, 1, 2] },
       "expected": ["count:0=7", "count:1=1", "count:2=9"],
+      "channels": {
+        "events": 123,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -266,6 +410,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1200"],
+      "channels": {
+        "events": 166,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -306,6 +458,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 92,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -315,6 +475,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1225] },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 58,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "terminal_lines": ["alpha"]
     },
@@ -349,6 +517,14 @@
       "expected": [
         "mutation:meaning:relax:macro definition:global"
       ],
+      "channels": {
+        "events": 41,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "terminal_lines": ["alpha"]
     },
@@ -363,6 +539,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=2000000000", "count:1=1"],
+      "channels": {
+        "events": 81,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -376,6 +560,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=0"],
+      "channels": {
+        "events": 39,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -385,6 +577,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1241] },
       "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
       "expected": ["box:0/0:hlist", "box:0/0/0:kern", "count:0=0"],
+      "channels": {
+        "events": 142,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -398,6 +598,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4, 5] },
       "expected": ["count:0=1", "count:1=1", "count:2=1", "count:3=1", "count:4=1", "count:5=1"],
+      "channels": {
+        "events": 780,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -427,6 +635,14 @@
         "count:7=1",
         "count:8=1"
       ],
+      "channels": {
+        "events": 662,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -469,6 +685,14 @@
         "count:13=1",
         "count:14=1"
       ],
+      "channels": {
+        "events": 1107,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -478,6 +702,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1248] },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=1", "count:1=1"],
+      "channels": {
+        "events": 312,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -500,6 +732,14 @@
         "terminal-check:All patterns must be given before typesetting begins.=true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 79,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -533,6 +773,14 @@
         "terminal-check:(See Appendix H.)=true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 154,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -546,6 +794,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 80,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -567,6 +823,14 @@
         "terminal-check:! Illegal magnification has been changed to 1000 (0).=true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 73,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -580,6 +844,14 @@
       },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["x"], "count_registers": [0] },
       "expected": ["terminal-check:x=false", "count:0=1"],
+      "channels": {
+        "events": 80,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "xfail",
         "bug": "umber2-mp0d",
@@ -602,6 +874,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 76,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "inputs": { "first.tex": "ok" }
     },
@@ -616,6 +896,14 @@
       },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["a b"], "count_registers": [0] },
       "expected": ["terminal-check:a b=true", "count:0=1"],
+      "channels": {
+        "events": 90,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -629,6 +917,14 @@
       },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["user help"], "count_registers": [0] },
       "expected": ["terminal-check:user help=true", "count:0=1"],
+      "channels": {
+        "events": 109,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -642,6 +938,14 @@
       },
       "projection": { "kind": "state", "count_registers": [0] },
       "expected": ["count:0=1"],
+      "channels": {
+        "events": 133,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -655,6 +959,14 @@
       },
       "projection": { "kind": "observations", "kinds": ["effect"], "count_registers": [0] },
       "expected": ["effect:terminate:engine\u0000", "count:0=1"],
+      "channels": {
+        "events": 28,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -688,6 +1000,14 @@
         "count:0=1",
         "count:9=0"
       ],
+      "channels": {
+        "events": 301,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -724,6 +1044,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1296] },
       "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
       "expected": ["box:0/0:hlist", "box:0/0/0:kern", "count:0=1"],
+      "channels": {
+        "events": 146,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -733,6 +1061,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1297] },
       "projection": { "kind": "state", "count_registers": [0, 1] },
       "expected": ["count:0=17", "count:1=1"],
+      "channels": {
+        "events": 59,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -742,6 +1078,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1298] },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["? "], "count_registers": [1] },
       "expected": ["terminal-check:? =true", "count:1=1"],
+      "channels": {
+        "events": 36,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "terminal_lines": ["s"]
     },
@@ -753,6 +1097,14 @@
       "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1335] },
       "projection": { "kind": "terminal-checks", "terminal_checks": ["performed only by INITEX"] },
       "expected": ["terminal-check:performed only by INITEX=true"],
+      "channels": {
+        "events": 5,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -779,6 +1131,14 @@
         "terminal-check:\\end occurred when \\iftrue on line 1 was incomplete=true",
         "terminal-check:! =false"
       ],
+      "channels": {
+        "events": 37,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -803,6 +1163,14 @@
         "command:raw:cs:/:ital_corr:0",
         "command:expanded:cs:/:ital_corr:0"
       ],
+      "channels": {
+        "events": 134,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     }
   ]

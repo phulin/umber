@@ -3,6 +3,11 @@
 //! The corpus contract itself lives in `tex_command_stream::semantic`; this
 //! test only asserts it.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "this host-only fixture test reads its committed corpus"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -10,6 +15,7 @@ use std::path::Path;
 use tex_command::FatalError;
 use tex_state::Universe;
 
+use tex_command_stream::semantic::channels::compare;
 use tex_command_stream::semantic::*;
 
 #[test]
@@ -19,14 +25,25 @@ fn declared_command_semantic_cases_match() {
     let mut failures = Vec::new();
     for declared in &cases {
         let label = format!("{}/{}", declared.domain, declared.case.id);
-        let actual = fs::read(declared.domain_dir.join(&declared.case.source))
+        let run = fs::read(declared.domain_dir.join(&declared.case.source))
             .map_err(|error| format!("source read: {error}"))
-            .and_then(|source| execute(&source, &declared.case))
-            .map(|run| project(&run, &declared.case.projection));
+            .and_then(|source| execute(&source, &declared.case));
+        let actual = run
+            .as_ref()
+            .map(|run| project(run, &declared.case.projection))
+            .map_err(Clone::clone);
         if let Err(error) =
             evaluate_expectation(&declared.case.expected, &actual, &declared.case.expectation)
         {
             failures.push(format!("{label}: {error:?}"));
+        }
+        // The projection is a focused property claim about one observable.
+        // The channel contract is the completeness claim about the rest of
+        // the same run, and both have to hold.
+        if let Ok(run) = &run {
+            for failure in compare_declared_channels(declared, run) {
+                failures.push(format!("{label}: {failure:?}"));
+            }
         }
     }
     assert!(
@@ -36,6 +53,61 @@ fn declared_command_semantic_cases_match() {
         cases.len(),
         failures.join("\n")
     );
+}
+
+fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<ChannelFailure> {
+    let contract = declared
+        .case
+        .channels
+        .as_ref()
+        .expect("load_suite requires every case to declare a channel contract");
+    let committed = |channel: StreamChannel| {
+        fs::read_to_string(channel_file(
+            &declared.domain_dir,
+            &declared.case.id,
+            channel,
+        ))
+        .ok()
+    };
+    compare(&CapturedChannels::capture(run), contract, &committed)
+}
+
+/// The set of cases exempt from the channel contract is exactly the set whose
+/// engine run does not complete, and it is pinned at its measured size.
+///
+/// Without the count this invariant would be satisfiable by pinning more cases
+/// as `xfail` -- the exemption would become the escape hatch instead of the
+/// ledger. Lowering the number is the only edit this test accepts silently.
+#[test]
+fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
+    let cases =
+        load_suite().unwrap_or_else(|error| panic!("invalid command-semantic corpus: {error}"));
+    let mut exempt = Vec::new();
+    for declared in &cases {
+        if declared.case.channels.is_some() {
+            continue;
+        }
+        let source = fs::read(declared.domain_dir.join(&declared.case.source))
+            .expect("an exempt case still has a readable source");
+        assert!(
+            execute(&source, &declared.case).is_err(),
+            "{}/{} runs and must therefore declare a channel contract",
+            declared.domain,
+            declared.case.id
+        );
+        exempt.push(format!("{}/{}", declared.domain, declared.case.id));
+    }
+    exempt.sort();
+    assert_eq!(
+        exempt,
+        [
+            "input-expansion/expansion-conversions",
+            "input-expansion/input-start-file",
+            "main-control/read-to-definition",
+        ],
+        "the exempt set moved"
+    );
+    assert_eq!(cases.len(), 130, "the corpus changed size");
 }
 
 #[test]
@@ -86,6 +158,7 @@ fn validator_rejects_duplicate_and_unowned_cases() {
             Path::new("."),
             Path::new("."),
             &BTreeMap::new(),
+            ChannelPolicy::Deriving,
         )
         .expect_err("unowned property must be rejected")
         .contains("unowned property")

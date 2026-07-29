@@ -1,0 +1,20 @@
+! Improper \hyphenation will be flushed.
+Hyphenation exceptions must contain only letters
+and hyphens. But continue; I'll forgive and forget.
+
+! Not a letter.
+Letters in \hyphenation words must have \lccode>0.
+Proceed; I'll ignore the character I just read.
+
+! Bad \patterns.
+(See Appendix H.)
+
+! Nonletter.
+(See Appendix H.)
+
+! Duplicate pattern.
+(See Appendix H.)
+
+! Duplicate pattern.
+(See Appendix H.)
+

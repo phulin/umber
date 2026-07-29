@@ -1,0 +1,4 @@
+
+! Bad register code (256).
+A register number must be between 0 and 255.
+I changed this one to zero.

@@ -1,0 +1,9 @@
+
+\target=
+! Bad number (-1).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+! Missing `to' inserted.
+You should have said `\read<number> to \cs'.
+I'm going to look for the \cs now.
+

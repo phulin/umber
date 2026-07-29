@@ -23,6 +23,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 427,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -48,6 +56,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 316,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -96,6 +112,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 382,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -120,6 +144,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 368,
+        "status": "clean",
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -144,6 +176,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 338,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -183,6 +223,14 @@
         "alignment:state_change:1000000",
         "alignment:state_change:999999"
       ],
+      "channels": {
+        "events": 144,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -221,6 +269,14 @@
         "alignment:state_change:1000000",
         "alignment:state_change:999999"
       ],
+      "channels": {
+        "events": 141,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -245,6 +301,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 340,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -275,6 +339,14 @@
         "execution:error:confusion(256 spans)",
         "count:0=0"
       ],
+      "channels": {
+        "events": 7163,
+        "status": "fatal:confusion(256 spans)",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -310,6 +382,14 @@
         "box:0/0/0/2:glue",
         "box:0/0/1:kern"
       ],
+      "channels": {
+        "events": 275,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -334,6 +414,14 @@
       "expected": [
         "count:0=0"
       ],
+      "channels": {
+        "events": 182,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -378,6 +466,14 @@
         "box:0/0/6:penalty",
         "box:0/0/7:glue"
       ],
+      "channels": {
+        "events": 417,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -436,6 +532,14 @@
         "box:0/0/12:penalty",
         "box:0/0/13:glue"
       ],
+      "channels": {
+        "events": 1198,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -464,6 +568,14 @@
       "expected": [
         "alignment:recovery:1"
       ],
+      "channels": {
+        "events": 203,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -505,6 +617,14 @@
         "box:0/0/5/1:hlist",
         "box:0/0/5/2:glue"
       ],
+      "channels": {
+        "events": 265,
+        "status": "clean",
+        "terminal": { "kind": "empty" },
+        "log": { "kind": "empty" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }

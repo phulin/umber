@@ -1,0 +1,19 @@
+
+### bottom level
+
+! OK.
+
+
+### semi simple group (level 1) entered at line 3 (\begingroup)
+### bottom level
+
+! OK.
+
+! You can't use a prefix with `\showgroups'.
+I'll pretend you didn't say \long or \outer or \global.
+
+
+### bottom level
+
+! OK.
+
