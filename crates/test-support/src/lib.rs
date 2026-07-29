@@ -3,6 +3,7 @@
 mod compile_fail;
 mod corpus;
 pub mod dvi;
+pub mod native_assets;
 pub mod pdf;
 pub mod pdf_fixture;
 pub mod pdf_probe;

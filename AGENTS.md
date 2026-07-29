@@ -93,18 +93,36 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   is built in, so a hand-written run can look green while the gate is red.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
-- Run the whole native suite with `scripts/run-native-tests.py`, not a bare
-  `cargo test --tests`: that command selects the workspace's default members
-  and runs none of the `bib-*` crates, `umber-interrupt`, `refexec`, or
-  `profile-analyzer`. The script selects every host-testable member and ends
-  with a `VERDICT:` line stating how many packages, test binaries, and tests
-  ran; that line, not a quiet exit, is the result to report.
-- In a linked Git worktree, `scripts/run-native-tests.py` first provisions its
-  mandatory gitignored conformance assets from the primary checkout. The
-  bootstrap copies only the file allowlist in `tests/native-test-assets.lock`,
-  verifies every SHA-256, and leaves the copies ignored. Do not manually link
-  or broadly copy `third_party/`; if the primary checkout lacks an asset, run
-  `scripts/setup-conformance-tests.sh` there.
+- **`cargo test --tests` is the whole routine suite.** `default-members` lists
+  every host-testable workspace member, so no wrapper script selects them and
+  none is needed. It once listed only 21 of 34, which left the nine `bib-*`
+  crates, `umber-interrupt`, `refexec`, and `profile-analyzer` executed by no
+  routine command at all (`umber2-johp.211`);
+  `default_members_cover_every_host_testable_crate` in `test-support` now fails
+  if that list drifts from the workspace again, so the coverage is enforced by
+  the suite rather than by remembering which command to type. `umber-wasm` is
+  the sole omission and declares its tier in that test.
+- **Conformance assets provision themselves, including in a fresh worktree.**
+  The byte-exact DVI oracles, TRIP inputs, and shared font/hyphenation inputs
+  are gitignored for licensing reasons, so a new worktree starts without them.
+  `test_support::native_assets::provision` copies them from the owning checkout
+  on first use: it reads only the allowlist in
+  `tests/native-test-assets.lock`, verifies every SHA-256 on both sides, and
+  leaves the copies ignored. Do not manually link or broadly copy
+  `third_party/`.
+
+  If the **primary checkout** lacks an asset there is nothing to copy from, and
+  the gates fail with the missing paths named. Materialize them once, in the
+  primary checkout, not in a worktree:
+
+  ```bash
+  scripts/setup-conformance-tests.sh
+  ```
+
+  That is the only setup a new clone needs. An environment that genuinely
+  cannot host the oracles opts out explicitly with
+  `UMBER_CONFORMANCE_ORACLES=optional`, which downgrades the byte-exact gates
+  to a loud notice rather than letting an absent oracle read as a pass.
 - Direct `cargo build` output to a log file; it has verbose output.
 - Use `scripts/check-and-test.sh` when a single command should run the default
   native correctness suite concurrently with the format and clippy gate.

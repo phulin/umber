@@ -36,7 +36,7 @@ def main() -> int:
             "quality workflow must enforce this coverage contract")
     require("scripts/check-and-test.sh" not in deferred,
             "deferred workflow must not duplicate format/lint and native gates")
-    require("run: scripts/run-native-tests.py" in deferred,
+    require("run: cargo test --quiet --tests" in deferred,
             "deferred workflow must retain native correctness coverage")
     require("scripts/check-wasm.sh" in deferred,
             "deferred workflow must retain the browser WASM gate")

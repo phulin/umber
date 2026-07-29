@@ -5,7 +5,7 @@ name: Deferred tiers
 # the workspace lockfile.
 #
 # Before umber2-johp.213 this file ran check-wasm.sh behind a path filter and
-# nothing at all ran check-tools.sh, so the coverage run-native-tests.py hands
+# nothing at all ran check-tools.sh, so the coverage the routine suite hands
 # to those tiers was asserted by a comment and executed by nobody. Both tiers
 # run here now, and both end in a VERDICT line naming the steps that ran, so a
 # green job is a statement about what happened rather than about what failed to
@@ -51,7 +51,7 @@ jobs:
       # Formatting and linting have their own unfiltered workflow. Keep native
       # correctness here without paying for those gates twice.
       - name: Native correctness gate
-        run: scripts/run-native-tests.py
+        run: cargo test --quiet --tests
       - name: Test optimized package in Firefox and Chrome
         run: CHROME="$(command -v chrome)" CHROME_NO_SANDBOX=1 scripts/check-wasm.sh
 

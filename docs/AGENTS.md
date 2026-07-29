@@ -1,6 +1,6 @@
 # Docs Guidance
 
-Read the repository-level `AGENTS.md` before editing here. Documentation should describe the current fixture workflow: `scripts/run-native-tests.py` exercises every host-testable workspace member against committed fixtures, `scripts/check-tools.sh` gates opt-in host tools as one of the three deferred tiers whose runs are stamped and reported by every routine gate, and `scripts/regen-fixtures.sh` is the only supported live-reference regeneration entry point.
+Read the repository-level `AGENTS.md` before editing here. Documentation should describe the current fixture workflow: `cargo test --tests` exercises every host-testable workspace member against committed fixtures, its coverage bound by `crates/test-support/tests/workspace_selection.rs`, `scripts/check-tools.sh` gates opt-in host tools as one of the three deferred tiers whose runs are stamped and reported by every routine gate, and `scripts/regen-fixtures.sh` is the only supported live-reference regeneration entry point.
 
 When documenting tests or parity workflow, point fixture changes to `scripts/regen-fixtures.sh` modes rather than cargo-test environment variables or retired scripts.
 

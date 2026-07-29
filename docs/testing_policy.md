@@ -29,7 +29,7 @@ Test placement should optimize for three things:
 The correctness tier is fixture-only and hermetic:
 
 ```bash
-scripts/run-native-tests.py
+cargo test --tests
 scripts/check-and-test.sh
 ```
 
@@ -48,17 +48,22 @@ End-to-End Conformance Gate Contract in
 Move expensive scaling and live-reference checks into explicit performance or
 regeneration tiers instead of weakening coverage in the default tier.
 
-The correctness tier selects every workspace member whose tests can run on the
-host, not the workspace's default members. `cargo test --tests` selects the
-default members, which silently left the nine `bib-*` crates,
+`cargo test --tests` selects the workspace's `default-members`, and that list
+now names every host-testable member, so the plain command is the whole tier.
+It once named 21 of 34, which silently left the nine `bib-*` crates,
 `umber-interrupt`, `refexec`, and `profile-analyzer` executed by no routine
-command at all (`umber2-johp.211`). `scripts/run-native-tests.py` selects
-`--workspace` minus a declared exclusion list instead, so a member added to
-`Cargo.toml` is covered by construction rather than by remembering, and it
-ends in a `VERDICT:` line stating how many packages, test binaries, and tests
-actually ran. Prefer it over a hand-written `cargo test` for any run whose
-result will be reported as coverage; `cargo test -q --tests -p <crate>` remains
-the right command while iterating on one crate.
+command at all (`umber2-johp.211`).
+
+The fix is a test rather than a wrapper. `default_members_cover_every_host_testable_crate`
+in `test-support` reads `cargo metadata` and fails if any member is absent from
+`default-members` without a declared reason naming the tier that runs it, and
+a companion test does the same for every `[workspace] exclude` directory, which
+`--workspace` cannot reach at all. The coverage invariant is therefore enforced
+inside the suite, under the command everyone already runs -- strictly better
+than being enforced by remembering to invoke a particular script.
+
+`cargo test -q --tests -p <crate>` remains the right command while iterating on
+one crate.
 
 `umber-wasm` is the one declared exclusion. Its tests are
 `#[wasm_bindgen_test]`, which registers no test on a host target, so selecting

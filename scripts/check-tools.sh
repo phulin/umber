@@ -7,7 +7,7 @@ cd "$repo_root"
 # Explicit gate for host-side regeneration, profiling, and triage tools that are
 # intentionally absent from the routine native correctness build.
 #
-# This tier stays out of `scripts/check.sh` and `scripts/run-native-tests.py`
+# This tier stays out of `scripts/check.sh` and the routine `cargo test` suite
 # because it needs ripgrep, the pinned oracle builds, and three dependency trees
 # the workspace lockfile does not cover. What changed in umber2-johp.213 is that
 # it now says what it ran: every step is named, a step whose tool is absent
@@ -35,7 +35,7 @@ tier_step_requiring "python3 tar gzip" arxiv-census \
   scripts/test-stepwise-arxiv-census.sh
 tier_step oracle-regeneration scripts/test-oracle-regeneration.sh
 
-# `profile-analyzer` and `refexec` are tested by `scripts/run-native-tests.py`
+# `profile-analyzer` and `refexec` are tested by the routine `cargo test` suite
 # with everything else, so re-running them here would only thrash the shared
 # target directory with a narrower feature resolution. `parity-harness` stays
 # because `reference-tools` is a resolution no other gate builds.
@@ -43,7 +43,7 @@ tier_step parity-harness \
   cargo test -q -p parity-harness --tests --features reference-tools
 
 # The `[workspace] exclude` directories: each is its own workspace with its own
-# lockfile, so `--workspace` cannot reach them and `scripts/run-native-tests.py`
+# lockfile, so `--workspace` cannot reach them and the routine suite
 # requires them to name a gate that does. This is that gate; the 23 tests here
 # ran nowhere at all before umber2-johp.211.
 check_corpus_sync() {

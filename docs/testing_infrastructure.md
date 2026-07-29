@@ -21,7 +21,7 @@ The fixture-only, hermetic correctness tier includes the TeX82 property-catalogu
 The fixture-only, hermetic correctness tier is:
 
 ```bash
-scripts/run-native-tests.py
+cargo test --tests
 scripts/check-and-test.sh
 ```
 
@@ -40,7 +40,7 @@ The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.
 
-A warmed `scripts/run-native-tests.py` spends about 19 seconds inside its test
+A warmed `cargo test --tests` spends about 19 seconds inside its test
 binaries, summed from the 48 `test result:` lines it prints. That figure is
 worth stating because it is the one part of the run that does not depend on
 build state: it is the same whether the tree is cold, warm, or contended.
@@ -86,31 +86,27 @@ members compiled and passed. That is the danger rather than the reassurance,
 because `tools/tex-command-stream` had rotted out of compiling under exactly
 the same gap (`umber2-johp.121`) and nobody found out from a test run.
 
-`scripts/run-native-tests.py` makes the covered set a property of the command
-instead of a property of whoever typed it:
+The gap was closed by correcting `default-members` to name every host-testable
+member, and by making that correctness a test rather than a wrapper script.
+`crates/test-support/tests/workspace_selection.rs` holds two:
 
-- the selection is `--workspace` minus `EXCLUDED_PACKAGES`, so a member added
-  to `Cargo.toml` is covered by construction;
-- each exclusion carries a reason and the exact command that does run it, and
-  an exclusion naming a package the workspace no longer has fails the run, so a
-  stale excuse cannot outlive the thing it excused;
-- the same declaration is required of every `[workspace] exclude` directory,
-  which `--workspace` cannot reach at all because each is its own workspace
-  with its own lockfile, so pushing a crate out of the workspace cannot quietly
-  take its tests out of every gate on the way;
-- the number of test binaries the selected manifests declare is read from
-  `cargo metadata` and compared against the number that actually reported, so a
-  run that executed fewer binaries than it built fails rather than passes;
-- the run ends in a `VERDICT:` line naming packages, binaries, and
-  passed/failed/ignored totals, under a four-status exit contract: `0` PASS,
-  `1` FAIL, `2` COVERAGE (the declaration no longer matches the workspace), `3`
-  SHORT (fewer binaries reported than declared).
+- `default_members_cover_every_host_testable_crate` reads `cargo metadata` and
+  fails if any member is absent from `default-members` without an `OMITTED`
+  entry naming the tier that runs it. A stale entry -- one naming a package the
+  workspace no longer has, or one contradicted by `default-members` selecting
+  it anyway -- fails too, so an excuse cannot outlive the thing it excused;
+- `every_excluded_workspace_directory_names_its_tier` does the same for
+  `[workspace] exclude` directories, which `--workspace` cannot reach at all
+  because each is its own workspace with its own lockfile. Pushing a crate out
+  of the workspace cannot quietly take its tests out of every gate on the way.
 
-`scripts/test-run-native-tests.py` drives each of those guards with inputs it
-must reject, and the runner runs it before trusting its own verdict, for the
-same reason the clippy gate self-tests `scripts/check-lint-passes.py`.
+`scripts/run-native-tests.py` used to enforce this by wrapping Cargo. Enforcing
+it from inside the suite is strictly better: the invariant now holds under the
+command everyone already runs, rather than under one they have to remember,
+and roughly 970 lines of wrapper, self-test, and asset-bootstrap script were
+deleted with it.
 
-`umber-wasm` is the single declared exclusion. Its tests are
+`umber-wasm` is the single declared omission. Its tests are
 `#[wasm_bindgen_test]`, which registers no test on a host target: selecting it
 builds a cdylib and reports three test binaries containing zero tests, for
 about six seconds of incremental link time and roughly 160 seconds on a cold
@@ -122,7 +118,8 @@ The three `[workspace] exclude` directories -- `tools/corpus-sync`,
 that likewise ran nowhere. They are separate workspaces with separate lockfiles
 and target directories, so they belong in the explicit tool tier rather than in
 the routine one: `scripts/check-tools.sh` runs each by manifest path, and
-`run-native-tests.py` fails if a fourth appears without naming its gate.
+`every_excluded_workspace_directory_names_its_tier` fails if a fourth appears
+without naming its gate.
 
 Each exclusion names a tier rather than a free-text command, and the tier must
 be one `scripts/tier_stamp.py` registers. That is what makes the deferral
@@ -173,13 +170,12 @@ a stamp under `.tier-stamps/` (gitignored) holding the commit, whether the tree
 was dirty, and the step census. `scripts/tier_stamp.py report` classifies each
 tier against the tree in front of you as `PASSED`, `PARTIAL`, `STALE`,
 `BLOCKED`, `FAILED`, or `NEVER-RUN`, and only a whole clean run at HEAD counts
-as evidence. Both `scripts/check.sh` and `scripts/run-native-tests.py` print
-that report -- reading a file, running no tier -- and the native suite's verdict
-line carries the count, so a `PASS` can no longer be mistaken for a statement
-about the deferred tiers:
+as evidence. `scripts/check.sh` prints that report -- reading a file, running
+no tier -- so a green suite can no longer be mistaken for a statement about the
+deferred tiers:
 
 ```text
-run-native-tests: VERDICT: PASS - 33 packages, 48/48 test binaries, 4018 passed, 0 failed, 941 ignored; TeX82 property catalogue: 946 reviewed, 434 deferred; 105 covered, 46 gap; deferred tiers: 0 of 6 passed on this tree
+TIER SUMMARY: 0 of 6 deferred tiers have passed on this tree (6 never-run)
 ```
 
 `scripts/test_tier_stamp.py` drives the classifier with every shape that must
@@ -208,7 +204,7 @@ tiers. `.github/workflows/quality.yml` runs `scripts/check.sh` without a path
 filter on every pull request and every push to `main`, so documentation, root
 Markdown, fixtures, scripts, tools, and every workspace crate reach the same
 gate. The deferred WASM job runs native correctness through
-`run-native-tests.py` but does not repeat formatting or linting.
+`cargo test --tests` but does not repeat formatting or linting.
 `scripts/test-ci-workflows.py` binds those workflow responsibilities so a
 future edit cannot silently put the path-filter hole back.
 
@@ -711,13 +707,21 @@ gate and warns that absent ones will cause failures, not skips. Its list is read
 from `.gitignore`, the same single source the registry meta-test binds to, so
 the preflight cannot go stale when a gate is added.
 
-`scripts/run-native-tests.py` additionally makes this contract usable from an
-isolated linked worktree. Before Cargo starts, `scripts/native-test-assets.py`
-resolves the primary checkout from Git's shared worktree metadata and
-materializes missing files from the explicit `tests/native-test-assets.lock`
-allowlist. The allowlist contains only the four oracles and their declared
-corpus, hyphenation, TFM, and TRIP/e-TRIP file dependencies. It cannot select a
-directory.
+The contract is usable from an isolated linked worktree without a setup step.
+`test_support::native_assets::provision` resolves the primary checkout from
+Git's shared worktree metadata and materializes missing files from the explicit
+`tests/native-test-assets.lock` allowlist, on first use, from inside the suite.
+The allowlist contains only the four oracles and their declared corpus,
+hyphenation, TFM, and TRIP/e-TRIP file dependencies; it cannot select a
+directory. Every source and destination is verified against its committed
+SHA-256, and copies are used rather than links so a worktree cannot mutate the
+owning checkout's evidence.
+
+`crates/umber/tests/it/e2e_conformance/assets.rs`'s `with_gate` is the single
+call site, which is the same choke point that already makes an absent oracle
+impossible to confuse with a passing gate. When the primary checkout itself
+lacks an asset there is nothing to copy from, and the failure names the missing
+paths and points at `scripts/setup-conformance-tests.sh`.
 
 Every source and destination must match its committed SHA-256. Provisioning
 uses an independently verified temporary copy followed by atomic rename, not a

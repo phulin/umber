@@ -223,6 +223,17 @@ pub fn with_gate(name: &str, body: impl FnOnce(&GateAssets)) {
             )
         });
     let repo_root = repo_root();
+    // A linked worktree is born without the gitignored oracles and inputs, so
+    // provision them from the owning checkout before asking whether they are
+    // present. This is what lets `cargo test` be the routine gate with no
+    // setup step in front of it; it is idempotent and copies nothing once the
+    // assets are in place. A genuine absence still reaches the report below.
+    if let Err(error) = test_support::native_assets::provision(&repo_root) {
+        note(&format!(
+            "\nconformance gate `{}`: could not provision pinned assets:\n{error:#}\n",
+            gate.name
+        ));
+    }
     let missing = gate.missing_assets(&repo_root);
     if !missing.is_empty() {
         let report = gate.absence_report(&missing);

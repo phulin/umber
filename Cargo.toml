@@ -6,7 +6,22 @@ members = [
   "tools/refexec",
   "tools/tex-command-stream",
 ]
+# Every host-testable member, so `cargo test --tests` IS the routine gate.
+# `umber-wasm` is the sole omission: its tests are `#[wasm_bindgen_test]`,
+# which registers no test on a host target, so selecting it would build a
+# cdylib to run exactly zero tests. `scripts/check-wasm.sh` runs them for
+# real. `default_members_cover_every_host_testable_crate` in `test-support`
+# fails if this list drifts from the workspace (umber2-johp.211).
 default-members = [
+  "crates/bib-bst",
+  "crates/bib-engine",
+  "crates/bib-graph",
+  "crates/bib-input",
+  "crates/bib-label",
+  "crates/bib-model",
+  "crates/bib-output",
+  "crates/bib-sort",
+  "crates/bib-unicode",
   "crates/corpus-manifest",
   "crates/test-support",
   "crates/tex-arith",
@@ -17,16 +32,19 @@ default-members = [
   "crates/tex-fonts",
   "crates/tex-incr",
   "crates/tex-lex",
-  "crates/tex-out",
   "crates/tex-oracle",
+  "crates/tex-out",
   "crates/tex-shape",
   "crates/tex-state",
   "crates/tex-typeset",
   "crates/umber",
   "crates/umber-distribution",
   "crates/umber-fetch",
+  "crates/umber-interrupt",
   "crates/umber-vfs",
   "tools/parity-harness",
+  "tools/profile-analyzer",
+  "tools/refexec",
   "tools/tex-command-stream",
 ]
 exclude = [

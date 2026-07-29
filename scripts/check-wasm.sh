@@ -6,7 +6,7 @@ cd "$repo_root"
 
 # Explicit gate for the WebAssembly binding and the authored browser package.
 #
-# `scripts/run-native-tests.py` deliberately excludes `umber-wasm`: its tests
+# The routine `cargo test --tests` suite deliberately omits `umber-wasm`: its tests
 # are `#[wasm_bindgen_test]`, which registers no test on a host target, so
 # selecting it there builds a cdylib and runs exactly zero tests. This tier is
 # where they run for real, and it needs wasm-pack, a headless browser, and Node,

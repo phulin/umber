@@ -12,7 +12,7 @@ cd "$repo_root"
 # of a run in which every fixture matched (umber2-johp.210). That is the defect
 # this repository keeps finding: a check believed to be running that is not. A
 # missing `hb-shape` is now BLOCKED, which is never 0, and the run is stamped
-# where `scripts/check.sh` and `scripts/run-native-tests.py` print it.
+# where `scripts/check.sh` prints it.
 
 # shellcheck source=scripts/tier-runner.sh
 source "$repo_root/scripts/tier-runner.sh"

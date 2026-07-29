@@ -98,7 +98,7 @@ Three things were wrong with it, and only the third is about tidiness:
    a `test` arm, a feature arm, and a neither arm, so the traced engine the
    oracle compares was never literally the engine that ships.
 2. **It made four build resolutions out of two.** A routine
-   `run-native-tests.py` resolved `tex-command/observe` on but `umber/observe`
+   `cargo test --tests` resolved `tex-command/observe` on but `umber/observe`
    off, which meant the TRIP and e-TRIP tests in
    `crates/umber/tests/it/e2e_conformance.rs` were not compiled by the routine
    gate at all, and `scripts/trip.sh` had to build a fourth resolution --
@@ -140,7 +140,7 @@ costs the routine gates exactly nothing: `cargo test --tests --workspace` and
 are unmet, so `gentle-profile`'s 2,433 lines and its `umber` dependency are
 already absent from every routine build. A `tools/` crate is a workspace
 member, so both gates would start building it -- and keeping the old behavior
-would then need a `Deferral` in `scripts/run-native-tests.py`, two `--exclude`
+would then need an `OMITTED` entry in `workspace_selection.rs`, two `--exclude`
 flags in each clippy pass, and a new members-linted-elsewhere escape hatch in
 `check_coverage`, which today requires every member to be linted by some pass.
 Three declarations and a new mechanism, to buy back the build time the feature

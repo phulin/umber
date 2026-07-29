@@ -6,7 +6,7 @@ tools, corpora, or a browser the routine gate must not depend on:
 `scripts/check-tools.sh`, `scripts/check-wasm.sh`, and
 `scripts/check-hb-shape-fixtures.sh`, and the three explicit LaTeX tiers.
 Moving them into `scripts/check.sh` or
-`scripts/run-native-tests.py` would make the fast path depend on wasm-pack,
+the routine `cargo test --tests` suite would make the fast path depend on wasm-pack,
 Firefox, ripgrep, and three extra dependency trees, which is precisely why they
 are separate (`umber2-johp.211`).
 

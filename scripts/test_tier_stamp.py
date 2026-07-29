@@ -3,7 +3,7 @@
 
 `tier_stamp.py report` runs this before printing anything, for the same reason
 the clippy gate self-tests `check-lint-passes.py` and the native suite
-self-tests `test-run-native-tests.py`: a coverage check nobody has watched fail
+self-tests `check-lint-passes.py`: a coverage check nobody has watched fail
 is worth no more than no check at all, and this one exists specifically to stop
 an unproven coverage claim from reading as a proven one.
 

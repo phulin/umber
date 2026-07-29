@@ -17,30 +17,14 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
-- `run-native-tests.py`: the routine native correctness suite; selects
-  `--workspace` minus a declared, verified exclusion list so a new workspace
-  member is covered by construction, requires every `[workspace] exclude`
-  directory to name the gate that runs it instead, checks the number of test
-  binaries that reported against the number the selected manifests declare, and
-  ends in a `VERDICT:` line under a PASS/FAIL/COVERAGE/SHORT exit contract.
 - `build-cache-policy.py`: report-only parallel-build capacity preflight using
   the measured per-worktree budget; its explicit `--reclaim` mode removes only
   the current checkout's validated incremental and clippy cache paths and
   refuses when Cargo-family processes are active there.
 - `test-build-cache-policy.py`: temporary-directory proof of exact-target
   reclamation, report budgeting, process refusal, and symlink/traversal guards.
-- `native-test-assets.py`: copy-only bootstrap for the routine suite's exact
-  gitignored conformance inputs; resolves the primary checkout through Git
-  worktree metadata and accepts only SHA-256-pinned paths from
-  `tests/native-test-assets.lock`.
-- `test-native-test-assets.py`: temporary-Git-repository proof of bounded,
-  idempotent, status-clean worktree provisioning and hard failures for missing,
-  altered, or unsafe assets.
 - `test-fetch-conformance-inputs.sh`: hermetic ordered-locator, digest,
   manifest-safety, and offline-cache contract for TRIP/e-TRIP acquisition.
-- `test-run-native-tests.py`: synthetic-input proof that each guard in
-  `run-native-tests.py` fails when it should; the runner runs it before
-  trusting its own verdict.
 - `check-lint-passes.py`: the clippy gate's declared lint passes; verifies each
   pass's feature resolution against Cargo's own records, requires every
   workspace member to be linted and every declared feature's enabled state to
@@ -61,7 +45,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `tier_stamp.py`: the deferred-tier registry, stamp writer, and staleness
   report; classifies each tier against the tree in front of the reader and
   treats only a whole clean run at HEAD as evidence. `scripts/check.sh` and
-  `run-native-tests.py` print its report, and `--require-attempted` is what
+  `check.sh` prints its report, and `--require-attempted` is what
   `hooks/pre-push` refuses a never-invoked tier with.
 - `test_tier_stamp.py`: synthetic-input proof that the classifier refuses every
   shape that must not count as evidence; `tier_stamp.py report` runs it first.
