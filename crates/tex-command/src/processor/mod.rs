@@ -97,6 +97,14 @@ pub struct CommandProcessor<'a> {
     pub(crate) expression_depth: u32,
 }
 
+impl CommandProcessor<'_> {
+    /// Returns the immutable command dialect and character mode for this job.
+    #[must_use]
+    pub const fn profile(&self) -> crate::CommandProfile {
+        self.command.profile()
+    }
+}
+
 enum ProcessorFuel<'a> {
     Owned(CommandFuel),
     Shared(&'a mut CommandFuel),

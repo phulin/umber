@@ -2524,6 +2524,182 @@ fn a_noalign_from_everycr_is_delivered_before_the_v_template_retires() {
     );
 }
 
+fn assert_etex_derived_noalign_observation_order(profile: CommandProfile, macro_produced: bool) {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(profile);
+    let source: &[u8] = if macro_produced {
+        br"\def\next{\noalign}\halign{#\cr x\cr\next{\kern1pt}y\cr}\end"
+    } else {
+        br"\halign{#\cr x\cr\noalign{\kern1pt}y\cr}\end"
+    };
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let noalign = observations
+        .0
+        .iter()
+        .rposition(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(delivery)
+                    if delivery.command == "no_align"
+                        && delivery.boundary == CommandDeliveryBoundary::Raw
+            )
+        })
+        .expect("raw no_align delivery");
+    let opening = observations.0[noalign + 1..]
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(opening)
+                    if opening.transition == "begin_group"
+                        && opening.previous_align_state == Some(1_000_000)
+                        && opening.align_state == 1_000_001
+            )
+        })
+        .map(|offset| noalign + 1 + offset)
+        .expect("opening brace changes align_state");
+    let brace = observations.0[opening + 1..]
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(brace)
+                    if brace.boundary == CommandDeliveryBoundary::Raw
+                        && brace.spelling == ObservedToken::Character {
+                            character: '{',
+                            catcode: Catcode::BeginGroup,
+                        }
+            )
+        })
+        .map(|offset| opening + 1 + offset)
+        .expect("opening brace is observed after its align_state transition");
+    assert!(
+        noalign < opening && opening < brace,
+        "e-TeX-derived §785 ordering must be raw no_align, opening-brace \
+         align_state transition, then opening-brace observation"
+    );
+    assert!(
+        !observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Command(delivery)
+                if delivery.command == "no_align"
+                    && delivery.boundary == CommandDeliveryBoundary::Expanded
+        )),
+        "direct and macro-produced no_align use the same e-TeX dialect boundary"
+    );
+}
+
+/// e-TeX 2.6 changes TeX82 §785's directly consumed `\noalign` trace to keep
+/// only §341's raw delivery before the opening-brace transition.
+#[test]
+fn etex_direct_noalign_precedes_its_opening_group_as_raw_only() {
+    assert_etex_derived_noalign_observation_order(CommandProfile::ETEX26, false);
+}
+
+#[test]
+fn etex_macro_noalign_matches_direct_opening_group_order() {
+    assert_etex_derived_noalign_observation_order(CommandProfile::ETEX26, true);
+}
+
+#[test]
+fn pdftex_direct_noalign_uses_its_etex_derived_opening_group_order() {
+    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14027, false);
+}
+
+#[test]
+fn pdftex_macro_noalign_matches_direct_opening_group_order() {
+    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14027, true);
+}
+
+#[test]
+fn tex82_macro_noalign_retains_expanded_delivery_before_its_opening_group() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\next{\noalign}\halign{#\cr x\cr\next{\kern1pt}y\cr}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let noalign_deliveries: Vec<(usize, CommandDeliveryBoundary)> = observations
+        .0
+        .iter()
+        .enumerate()
+        .filter_map(|(index, observation)| match observation {
+            CommandObservation::Command(delivery)
+                if delivery.command == "no_align" && delivery.provenance.source_range.is_none() =>
+            {
+                Some((index, delivery.boundary))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        noalign_deliveries
+            .iter()
+            .map(|(_, boundary)| *boundary)
+            .collect::<Vec<_>>(),
+        [
+            CommandDeliveryBoundary::Raw,
+            CommandDeliveryBoundary::Expanded
+        ]
+    );
+    let expanded = noalign_deliveries[1].0;
+    let opening = observations.0[expanded + 1..]
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(opening)
+                    if opening.transition == "begin_group"
+                        && opening.previous_align_state == Some(1_000_000)
+                        && opening.align_state == 1_000_001
+            )
+        })
+        .map(|offset| expanded + 1 + offset)
+        .expect("opening brace changes align_state after expanded no_align");
+    let brace = observations.0[opening + 1..]
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(brace)
+                    if brace.boundary == CommandDeliveryBoundary::Raw
+                        && brace.spelling == ObservedToken::Character {
+                            character: '{',
+                            catcode: Catcode::BeginGroup,
+                        }
+            )
+        })
+        .map(|offset| opening + 1 + offset)
+        .expect("opening brace observation follows align_state transition");
+    assert!(expanded < opening && opening < brace);
+}
+
 /// TeX82 §§785/789 pass `align_peek`'s final command straight to `init_col`.
 /// Its ordinary branch runs `back_input` before the u-template starts, so a
 /// command produced by macro expansion has a raw delivery followed by the

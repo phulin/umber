@@ -4,7 +4,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -292,7 +292,12 @@ impl CommandProcessor<'_> {
             // §381's expansion loop remains pending across §789's back_input.
             let expanded_through_call =
                 self.command.expansion.cumulative_expansions != expansions_before;
-            if !expanded_through_call {
+            let etex_noalign = self.command.profile().capabilities().supports_etex()
+                && matches!(
+                    command.meaning(),
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign)
+                );
+            if !expanded_through_call && !etex_noalign {
                 self.observe_expanded_delivery(&command);
             }
             return Ok(Some((command, expanded_through_call)));

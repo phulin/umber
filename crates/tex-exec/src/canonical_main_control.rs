@@ -4236,7 +4236,7 @@ fn scan_alignment_peek(
         })?;
     match command.meaning() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
-            if pending_expanded_delivery {
+            if pending_expanded_delivery && !processor.profile().capabilities().supports_etex() {
                 processor.commit_alignment_peek_delivery(&command);
             }
             processor
