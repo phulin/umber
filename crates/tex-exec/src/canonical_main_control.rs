@@ -3587,9 +3587,7 @@ enum ScannedStep {
     /// TeX82 §1293's `show_lists_code` branch of `show_whatever`, which takes
     /// no operand: `begin_diagnostic; show_activities`. The mode is carried
     /// so the committed effect can name the nest it reported.
-    ShowLists {
-        mode: Mode,
-    },
+    ShowLists,
     /// e-TeX 2.6 `etex.ch` [17.3623--3671]'s `\\showtokens`: command
     /// processing has removed the compulsory braces and frozen the
     /// unexpanded balanced interior. Replay owns only diagnostic rendering.
@@ -4104,6 +4102,18 @@ fn scan_alignment_delivery_step(
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
             if matches!(command.meaning(), Meaning::EndV) {
+                // TeX82 §§1046-1047 route `mmode+endv` through
+                // `insert_dollar_sign`, just like every other command that
+                // reaches an alignment v-template before its math mode has
+                // closed. The synthesized `$` closes math first; the backed
+                // up `endv` is then redelivered in the cell's h/v mode and
+                // reaches §1131 below.
+                if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                    processor
+                        .recover_missing_math_shift(command)
+                        .map_err(command_error)?;
+                    return Ok(ScannedStep::MissingMathShift);
+                }
                 // Replay's structural alignment group is deliberately not a
                 // Universe group: the surrounding box owns that stack slot.
                 // A recovery-opened simple group is the bounded exception
@@ -4371,19 +4381,6 @@ fn dispatch_main_control_command(
             }
         }
         return Ok(scanned);
-    }
-}
-
-/// The canonical hyphenated name of one mode, as committed observations and
-/// the semantic corpus spell it.
-fn canonical_mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Vertical => "vertical",
-        Mode::Horizontal => "horizontal",
-        Mode::DisplayMath => "display-math",
-        Mode::InternalVertical => "internal-vertical",
-        Mode::RestrictedHorizontal => "restricted-horizontal",
-        Mode::Math => "math",
     }
 }
 
@@ -5775,7 +5772,7 @@ fn scan_command(
         // family in every mode; §1293's `show_lists_code` case reads no
         // operand at all.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowLists) => {
-            Ok(ScannedStep::ShowLists { mode })
+            Ok(ScannedStep::ShowLists)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowGroups) => {
             Ok(ScannedStep::ShowGroups { diagnostic: None })
@@ -8196,7 +8193,7 @@ fn applied_mutation_observation(
         | ScannedStep::Message { .. }
         | ScannedStep::DisplayDiagnostic(..)
         | ScannedStep::ShowBox { .. }
-        | ScannedStep::ShowLists { .. }
+        | ScannedStep::ShowLists
         | ScannedStep::ShowTokens { .. }
         | ScannedStep::ShowIfs { .. }
         | ScannedStep::ShowGroups { .. }
@@ -8395,13 +8392,6 @@ fn committed_stream_effect_observations(
 
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
-        // TeX82 §1293's `show_activities` reports the whole mode nest; the
-        // committed effect names the innermost mode it was shown from.
-        ScannedStep::ShowLists { mode } => Some(EffectRecord {
-            kind: "activities",
-            detail: format!("mode={}", canonical_mode_name(*mode)),
-            tokens: None,
-        }),
         ScannedStep::Message { tokens, .. } => Some(EffectRecord {
             kind: "message",
             // TeX82 §1279 observes the string produced by
@@ -10459,7 +10449,7 @@ fn apply_scanned_step(
             crate::diagnostics::execute_showbox(stores, index);
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ShowLists { .. } => {
+        ScannedStep::ShowLists => {
             crate::diagnostics::execute_showlists(stores, modes);
             Ok(ReplayStep::Continue)
         }

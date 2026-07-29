@@ -2075,6 +2075,35 @@ fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence
 }
 
 #[test]
+fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
+    // TeX82 §1293 writes `show_activities` through the diagnostic printer.
+    // The schema-v1 command stream has no detached effect for that report;
+    // only actual engine effects such as messages, writes, and termination
+    // are published as effect observations.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\showlists\end");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("showlists executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert!(terminal_text(&stores).contains("### vertical mode"));
+    assert!(!observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Effect(effect) if effect.kind == "activities"
+        )
+    }));
+}
+
+#[test]
 fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

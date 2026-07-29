@@ -610,6 +610,74 @@ fn canonical_empty_alignment_cell_reaches_endv_without_a_backup() {
     );
 }
 
+#[test]
+fn canonical_alignment_endv_closes_unfinished_math_before_finishing_cell() {
+    // TeX82 §§1046-1047: an alignment v-template that reaches `endv` in
+    // math mode inserts `$`, closes math, and only then redelivers `endv` to
+    // §1131 in the cell's horizontal mode.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#\cr$x\cr}\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    assert!(terminal_text(&universe).contains("Missing $ inserted"));
+    assert_eq!(control.active_alignment(), None);
+    assert!(
+        universe
+            .group_frames()
+            .all(|frame| !matches!(frame.kind(), GroupKind::Align | GroupKind::MathShift))
+    );
+}
+
+#[test]
+fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
+    // Suspension inside the unfinished math cell must preserve the paired
+    // alignment-entry and math save levels. Repeated retries may not consume
+    // either level before §§1046-1047 synthesize the closing `$`.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#\cr$\input child\cr}\end");
+
+    loop {
+        match control.advance(&mut universe).expect("alignment advances") {
+            CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) => {
+                assert_eq!(name, "child");
+                break;
+            }
+            other => panic!("alignment should suspend inside its cell: {other:?}"),
+        }
+    }
+    let groups = universe
+        .group_frames()
+        .map(|frame| frame.kind())
+        .collect::<Vec<_>>();
+    assert!(groups.ends_with(&[GroupKind::Align, GroupKind::Align, GroupKind::MathShift]));
+    for _ in 0..3 {
+        assert!(matches!(
+            control.advance(&mut universe).expect("retry suspends"),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+                if name == "child"
+        ));
+        assert_eq!(
+            universe
+                .group_frames()
+                .map(|frame| frame.kind())
+                .collect::<Vec<_>>(),
+            groups
+        );
+    }
+
+    control.capabilities_mut().register_input(
+        "child",
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+    );
+    run_to_end(&mut control, &mut universe);
+    assert!(terminal_text(&universe).contains("Missing $ inserted"));
+    assert_eq!(control.active_alignment(), None);
+}
+
 /// Labels the observations from the first raw `end_template` delivery through
 /// the `endv` it becomes, so the two forms of §380 can be compared directly.
 fn end_template_to_endv_shape(observations: &[CommandObservation]) -> Vec<&'static str> {
