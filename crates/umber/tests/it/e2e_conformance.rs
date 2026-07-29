@@ -785,7 +785,7 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         EngineMode::Tex82
     };
     let mut failure = None;
-    let initial = run_file_in_process_captured(
+    let mut initial = run_file_in_process_captured(
         &input,
         source_identity.canonical_name(),
         None,
@@ -802,11 +802,17 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         );
         panic!("{fixture_name} format creation failed: {error}")
     });
-    let format = initial
-        .format
-        .clone()
-        .unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
-    let initex_identity = format!("sha256:{:x}", Sha256::digest(&format));
+    let format = initial.format.clone();
+    let initex_identity = format
+        .as_deref()
+        .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
+        .unwrap_or_else(|| "absent".to_owned());
+    if format.is_none() {
+        initial.capture.outcome = LiveSessionOutcome::Failed {
+            diagnostic: "missing_format_dump".into(),
+            detail: format!("{fixture_name} did not dump a format"),
+        };
+    }
     compare_trip_phase(
         root,
         fixture_name,
@@ -816,6 +822,7 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         &initex_identity,
         None,
     );
+    let format = format.unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
     let mut failure = None;
     let loaded = run_file_in_process_captured(
         &input,
