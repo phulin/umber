@@ -1740,6 +1740,75 @@ fn read_text(processor: &CommandProcessor<'_>, list: &TracedTokenList) -> String
 }
 
 #[test]
+fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
+    // e-TeX 2.6 etex.ch §53a and §53c retain TeX's eight-bit character
+    // domain: `\readline` assigns catcode 12 without requiring the byte to be
+    // a Unicode-domain scalar. Its one-line pseudo-file must then retire back
+    // to the enclosing `\scantokens` pseudo-file.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+    let empty = TracedTokenList::synthetic(universe.intern_token_list(&[]));
+    let scantokens = command
+        .open_scantokens(
+            SourceRegistration::new(RegisteredSourceKind::Generated, b"q\n".to_vec()),
+            empty,
+        )
+        .expect("scantokens pseudo-file opens");
+    let expected = command.clone();
+    let mut snapshot = Some(command.snapshot());
+    let mut first = None;
+    let mut capabilities = CommandHostCapabilities::default();
+
+    for _attempt in 0..2 {
+        let mut fuel = crate::CommandFuel::new(16).expect("finite test fuel");
+        let collected = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_fuel(&mut fuel);
+            let line = processor
+                .command
+                .open_read_line(
+                    SourceRegistration::new(RegisteredSourceKind::Generated, vec![0xff]),
+                    crate::input::SourceNameClass::ReadStream(1),
+                )
+                .expect("readline pseudo-file opens");
+            let mut tokens = Vec::new();
+            processor
+                .collect_read_line_verbatim(line, &mut tokens)
+                .expect("exact-byte readline collects");
+            assert_eq!(
+                processor.command.top_input_level_identity(),
+                Some(scantokens),
+                "readline retirement resumes the enclosing scantokens source"
+            );
+            tokens
+                .into_iter()
+                .map(TracedTokenWord::semantic_token)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            collected,
+            [Token::Char {
+                ch: '\u{ff}',
+                cat: Catcode::Other,
+            }]
+        );
+        assert!(fuel.burned() <= 16);
+        if let Some(previous) = &first {
+            assert_eq!(&collected, previous, "rollback replays the exact byte");
+        } else {
+            first = Some(collected);
+            command
+                .rollback(snapshot.take().expect("first attempt owns snapshot"))
+                .expect("rollback succeeds");
+            assert_eq!(command, expected);
+        }
+    }
+}
+
+#[test]
 fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
     // TeX82 §482: `repeat <input and store one line> until
     // align_state=1000000`, so an unmatched `{` continues onto the next line.

@@ -1965,12 +1965,7 @@ impl crate::SourceStepQueries for LiveSourceQueries<'_, '_> {
 }
 
 fn character_from_code(code: CharacterCode) -> char {
-    match code.to_byte() {
-        Ok(byte) => char::from(byte),
-        Err(_) => code
-            .to_char()
-            .expect("registered Unicode source supplies valid scalars"),
-    }
+    crate::profile::token_character(code)
 }
 
 /// Whether a delivered command is TeX82's `math_shift` command code -- the

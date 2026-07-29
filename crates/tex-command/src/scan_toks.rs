@@ -860,10 +860,7 @@ impl CommandProcessor<'_> {
             .int_param(tex_state::env::banks::IntParam::END_LINE_CHAR);
         self.command.load_next_source_line(endlinechar);
         while let Some(character) = self.command.next_source_character() {
-            let ch = character
-                .code()
-                .to_char()
-                .map_err(|_| CommandError::input_invariant())?;
+            let ch = crate::profile::token_character(character.code());
             let origin = self.state.source_token_origin(
                 character.range().source(),
                 character.range().start(),

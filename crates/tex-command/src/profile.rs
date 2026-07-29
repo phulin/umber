@@ -146,6 +146,20 @@ impl fmt::Display for CharacterCodeError {
 
 impl std::error::Error for CharacterCodeError {}
 
+/// Projects either canonical input-character domain into the scalar spelling
+/// used by [`tex_state::token::Token`].
+///
+/// TeX82's byte characters occupy the corresponding U+0000..U+00FF scalar
+/// values; Unicode profiles retain their scalar unchanged.
+pub(crate) fn token_character(code: CharacterCode) -> char {
+    match code.to_byte() {
+        Ok(byte) => char::from(byte),
+        Err(_) => code
+            .to_char()
+            .expect("registered Unicode source supplies valid scalars"),
+    }
+}
+
 /// Canonical command family installed before a job begins.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
