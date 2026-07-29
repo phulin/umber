@@ -531,17 +531,11 @@ pub struct ScannedAccent {
     pub accent_provenance: StructuredProvenance,
 }
 
-/// Completed command-owned group material for TeX82's `\discretionary`.
-///
-/// Each list is an immutable, traced token list.  The group delimiters and
-/// all nested token collection stay in command control; a caller may execute
-/// each completed list in an isolated restricted-horizontal episode without
-/// reopening source input.
+/// The source position at which TeX82 §1117/§1120 opened one live
+/// `\discretionary` part.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedDiscretionary {
-    pub pre_break: ScannedBalancedText,
-    pub post_break: ScannedBalancedText,
-    pub replacement: ScannedBalancedText,
+pub struct ScannedDiscretionaryOpening {
+    pub provenance: StructuredProvenance,
 }
 
 /// A completed TeX82 math-character operand (`\\mathchar` or `\\mathaccent`).
@@ -2130,43 +2124,18 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Collects all three TeX82 `\discretionary` groups as immutable traced
-    /// material. Their eventual restricted-horizontal execution is separate
-    /// from raw source collection and cannot access an `InputStack`.
-    pub fn scan_discretionary(&mut self) -> Result<ScannedDiscretionary, CommandError> {
-        Ok(ScannedDiscretionary {
-            pre_break: self.scan_discretionary_part()?,
-            post_break: self.scan_discretionary_part()?,
-            replacement: self.scan_discretionary_part()?,
-        })
-    }
-
-    /// Freezes one discretionary part after TeX82 §1117/§1120 has consumed
-    /// its opening brace through §403 while `scanner_status` is still normal.
-    ///
-    /// Umber's executor replays the frozen body later, but that migration
-    /// boundary must not move the brace into the body collector: doing so
-    /// publishes the collector's absorbing transition before the raw and
-    /// expanded brace deliveries.
-    fn scan_discretionary_part(&mut self) -> Result<ScannedBalancedText, CommandError> {
+    /// Consumes only §1117/§1120's opening brace. The body remains on the
+    /// live input stack and returns to main control in restricted horizontal
+    /// mode; in particular, no macro or conditional from the body is expanded
+    /// before the executor has installed `disc_group`.
+    pub fn scan_discretionary_opening(
+        &mut self,
+    ) -> Result<ScannedDiscretionaryOpening, CommandError> {
         let opening = self.scan_left_brace(true)?;
-        let primary = opening.origin();
-        // TeX82 §1117 returns to main control after opening this group, so
-        // the body begins through `get_x_token`. Complete that first expanded
-        // delivery before the migration collector takes ownership; seeding
-        // the collector avoids executing or delivering the result twice.
-        let first = self
-            .get_x_token()?
-            .ok_or(CommandError::input_invariant())?
-            .spelling();
-        let scanned = self.scan_toks(ScanToksMode::GeneralAfterExpandedFront {
-            expanded: false,
-            primary,
-            first,
-        })?;
-        Ok(ScannedBalancedText {
-            tokens: scanned.replacement_text,
-            provenance: provenance(&scanned),
+        Ok(ScannedDiscretionaryOpening {
+            provenance: StructuredProvenance {
+                primary: opening.origin(),
+            },
         })
     }
 

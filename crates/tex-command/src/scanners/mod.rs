@@ -22,7 +22,7 @@ pub use structured::{
     PdfObjectRequest, PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest,
     PdfThreadRequest, RegisteredInput, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedCharacterDefinition, ScannedDiscretionary,
+    ScannedBoxShiftPayload, ScannedCharacterDefinition, ScannedDiscretionaryOpening,
     ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
     ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
     ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,

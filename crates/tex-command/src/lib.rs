@@ -108,7 +108,7 @@ pub use scanners::{
     RegisteredInput, RestrictedInteger, RestrictedIntegerClass, RestrictedIntegerRecovery,
     ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedCharacterDefinition, ScannedDiscretionary,
+    ScannedBoxShiftPayload, ScannedCharacterDefinition, ScannedDiscretionaryOpening,
     ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
     ScannedGlueParameterAssignment, ScannedHyphenationData, ScannedInsertConstruction,
     ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter,

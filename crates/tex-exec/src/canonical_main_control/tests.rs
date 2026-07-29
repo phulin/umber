@@ -68,6 +68,73 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
 }
 
 #[test]
+fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
+    // TeX82 §§1117/1120: each part returns to main control in restricted
+    // horizontal mode under disc_group (e-TeX group code 10). Two macro
+    // layers and a conditional make any fixed body-prefetch scheme invalid;
+    // the literal `\kern` is the nonmacro negative control for duplicate
+    // delivery.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    stores.install_primitive_meaning(
+        "currentgrouptype",
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
+    );
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\def\layera{\layerb}
+          \def\layerb{\ifnum\currentgrouptype=10
+            \global\count0=10
+          \else
+            \global\count0=-1
+          \fi}
+          \discretionary{\layera\kern1pt}{}{}",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.count(0),
+        10,
+        "body expansion saw disc_group; terminal={}",
+        terminal_text(&stores)
+    );
+    let disc = control
+        .modes
+        .current_list()
+        .nodes()
+        .iter()
+        .find_map(|node| match node {
+            Node::Disc {
+                pre, post, replace, ..
+            } => Some((*pre, *post, *replace)),
+            _ => None,
+        })
+        .expect("completed discretionary node");
+    assert_eq!(
+        stores
+            .nodes(disc.0)
+            .iter()
+            .filter(|node| matches!(
+                node.to_owned(),
+                Node::Kern {
+                    amount,
+                    ..
+                } if amount == Scaled::from_raw(Scaled::UNITY)
+            ))
+            .count(),
+        1,
+        "unexpandable body command executes exactly once"
+    );
+    assert!(stores.nodes(disc.1).is_empty());
+    assert!(stores.nodes(disc.2).is_empty());
+    assert_eq!(stores.innermost_group_kind(), None);
+}
+
+#[test]
 fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     // TeX82 §§1051--1052 run `normal_paragraph` after opening a `\vtop`.
     // The display therefore uses the box-local 100pt hsize, not the inherited

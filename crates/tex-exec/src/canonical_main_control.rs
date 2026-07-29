@@ -19,7 +19,7 @@ use tex_command::{
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
     PdfReferenceObjectRequest, PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent,
     ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedDiscretionary, ScannedDisplayDiagnostic,
+    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
     ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
@@ -76,6 +76,7 @@ pub struct CanonicalMainControl {
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
+    active_discretionaries: Vec<ActiveDiscretionary>,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -264,6 +265,11 @@ struct ReplayBoxes {
     output_routine_opening_pending: bool,
 }
 
+#[derive(Clone, Debug)]
+struct ActiveDiscretionary {
+    parts: Vec<NodeListId>,
+}
+
 /// The only normal reason a canonical operation may be retried by its host.
 ///
 /// The command core has already classified the unavailable resource, while
@@ -299,6 +305,7 @@ struct CanonicalStepSnapshot {
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
+    active_discretionaries: Vec<ActiveDiscretionary>,
     main_loop_active: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
@@ -314,6 +321,7 @@ impl CanonicalStepSnapshot {
             next_alignment_identity: control.next_alignment_identity,
             active_alignment: control.active_alignment.clone(),
             boxes: control.boxes.clone(),
+            active_discretionaries: control.active_discretionaries.clone(),
             main_loop_active: control.main_loop_active,
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
@@ -343,6 +351,7 @@ impl CanonicalStepSnapshot {
         control.next_alignment_identity = self.next_alignment_identity;
         control.active_alignment = self.active_alignment;
         control.boxes = self.boxes;
+        control.active_discretionaries = self.active_discretionaries;
         control.main_loop_active = self.main_loop_active;
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
@@ -1136,9 +1145,8 @@ impl CanonicalMainControl {
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
             ScannedStep::MathShift { paired } => self.apply_canonical_math_shift(paired, stores),
-            ScannedStep::Discretionary(discretionary) => {
-                self.apply_discretionary(discretionary, stores)
-            }
+            ScannedStep::DiscretionaryOpening(opening) => self.begin_discretionary(opening, stores),
+            ScannedStep::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
             ScannedStep::DiscretionaryHyphen { origin } => {
                 self.apply_discretionary_hyphen(origin, stores)
             }
@@ -1226,13 +1234,11 @@ impl CanonicalMainControl {
         Ok(applied)
     }
 
-    /// Executes TeX82's three completed discretionary parts as isolated
-    /// restricted-horizontal episodes. The command machine owns replay of the
-    /// immutable lists, including expansion, grouping recovery, and origins;
-    /// this layer owns only the temporary mode/group lifecycle and final node.
-    fn apply_discretionary(
+    /// Enters TeX82 §1117's live `disc_group` after the command processor has
+    /// consumed only its opening brace.
+    fn begin_discretionary(
         &mut self,
-        discretionary: ScannedDiscretionary,
+        _opening: ScannedDiscretionaryOpening,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
@@ -1242,9 +1248,81 @@ impl CanonicalMainControl {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
         crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
-        let pre = self.execute_discretionary_part(discretionary.pre_break.tokens, stores)?;
-        let post = self.execute_discretionary_part(discretionary.post_break.tokens, stores)?;
-        let replace = self.execute_discretionary_part(discretionary.replacement.tokens, stores)?;
+        self.active_discretionaries
+            .push(ActiveDiscretionary { parts: Vec::new() });
+        self.open_discretionary_part(stores)?;
+        Ok(ReplayStep::Continue)
+    }
+
+    fn open_discretionary_part(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        stores.enter_group_with_kind_at_line(
+            GroupKind::Disc,
+            self.command.current_file_line_number(),
+        );
+        self.modes.push(Mode::RestrictedHorizontal)?;
+        Ok(())
+    }
+
+    /// Implements §1120's `build_discretionary`: finish the current live
+    /// restricted-horizontal list, `unsave`, and either scan the next opening
+    /// brace or append the completed three-part node.
+    fn finish_discretionary_part(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let nodes = stores.freeze_node_list(level.list().nodes());
+        let aftergroup =
+            stores
+                .leave_group_with_kind(GroupKind::Disc)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "discretionary group",
+                })?;
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
+
+        let part_count = {
+            let active = self
+                .active_discretionaries
+                .last_mut()
+                .ok_or(ExecError::MissingToken {
+                    context: "active discretionary",
+                })?;
+            active.parts.push(nodes);
+            active.parts.len()
+        };
+        if part_count < 3 {
+            let mut diagnostics = Vec::new();
+            {
+                let mut processor = command_processor(
+                    &mut self.command,
+                    &mut self.runtime,
+                    &mut self.fuel,
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    stores,
+                );
+                let _ = processor
+                    .scan_discretionary_opening()
+                    .map_err(command_error)?;
+                diagnostics.extend(
+                    processor
+                        .take_semantic_diagnostics()
+                        .into_iter()
+                        .map(PendingDiagnostic::Command),
+                );
+            }
+            report_pending_diagnostics(stores, diagnostics);
+            self.open_discretionary_part(stores)?;
+            return Ok(ReplayStep::Continue);
+        }
+        let active = self
+            .active_discretionaries
+            .pop()
+            .expect("three parts require an active discretionary");
+        let [pre, post, replace]: [NodeListId; 3] = active
+            .parts
+            .try_into()
+            .expect("discretionary completes after exactly three parts");
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
@@ -1285,38 +1363,6 @@ impl CanonicalMainControl {
             replace: empty,
         });
         Ok(ReplayStep::Continue)
-    }
-
-    fn execute_discretionary_part(
-        &mut self,
-        tokens: TracedTokenList,
-        stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
-        stores.enter_group_with_kind_at_line(
-            GroupKind::Disc,
-            self.command.current_file_line_number(),
-        );
-        self.modes.push(Mode::RestrictedHorizontal)?;
-        let episode = self.command.push_discretionary_episode(tokens);
-        self.main_loop_active = false;
-        while self.command.replay_episode_is_active(episode) {
-            let _ = self.nested_step_once(stores, None)?;
-        }
-        self.main_loop_active = false;
-
-        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
-        let nodes = stores.freeze_node_list(level.list().nodes());
-        let aftergroup =
-            stores
-                .leave_group_with_kind(GroupKind::Disc)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "discretionary group",
-                })?;
-        // §1120's `build_discretionary` opens with a bare `unsave`, so the
-        // tokens §282 backs up land in the ordinary input stream and are read
-        // by whatever reads next -- there is no private replay loop for them.
-        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        Ok(nodes)
     }
 
     /// Attempts one atomic canonical main-control operation.
@@ -3964,7 +4010,8 @@ enum ScannedStep {
         suppress_left_boundary: bool,
     },
     Accent(ScannedAccent),
-    Discretionary(ScannedDiscretionary),
+    DiscretionaryOpening(ScannedDiscretionaryOpening),
+    DiscretionaryPartEnd,
     DiscretionaryHyphen {
         origin: tex_state::token::OriginId,
     },
@@ -4949,6 +4996,17 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndMathGroup(kind));
     }
+    if innermost_group == Some(GroupKind::Disc)
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::DiscretionaryPartEnd);
+    }
     // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
     // directly in math mode starts a subformula that becomes the nucleus of a
     // freshly appended noad -- `tail_append(new_noad); back_input;
@@ -5324,9 +5382,13 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => Ok(ScannedStep::Accent(
             processor.scan_accent().map_err(command_error)?,
         )),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Discretionary) => Ok(
-            ScannedStep::Discretionary(processor.scan_discretionary().map_err(command_error)?),
-        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Discretionary) => {
+            Ok(ScannedStep::DiscretionaryOpening(
+                processor
+                    .scan_discretionary_opening()
+                    .map_err(command_error)?,
+            ))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DiscretionaryHyphen) => {
             Ok(ScannedStep::DiscretionaryHyphen {
                 origin: command.origin(),
@@ -8572,7 +8634,8 @@ fn applied_mutation_observation(
         | ScannedStep::Math(..)
         | ScannedStep::MathDelimiter(..)
         | ScannedStep::MathShift { .. }
-        | ScannedStep::Discretionary(..)
+        | ScannedStep::DiscretionaryOpening(..)
+        | ScannedStep::DiscretionaryPartEnd
         | ScannedStep::DiscretionaryHyphen { .. }
         | ScannedStep::Accent(..) => {
             unreachable!("apply_host_owned_step applies this step before classifying mutations")
@@ -11936,7 +11999,7 @@ fn apply_scanned_step(
         // `step_once` consumes the command-owned episodes while its aggregate
         // snapshot is live. Observed replay is not an alternate production
         // execution path, so reaching these arms is an invariant.
-        ScannedStep::Discretionary(_) => {
+        ScannedStep::DiscretionaryOpening(_) | ScannedStep::DiscretionaryPartEnd => {
             unreachable!("discretionary is applied by CanonicalMainControl")
         }
         ScannedStep::DiscretionaryHyphen { .. } => {

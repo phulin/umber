@@ -1242,7 +1242,7 @@
         1124,
         1125
       ],
-      "claim": "discretionary constructs exactly three isolated restricted-horizontal lists, enforces the replacement-count limit and admissible node kinds, attaches pre/post/replacement ownership once, and preserves aftergroup replay; text accent scans the accent and optional base character, computes slant/x-height placement, appends balancing kerns, and replays a noncharacter base command.",
+      "claim": "discretionary constructs exactly three live restricted-horizontal lists under disc_group, enforces the replacement-count limit and admissible node kinds, attaches pre/post/replacement ownership once, and preserves aftergroup replay; text accent scans the accent and optional base character, computes slant/x-height placement, appends balancing kerns, and replays a noncharacter base command.",
       "preconditions": [
         "The discretionary command kind, current hmode, hyphen character, font metrics, and isolated group replay facility are available.",
         "Accent scanning has a valid accent code or a recoverable noncharacter lookahead."
@@ -1251,7 +1251,7 @@
         "Build explicit and automatic-hyphen discretionaries with empty/nonempty/nested parts and aftergroup effects; accent characters with and without bases, slanted fonts, missing glyphs, and noncharacter base commands."
       ],
       "expected_observations": [
-        "Each discretionary part retires at its own replay boundary and the final Disc node retains exact part order/provenance without changing space_factor.",
+        "Each discretionary part executes through live main control until its group closes and the final Disc node retains exact part order/provenance without changing space_factor.",
         "Accent and base positioning/kerns match §1123 and a noncharacter base is backed up after the accent is appended."
       ],
       "postconditions": [
@@ -1271,8 +1271,8 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "discretionary_scanner_freezes_all_three_groups_with_provenance"
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery"
         },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",

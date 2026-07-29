@@ -2811,10 +2811,7 @@ fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
         control.step(&mut universe).expect("paragraph start"),
         MainControlStep::Continue
     );
-    assert_eq!(
-        control.step(&mut universe).expect("discretionary episodes"),
-        MainControlStep::Continue
-    );
+    run_to_end(&mut control, &mut universe);
     assert_eq!(universe.count(3), 0, "disc group assignments stay local");
     let Some(tex_state::node::Node::Disc {
         kind: tex_state::node::DiscKind::Discretionary,
@@ -2835,10 +2832,6 @@ fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
             Some(tex_state::node_arena::NodeRef::Kern { amount, .. }) if amount == expected
         ));
     }
-    assert_eq!(
-        control.step(&mut universe).expect("following command"),
-        MainControlStep::Continue
-    );
     assert_eq!(universe.count(4), 9);
 }
 
