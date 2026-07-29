@@ -1543,37 +1543,94 @@ fn canonical_font_definition_scans_size_and_respects_local_global_scope() {
     assert!(matches!(universe.meaning(global), Meaning::Font(_)));
 }
 
-#[test]
-fn canonical_missing_font_rolls_back_then_retries_once_with_registered_resource() {
-    let mut universe = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\font\f=cmr10\message{ok}\end");
-    let mut observations = ObservationRecorder::default();
+fn assert_font_definition_retry_observations(
+    profile: tex_command::CommandProfile,
+    expected_mutations: usize,
+) {
+    let source = br"\font\f=cmr10\hyphenchar\f=45\end";
+    let mut retried_universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut retried_universe);
+    crate::install_unexpandable_primitives(&mut retried_universe);
+    if profile.capabilities().supports_etex() {
+        tex_expand::install_etex_expandable_primitives(&mut retried_universe);
+        crate::install_etex_unexpandable_primitives(&mut retried_universe);
+    }
+    let mut retried = CanonicalMainControl::prepared_initex(profile);
+    register_source(&mut retried, source);
+    let mut retried_observations = ObservationRecorder::default();
 
     assert!(matches!(
-        control
-            .advance_with_observer(&mut universe, &mut observations)
+        retried
+            .advance_with_observer(&mut retried_universe, &mut retried_observations)
             .expect("missing font suspends"),
         CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request })
             if request.name == "cmr10"
     ));
-    let f = universe.intern("f");
-    assert!(matches!(universe.meaning(f), Meaning::Undefined));
+    let f = retried_universe.intern("f");
+    assert!(matches!(retried_universe.meaning(f), Meaning::Undefined));
     assert!(
-        observations.0.is_empty(),
+        retried_observations.0.is_empty(),
         "suspended command leaked observations"
     );
 
-    register_cmr10_font(&mut control, &mut universe);
+    register_cmr10_font(&mut retried, &mut retried_universe);
     assert!(matches!(
-        control
-            .advance_with_observer(&mut universe, &mut observations)
+        retried
+            .advance_with_observer(&mut retried_universe, &mut retried_observations)
             .expect("fresh retry installs font"),
         CanonicalStepResult::Progress(ReplayStep::Continue)
     ));
-    assert!(matches!(universe.meaning(f), Meaning::Font(_)));
-    run_to_end(&mut control, &mut universe);
-    assert_eq!(terminal_text(&universe), "ok");
+    assert!(matches!(retried_universe.meaning(f), Meaning::Font(_)));
+
+    let mut fresh_universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut fresh_universe);
+    crate::install_unexpandable_primitives(&mut fresh_universe);
+    if profile.capabilities().supports_etex() {
+        tex_expand::install_etex_expandable_primitives(&mut fresh_universe);
+        crate::install_etex_unexpandable_primitives(&mut fresh_universe);
+    }
+    let mut fresh = CanonicalMainControl::prepared_initex(profile);
+    register_cmr10_font(&mut fresh, &mut fresh_universe);
+    register_source(&mut fresh, source);
+    let mut fresh_observations = ObservationRecorder::default();
+    assert!(matches!(
+        fresh
+            .advance_with_observer(&mut fresh_universe, &mut fresh_observations)
+            .expect("preloaded font installs"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+
+    assert_eq!(retried_observations.0, fresh_observations.0);
+    let font_mutations: Vec<_> = retried_observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record)
+                if record.target == "meaning"
+                    && record.value == "set_font"
+                    && record.key.as_deref() == Some("f") =>
+            {
+                Some(record)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        font_mutations.len(),
+        expected_mutations,
+        "font-definition observations must follow the selected canonical dialect"
+    );
+}
+
+#[test]
+fn canonical_font_definition_observations_are_profile_exact_across_resource_retry() {
+    // TeX82 §1257 uses `equiv(u):=f` at `common_ending`, so only its
+    // provisional `define(u,set_font,null_font)` is observable. e-TeX change
+    // [49.1257] replaces the direct final write with `define(u,set_font,f)`
+    // specifically for e-TeX tracing. Each profile must preserve that exact
+    // distinction across an atomic missing-resource rollback and fresh retry.
+    assert_font_definition_retry_observations(tex_command::CommandProfile::TEX82, 1);
+    assert_font_definition_retry_observations(tex_command::CommandProfile::ETEX26, 2);
 }
 
 #[test]

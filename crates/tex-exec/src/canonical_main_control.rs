@@ -2514,7 +2514,7 @@ impl CanonicalMainControl {
             },
             scanned => scanned,
         };
-        let mutation = applied_mutation_observation(&scanned, stores);
+        let mutation = applied_mutation_observation(&scanned, stores, self.command_profile());
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
@@ -7718,6 +7718,7 @@ fn committed_arithmetic_mutation(
 fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
+    profile: CommandProfile,
 ) -> Option<PendingMutation> {
     // e-TeX's §275 `eq_word_define` returns before touching the save stack
     // when extended mode locally reassigns an identical fullword value.
@@ -8030,15 +8031,30 @@ fn applied_mutation_observation(
         | ScannedStep::HyphenationData { .. }
         | ScannedStep::SetInteractionMode(..)
         | ScannedStep::SetInteractionModeValue(..) => return None,
-        // -- §1257's `new_font` commits its only `eq_define`,
-        // `define(u,set_font,null_font)`, *before* it scans the file name and
-        // `at`/`scaled` size, so the command-owned `scan_font_definition`
-        // performs and observes it there, exactly as §1224's provisional
-        // `\relax` is. §1257's `common_ending: equiv(u):=f` then overwrites
-        // the equivalent directly, which is not an `eq_define` and which
-        // `umber_trace_eq_mutation` therefore never sees, so this apply seam
-        // stays silent.
-        ScannedStep::FontDefinition { .. } => return None,
+        // -- TeX82 §1257's `new_font` observes only the provisional
+        // `define(u,set_font,null_font)`: its common ending writes the loaded
+        // font number directly with `equiv(u):=f`. e-TeX change [49.1257]
+        // deliberately replaces that direct write with
+        // `define(u,set_font,f)` for e-TeX tracing, and pdfTeX inherits the
+        // same change. The command scanner already observes the provisional
+        // definition; only an e-TeX-capable dialect observes this applied
+        // final definition after all scanner records. Holding the record in
+        // the operation buffer also makes resource suspension discard both
+        // definitions and a fresh retry publish the profile-exact sequence.
+        ScannedStep::FontDefinition {
+            request, global, ..
+        } => {
+            if !profile.capabilities().supports_etex() {
+                return None;
+            }
+            MutationRecord {
+                target: "meaning",
+                value: "set_font".into(),
+                key: Some(stores.resolve(request.target).to_owned()),
+                tokens: None,
+                global: *global,
+            }
+        }
         // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
         // `read_toks`. Open/close mutate stream state rather than `eqtb`;
         // read installs §482's collected list as a parameterless macro.
