@@ -1,24 +1,84 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./head-for-vmode-recovery.tex
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \setbox12=\vbox{
+                    \kern1pt}
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.2 \setbox0=\hbox{
+                   \unvbox12
 ! Missing } inserted.
-! Missing { inserted.
-! Missing { inserted.
+<inserted text> 
+                }
+...
+l.2 \setbox0=\hbox{\unvbox
+                          12
 
+Overfull \hbox (1.0pt too wide) in paragraph at lines 1--2
+[]
+! Missing { inserted.
+<to be read again> 
+                   {
+l.4 \setbox13=\vbox{
+                    \kern1pt}
+! Missing { inserted.
+<to be read again> 
+                   {
+l.5 \setbox1=\hbox{
+                   \unvcopy13
 ! Missing } inserted.
-! Missing { inserted.
+<inserted text> 
+                }
+...
+l.5 \setbox1=\hbox{\unvcopy
+                           13
 
+Overfull \hbox (1.0pt too wide) in paragraph at lines 4--5
+[]
+! Missing { inserted.
+<to be read again> 
+                   {
+l.7 \setbox2=\hbox{
+                   \halign{#\cr\cr}
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.7 \setbox2=\hbox{\halign
+                          {#\cr\cr}
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.7 \setbox2=\hbox{\halign{
+                           #\cr\cr}
+! Missing # inserted in alignment preamble.
+<to be read again> 
+                   \cr 
+l.7 \setbox2=\hbox{\halign{#\cr
+                               \cr}
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.9 \end
+        
+! Missing \cr inserted.
+<inserted text> 
+                \cr 
+...
+l.9 \end
+        
 ! You can't use `\end' in internal vertical mode.
-Sorry, but I'm not programmed to handle this case;
-I'll just pretend that you didn't ask for it.
-If you're in the wrong mode, you might be able to
-return to the right one by typing `I}' or `I$' or `I\par'.
+<recently read> \end 
+                     
+l.9 \end
+        
 )
+*(Please type a command or say `\end')
+*(Please type a command or say `\end')
 *(Please type a command or say `\end')
 *
 ! Emergency stop.

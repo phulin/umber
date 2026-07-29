@@ -1,4 +1,8 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./running-rules.tex )
+(./running-rules.tex
+Underfull \hbox (badness 10000) in paragraph at lines 2--3
+[]
+ )
+(see the transcript file for additional information)
 No pages of output.
 Transcript written on running-rules.log.

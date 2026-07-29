@@ -1,10 +1,10 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./read-missing-to.tex
-\target=
-! Bad number (-1).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
 ! Missing `to' inserted.
+<to be read again> 
+                   \target 
+l.2 \read-1 \target
+                   
  )
 (see the transcript file for additional information)
 No pages of output.

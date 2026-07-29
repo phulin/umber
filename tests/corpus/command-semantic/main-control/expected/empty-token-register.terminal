@@ -5,11 +5,19 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
                    {
 l.2 \toks0={
             }
-)
-*(Please type a command or say `\end')
-*
+? )
+Runaway text?
+{} \end 
+! File ended while scanning text of \toks.
+<inserted text> 
+                }
+<*> empty-token-register.tex
+                            
+? 
 ! Emergency stop.
-<*> 
-    
+<inserted text> 
+                }
+<*> empty-token-register.tex
+                            
 No pages of output.
 Transcript written on empty-token-register.log.

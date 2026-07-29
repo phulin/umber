@@ -1,6 +1,9 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./mag-freeze.tex
-! Incompatible magnification (1300); the previous value will be retained (1200).
+! Incompatible magnification (1300);
+ the previous value will be retained (1200).
+l.4 \dimen1=1true
+                 pt
  )
 (see the transcript file for additional information)
 No pages of output.

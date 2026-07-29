@@ -1,2 +1,9 @@
-! Too late for \patterns.
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)
+(./hyphenation-data.tex
+! Patterns can be loaded only by INITEX.
+l.2 \patterns
+             {a1b}
+ )
 (see the transcript file for additional information)
+No pages of output.
+Transcript written on hyphenation-data.log.

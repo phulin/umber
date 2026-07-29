@@ -1,4 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **display-prevdepth.tex
-(./display-prevdepth.tex )
+(./display-prevdepth.tex
+Underfull \hbox (badness 10000) in paragraph at lines 3--4
+|
+
+\hbox(0.0+2.0)x50.0 []
+
+ )
 No pages of output.

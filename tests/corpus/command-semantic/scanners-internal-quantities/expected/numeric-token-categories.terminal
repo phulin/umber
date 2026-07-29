@@ -3,7 +3,13 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 ! Undefined control sequence.
 l.5 \count2
            ="A
+! Missing number, treated as zero.
+<to be read again> 
+                   a
+l.6 \count3="a
+              
 [1.10] )
+(\end occurred inside a group at level 1)
 (see the transcript file for additional information)
 Output written on numeric-token-categories.dvi (1 page, 128 bytes).
 Transcript written on numeric-token-categories.log.

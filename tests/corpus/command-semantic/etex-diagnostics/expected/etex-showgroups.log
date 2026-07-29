@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 entering extended mode
 **etex-showgroups.tex
 (./etex-showgroups.tex
@@ -6,20 +6,32 @@ entering extended mode
 ### bottom level
 
 ! OK.
+l.2 \showgroups
+               
 
 
 ### semi simple group (level 1) entered at line 3 (\begingroup)
 ### bottom level
 
 ! OK.
+l.4 \showgroups
+               
 
 ! You can't use a prefix with `\showgroups'.
-I'll pretend you didn't say \long or \outer or \global.
+<to be read again> 
+                   \showgroups 
+l.6 \global\showgroups
+                      \count0=7
+I'll pretend you didn't say \long or \outer or \global or \protected.
 
 
 ### bottom level
 
 ! OK.
+<recently read> \showgroups 
+                            
+l.6 \global\showgroups
+                      \count0=7
 
  )
 No pages of output.

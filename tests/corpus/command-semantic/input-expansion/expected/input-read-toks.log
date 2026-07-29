@@ -1,13 +1,7 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **input-read-toks.tex
-(./input-read-toks.tex
-\readvalue=
-! Bad number (-1).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
+(./input-read-toks.texR
 )
-*
-(Please type a command or say `\end')
 *
 ! Emergency stop.
 <*> 

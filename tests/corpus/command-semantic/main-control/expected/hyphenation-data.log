@@ -1,3 +1,9 @@
-! Too late for \patterns.
-All patterns must be given before typesetting begins.
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>
+**hyphenation-data.tex
+(./hyphenation-data.tex
+! Patterns can be loaded only by INITEX.
+l.2 \patterns
+             {a1b}
 
+ )
+No pages of output.

@@ -1,4 +1,20 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **infinite-glue-case.tex
-(./infinite-glue-case.tex )
+(./infinite-glue-case.tex
+! Illegal unit of measure (replaced by filll).
+l.1 \skip0=0pt plus 1fIl L l L
+                              
+I dddon't go any higher than filll.
+
+! Illegal unit of measure (replaced by filll).
+l.2 \skip1=0pt plus 1 FiLlLl
+                            L
+I dddon't go any higher than filll.
+
+! Illegal unit of measure (replaced by filll).
+l.2 \skip1=0pt plus 1 FiLlLlL
+                             
+I dddon't go any higher than filll.
+
+ )
 No pages of output.

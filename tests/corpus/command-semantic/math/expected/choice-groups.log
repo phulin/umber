@@ -1,4 +1,12 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **choice-groups.tex
-(./choice-groups.tex )
+(./choice-groups.tex
+! Math formula deleted: Insufficient symbol fonts.
+l.2 \setbox0=\hbox{$\mathchoice{}{}{}{}$
+                                        }\end
+Sorry, but I can't typeset math unless \textfont 2
+and \scriptfont 2 and \scriptscriptfont 2 have all
+the \fontdimen values needed in math symbol fonts.
+
+ )
 No pages of output.

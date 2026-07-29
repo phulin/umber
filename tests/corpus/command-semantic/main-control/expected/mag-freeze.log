@@ -1,7 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **mag-freeze.tex
 (./mag-freeze.tex
-! Incompatible magnification (1300); the previous value will be retained (1200).
+! Incompatible magnification (1300);
+ the previous value will be retained (1200).
+l.4 \dimen1=1true
+                 pt
 I can handle only one magnification ratio per job. So I've
 reverted to the magnification you used earlier on this run.
 

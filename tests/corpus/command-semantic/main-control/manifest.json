@@ -17,8 +17,8 @@
       "channels": {
         "events": 517,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -38,8 +38,8 @@
       "channels": {
         "events": 206,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -59,8 +59,8 @@
       "channels": {
         "events": 251,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -76,8 +76,8 @@
       "channels": {
         "events": 256,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -97,8 +97,8 @@
       "channels": {
         "events": 281,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -118,9 +118,33 @@
       "channels": {
         "events": 301,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./mode-dispatch.tex",
+            "actual": "(./mode-dispatch.tex [1.1.1.1.1.1] )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./mode-dispatch.tex",
+            "actual": "(./mode-dispatch.tex [1.1.1.1.1.1] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": { "kind": "pass" }
@@ -139,8 +163,8 @@
       "channels": {
         "events": 168,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -160,8 +184,8 @@
       "channels": {
         "events": 43,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -177,8 +201,8 @@
       "channels": {
         "events": 86,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -194,8 +218,8 @@
       "channels": {
         "events": 120,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -211,8 +235,8 @@
       "channels": {
         "events": 213,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -249,8 +273,8 @@
       "channels": {
         "events": 186,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -270,8 +294,8 @@
       "channels": {
         "events": 224,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -291,8 +315,8 @@
       "channels": {
         "events": 382,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -312,8 +336,8 @@
       "channels": {
         "events": 128,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -345,8 +369,8 @@
       "channels": {
         "events": 31,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -375,8 +399,8 @@
       "channels": {
         "events": 23,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -392,8 +416,8 @@
       "channels": {
         "events": 123,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -413,8 +437,24 @@
       "channels": {
         "events": 166,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.23",
+          "mismatch": {
+            "line": 3,
+            "expected": "! Incompatible magnification (1300);",
+            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.23",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Incompatible magnification (1300);",
+            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -461,9 +501,17 @@
       "channels": {
         "events": 92,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": { "kind": "pass" }
@@ -478,8 +526,16 @@
       "channels": {
         "events": 58,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": { "line": 3, "expected": "! Missing `to' inserted.", "actual": "\\target=" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": { "line": 4, "expected": "! Missing `to' inserted.", "actual": "\\target=" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -520,8 +576,20 @@
       "channels": {
         "events": 41,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": { "line": 2, "expected": "(./read-mutation-order.tex )", "actual": "(./read-mutation-order.tex" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./read-mutation-order.texalpha",
+            "actual": "(./read-mutation-order.tex"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -542,8 +610,8 @@
       "channels": {
         "events": 81,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -563,8 +631,16 @@
       "channels": {
         "events": 39,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": { "line": 8, "expected": "? )", "actual": ")" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": { "line": 9, "expected": "? ", "actual": "A left brace was mandatory here, so I've put one in." }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -580,8 +656,8 @@
       "channels": {
         "events": 142,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -601,9 +677,17 @@
       "channels": {
         "events": 780,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0006\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0006\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": { "kind": "pass" }
@@ -638,8 +722,8 @@
       "channels": {
         "events": 662,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -688,8 +772,8 @@
       "channels": {
         "events": 1107,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -705,8 +789,8 @@
       "channels": {
         "events": 312,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -735,8 +819,24 @@
       "channels": {
         "events": 79,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)",
+            "actual": "! Too late for \\patterns."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>",
+            "actual": "! Too late for \\patterns."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -776,8 +876,24 @@
       "channels": {
         "events": 154,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 7,
+            "expected": "l.4 \\hyphenation{ab\\relax cd ab!",
+            "actual": "l.4 \\hyphenation{ab\\relax cd ab!c-d}"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 11,
+            "expected": "l.4 \\hyphenation{ab\\relax cd ab!",
+            "actual": "l.4 \\hyphenation{ab\\relax cd ab!c-d}"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -797,8 +913,8 @@
       "channels": {
         "events": 80,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -826,8 +942,8 @@
       "channels": {
         "events": 73,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -847,8 +963,8 @@
       "channels": {
         "events": 80,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -877,8 +993,8 @@
       "channels": {
         "events": 76,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -899,8 +1015,8 @@
       "channels": {
         "events": 90,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -920,8 +1036,8 @@
       "channels": {
         "events": 109,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -941,8 +1057,8 @@
       "channels": {
         "events": 133,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -962,8 +1078,8 @@
       "channels": {
         "events": 28,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1003,8 +1119,16 @@
       "channels": {
         "events": 301,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.19",
+          "mismatch": { "line": 4, "expected": "> \\shown=macro:", "actual": "> \\shown=macro:->\\global \\count 9=1." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.19",
+          "mismatch": { "line": 5, "expected": "> \\shown=macro:", "actual": "> \\shown=macro:->\\global \\count 9=1." }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1047,8 +1171,8 @@
       "channels": {
         "events": 146,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1064,8 +1188,8 @@
       "channels": {
         "events": 59,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1081,8 +1205,20 @@
       "channels": {
         "events": 36,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 5,
+            "expected": "                   ",
+            "actual": "                   ? OK, entering \\scrollmode..."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": { "line": 6, "expected": "                   ", "actual": "                   ? s" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1102,8 +1238,24 @@
       "channels": {
         "events": 5,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)",
+            "actual": "(\\dump is performed only by INITEX)"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>",
+            "actual": "(\\dump is performed only by INITEX)"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1136,8 +1288,8 @@
       "channels": {
         "events": 37,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1168,8 +1320,8 @@
       "channels": {
         "events": 134,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

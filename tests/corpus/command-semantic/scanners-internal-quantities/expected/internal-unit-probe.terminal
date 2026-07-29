@@ -1,17 +1,28 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./internal-unit-probe.tex
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
+<inserted text> 
+                $
+...
+l.1 $$\mkern
+            2\count0$$\end
 ! Incompatible glue units.
-
+<to be read again> 
+                   $
+l.1 $$\mkern2\count0$
+                     $\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
+<inserted text> 
+                $
+...
+l.1 $$\mkern2\count0$$\end
+                          
+! Math formula deleted: Insufficient symbol fonts.
+<inserted text> $
+                 
+...
+l.1 $$\mkern2\count0$$\end
+                          
 [0] )
 (see the transcript file for additional information)
 Output written on internal-unit-probe.dvi (1 page, 128 bytes).

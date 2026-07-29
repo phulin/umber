@@ -57,8 +57,8 @@
       "channels": {
         "events": 154,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -85,8 +85,24 @@
       "channels": {
         "events": 26,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -115,8 +131,24 @@
       "channels": {
         "events": 42,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -146,8 +178,24 @@
       "channels": {
         "events": 21,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -178,8 +226,8 @@
       "channels": {
         "events": 27,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -207,8 +255,8 @@
       "channels": {
         "events": 61,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -249,8 +297,8 @@
       "channels": {
         "events": 152,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -277,9 +325,17 @@
       "channels": {
         "events": 76,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": { "kind": "pass" }
@@ -306,8 +362,8 @@
       "channels": {
         "events": 187,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -338,8 +394,8 @@
       "channels": {
         "events": 90,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -386,8 +442,8 @@
       "channels": {
         "events": 95,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -417,8 +473,8 @@
       "channels": {
         "events": 130,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -447,8 +503,8 @@
       "channels": {
         "events": 46,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -479,8 +535,16 @@
       "channels": {
         "events": 45,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.17",
+          "mismatch": {
+            "line": 25,
+            "expected": "I'll pretend you didn't say \\long or \\outer or \\global or \\protected.",
+            "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -508,8 +572,8 @@
       "channels": {
         "events": 352,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -556,8 +620,16 @@
       "channels": {
         "events": 983,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "", "actual": "! Missing { inserted." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 37, "expected": "<*> etex-glue-component-enquiries.tex", "actual": "<*> " }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -588,8 +660,16 @@
       "channels": {
         "events": 2418,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 14, "expected": "", "actual": "! You can't use `\\end' in internal vertical mode." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 37, "expected": "<*> etex-expressions.tex", "actual": "<*> " }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

@@ -1,5 +1,11 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./predicate-dispatch.tex)
+(./predicate-dispatch.tex
+! Math formula deleted: Insufficient symbol fonts.
+<recently read> $
+                 
+l.7 $\ifmmode\count9=1\fi\ifinner\count10=1\fi$
+                                               
+)
 *(Please type a command or say `\end')
 *
 ! Emergency stop.

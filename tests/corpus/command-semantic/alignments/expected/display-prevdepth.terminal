@@ -1,4 +1,8 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./display-prevdepth.tex )
+(./display-prevdepth.tex
+Underfull \hbox (badness 10000) in paragraph at lines 3--4
+|
+ )
+(see the transcript file for additional information)
 No pages of output.
 Transcript written on display-prevdepth.log.

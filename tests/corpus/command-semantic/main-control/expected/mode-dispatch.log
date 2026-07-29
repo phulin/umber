@@ -1,4 +1,23 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **mode-dispatch.tex
-(./mode-dispatch.tex [1.1.1.1.1.1] )
+(./mode-dispatch.tex
+! Math formula deleted: Insufficient symbol fonts.
+<recently read> $
+                 
+l.6 $\global\count4=1$
+                      
+Sorry, but I can't typeset math unless \textfont 2
+and \scriptfont 2 and \scriptscriptfont 2 have all
+the \fontdimen values needed in math symbol fonts.
+
+! Math formula deleted: Insufficient symbol fonts.
+<recently read> $
+                 
+l.7 $$\global\count5=1$
+                       $
+Sorry, but I can't typeset math unless \textfont 2
+and \scriptfont 2 and \scriptscriptfont 2 have all
+the \fontdimen values needed in math symbol fonts.
+
+[1.1.1.1.1.1] )
 Output written on mode-dispatch.dvi (1 page, 128 bytes).

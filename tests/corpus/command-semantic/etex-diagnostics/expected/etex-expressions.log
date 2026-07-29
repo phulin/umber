@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 entering extended mode
 **etex-expressions.tex
 (./etex-expressions.tex
@@ -22,8 +22,8 @@ If you're in the wrong mode, you might be able to
 return to the right one by typing `I}' or `I$' or `I\par'.
 )
 ! Emergency stop.
-<*> 
-    
+<*> etex-expressions.tex
+                        
 *** (job aborted, no legal \end found)
 
 No pages of output.

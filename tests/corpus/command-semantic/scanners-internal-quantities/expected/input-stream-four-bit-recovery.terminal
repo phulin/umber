@@ -1,18 +1,15 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-
-! Bad number (-1).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
 (./input-stream-four-bit-recovery.tex
+! Bad number (-1).
+<to be read again> 
+                   =
+l.1 \openin-1=
+              missing
 ! Bad number (16).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
+l.2 \closein16
+              
 
-\ordinary=
-! Bad number (1000000).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
-! Undefined control sequence.
+\ordinary=! Undefined control sequence.
 l.4 \readline
              15 to \verbatim
 ! Undefined control sequence.

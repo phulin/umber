@@ -1,11 +1,20 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./hyphenation-errors.tex
 ! Improper \hyphenation will be flushed.
+l.4 \hyphenation{ab\relax
+                          cd ab!c-d}
 ! Not a letter.
+l.4 \hyphenation{ab\relax cd ab!
+                                c-d}
 ! Bad \patterns.
+l.5 \patterns{a\relax
+                      b a!b a1b a2b}
 ! Nonletter.
+l.5 \patterns{a\relax b a!
+                          b a1b a2b}
 ! Duplicate pattern.
-! Duplicate pattern.
+l.5 \patterns{a\relax b a!b a1b a2b}
+                                    
  )
 (see the transcript file for additional information)
 No pages of output.

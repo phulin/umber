@@ -1,20 +1,34 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./script-attachment.tex
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.1 \shipout\hbox{
+                  ${}^{\mkern1mu}^{\mkern2mu}_{\mkern3mu}_{\mkern4mu}$}\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
-
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{${}^{\mkern
+                             1mu}^{\mkern2mu}_{\mkern3mu}_{\mkern4mu}$}\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
-
+<inserted text> 
+                $
+...
+l.1 ...}^{\mkern2mu}_{\mkern3mu}_{\mkern4mu}$}\end
+                                                  
+! Math formula deleted: Insufficient symbol fonts.
+<inserted text> $
+                 
+...
+l.1 ...}^{\mkern2mu}_{\mkern3mu}_{\mkern4mu}$}\end
+                                                  
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.1 ...}^{\mkern2mu}_{\mkern3mu}_{\mkern4mu}$}\end
+                                                  
 [0] )
 (see the transcript file for additional information)
 Output written on script-attachment.dvi (1 page, 128 bytes).

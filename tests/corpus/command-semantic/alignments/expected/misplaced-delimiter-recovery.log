@@ -1,4 +1,15 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **misplaced-delimiter-recovery.tex
-(./misplaced-delimiter-recovery.tex )
+(./misplaced-delimiter-recovery.tex
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.3   {\relax&
+              \relax\cr}}\end
+I've put in what seems to be necessary to fix
+the current column of the current alignment.
+Try to go on, since this might almost work.
+
+ )
 No pages of output.

@@ -1,4 +1,16 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./mode-dispatch.tex [1.1.1.1.1.1] )
+(./mode-dispatch.tex
+! Math formula deleted: Insufficient symbol fonts.
+<recently read> $
+                 
+l.6 $\global\count4=1$
+                      
+! Math formula deleted: Insufficient symbol fonts.
+<recently read> $
+                 
+l.7 $$\global\count5=1$
+                       $
+[1.1.1.1.1.1] )
+(see the transcript file for additional information)
 Output written on mode-dispatch.dvi (1 page, 128 bytes).
 Transcript written on mode-dispatch.log.

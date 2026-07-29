@@ -1,20 +1,37 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./noad-construction.tex
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.1 \shipout\hbox{
+                  $\mathop{}\nolimits$}\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
-
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{$\mathop
+                          {}\nolimits$}\end
+! Limit controls must follow a math operator.
+l.1 \shipout\hbox{$\mathop{}\nolimits
+                                     $}\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
-
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{$\mathop{}\nolimits$}\end
+                                           
+! Math formula deleted: Insufficient symbol fonts.
+<inserted text> $
+                 
+...
+l.1 \shipout\hbox{$\mathop{}\nolimits$}\end
+                                           
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.1 \shipout\hbox{$\mathop{}\nolimits$}\end
+                                           
 [0] )
 (see the transcript file for additional information)
 Output written on noad-construction.dvi (1 page, 128 bytes).

@@ -34,8 +34,8 @@
       "channels": {
         "events": 81,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -72,9 +72,25 @@
       "channels": {
         "events": 146,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.21",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./open-close-effect-observation.tex [0",
+            "actual": "(./open-close-effect-observation.tex [0] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": {
@@ -111,8 +127,8 @@
       "channels": {
         "events": 90,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -147,9 +163,17 @@
       "channels": {
         "events": 107,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0005\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0005\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": {
@@ -184,9 +208,17 @@
       "channels": {
         "events": 141,
         "status": "clean",
-        "terminal": { "kind": "file", "authority": "umber-baseline" },
-        "log": { "kind": "file", "authority": "umber-baseline" },
-        "dvi": { "kind": "file", "authority": "umber-baseline" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0003��\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0003��\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
         "effects": { "kind": "empty" }
       },
       "expectation": {

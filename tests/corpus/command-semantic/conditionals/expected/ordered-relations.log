@@ -1,6 +1,14 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **ordered-relations.tex
-(./ordered-relations.tex)
+(./ordered-relations.tex
+! Missing = inserted for \ifnum.
+<to be read again> 
+                   1
+l.7 \ifnum1 1
+             \count6=1\fi
+I was expecting to see `<', `=', or `>'. Didn't.
+
+)
 *
 (Please type a command or say `\end')
 *

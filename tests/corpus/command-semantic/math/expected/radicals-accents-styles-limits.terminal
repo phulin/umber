@@ -1,20 +1,39 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./radicals-accents-styles-limits.tex
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \shipout\hbox{
+                  $\radical"0{}\mathaccent"0{}\scriptstyle\mathop{}\limits$}...
 
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{$\radical
+                           "0{}\mathaccent"0{}\scriptstyle\mathop{}\limits$}...
 
+! Limit controls must follow a math operator.
+l.1 ...\mathaccent"0{}\scriptstyle\mathop{}\limits
+                                                  $}\end
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
-I've inserted a begin-math/end-math symbol since I think
-you left one out. Proceed, with fingers crossed.
-
+<inserted text> 
+                $
+...
+l.1 ...ccent"0{}\scriptstyle\mathop{}\limits$}\end
+                                                  
+! Math formula deleted: Insufficient symbol fonts.
+<inserted text> $
+                 
+...
+l.1 ...ccent"0{}\scriptstyle\mathop{}\limits$}\end
+                                                  
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.1 ...ccent"0{}\scriptstyle\mathop{}\limits$}\end
+                                                  
 [0] )
 (see the transcript file for additional information)
 Output written on radicals-accents-styles-limits.dvi (1 page, 128 bytes).

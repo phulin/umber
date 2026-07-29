@@ -1,9 +1,8 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **input-tokenization-lifecycle.tex
 (./input-tokenization-lifecycle.tex
-A=>)
-*
-(Please type a command or say `\end')
+A=>B
+)
 *
 ! Emergency stop.
 <*> 

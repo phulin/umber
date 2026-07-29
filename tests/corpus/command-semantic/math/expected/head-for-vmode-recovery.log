@@ -1,55 +1,158 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **head-for-vmode-recovery.tex
 (./head-for-vmode-recovery.tex
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \setbox12=\vbox{
+                    \kern1pt}
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
 
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.2 \setbox0=\hbox{
+                   \unvbox12
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
-
 
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.2 \setbox0=\hbox{\unvbox
+                          12
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+
+Overfull \hbox (1.0pt too wide) in paragraph at lines 1--2
+[]
+
+\hbox(0.0+0.0)x0.0 []
+
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.4 \setbox13=\vbox{
+                    \kern1pt}
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
 
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.5 \setbox1=\hbox{
+                   \unvcopy13
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
-
 
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.5 \setbox1=\hbox{\unvcopy
+                           13
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+
+Overfull \hbox (1.0pt too wide) in paragraph at lines 4--5
+[]
+
+\hbox(0.0+0.0)x0.0 []
+
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.7 \setbox2=\hbox{
+                   \halign{#\cr\cr}
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
-
 
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.7 \setbox2=\hbox{\halign
+                          {#\cr\cr}
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.7 \setbox2=\hbox{\halign{
+                           #\cr\cr}
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
 
+! Missing # inserted in alignment preamble.
+<to be read again> 
+                   \cr 
+l.7 \setbox2=\hbox{\halign{#\cr
+                               \cr}
+There should be exactly one # between &'s, when an
+\halign or \valign is being set up. In this case you had
+none, so I've put one in; maybe that will work.
+
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.9 \end
+        
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+! Missing \cr inserted.
+<inserted text> 
+                \cr 
+...
+l.9 \end
+        
+I'm guessing that you meant to end an alignment here.
 
 ! You can't use `\end' in internal vertical mode.
+<recently read> \end 
+                     
+l.9 \end
+        
 Sorry, but I'm not programmed to handle this case;
 I'll just pretend that you didn't ask for it.
 If you're in the wrong mode, you might be able to
 return to the right one by typing `I}' or `I$' or `I\par'.
+
 )
+*
+(Please type a command or say `\end')
+*
+(Please type a command or say `\end')
 *
 (Please type a command or say `\end')
 *

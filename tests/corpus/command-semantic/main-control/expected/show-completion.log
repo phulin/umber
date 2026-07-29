@@ -1,7 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **show-completion.tex
 (./show-completion.tex
-> 0.? s
+> 0.
+l.1 \showthe\count0
+                   
+? s
 OK, entering \scrollmode...
  )
 No pages of output.

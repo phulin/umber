@@ -1,11 +1,5 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./input-read-toks.tex
-\readvalue=
-! Bad number (-1).
-Since I expected to read a number between 0 and 15,
-I changed this one to zero.
-)
-*(Please type a command or say `\end')
+(./input-read-toks.tex)
 *
 ! Emergency stop.
 <*> 

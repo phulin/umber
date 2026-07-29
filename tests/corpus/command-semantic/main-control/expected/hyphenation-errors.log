@@ -1,24 +1,31 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **hyphenation-errors.tex
 (./hyphenation-errors.tex
 ! Improper \hyphenation will be flushed.
+l.4 \hyphenation{ab\relax
+                          cd ab!c-d}
 Hyphenation exceptions must contain only letters
 and hyphens. But continue; I'll forgive and forget.
 
 ! Not a letter.
+l.4 \hyphenation{ab\relax cd ab!
+                                c-d}
 Letters in \hyphenation words must have \lccode>0.
 Proceed; I'll ignore the character I just read.
 
 ! Bad \patterns.
+l.5 \patterns{a\relax
+                      b a!b a1b a2b}
 (See Appendix H.)
 
 ! Nonletter.
+l.5 \patterns{a\relax b a!
+                          b a1b a2b}
 (See Appendix H.)
 
 ! Duplicate pattern.
-(See Appendix H.)
-
-! Duplicate pattern.
+l.5 \patterns{a\relax b a!b a1b a2b}
+                                    
 (See Appendix H.)
 
  )

@@ -1,4 +1,12 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./misplaced-delimiter-recovery.tex )
+(./misplaced-delimiter-recovery.tex
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.3   {\relax&
+              \relax\cr}}\end
+ )
+(see the transcript file for additional information)
 No pages of output.
 Transcript written on misplaced-delimiter-recovery.log.

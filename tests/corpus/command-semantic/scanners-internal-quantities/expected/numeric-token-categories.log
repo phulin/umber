@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **numeric-token-categories.tex
 (./numeric-token-categories.tex
 ! Undefined control sequence.
@@ -8,5 +8,15 @@ misspelled it (e.g., `\hobx'), type `I' and the correct
 spelling (e.g., `I\hbox'). Otherwise just continue,
 and I'll forget about whatever was undefined.
 
+! Missing number, treated as zero.
+<to be read again> 
+                   a
+l.6 \count3="a
+              
+A number should have been here; I inserted `0'.
+(If you can't figure out why I needed to see a number,
+look up `weird error' in the index to The TeXbook.)
+
 [1.10] )
+(\end occurred inside a group at level 1)
 Output written on numeric-token-categories.dvi (1 page, 128 bytes).

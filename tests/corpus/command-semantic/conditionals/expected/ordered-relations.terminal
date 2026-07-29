@@ -1,5 +1,11 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
-(./ordered-relations.tex)
+(./ordered-relations.tex
+! Missing = inserted for \ifnum.
+<to be read again> 
+                   1
+l.7 \ifnum1 1
+             \count6=1\fi
+)
 *(Please type a command or say `\end')
 *
 ! Emergency stop.
