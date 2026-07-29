@@ -103,6 +103,27 @@ current exhaustive signature was 23 divergences in 9 root sites with
 `DIVERGED` exit 1; this supersedes older event totals only for comparisons
 based on that commit.
 
+Issue `umber2-johp.308` profiled the bounded five-entry command-stream report
+after source-descriptor retention, shared-DVI rollback, and the promoted mode
+inverse journal. The repeated workload replayed the two committed
+microfixtures while leaving the ungenerated Plain, Story, and Gentle document
+entries explicitly unconfigured; it did not trace a full document. A matched
+100-run `perf -F 499 --call-graph fp` capture attributed 44.47% self samples to
+`memcmp` and another 19.69% to
+`CommittedFixture::audit_matrices`. The audit was scanning every serialized
+event with a naive byte window for each required semantic fragment.
+
+Each requirement now constructs one `memchr::memmem::Finder` and reuses it
+across the event stream. The event boundary remains exact: a match must still
+occur wholly inside one canonical event. Twelve order-balanced timing pairs
+reduced mean latency from 663.264 ms to 289.168 ms and median latency from
+703.325 ms to 305.700 ms; all twelve pairs favored the candidate. The matched
+candidate capture reduced the complete substring search to 9.31% self samples
+(`searcher_kind_two_way_with_prefilter` plus its AVX2 prefilter), with SHA-256
+now the largest self-time owner at 18.32%. Both captures reported zero lost
+samples. The five-entry report and committed-microfixture semantic identity
+were unchanged.
+
 Use the persistent in-process Gentle runner when investigating whole-engine
 hotspots:
 

@@ -1257,6 +1257,7 @@ dependencies = [
 name = "tex-oracle"
 version = "0.1.0"
 dependencies = [
+ "memchr",
  "serde",
  "serde_json",
  "sha2",

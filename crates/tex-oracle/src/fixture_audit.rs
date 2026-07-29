@@ -52,10 +52,9 @@ impl CommittedFixture {
                     requirement.family, requirement.boundary
                 ));
             }
-            if !event_bytes
-                .iter()
-                .any(|event| contains_bytes(event, requirement.pattern.as_bytes()))
-            {
+            let pattern = requirement.pattern.as_bytes();
+            let finder = memchr::memmem::Finder::new(pattern);
+            if !event_bytes.iter().any(|event| finder.find(event).is_some()) {
                 return invalid(format!(
                     "committed event stream is missing {}/{}",
                     requirement.family, requirement.boundary
@@ -198,13 +197,6 @@ fn parse_rows<'a, T>(
         return invalid(format!("{kind} matrix contains no requirements"));
     }
     Ok(rows)
-}
-
-fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
 }
 
 fn invalid<T>(message: impl Into<String>) -> Result<T, FixtureError> {
