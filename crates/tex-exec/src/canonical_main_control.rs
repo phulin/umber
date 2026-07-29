@@ -4229,15 +4229,15 @@ fn scan_alignment_peek(
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
     let (command, pending_expanded_delivery) = processor
-        .next_alignment_peek_token()
+        .next_alignment_lookahead()
         .map_err(command_error)?
         .ok_or(ExecError::MissingToken {
             context: "alignment lookahead",
         })?;
     match command.meaning() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
-            if pending_expanded_delivery && !processor.profile().capabilities().supports_etex() {
-                processor.commit_alignment_peek_delivery(&command);
+            if pending_expanded_delivery {
+                processor.commit_alignment_lookahead_delivery(&command);
             }
             processor
                 .scan_alignment_noalign_opening()
@@ -4246,7 +4246,7 @@ fn scan_alignment_peek(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
             if pending_expanded_delivery {
-                processor.commit_alignment_peek_delivery(&command);
+                processor.commit_alignment_lookahead_delivery(&command);
             }
             Ok(ScannedStep::AlignPeekRestart { alignment })
         }
@@ -4255,13 +4255,13 @@ fn scan_alignment_peek(
             ..
         } => {
             if pending_expanded_delivery {
-                processor.commit_alignment_peek_delivery(&command);
+                processor.commit_alignment_lookahead_delivery(&command);
             }
             Ok(ScannedStep::AlignmentFinish { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
             if pending_expanded_delivery {
-                processor.commit_alignment_peek_delivery(&command);
+                processor.commit_alignment_lookahead_delivery(&command);
             }
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,

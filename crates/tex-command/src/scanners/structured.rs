@@ -2761,35 +2761,32 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Performs TeX82 `fin_col`'s next-entry lookahead. Spaces are delivered
-    /// normally; the first non-space token is restored before the selected
-    /// u-template is installed.
+    /// Performs TeX82 §791 `fin_col`'s next-entry lookahead. TeX82 uses
+    /// `get_x_token`; e-TeX 2.6 change section [37.791] and pdfTeX use
+    /// `get_x_or_protected`. The profile-aware fetch and pending observation
+    /// ownership are shared with §785's post-row `align_peek`.
     pub fn scan_alignment_next_cell_opening(
         &mut self,
     ) -> Result<AlignmentCellOpening, CommandError> {
         self.command
             .prepare_alignment_cell_lookahead()
             .map_err(|_| CommandError::input_invariant())?;
-        loop {
-            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            if matches!(
-                command.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }
-            ) {
-                continue;
-            }
+        let (command, pending_expanded_delivery) = self
+            .next_alignment_lookahead()?
+            .ok_or(CommandError::input_invariant())?;
+        {
             if matches!(
                 command.meaning(),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)
             ) {
+                if pending_expanded_delivery {
+                    self.commit_alignment_lookahead_delivery(&command);
+                }
                 return Ok(AlignmentCellOpening::Omit);
             }
             self.back_input(command)?;
-            return Ok(AlignmentCellOpening::Template);
         }
+        Ok(AlignmentCellOpening::Template)
     }
 
     /// Consumes the compulsory opener following `align_peek`'s `\\noalign`.

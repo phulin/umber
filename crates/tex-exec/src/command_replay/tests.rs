@@ -2759,6 +2759,248 @@ fn pdftex_macro_noalign_matches_direct_opening_group_order() {
     assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14027, true);
 }
 
+/// e-TeX 2.6 change sections [37.785] and [37.791] replace TeX82's
+/// `get_x_token` lookahead with `get_x_or_protected`. The latter returns a
+/// terminal unexpandable command directly from `get_token`: both the skipped
+/// blank and the alignment-closing brace are therefore raw-only deliveries.
+#[test]
+fn etex_alignment_closing_lookahead_is_raw_only() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(&mut control, br"\def\s{ }\halign{#\cr\cr\s}\end");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let finish = observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(record) if record.transition == "finish"
+            )
+        })
+        .expect("alignment finishes");
+    let lookahead_boundaries: Vec<_> = observations.0[..finish]
+        .iter()
+        .rev()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(delivery)
+                if matches!(
+                    delivery.spelling,
+                    ObservedToken::Character {
+                        catcode: Catcode::Space | Catcode::EndGroup,
+                        ..
+                    }
+                ) =>
+            {
+                Some(delivery.boundary)
+            }
+            _ => None,
+        })
+        .take(2)
+        .collect();
+    assert_eq!(
+        lookahead_boundaries,
+        [CommandDeliveryBoundary::Raw, CommandDeliveryBoundary::Raw],
+        "e-TeX alignment lookahead must stop at get_token's raw boundary"
+    );
+}
+
+fn alignment_command_boundaries(
+    profile: CommandProfile,
+    source: &[u8],
+    name: &str,
+) -> Vec<CommandDeliveryBoundary> {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(profile);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(delivery)
+                if matches!(
+                    &delivery.spelling,
+                    ObservedToken::ControlSequence(spelling) if spelling == name
+                ) =>
+            {
+                Some(delivery.boundary)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn alignment_character_boundaries(
+    profile: CommandProfile,
+    source: &[u8],
+    character: char,
+) -> Vec<CommandDeliveryBoundary> {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(profile);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(delivery)
+                if matches!(
+                    delivery.spelling,
+                    ObservedToken::Character {
+                        character: delivered,
+                        ..
+                    } if delivered == character
+                ) =>
+            {
+                Some(delivery.boundary)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// e-TeX [37.791] and its pdfTeX counterpart preserve a protected macro at
+/// both ordinary `&` and `\span` `fin_col` lookahead. The raw command is
+/// backed up and normally replayed above the selected u-template.
+#[test]
+fn etex_derived_fin_col_preserves_protected_macro_for_normal_replay() {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+        for source in [
+            &br"\protected\def\p{z}\halign{#&#\cr a&\p\cr}\end"[..],
+            &br"\protected\def\p{z}\halign{#&#\cr a\span\p\cr}\end"[..],
+        ] {
+            assert_eq!(
+                alignment_command_boundaries(profile, source, "p"),
+                [
+                    CommandDeliveryBoundary::Raw,
+                    CommandDeliveryBoundary::Raw,
+                    CommandDeliveryBoundary::Raw,
+                ],
+                "{profile:?} must define, preserve, and replay the protected fin_col lookahead"
+            );
+        }
+    }
+}
+
+/// e-TeX [37.785] and pdfTeX preserve the same protected-macro boundary in
+/// post-row `align_peek`, before the ordinary first-cell replay.
+#[test]
+fn etex_derived_align_peek_preserves_protected_macro_for_normal_replay() {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+        assert_eq!(
+            alignment_command_boundaries(
+                profile,
+                br"\protected\def\p{z}\halign{#\cr a\cr\p\cr}\end",
+                "p",
+            ),
+            [
+                CommandDeliveryBoundary::Raw,
+                CommandDeliveryBoundary::Raw,
+                CommandDeliveryBoundary::Raw,
+            ],
+            "{profile:?} must define, preserve, and replay the protected align_peek lookahead"
+        );
+    }
+}
+
+/// TeX82 keeps its original `get_x_token` semantics at both alignment sites:
+/// an ordinary macro is expanded by the lookahead and is never backed up as
+/// the macro command itself.
+#[test]
+fn tex82_alignment_lookahead_expands_macros_before_replay() {
+    for source in [
+        &br"\def\p{z}\halign{#&#\cr a&\p\cr}\end"[..],
+        &br"\def\p{z}\halign{#&#\cr a\span\p\cr}\end"[..],
+        &br"\def\p{z}\halign{#\cr a\cr\p\cr}\end"[..],
+    ] {
+        assert_eq!(
+            alignment_command_boundaries(CommandProfile::TEX82, source, "p"),
+            [CommandDeliveryBoundary::Raw, CommandDeliveryBoundary::Raw,],
+            "TeX82 must retain get_x_token expansion at align_peek and fin_col"
+        );
+    }
+}
+
+/// The terminal spacer and nonspace commands from e-TeX's
+/// `get_x_or_protected` are raw-only at both [37.785] and [37.791]. TeX82's
+/// original helper retains its expanded-delivery observations.
+#[test]
+fn alignment_lookahead_terminal_characters_are_profile_selected() {
+    for source in [
+        &br"\def\s{ }\halign{#&#\cr a&\s b\cr}\end"[..],
+        &br"\def\s{ }\halign{#\cr a\cr\s b\cr}\end"[..],
+    ] {
+        for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+            assert!(
+                alignment_character_boundaries(profile, source, ' ')
+                    .iter()
+                    .all(|boundary| *boundary == CommandDeliveryBoundary::Raw),
+                "{profile:?} must keep skipped terminal spacers raw-only"
+            );
+            let nonspace = alignment_character_boundaries(profile, source, 'b');
+            assert_eq!(
+                &nonspace[..2],
+                [CommandDeliveryBoundary::Raw, CommandDeliveryBoundary::Raw,],
+                "{profile:?} must back up the raw terminal command before normal replay"
+            );
+        }
+        assert!(
+            alignment_character_boundaries(CommandProfile::TEX82, source, ' ')
+                .contains(&CommandDeliveryBoundary::Expanded),
+            "TeX82 must retain expanded delivery for a skipped spacer"
+        );
+        assert_eq!(
+            &alignment_character_boundaries(CommandProfile::TEX82, source, 'b')[..2],
+            [
+                CommandDeliveryBoundary::Raw,
+                CommandDeliveryBoundary::Expanded,
+            ],
+            "TeX82 must complete get_x_token before backing up the nonspace command"
+        );
+    }
+}
+
 #[test]
 fn tex82_macro_noalign_retains_expanded_delivery_before_its_opening_group() {
     let mut universe = Universe::new_with_plain_catcodes();

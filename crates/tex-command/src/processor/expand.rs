@@ -4,7 +4,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -122,6 +122,12 @@ pub(crate) enum ExpandedFetch {
     XToken,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProtectedMacroHandling {
+    Expand,
+    Preserve,
+}
+
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
@@ -146,7 +152,12 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<CurrentCommand>, CommandError> {
         self.command.transient.active_expansion_depth += 1;
         let result = loop {
-            match self.expanded_delivery(pending.take(), fetch, true)? {
+            match self.expanded_delivery(
+                pending.take(),
+                fetch,
+                true,
+                ProtectedMacroHandling::Expand,
+            )? {
                 Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => break Ok(None),
@@ -256,20 +267,37 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// TeX82 §§785/789's `align_peek` fetch, whose final command is handed
-    /// directly to `init_col`.
+    /// TeX82 §§785/791's shared alignment lookahead fetch.
     ///
-    /// `init_col` backs an ordinary command up before the expanded-delivery
-    /// boundary is committed: the command is observed as expanded only when
-    /// the backup is read again above its u-template. Spacers skipped by
-    /// §406 are complete deliveries and are committed here normally.
-    pub fn next_alignment_peek_token(
+    /// TeX82's `init_col` backs an ordinary command up before the
+    /// expanded-delivery boundary is committed: the command is observed as
+    /// expanded only when the backup is read again above its u-template.
+    /// Spacers skipped by §406 are complete deliveries and are committed here
+    /// normally.
+    ///
+    /// e-TeX 2.6 change sections [37.785] and [37.791] replace that helper
+    /// with `get_x_or_protected`. Its terminal unexpandable command comes
+    /// straight from `get_token`, so neither skipped spacers nor a consumed
+    /// `\noalign`, `\crcr`, `\omit`, or closing brace has an expanded
+    /// delivery. A protected macro is likewise terminal and is backed up as
+    /// the first command of the next cell.
+    pub fn next_alignment_lookahead(
         &mut self,
     ) -> Result<Option<(CurrentCommand, bool)>, CommandError> {
         loop {
             let expansions_before = self.command.expansion.cumulative_expansions;
             self.command.transient.active_expansion_depth += 1;
-            let result = self.expanded_delivery(None, ExpandedFetch::GetXToken, false);
+            let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
+            let result = self.expanded_delivery(
+                None,
+                ExpandedFetch::GetXToken,
+                false,
+                if etex_protected_fetch {
+                    ProtectedMacroHandling::Preserve
+                } else {
+                    ProtectedMacroHandling::Expand
+                },
+            );
             self.command.transient.active_expansion_depth -= 1;
             let Some(delivery) = result? else {
                 return Ok(None);
@@ -284,7 +312,9 @@ impl CommandProcessor<'_> {
                     ..
                 }
             ) {
-                self.observe_expanded_delivery(&command);
+                if !etex_protected_fetch {
+                    self.observe_expanded_delivery(&command);
+                }
                 continue;
             }
             // A command that §406 fetched directly has completed the ordinary
@@ -292,21 +322,19 @@ impl CommandProcessor<'_> {
             // §381's expansion loop remains pending across §789's back_input.
             let expanded_through_call =
                 self.command.expansion.cumulative_expansions != expansions_before;
-            let etex_noalign = self.command.profile().capabilities().supports_etex()
-                && matches!(
-                    command.meaning(),
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign)
-                );
-            if !expanded_through_call && !etex_noalign {
+            if !expanded_through_call && !etex_protected_fetch {
                 self.observe_expanded_delivery(&command);
             }
-            return Ok(Some((command, expanded_through_call)));
+            return Ok(Some((
+                command,
+                expanded_through_call && !etex_protected_fetch,
+            )));
         }
     }
 
-    /// Commits a final alignment-peek delivery that §785 consumes instead of
-    /// passing to §789's ordinary `back_input` branch.
-    pub fn commit_alignment_peek_delivery(&mut self, command: &CurrentCommand) {
+    /// Commits a terminal TeX82 lookahead delivery that alignment control
+    /// consumes instead of passing to an ordinary `back_input` branch.
+    pub fn commit_alignment_lookahead_delivery(&mut self, command: &CurrentCommand) {
         self.observe_expanded_delivery(command);
     }
 
@@ -358,11 +386,21 @@ impl CommandProcessor<'_> {
         if is_main_loop_character(command.meaning()) {
             return Ok(Some(CommandReplayDelivery::Command(command)));
         }
-        self.expanded_delivery(Some(command), ExpandedFetch::XToken, true)
+        self.expanded_delivery(
+            Some(command),
+            ExpandedFetch::XToken,
+            true,
+            ProtectedMacroHandling::Expand,
+        )
     }
 
     fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
-        self.expanded_delivery(None, ExpandedFetch::GetXToken, true)
+        self.expanded_delivery(
+            None,
+            ExpandedFetch::GetXToken,
+            true,
+            ProtectedMacroHandling::Expand,
+        )
     }
 
     /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
@@ -373,6 +411,7 @@ impl CommandProcessor<'_> {
         mut pending: Option<CurrentCommand>,
         fetch: ExpandedFetch,
         observe_final: bool,
+        protected_macros: ProtectedMacroHandling,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
             let command = match pending.take() {
@@ -414,7 +453,14 @@ impl CommandProcessor<'_> {
                 }
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
-            if !is_expandable_command(&command) {
+            if !is_expandable_command(&command)
+                || (protected_macros == ProtectedMacroHandling::Preserve
+                    && matches!(
+                        command.meaning(),
+                        Meaning::Macro { flags, .. }
+                            if flags.contains(MeaningFlags::PROTECTED)
+                    ))
+            {
                 if observe_final {
                     self.observe_expanded_delivery(&command);
                 }
