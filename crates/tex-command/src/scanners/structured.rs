@@ -2121,9 +2121,17 @@ impl CommandProcessor<'_> {
     fn scan_discretionary_part(&mut self) -> Result<ScannedBalancedText, CommandError> {
         let opening = self.scan_left_brace(true)?;
         let primary = opening.origin();
+        // TeX82 §1117 enters the body through `get_x_token`. Preserve its
+        // raw half before the migration collector takes ownership; seeding
+        // the collector avoids a second raw-delivery observation.
+        let first = self
+            .get_token()?
+            .ok_or(CommandError::input_invariant())?
+            .spelling();
         let scanned = self.scan_toks(ScanToksMode::GeneralAfterConsumedOpening {
             expanded: false,
             primary,
+            first,
         })?;
         Ok(ScannedBalancedText {
             tokens: scanned.replacement_text,

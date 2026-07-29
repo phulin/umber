@@ -1239,6 +1239,82 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
 }
 
 #[test]
+fn discretionary_raw_delivers_first_body_call_before_collection() {
+    // TeX82 §1117 enters each discretionary body through `get_x_token`, so
+    // the raw half of the first call precedes the migration collector's
+    // absorbing transition and is not delivered a second time.
+    let mut command = CommandState::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let call = universe.intern("body").symbol();
+    let replacement = universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    let parameters = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        call,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{\\body}{b}{c}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+
+    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_discretionary()
+        .expect("discretionary scans");
+
+    let call_deliveries = recorder
+        .0
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CommandObservation::Command(command)
+                    if command.spelling
+                        == crate::ObservedToken::ControlSequence("body".into())
+            )
+        })
+        .count();
+    assert_eq!(call_deliveries, 1, "{:?}", recorder.0);
+    assert!(matches!(
+        recorder.0.as_slice(),
+        [
+            CommandObservation::Command(opening_raw),
+            CommandObservation::Command(opening_expanded),
+            CommandObservation::Command(call_raw),
+            CommandObservation::ScannerStatus(status),
+            ..
+        ] if matches!(opening_raw.spelling, crate::ObservedToken::Character {
+                character: '{', catcode: Catcode::BeginGroup
+            })
+            && matches!(opening_expanded.spelling, crate::ObservedToken::Character {
+                character: '{', catcode: Catcode::BeginGroup
+            })
+            && call_raw.spelling == crate::ObservedToken::ControlSequence("body".into())
+            && status.from == "normal"
+            && status.to == "absorbing"
+    ));
+}
+
+#[test]
 fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

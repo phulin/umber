@@ -37,11 +37,16 @@ pub(crate) enum ScanToksMode {
     /// and must use `General`, whose absorbing transition precedes the brace.
     GeneralAfterOpening { expanded: bool, primary: OriginId },
     /// Collect general text after the caller has already consumed the
-    /// required opening brace. TeX82 §1117's `append_discretionary` performs
-    /// `scan_left_brace` before it enters the discretionary body; the
-    /// command core freezes that body for executor replay, so its collector
-    /// must begin after the already delivered brace.
-    GeneralAfterConsumedOpening { expanded: bool, primary: OriginId },
+    /// required opening brace and raw-delivered the first body token. TeX82
+    /// §1117's discretionary body begins with `get_x_token`; the command
+    /// core freezes that body for executor replay, so its collector must be
+    /// seeded with the already delivered token instead of delivering it
+    /// again after entering `absorbing`.
+    GeneralAfterConsumedOpening {
+        expanded: bool,
+        primary: OriginId,
+        first: TracedTokenWord,
+    },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
@@ -174,50 +179,69 @@ impl CommandProcessor<'_> {
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
-        let (expanded, parameter_text, macro_parameters, hash_brace, primary, malformed_parameter) =
-            match mode {
-                ScanToksMode::General { expanded } => {
-                    // TeX scans the required opening brace through the ordinary
-                    // expanded path even when the replacement text itself is
-                    // collected unexpanded.
-                    let primary = self.scan_left_brace(true)?.origin();
-                    (expanded, Vec::new(), None, None, primary, false)
+        let (
+            expanded,
+            parameter_text,
+            macro_parameters,
+            hash_brace,
+            primary,
+            malformed_parameter,
+            first,
+        ) = match mode {
+            ScanToksMode::General { expanded } => {
+                // TeX scans the required opening brace through the ordinary
+                // expanded path even when the replacement text itself is
+                // collected unexpanded.
+                let primary = self.scan_left_brace(true)?.origin();
+                (expanded, Vec::new(), None, None, primary, false, None)
+            }
+            ScanToksMode::GeneralAfterOpening { expanded, primary } => {
+                let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
+                if !is_begin_group(opening.spelling().semantic_token()) {
+                    return Err(CommandError::input_invariant());
                 }
-                ScanToksMode::GeneralAfterOpening { expanded, primary } => {
-                    let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
-                    if !is_begin_group(opening.spelling().semantic_token()) {
-                        return Err(CommandError::input_invariant());
-                    }
-                    self.observe_expanded_delivery(&opening);
-                    (expanded, Vec::new(), None, None, primary, false)
-                }
-                ScanToksMode::GeneralAfterConsumedOpening { expanded, primary } => {
-                    (expanded, Vec::new(), None, None, primary, false)
-                }
-                ScanToksMode::MacroDefinition { expanded } => {
-                    let parameters = self.scan_parameter_text()?;
-                    (
-                        expanded,
-                        parameters.tokens,
-                        Some((parameters.highest_parameter, None)),
-                        parameters.hash_brace,
-                        parameters.primary,
-                        parameters.malformed_parameter,
-                    )
-                }
-                ScanToksMode::MacroDefinitionFor { expanded, target } => {
-                    let parameters = self.scan_parameter_text()?;
-                    (
-                        expanded,
-                        parameters.tokens,
-                        Some((parameters.highest_parameter, Some(target))),
-                        parameters.hash_brace,
-                        parameters.primary,
-                        parameters.malformed_parameter,
-                    )
-                }
-            };
-        let replacement = self.collect_replacement(expanded, macro_parameters)?;
+                self.observe_expanded_delivery(&opening);
+                (expanded, Vec::new(), None, None, primary, false, None)
+            }
+            ScanToksMode::GeneralAfterConsumedOpening {
+                expanded,
+                primary,
+                first,
+            } => (
+                expanded,
+                Vec::new(),
+                None,
+                None,
+                primary,
+                false,
+                Some(first),
+            ),
+            ScanToksMode::MacroDefinition { expanded } => {
+                let parameters = self.scan_parameter_text()?;
+                (
+                    expanded,
+                    parameters.tokens,
+                    Some((parameters.highest_parameter, None)),
+                    parameters.hash_brace,
+                    parameters.primary,
+                    parameters.malformed_parameter,
+                    None,
+                )
+            }
+            ScanToksMode::MacroDefinitionFor { expanded, target } => {
+                let parameters = self.scan_parameter_text()?;
+                (
+                    expanded,
+                    parameters.tokens,
+                    Some((parameters.highest_parameter, Some(target))),
+                    parameters.hash_brace,
+                    parameters.primary,
+                    parameters.malformed_parameter,
+                    None,
+                )
+            }
+        };
+        let replacement = self.collect_replacement(expanded, macro_parameters, first)?;
         let mut replacement = replacement;
         // TeX's `#{` parameter-text special case treats that left brace as a
         // delimiter and appends the same saved brace after the replacement
@@ -381,61 +405,72 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
         macro_parameters: Option<(u8, Option<Symbol>)>,
+        first: Option<TracedTokenWord>,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
         let mut pending_parameter = None;
         let collector_status = self.command.scanner.status().clone();
+        let mut first = first;
         loop {
-            let command = if expanded {
-                self.get_next()?
+            let mut delivered = None;
+            let spelling = if let Some(first) = first.take() {
+                debug_assert!(!expanded);
+                first
             } else {
-                self.get_token()?
-            }
-            .ok_or(CommandError::input_invariant())?;
-            if expanded && is_expandable_command(&command) {
-                if matches!(
-                    command.meaning(),
-                    Meaning::ExpandablePrimitive(ExpandablePrimitive::The)
-                ) && self.append_direct_the_toks(&mut output)?
-                {
-                    continue;
-                }
-                if matches!(
-                    command.meaning(),
-                    Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
-                ) {
-                    self.append_unexpanded(&mut output)?;
-                    continue;
-                }
-                if matches!(command.meaning(), Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
-                {
-                    // Protected macros are terminal tokens in an e-TeX
-                    // expanded token-list scan.
+                let command = if expanded {
+                    self.get_next()?
                 } else {
-                    // TeX82 §394 returns from a failed macro call after
-                    // either an ordinary non-`\long` `\par` or §23's
-                    // outer-validity recovery. Both return to §380's
-                    // get_x_token loop; this inlined expanded collector is
-                    // that loop's owner while scan_toks is active.
-                    match self.expand(command) {
-                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
-                        Err(CommandError::OuterInMacroArgument) => {
-                            self.restore_collector_status_after_outer_abort(&collector_status);
-                            continue;
+                    self.get_token()?
+                }
+                .ok_or(CommandError::input_invariant())?;
+                if expanded && is_expandable_command(&command) {
+                    if matches!(
+                        command.meaning(),
+                        Meaning::ExpandablePrimitive(ExpandablePrimitive::The)
+                    ) && self.append_direct_the_toks(&mut output)?
+                    {
+                        continue;
+                    }
+                    if matches!(
+                        command.meaning(),
+                        Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
+                    ) {
+                        self.append_unexpanded(&mut output)?;
+                        continue;
+                    }
+                    if matches!(command.meaning(), Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+                    {
+                        // Protected macros are terminal tokens in an e-TeX
+                        // expanded token-list scan.
+                    } else {
+                        // TeX82 §394 returns from a failed macro call after
+                        // either an ordinary non-`\long` `\par` or §23's
+                        // outer-validity recovery. Both return to §380's
+                        // get_x_token loop; this inlined expanded collector is
+                        // that loop's owner while scan_toks is active.
+                        match self.expand(command) {
+                            Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
+                            Err(CommandError::OuterInMacroArgument) => {
+                                self.restore_collector_status_after_outer_abort(&collector_status);
+                                continue;
+                            }
+                            Err(error) => return Err(error),
                         }
-                        Err(error) => return Err(error),
                     }
                 }
-            }
 
-            // The expanded collector has completed a get_x-style delivery
-            // for each retained unexpandable token. Emit that boundary before
-            // storing the spelling, while expandable commands above remain
-            // represented by their own expansion transitions.
-            if expanded {
-                self.observe_expanded_delivery(&command);
-            }
+                // The expanded collector has completed a get_x-style delivery
+                // for each retained unexpandable token. Emit that boundary before
+                // storing the spelling, while expandable commands above remain
+                // represented by their own expansion transitions.
+                if expanded {
+                    self.observe_expanded_delivery(&command);
+                }
+                let spelling = command.spelling();
+                delivered = Some(command);
+                spelling
+            };
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
             // delimiter by §789's ⟨v_j⟩ template inside `get_next`, so this
@@ -445,7 +480,6 @@ impl CommandProcessor<'_> {
             // `$\displaystyle{##}$` is the common case): the still-open
             // `depth` continues over the boundary exactly as if no alignment
             // entry had ended.
-            let spelling = command.spelling();
             let token = spelling.semantic_token();
             if let Some((hash, highest_parameter, target)) = pending_parameter.take() {
                 // §479: a second parameter character stores that character
@@ -469,6 +503,7 @@ impl CommandProcessor<'_> {
                     );
                     continue;
                 }
+                let command = delivered.expect("parameter text is never pre-delivered");
                 self.back_error(command, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)?;
                 self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },
@@ -696,7 +731,7 @@ impl CommandProcessor<'_> {
         // after that brace is copied raw. This distinction is what makes
         // `\unexpanded\expandafter{...}` legal.
         let _ = self.scan_left_brace(true)?;
-        let raw = self.collect_replacement(false, None)?;
+        let raw = self.collect_replacement(false, None, None)?;
         let observed = raw
             .iter()
             .copied()
