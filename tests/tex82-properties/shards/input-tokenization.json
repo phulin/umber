@@ -895,21 +895,7 @@
       "stimulus": [
         "Existing tokenizer tests cover physical M/N/S and superscript behavior; Phase 2 units `stored_get_next_substitutes_parameters_and_resolves_meanings`, `force_eof_and_refill_retire_only_at_line_boundary`, `pausing_replaces_the_firmed_line_before_tokenization`, and `no_new_control_sequence_guard_covers_source_and_csname_paths`, plus minifixture `input-tokenization-lifecycle.tex`, cover the remaining claims."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/input/tokenizer/tests.rs",
-          "test": "pausing_replaces_the_firmed_line_before_tokenization"
-        },
-        {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "input-tokenization-lifecycle strict xfail",
-            "linked to umber2-johp.243",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "Physical M/N/S emission and exact ranges match canonical input; stored tokens bypass tokenization, substitute output parameters, resolve current meanings, and update alignment state; refill, pausing, force_eof, and guarded lookup occur at their exact boundaries."
       ],
@@ -923,7 +909,7 @@
         "Ignored, invalid, comment, invalid superscript, inactive endlinechar, force_eof, and forbidden new-control-sequence cases each consume or retire exactly the canonical input and cannot loop unchanged."
       ],
       "semantic_owner": "tex-command::input",
-      "test_level": "planned-rust-unit+strict-semantic-xfail",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/input/lines/tests.rs",
@@ -972,10 +958,14 @@
         {
           "path": "crates/tex-command/src/processor/next.rs",
           "test": "get_token_enters_a_new_multiletter_name_a_later_raw_scan_then_finds"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.243"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.expansion.delivery-and-primitives",
@@ -1224,21 +1214,7 @@
       "stimulus": [
         "Phase 2 unit `read_toks_collects_balanced_multiline_input_and_appends_one_eof_line` plus minifixture `input-read-toks.tex` cover closed, just-open, normal, balanced, and unbalanced streams."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "read_toks_collects_balanced_multiline_input_and_appends_one_eof_line"
-        },
-        {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "input-read-toks strict xfail",
-            "linked to umber2-johp.253",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
-        }
-      ],
+      "planned_coverage": null,
       "expected_observations": [
         "The list begins with end-match, balance controls continuation, and scanner/alignment state is restored."
       ],
@@ -1252,10 +1228,27 @@
         "EOF contributes one final empty line; EOF with unmatched left braces reports and restores balance once; a right brace below the disabled alignment baseline consumes the rest of that line before returning."
       ],
       "semantic_owner": "tex-command::scan-toks",
-      "test_level": "planned-rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.253"
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
+          "test": "read_toks_collects_balanced_multiline_input_and_appends_one_eof_line"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
+          "test": "read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream"
+        },
+        {
+          "path": "crates/tex-command/src/scan_toks/tests.rs",
+          "test": "read_toks_disables_alignment_delimiters_and_restores_scanner_state"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.input.start-input-and-first-line",
