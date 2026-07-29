@@ -13,6 +13,7 @@ use crate::input::{
 };
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
+    TransientReplayReason,
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{
@@ -881,6 +882,39 @@ impl CommandState {
             level.cursor.pending_acquired_line = true;
         }
         Ok(identity)
+    }
+
+    /// Opens e-TeX 2.6 etex.ch §53a's generated `\scantokens` pseudo-file.
+    pub(crate) fn open_scantokens(
+        &mut self,
+        registration: SourceRegistration,
+        every_eof: TracedTokenList,
+    ) -> Result<InputLevelId, SourceRegistrationError> {
+        // etex.ch §24.362 inserts \everyeof after natural pseudo-file EOF and
+        // calls pseudo_close only after that list retires. Installing this
+        // closing level below the source gives the stack exactly that order.
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: every_eof.token_list(),
+                origins: every_eof.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::CloseScantokens,
+            ReplayTrace::Transient(TransientReplayReason::Scantokens),
+        );
+        let source = self.register_source(registration)?;
+        let registered = self
+            .input
+            .registered_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .cloned()
+            .expect("a source registered above is present");
+        Ok(self.push_source_level(
+            registered,
+            SourceNameClass::File,
+            crate::input::SourceRetirement::Pop,
+        ))
     }
 
     fn push_source_level(

@@ -169,6 +169,85 @@ fn etex_unexpanded_returns_each_balanced_token_without_expanding_it() {
     assert!(fuel.burned() <= 32);
 }
 
+#[test]
+fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
+    // e-TeX 2.6 etex.ch §53a: pseudo_start applies token_show, splits at the
+    // live \newlinechar, and reads the result under the live catcode table.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(IntParam::NEWLINE_CHAR, i32::from(b'|'));
+    universe.set_catcode('a', Catcode::Other);
+    let every_eof = universe.intern_token_list(&[Token::Char {
+        ch: 'E',
+        cat: Catcode::Letter,
+    }]);
+    universe.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, every_eof);
+    let scantokens =
+        install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(scantokens)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Char {
+                ch: '|',
+                cat: Catcode::Other,
+            }),
+            traced(Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuel::new(64).expect("finite test fuel");
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(&mut fuel);
+    let mut output = Vec::new();
+    while let Some(delivery) = processor.get_x_token().expect("scantokens expands") {
+        output.push(delivery.spelling().semantic_token());
+    }
+    assert_eq!(
+        output.first(),
+        Some(&Token::Char {
+            ch: 'a',
+            cat: Catcode::Other,
+        })
+    );
+    assert!(output.iter().any(|token| {
+        matches!(
+            token,
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter
+            }
+        )
+    }));
+    assert_eq!(
+        output.last(),
+        Some(&Token::Char {
+            ch: 'E',
+            cat: Catcode::Letter,
+        }),
+        "\\everyeof must replay after the pseudo-file's final line"
+    );
+    assert!(fuel.burned() <= 64);
+}
+
 fn rendered(processor: &mut CommandProcessor<'_>) -> String {
     let mut text = String::new();
     while let Some(command) = processor.get_x_token().expect("conversion expands") {

@@ -18,7 +18,10 @@ use crate::input::{
 use crate::macro_call::MacroArguments;
 use crate::processor::status::ScannerStatus;
 use crate::profile::CommandProfile;
-use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
+use crate::{
+    CommandError, CommandReplayDelivery, CurrentCommand, RegisteredSourceKind, SourceNameClass,
+    SourceRegistration,
+};
 
 use super::CommandProcessor;
 
@@ -467,6 +470,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 self.expand_unexpanded()
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
+                self.expand_scantokens()
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
                 self.expand_fontname(command)
             }
@@ -515,6 +521,46 @@ impl CommandProcessor<'_> {
             }
             _ => Err(CommandError::input_invariant()),
         }
+    }
+
+    /// e-TeX 2.6 etex.ch §53a `pseudo_start`.
+    fn expand_scantokens(&mut self) -> Result<(), CommandError> {
+        let scanned =
+            self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: false })?;
+        let mut text =
+            token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        let newline = self.state.int_param(IntParam::NEWLINE_CHAR);
+        if let Some(newline) = char::from_u32(u32::try_from(newline).unwrap_or(u32::MAX))
+            && newline != '\n'
+        {
+            text = text
+                .chars()
+                .map(|ch| if ch == newline { '\n' } else { ch })
+                .collect();
+        }
+        // etex.ch appends one sentinel space before splitting the string.
+        // The pseudo-input representation is line-oriented, so a final LF
+        // expresses that final record without becoming source text itself.
+        text.push('\n');
+        let every_eof = tex_state::TracedTokenList::synthetic(
+            self.state
+                .tok_param(tex_state::env::banks::TokParam::EVERY_EOF),
+        );
+        let level = self
+            .command
+            .open_scantokens(
+                SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
+                every_eof,
+            )
+            .map_err(|_| CommandError::input_invariant())?;
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Push,
+            reason: InputReason::Source,
+            source_name: Some(SourceNameClass::File),
+            level: level.0,
+            position: 0,
+        }));
+        Ok(())
     }
 
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
