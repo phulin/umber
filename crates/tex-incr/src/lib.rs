@@ -224,6 +224,16 @@ pub struct AcceptedOutput {
     pub retention: RetentionMetrics,
 }
 
+/// Accepted engine state whose fallible page suffix remains unpublished.
+///
+/// This is the consuming native-finalization handoff. The incremental session
+/// retains ordinary committed pages unchanged, but transfers the suffix
+/// beginning with the first deferred `OpenOut` as a typed prepared value.
+pub struct AcceptedUniverseFinalization {
+    pub universe: Universe,
+    pub prepared_pages: Option<tex_state::PreparedPageSuffix>,
+}
+
 /// One fully executed editor revision that has not replaced accepted session
 /// state yet.
 ///
@@ -1514,12 +1524,29 @@ impl Session {
     /// Consumes the accepted session into the reached engine state with its
     /// detached effects still uncommitted. This is the client finalization
     /// boundary for one-shot drivers.
-    pub fn into_accepted_universe(mut self) -> Result<Universe, SessionError> {
+    pub fn into_accepted_universe(mut self) -> Result<AcceptedUniverseFinalization, SessionError> {
         let substrate = self
             .substrate
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(substrate.into_detached_universe(self.effects, self.artifacts)?)
+        let mut universe = substrate.into_detached_universe(self.effects, self.artifacts)?;
+        let first_fallible_page =
+            universe
+                .world()
+                .committed_artifacts()
+                .iter()
+                .position(|artifact| {
+                    tex_out::PageArtifact::from_bytes(artifact.bytes()).is_ok_and(|page| {
+                        page.effects
+                            .iter()
+                            .any(|effect| matches!(effect, tex_out::PageEffect::OpenOut { .. }))
+                    })
+                });
+        let prepared_pages = first_fallible_page.map(|start| universe.prepare_page_suffix(start));
+        Ok(AcceptedUniverseFinalization {
+            universe,
+            prepared_pages,
+        })
     }
 
     #[must_use]

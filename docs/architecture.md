@@ -412,8 +412,12 @@ is a session-selected capability: classic/default sessions fuse it into the
 same traversal, while HTML-only sessions omit it so artifact Unicode above
 U+00FF reaches downstream positioned output. A
 localized owned payload remains permitted where DVI leader replay requires
-repetition. Artifacts, effects, and prepared plans publish only after the
-shipout transaction commits.
+repetition. Ordinary artifacts, effects, and prepared plans publish only after
+the shipout transaction commits. A retained native run gives the suffix
+beginning with a deferred `OpenOut` a typed prepared owner at the `tex-incr`
+finalization handoff. That suffix remains outside the committed artifact and
+PDF-page prefixes until the authoritative host open succeeds; a replacement
+filename is serialized and hashed before the suffix publishes.
 
 ## 7. Typesetting kernels
 

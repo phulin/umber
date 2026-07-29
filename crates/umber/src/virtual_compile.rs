@@ -985,22 +985,12 @@ impl VirtualCompileSession {
         })?;
         let dumped_format = session.accepted_dumped_format();
         let expansion_stats = session.accepted_expansion_stats();
-        let mut stores = session
+        let tex_incr::AcceptedUniverseFinalization {
+            universe: stores,
+            prepared_pages,
+        } = session
             .into_accepted_universe()
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
-        let first_fallible_page =
-            stores
-                .world()
-                .committed_artifacts()
-                .iter()
-                .position(|artifact| {
-                    tex_out::PageArtifact::from_bytes(artifact.bytes()).is_ok_and(|page| {
-                        page.effects
-                            .iter()
-                            .any(|effect| matches!(effect, tex_out::PageEffect::OpenOut { .. }))
-                    })
-                });
-        let prepared_pages = first_fallible_page.map(|start| stores.prepare_page_suffix(start));
         Ok(AcceptedFinalization {
             stores,
             prepared_pages,

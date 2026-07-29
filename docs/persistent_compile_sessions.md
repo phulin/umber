@@ -257,6 +257,12 @@ effects still uncommitted. The CLI performs selected PDF finalization, format se
 receipt construction, and driver-file collision checks against that detached
 state; only then does it retarget the retained `World` to the native output
 backend, commit effects, and atomically publish the complete driver file set.
+If a page contains a deferred `OpenOut`, `tex-incr` transfers that page and the
+following ordered page suffix in a typed prepared state. The CLI may use those
+bytes to prepare drivers, but neither their artifact identities nor their PDF
+page records are committed. TeX82 §§1373--1375 retry updates the prepared
+effect payload; authoritative effect success hashes and publishes the suffix
+before driver materialization.
 An unaccepted or pending revision cannot cross the boundary. Persistent WASM
 and watch sessions continue to use non-consuming accepted-output views.
 

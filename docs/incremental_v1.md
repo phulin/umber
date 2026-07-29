@@ -315,6 +315,16 @@ irreversible host-visible output. Instead:
   finalization operation; and
 - shell escape remains disabled in an incremental editor session.
 
+The consuming native-finalization handoff has one additional publication
+barrier for TeX82 §§1373--1375. The ordered page suffix beginning with the
+first deferred `OpenOut` is transferred as `PreparedPageSuffix`, not exposed
+through the committed artifact or PDF-page prefixes. An authoritative open
+failure retains that suffix together with the failed effect and following
+effects. Prompt retry rewrites the `PageEffect::OpenOut` target before artifact
+hashing; successful effect export then publishes the whole prepared suffix.
+Dropping the retry plan discards it, and an already-drained effect prefix is
+never replayed.
+
 Retained session effect, stream, and artifact history is owned by the session
 outside any single `Universe`'s `World` state, or shared through immutable
 references, so forking a substrate never duplicates it and discarding a
