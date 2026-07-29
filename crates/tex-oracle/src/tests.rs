@@ -432,7 +432,7 @@ fn fixture_audit_rejects_missing_behavior_and_unowned_observations() {
 }
 
 #[test]
-fn committed_fixture_rejects_event_identity_and_output_byte_drift() {
+fn committed_fixture_rejects_event_hash_identity_and_output_byte_drift() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/corpus/command/tex82/command-transitions-v1");
     let loaded = CommittedFixture::load(&source).expect("fixture");
@@ -454,7 +454,15 @@ fn committed_fixture_rejects_event_identity_and_output_byte_drift() {
         fs::copy(source.join(&artifact.path), destination).expect("copy artifact");
     }
 
-    let mut events = fs::read(temporary.join("events.jsonl")).expect("events");
+    let event_path = temporary.join("events.jsonl");
+    let mut events = fs::read(&event_path).expect("events");
+    let last = events.len() - 2;
+    events[last] ^= 1;
+    fs::write(&event_path, &events).expect("write event drift");
+    assert!(CommittedFixture::load(&temporary).is_err());
+
+    fs::copy(source.join("events.jsonl"), &event_path).expect("restore events");
+    let mut events = fs::read(&event_path).expect("events");
     let newline = events
         .iter()
         .position(|byte| *byte == b'\n')
@@ -462,7 +470,7 @@ fn committed_fixture_rejects_event_identity_and_output_byte_drift() {
     events[..newline].copy_from_slice(
         b"{\"schema\":1,\"manifest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     );
-    fs::write(temporary.join("events.jsonl"), &events).expect("write events");
+    fs::write(&event_path, &events).expect("write events");
     let mut manifest = loaded.manifest.clone();
     manifest.events.sha256 = hex_hash(&events);
     fs::write(
@@ -472,7 +480,7 @@ fn committed_fixture_rejects_event_identity_and_output_byte_drift() {
     .expect("write manifest");
     assert!(CommittedFixture::load(&temporary).is_err());
 
-    fs::copy(source.join("events.jsonl"), temporary.join("events.jsonl")).expect("restore events");
+    fs::copy(source.join("events.jsonl"), &event_path).expect("restore events");
     fs::write(
         temporary.join("manifest.json"),
         loaded

@@ -215,18 +215,17 @@ impl CommittedFixture {
             fs::read(&manifest_path).map_err(|error| FixtureError::io(&manifest_path, error))?;
         let manifest = FixtureManifest::from_canonical_json(&manifest_bytes)?;
 
-        for artifact in manifest
-            .sources
-            .values()
-            .chain(std::iter::once(&manifest.events))
-            .chain(manifest.outputs.values())
-        {
+        for artifact in manifest.sources.values() {
             validate_committed_file(directory, artifact)?;
         }
 
         let event_path = directory.join(&manifest.events.path);
         let event_bytes =
             fs::read(&event_path).map_err(|error| FixtureError::io(&event_path, error))?;
+        validate_committed_bytes(&manifest.events, &event_bytes)?;
+        for artifact in manifest.outputs.values() {
+            validate_committed_file(directory, artifact)?;
+        }
         let stream = ObservationStream::from_canonical_json_lines(&event_bytes)
             .map_err(FixtureError::Observation)?;
         let expected_manifest = manifest
@@ -331,6 +330,10 @@ fn validate_committed_file(
 ) -> Result<(), FixtureError> {
     let path = directory.join(&artifact.path);
     let bytes = fs::read(&path).map_err(|error| FixtureError::io(&path, error))?;
+    validate_committed_bytes(artifact, &bytes)
+}
+
+fn validate_committed_bytes(artifact: &FixtureArtifact, bytes: &[u8]) -> Result<(), FixtureError> {
     if bytes.len() as u64 != artifact.bytes {
         return Err(FixtureError::Invalid(format!(
             "{} byte length drifted: expected {}, observed {}",
@@ -339,7 +342,7 @@ fn validate_committed_file(
             bytes.len()
         )));
     }
-    let observed = hex_hash(&bytes);
+    let observed = hex_hash(bytes);
     if observed != artifact.sha256 {
         return Err(FixtureError::Invalid(format!(
             "{} SHA-256 drifted: expected {}, observed {observed}",
