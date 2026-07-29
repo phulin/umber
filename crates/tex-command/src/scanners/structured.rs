@@ -2847,7 +2847,9 @@ impl CommandProcessor<'_> {
             // A single combined u/v phase loses that replay boundary.
             let mut u_template = Vec::new();
             loop {
-                let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                let command = self
+                    .get_preamble_token()?
+                    .ok_or(CommandError::input_invariant())?;
                 if matches!(
                     command.meaning(),
                     Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
@@ -2925,7 +2927,9 @@ impl CommandProcessor<'_> {
 
             let mut v_template = Vec::new();
             let ends_preamble = loop {
-                let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                let command = self
+                    .get_preamble_token()?
+                    .ok_or(CommandError::input_invariant())?;
                 if matches!(
                     command.meaning(),
                     Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
@@ -3028,6 +3032,33 @@ impl CommandProcessor<'_> {
             self.command.scanner.status().clone(),
         );
         Ok(())
+    }
+
+    /// TeX82 §759's `get_preamble_token`.
+    ///
+    /// A `\span` is not template material: it fetches the following token,
+    /// expands that token exactly once when expandable, and repeats if the
+    /// resulting raw token is another `\span`. Ordinary template tokens stay
+    /// raw so their meanings are resolved when each cell is executed.
+    fn get_preamble_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        let mut command = self.get_token()?;
+        while command.as_ref().is_some_and(|command| {
+            matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)
+            )
+        }) {
+            let Some(next) = self.get_token()? else {
+                return Ok(None);
+            };
+            if crate::processor::expand::is_expandable_command(&next) {
+                self.expand(next)?;
+                command = self.get_token()?;
+            } else {
+                command = Some(next);
+            }
+        }
+        Ok(command)
     }
 
     /// Scans TeX's balanced general text through the canonical `scan_toks`

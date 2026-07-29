@@ -60,6 +60,35 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     assert_eq!(boxed.width.raw(), 3_276_800);
 }
 
+#[test]
+fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
+    // TeX82 §759 expands exactly the token after each preamble `\span`.
+    // Here \A is \relax while the preamble is scanned, then becomes a 3pt
+    // kern before the spanned column template executes. The template must
+    // retain \A itself and resolve its later meaning, producing exactly 3pt.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(20_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode
+          \let\A=\relax
+          \setbox0=\vbox{\halign{#&\iftrue\A\span\else\span\fi\span&#\cr
+            \def\A{\kern3pt}\span\relax&\relax\cr}}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let root = stores.box_reg(0).expect("vbox is assigned");
+    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    assert_eq!(boxed.width.raw(), 3 * Scaled::UNITY);
+}
+
 fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);
