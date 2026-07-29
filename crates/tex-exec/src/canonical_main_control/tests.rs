@@ -128,6 +128,89 @@ fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
 }
 
 #[test]
+fn etex_raw_parshape_enquiries_are_forbidden_without_scanning_in_every_mode() {
+    // e-TeX 2.6 etex.ch [3455--3488] registers the coherent parshape
+    // enquiry family as `last_item`. TeX82 §1048 therefore diagnoses raw
+    // delivery in every mode and leaves each following integer unscanned.
+    for source in [
+        br"\nonstopmode \parshapelength1\parshapeindent2\parshapedimen3\end".as_slice(),
+        br"\nonstopmode x\parshapelength1\parshapeindent2\parshapedimen3\end",
+        br"\nonstopmode \hbox{\parshapelength1\parshapeindent2\parshapedimen3}\end",
+        br"\nonstopmode \vbox{\parshapelength1\parshapeindent2\parshapedimen3}\end",
+        br"\nonstopmode $\parshapelength1\parshapeindent2\parshapedimen3$\end",
+        br"\nonstopmode $$\parshapelength1\parshapeindent2\parshapedimen3$$\end",
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = canonical_etex_initex(&mut stores);
+        control
+            .set_fuel_limit(10_000)
+            .expect("bounded canonical fuel");
+        register_source(&mut control, source);
+
+        run_to_end(&mut control, &mut stores);
+
+        let output = terminal_text(&stores);
+        for primitive in ["parshapelength", "parshapeindent", "parshapedimen"] {
+            assert!(
+                output.contains(&format!("You can't use `\\{primitive}' in ")),
+                "{source:?}: {output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn etex_parshape_enquiry_loaded_format_checkpoint_retry_is_atomic() {
+    let mut initex_stores = Universe::new_with_plain_catcodes();
+    let _ = canonical_etex_initex(&mut initex_stores);
+    let format = initex_stores
+        .dump_format()
+        .expect("dump extended e-TeX format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    control
+        .set_fuel_limit(1_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, br"\nonstopmode \parshapelength1\end");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("interaction mode executes"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("raw parshape enquiry checkpoints");
+
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("raw parshape enquiry recovers"),
+        MainControlStep::Continue
+    );
+    let first_hash = stores.testing_state_hash();
+    let first_output = terminal_text(&stores);
+    assert!(first_output.contains("You can't use `\\parshapelength' in vertical mode"));
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("raw parshape enquiry state restores");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("raw parshape enquiry retry recovers"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(terminal_text(&stores), first_output);
+}
+
+#[test]
 fn empty_equation_number_checks_math_fonts_on_both_sides() {
     // TeX82 §1194 checks the equation-number mlist and then the saved display
     // mlist independently, even though neither one contains a math noad.

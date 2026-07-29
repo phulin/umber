@@ -753,6 +753,40 @@ fn parshape_assignment_scans_pair_count_and_restores_local_shape() {
 }
 
 #[test]
+fn etex_parshape_enquiries_follow_grouped_shape_through_canonical_scanners() {
+    // e-TeX 2.6 etex.ch [3455--3488]: all three `last_item` enquiries read
+    // the live, group-scoped parshape and return dimensions inside `\the`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let format = stores.dump_format().expect("dump extended e-TeX format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+    let mut control = CanonicalMainControl::with_profile(tex_command::CommandProfile::ETEX26);
+    control
+        .set_fuel_limit(20_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\parshape=2 1pt 2pt 3pt 4pt
+           \edef\shapeA{\the\parshapeindent1/\the\parshapelength1/\the\parshapedimen3/\the\parshapedimen4/\the\parshapelength8}
+           {\parshape=0\global\edef\shapeEmpty{\the\parshapelength1/\the\parshapedimen1}}
+           \edef\shapeRestored{\the\parshapeindent2/\the\parshapelength2}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        macro_text(&stores, "shapeA"),
+        "1.0pt/2.0pt/3.0pt/4.0pt/4.0pt"
+    );
+    assert_eq!(macro_text(&stores, "shapeEmpty"), "0.0pt/0.0pt");
+    assert_eq!(macro_text(&stores, "shapeRestored"), "3.0pt/4.0pt");
+}
+
+#[test]
 fn font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

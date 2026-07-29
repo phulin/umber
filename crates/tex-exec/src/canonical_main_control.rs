@@ -6889,6 +6889,9 @@ fn scan_unclassified_primitive(
         | P::FontCharHt
         | P::FontCharDp
         | P::FontCharIc
+        | P::ParShapeLength
+        | P::ParShapeIndent
+        | P::ParShapeDimen
         | P::NumExpr
         | P::DimExpr
         | P::GlueExpr
@@ -6933,9 +6936,6 @@ fn scan_unclassified_primitive(
         | P::GlobalDefs
         | P::LetterspaceFont
         | P::PageDiscards
-        | P::ParShapeDimen
-        | P::ParShapeIndent
-        | P::ParShapeLength
         | P::PdfCopyFont
         | P::PdfEfCode
         | P::PdfFontAttr

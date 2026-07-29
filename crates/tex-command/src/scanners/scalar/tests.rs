@@ -3135,6 +3135,88 @@ fn etex_font_character_dimensions_use_zero_for_nullfont() {
 }
 
 #[test]
+fn etex_parshape_enquiries_cover_empty_nonempty_repeated_and_interleaved_lines() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    for (primitive, number) in [
+        (P::ParShapeLength, "1"),
+        (P::ParShapeIndent, "1"),
+        (P::ParShapeDimen, "1"),
+    ] {
+        let enquiry = internal_primitive(&mut universe, "parshape-enquiry", primitive);
+        let mut tokens = vec![enquiry];
+        tokens.extend(number.chars().map(char_token));
+        assert_eq!(
+            scan_internal_with(&mut universe, tokens, |_| {}),
+            InternalValue::Dimension(Scaled::from_raw(0))
+        );
+    }
+
+    universe.set_paragraph_shape(
+        &[
+            tex_state::ParagraphShapeLine {
+                indent: Scaled::from_raw(11),
+                width: Scaled::from_raw(12),
+            },
+            tex_state::ParagraphShapeLine {
+                indent: Scaled::from_raw(21),
+                width: Scaled::from_raw(22),
+            },
+        ],
+        false,
+    );
+    for (primitive, number, expected) in [
+        (P::ParShapeLength, "-1", 0),
+        (P::ParShapeLength, "0", 0),
+        (P::ParShapeLength, "1", 12),
+        (P::ParShapeLength, "9", 22),
+        (P::ParShapeIndent, "1", 11),
+        (P::ParShapeIndent, "9", 21),
+        (P::ParShapeDimen, "-1", 0),
+        (P::ParShapeDimen, "0", 0),
+        (P::ParShapeDimen, "1", 11),
+        (P::ParShapeDimen, "2", 12),
+        (P::ParShapeDimen, "3", 21),
+        (P::ParShapeDimen, "4", 22),
+        (P::ParShapeDimen, "9", 21),
+    ] {
+        let enquiry = internal_primitive(&mut universe, "parshape-enquiry", primitive);
+        let mut tokens = vec![enquiry];
+        tokens.extend(number.chars().map(char_token));
+        tokens.push(char_token('!'));
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        push(&mut command, tokens);
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let target = processor
+            .get_x_token()
+            .expect("parshape enquiry delivers")
+            .expect("parshape enquiry exists");
+        assert_eq!(
+            processor
+                .scan_the_internal_value(&target)
+                .expect("parshape enquiry scans"),
+            Some(InternalValue::Dimension(Scaled::from_raw(expected)))
+        );
+        assert!(matches!(
+            processor
+                .get_x_token()
+                .expect("following token delivers")
+                .expect("following token exists")
+                .meaning(),
+            Meaning::CharToken { ch: '!', .. }
+        ));
+    }
+}
+
+#[test]
 fn etex_glue_component_enquiries_cover_values_orders_and_zero_components() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 

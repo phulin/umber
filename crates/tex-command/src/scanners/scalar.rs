@@ -1884,6 +1884,29 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
                 InternalValue::Integer(i32::try_from(self.state.paragraph_shape_len()).unwrap_or(0))
             }
+            // e-TeX 2.6 etex.ch [3455--3488]'s three parshape enquiries
+            // scan one integer and return a dimension. Length/indent select
+            // the corresponding component of that line; dimen interleaves
+            // indent and length. Nonpositive indexes and an empty shape
+            // return zero, while positive indexes beyond the shape repeat
+            // its final line.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::ParShapeLength
+                | UnexpandablePrimitive::ParShapeIndent
+                | UnexpandablePrimitive::ParShapeDimen),
+            ) => {
+                let number = self.scan_integer()?.value;
+                let (line, width) = match primitive {
+                    UnexpandablePrimitive::ParShapeLength => (number, true),
+                    UnexpandablePrimitive::ParShapeIndent => (number, false),
+                    UnexpandablePrimitive::ParShapeDimen if number > 0 => {
+                        ((number + 1) / 2, number % 2 == 0)
+                    }
+                    UnexpandablePrimitive::ParShapeDimen => (0, false),
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                InternalValue::Dimension(self.state.paragraph_shape_dimension(line, width))
+            }
             // e-TeX 2.6 etex.ch [17.5363--5404] extracts one component from
             // `scan_normal_glue`.  The nested ordinary-glue scanner owns all
             // literal/register/parameter expansion, mu-glue coercion and its

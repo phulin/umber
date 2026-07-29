@@ -134,6 +134,13 @@ impl CommandContext<'_> {
         self.universe.paragraph_shape_len()
     }
 
+    /// Reads one component of TeX's current `\parshape` value, repeating its
+    /// final line for positive indexes beyond the explicitly stored shape.
+    #[must_use]
+    pub fn paragraph_shape_dimension(&self, line: i32, width: bool) -> crate::scaled::Scaled {
+        self.universe.paragraph_shape_dimension(line, width)
+    }
+
     /// Interns a control-sequence spelling without assigning it a meaning.
     ///
     /// This is TeX82 §259's `id_lookup` with `no_new_control_sequence` clear:
