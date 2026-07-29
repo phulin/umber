@@ -26,7 +26,7 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, DiagnosticRecord, EffectRecord, GeometryRecord,
     MutationRecord, ObservedToken, ParameterClass, canonical_names::glue_order_name,
-    parameter_mutation_key,
+    parameter_mutation_key_for_dialect,
 };
 use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -7560,6 +7560,7 @@ enum PendingMutation {
     Arithmetic {
         target: ArithmeticTarget,
         global: bool,
+        profile: CommandProfile,
     },
 }
 
@@ -7567,9 +7568,11 @@ impl PendingMutation {
     fn resolve(self, stores: &Universe) -> MutationRecord {
         match self {
             Self::Captured(record) => record,
-            Self::Arithmetic { target, global } => {
-                committed_arithmetic_mutation(target, global, stores)
-            }
+            Self::Arithmetic {
+                target,
+                global,
+                profile,
+            } => committed_arithmetic_mutation(target, global, stores, profile),
         }
     }
 }
@@ -7603,6 +7606,7 @@ fn committed_arithmetic_mutation(
     target: ArithmeticTarget,
     global: bool,
     stores: &Universe,
+    profile: CommandProfile,
 ) -> MutationRecord {
     match target {
         ArithmeticTarget::IntegerRegister(index) => MutationRecord {
@@ -7634,7 +7638,11 @@ fn committed_arithmetic_mutation(
             target: "parameter",
             value: format!(
                 "{}={}",
-                parameter_mutation_key(ParameterClass::Integer, index),
+                parameter_mutation_key_for_dialect(
+                    profile.dialect(),
+                    ParameterClass::Integer,
+                    index,
+                ),
                 stores.int_param(IntParam::new(index))
             ),
             key: None,
@@ -7647,7 +7655,11 @@ fn committed_arithmetic_mutation(
                 "scaled:{}",
                 stores.dimen_param(DimenParam::new(index)).raw()
             ),
-            key: Some(parameter_mutation_key(ParameterClass::Dimension, index)),
+            key: Some(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Dimension,
+                index,
+            )),
             tokens: None,
             global,
         },
@@ -7659,7 +7671,11 @@ fn committed_arithmetic_mutation(
         ArithmeticTarget::GlueParameter { index, .. } => MutationRecord {
             target: "parameter",
             value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
-            key: Some(parameter_mutation_key(ParameterClass::Glue, index)),
+            key: Some(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Glue,
+                index,
+            )),
             tokens: None,
             global,
         },
@@ -7797,7 +7813,11 @@ fn applied_mutation_observation(
             target: "parameter",
             value: format!(
                 "{}={value}",
-                parameter_mutation_key(ParameterClass::Integer, *index)
+                parameter_mutation_key_for_dialect(
+                    profile.dialect(),
+                    ParameterClass::Integer,
+                    *index,
+                )
             ),
             key: None,
             tokens: None,
@@ -7810,7 +7830,11 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: format!("scaled:{}", value.raw()),
-            key: Some(parameter_mutation_key(ParameterClass::Dimension, *index)),
+            key: Some(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Dimension,
+                *index,
+            )),
             tokens: None,
             global: *global,
         },
@@ -7821,7 +7845,11 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: glue_mutation_value(value),
-            key: Some(parameter_mutation_key(ParameterClass::Glue, *index)),
+            key: Some(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Glue,
+                *index,
+            )),
             tokens: None,
             global: *global,
         },
@@ -7832,7 +7860,11 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: "tokens".into(),
-            key: Some(parameter_mutation_key(ParameterClass::Token, *index)),
+            key: Some(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Token,
+                *index,
+            )),
             tokens: Some(
                 stores
                     .tokens(tokens.token_list())
@@ -7978,6 +8010,7 @@ fn applied_mutation_observation(
             return Some(PendingMutation::Arithmetic {
                 target: *target,
                 global: *global,
+                profile,
             });
         }
         // -- Assignments that do write `eqtb`, into a region the reference

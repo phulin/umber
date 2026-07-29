@@ -94,9 +94,10 @@ pub(crate) const INT_BASE: i64 = 27_167;
 /// Translates an Umber `IntParam` bank slot to tex.web's `int_par` code.
 ///
 /// TeX82 codes are tex.web §236's; e-TeX codes are `etex.ch`'s
-/// `etex_int_base = tex_int_pars = 55` block. `None` marks a slot Umber's
-/// dense bank owns that the TeX82/e-TeX dialect has no `assign_int` selector
-/// for (see the module documentation).
+/// `etex_int_base` block, shifted after the pinned Web2C build's seven
+/// MLTeX/encTeX integer parameters. `None` marks a slot Umber's dense bank
+/// owns that the TeX82/e-TeX dialect has no `assign_int` selector for (see the
+/// module documentation).
 pub(crate) fn int_parameter_code(dialect: CommandDialect, slot: u16) -> Option<i64> {
     // The left column is `crates/tex-exec/src/assignments/primitives.rs`'s
     // `INT_PARAMS` (plus its e-TeX and pdfTeX tables); the right column is
@@ -227,7 +228,10 @@ pub(crate) fn int_parameter_code(dialect: CommandDialect, slot: u16) -> Option<i
 const fn etex_int_base(dialect: CommandDialect) -> Option<i64> {
     match dialect {
         CommandDialect::Tex82 => None,
-        CommandDialect::Etex26 => Some(55),
+        // etex.ch [17.236] starts this block after TeX's 55 parameters.
+        // The pinned Web2C change chain inserts three MLTeX and four encTeX
+        // parameters first, so its effective `etex_int_base` is 62.
+        CommandDialect::Etex26 => Some(62),
         CommandDialect::Pdftex14027 => Some(92),
     }
 }
@@ -357,6 +361,11 @@ pub fn parameter_mutation_key_for_dialect(
     class: ParameterClass,
     slot: u16,
 ) -> String {
+    if matches!(class, ParameterClass::Integer)
+        && let Some(name) = extension_integer_parameter_name(dialect, slot)
+    {
+        return name.into();
+    }
     let (family, code) = match class {
         ParameterClass::Integer => ("integer_parameter", int_parameter_code(dialect, slot)),
         ParameterClass::Dimension => ("dimension_parameter", dimen_parameter_code(slot)),
@@ -372,6 +381,35 @@ pub fn parameter_mutation_key_for_dialect(
         Some(code) => format!("{family}:{code}"),
         None => format!("{family}:umber{slot}"),
     }
+}
+
+/// Names the complete e-TeX integer block the way the reference
+/// instrumentation's `umber_trace_named_slot` does.
+///
+/// `etex.ch` [17.236] assigns semantic names to all ten externally reachable
+/// cells instead of exposing their build-dependent offsets as
+/// `integer_parameter:<n>`. pdfTeX carries the same e-TeX block at a different
+/// offset; the Umber bank slots remain common across both profiles.
+const fn extension_integer_parameter_name(
+    dialect: CommandDialect,
+    slot: u16,
+) -> Option<&'static str> {
+    if matches!(dialect, CommandDialect::Tex82) {
+        return None;
+    }
+    Some(match slot {
+        61 => "tracingscantokens",
+        62 => "TeXXeTstate",
+        63 => "predisplaydirection",
+        64 => "tracingassigns",
+        65 => "tracinggroups",
+        66 => "tracingifs",
+        67 => "tracingnesting",
+        68 => "savingvdiscards",
+        69 => "lastlinefit",
+        70 => "savinghyphcodes",
+        _ => return None,
+    })
 }
 
 /// Returns the `last_item` selector for a read-only internal integer.
@@ -541,12 +579,57 @@ mod tests {
     }
 
     #[test]
-    fn etex_int_parameter_codes_are_distinct_and_above_tex82() {
+    fn etex_int_parameter_codes_follow_the_complete_pinned_web2c_block() {
         let mut codes: Vec<i64> = (61..=70)
             .filter_map(|slot| int_parameter_code(CommandDialect::Etex26, slot))
             .collect();
         codes.sort_unstable();
-        assert_eq!(codes, (55..65).collect::<Vec<_>>());
+        assert_eq!(codes, (62..72).collect::<Vec<_>>());
+        assert!(
+            (61..=70).all(|slot| { int_parameter_code(CommandDialect::Tex82, slot).is_none() })
+        );
+    }
+
+    #[test]
+    fn extension_integer_mutation_names_are_profile_bounded_and_exhaustive() {
+        let expected = [
+            "tracingscantokens",
+            "TeXXeTstate",
+            "predisplaydirection",
+            "tracingassigns",
+            "tracinggroups",
+            "tracingifs",
+            "tracingnesting",
+            "savingvdiscards",
+            "lastlinefit",
+            "savinghyphcodes",
+        ];
+        for (slot, name) in (61_u16..=70).zip(expected) {
+            assert_eq!(
+                parameter_mutation_key_for_dialect(
+                    CommandDialect::Etex26,
+                    ParameterClass::Integer,
+                    slot,
+                ),
+                name
+            );
+            assert_eq!(
+                parameter_mutation_key_for_dialect(
+                    CommandDialect::Pdftex14027,
+                    ParameterClass::Integer,
+                    slot,
+                ),
+                name
+            );
+            assert_eq!(
+                parameter_mutation_key_for_dialect(
+                    CommandDialect::Tex82,
+                    ParameterClass::Integer,
+                    slot,
+                ),
+                format!("integer_parameter:umber{slot}")
+            );
+        }
     }
 
     #[test]
