@@ -24,7 +24,7 @@ const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 pub(super) fn retry_unavailable_stream_open(
     stores: &mut Universe,
     failed_path: &std::path::Path,
-) -> Result<(), ExecError> {
+) -> Result<std::path::PathBuf, ExecError> {
     let interaction = stores.interaction_mode();
     let failed_name = failed_path.to_string_lossy();
     let mut report = stores.print_err("I can't write on file `");
@@ -46,10 +46,11 @@ pub(super) fn retry_unavailable_stream_open(
         .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
             "End of file on the terminal!",
         )))?;
+    let replacement = direct::terminal_output_name(&replacement);
     stores
         .world_mut()
-        .retarget_pending_stream_open(failed_path, direct::terminal_output_name(&replacement))?;
-    Ok(())
+        .retarget_pending_stream_open(failed_path, &replacement)?;
+    Ok(replacement.into())
 }
 
 // TeX82 map: `ship_out` consumes a box whose child list is visited by

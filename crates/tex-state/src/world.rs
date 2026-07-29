@@ -475,6 +475,16 @@ impl CommittedArtifact {
         &self.bytes
     }
 
+    /// Replaces prepared bytes while retaining the diagnostic provenance sidecar.
+    ///
+    /// This is used only before publication when TeX82's openout retry changes
+    /// the page effect payload and therefore its final content identity.
+    pub fn with_prepared_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
+        self.bytes = bytes.into();
+        self
+    }
+
     /// Eager diagnostic origins aligned with artifact nodes in preorder.
     ///
     /// Replayed paragraphs retain stable recipes instead. Call
@@ -1386,7 +1396,11 @@ impl ExecutionTraceEvent {
 }
 
 impl WorldError {
-    fn new(operation: &'static str, path: Option<PathBuf>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        operation: &'static str,
+        path: Option<PathBuf>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             operation,
             path,
@@ -2551,6 +2565,27 @@ impl World {
             bytes,
             render_provenance,
         ));
+    }
+
+    pub(crate) fn take_artifact_suffix(&mut self, start: usize) -> Vec<CommittedArtifact> {
+        let start = start.min(self.committed_artifacts.len());
+        Arc::make_mut(&mut self.artifact_commits).truncate(start);
+        Arc::make_mut(&mut self.committed_artifacts).split_off(start)
+    }
+
+    pub(crate) fn publish_prepared_artifact(
+        &mut self,
+        artifact: CommittedArtifact,
+    ) -> Result<ContentHash, WorldError> {
+        let verified = VerifiedArtifact {
+            hash: artifact.hash,
+            bytes: artifact.bytes.as_ref().to_vec(),
+            render_provenance: artifact.render_provenance.clone(),
+        };
+        let hash = self.store_verified_artifact(&verified)?;
+        Arc::make_mut(&mut self.artifact_commits).push(hash);
+        Arc::make_mut(&mut self.committed_artifacts).push(artifact);
+        Ok(hash)
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {

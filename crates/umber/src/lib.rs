@@ -882,6 +882,7 @@ impl DriverFile {
 pub struct PlannedFinalization {
     effect_pos: EffectPos,
     files: Vec<DriverFile>,
+    prepared_pages: Option<tex_state::PreparedPageSuffix>,
 }
 
 /// A finalization effect commit that retained its downstream plan after a
@@ -902,7 +903,43 @@ impl PlannedFinalization {
                 return Err(FinalizationError::ConflictingDriverPath(file.path.clone()));
             }
         }
-        Ok(Self { effect_pos, files })
+        Ok(Self {
+            effect_pos,
+            files,
+            prepared_pages: None,
+        })
+    }
+
+    #[must_use]
+    pub fn with_prepared_pages(mut self, pages: Option<tex_state::PreparedPageSuffix>) -> Self {
+        self.prepared_pages = pages;
+        self
+    }
+
+    pub fn retarget_prepared_open(
+        &mut self,
+        failed: &Path,
+        replacement: &Path,
+    ) -> Result<(), FinalizationError> {
+        let Some(pages) = self.prepared_pages.as_mut() else {
+            return Ok(());
+        };
+        let failed = failed.to_string_lossy();
+        let replacement = replacement.to_string_lossy();
+        for artifact in pages.artifacts_mut() {
+            let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
+                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
+            for stream in 0..16 {
+                if page.retarget_open_out(stream, &failed, &replacement) {
+                    let bytes = page
+                        .to_bytes()
+                        .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
+                    *artifact = artifact.clone().with_prepared_bytes(bytes);
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn commit_effects(
@@ -923,7 +960,7 @@ impl PlannedFinalization {
     /// open, then resume the same pending suffix without rebuilding drivers or
     /// replaying engine effects.
     pub fn commit_effects_retryable(
-        self,
+        mut self,
         stores: &mut Universe,
     ) -> Result<FinalizationCommit, FinalizationError> {
         let result = if stores.world().commit_mode() == WorldCommitMode::Retained {
@@ -939,6 +976,9 @@ impl PlannedFinalization {
                 return Ok(FinalizationCommit::Retry { plan: self, error });
             }
             return Err(error.into());
+        }
+        if let Some(pages) = self.prepared_pages.take() {
+            stores.publish_page_suffix(pages)?;
         }
         Ok(FinalizationCommit::Committed(CommittedFinalization {
             files: self.files,
@@ -995,6 +1035,7 @@ impl CommittedFinalization {
 #[derive(Debug)]
 pub enum FinalizationError {
     ConflictingDriverPath(PathBuf),
+    PreparedArtifact(String),
     World(WorldError),
 }
 
@@ -1006,6 +1047,9 @@ impl std::fmt::Display for FinalizationError {
                 "multiple downstream outputs resolve to {}",
                 path.display()
             ),
+            Self::PreparedArtifact(message) => {
+                write!(f, "prepared page artifact finalization failed: {message}")
+            }
             Self::World(error) => error.fmt(f),
         }
     }

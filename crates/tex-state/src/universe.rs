@@ -558,6 +558,26 @@ pub struct ShipoutTransaction<'a> {
     finished: bool,
 }
 
+/// Ordered page suffix retained outside artifact and PDF publication.
+///
+/// Native finalization owns this value across retry. Dropping it is rollback:
+/// neither its artifacts nor its PDF page records can become observable.
+pub struct PreparedPageSuffix {
+    artifacts: Vec<CommittedArtifact>,
+    pdf_pages: Vec<crate::PdfPageRecord>,
+}
+
+impl PreparedPageSuffix {
+    #[must_use]
+    pub fn artifacts(&self) -> &[CommittedArtifact] {
+        &self.artifacts
+    }
+
+    pub fn artifacts_mut(&mut self) -> &mut [CommittedArtifact] {
+        &mut self.artifacts
+    }
+}
+
 /// Full-state rollback guard for a speculative replay transition.
 ///
 /// This is deliberately an opaque, lifetime-bound capability. Dropping it
@@ -1355,6 +1375,36 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Removes an ordered suffix from committed artifact/PDF publication.
+    pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
+        PreparedPageSuffix {
+            artifacts: self.world.take_artifact_suffix(start),
+            pdf_pages: self.pdf.take_page_suffix(start),
+        }
+    }
+
+    /// Atomically publishes a prepared suffix after its fallible effects succeeded.
+    pub fn publish_page_suffix(
+        &mut self,
+        mut suffix: PreparedPageSuffix,
+    ) -> Result<(), WorldError> {
+        if suffix.artifacts.len() != suffix.pdf_pages.len() && !suffix.pdf_pages.is_empty() {
+            return Err(WorldError::new(
+                "publish prepared page suffix",
+                None,
+                "artifact and PDF page suffixes are not aligned",
+            ));
+        }
+        let mut hashes = Vec::with_capacity(suffix.artifacts.len());
+        for artifact in suffix.artifacts.iter().cloned() {
+            hashes.push(self.world.publish_prepared_artifact(artifact)?);
+        }
+        for (page, hash) in suffix.pdf_pages.iter_mut().zip(hashes) {
+            page.retarget_artifact(hash);
+        }
+        self.pdf.restore_page_suffix(suffix.pdf_pages);
+        Ok(())
+    }
     pub const FORMAT_SCHEMA_VERSION: u32 = crate::format_container::SCHEMA_VERSION;
     /// Fingerprint of the current portable format container ABI.
     pub const FORMAT_ABI_FINGERPRINT: u64 = crate::format_container::ABI_FINGERPRINT;

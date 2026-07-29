@@ -527,6 +527,7 @@ pub enum CompileAttemptResult {
 /// client-owned downstream finalizer. Effects remain uncommitted.
 pub struct AcceptedFinalization {
     pub stores: Universe,
+    pub prepared_pages: Option<tex_state::PreparedPageSuffix>,
     pub dumped_format: bool,
     pub expansion_stats: tex_lex::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
@@ -984,11 +985,25 @@ impl VirtualCompileSession {
         })?;
         let dumped_format = session.accepted_dumped_format();
         let expansion_stats = session.accepted_expansion_stats();
-        let stores = session
+        let mut stores = session
             .into_accepted_universe()
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        let first_fallible_page =
+            stores
+                .world()
+                .committed_artifacts()
+                .iter()
+                .position(|artifact| {
+                    tex_out::PageArtifact::from_bytes(artifact.bytes()).is_ok_and(|page| {
+                        page.effects
+                            .iter()
+                            .any(|effect| matches!(effect, tex_out::PageEffect::OpenOut { .. }))
+                    })
+                });
+        let prepared_pages = first_fallible_page.map(|start| stores.prepare_page_suffix(start));
         Ok(AcceptedFinalization {
             stores,
+            prepared_pages,
             dumped_format,
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,

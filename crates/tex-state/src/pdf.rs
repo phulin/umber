@@ -788,6 +788,9 @@ impl PdfFormRecord {
 }
 
 impl PdfPageRecord {
+    pub(crate) fn retarget_artifact(&mut self, artifact: ContentHash) {
+        self.artifact = artifact;
+    }
     #[must_use]
     pub const fn artifact(self) -> ContentHash {
         self.artifact
@@ -1045,6 +1048,14 @@ impl PdfState {
     #[must_use]
     pub(crate) fn pages(&self) -> &[PdfPageRecord] {
         &self.pages
+    }
+
+    pub(crate) fn take_page_suffix(&mut self, start: usize) -> Vec<PdfPageRecord> {
+        self.pages.split_off(start.min(self.pages.len()))
+    }
+
+    pub(crate) fn restore_page_suffix(&mut self, pages: Vec<PdfPageRecord>) {
+        self.pages.extend(pages);
     }
     pub(crate) fn set_space_font_name(&mut self, name: Vec<u8>) {
         let id = if let Some(&id) = self.space_font_name_lookup.get(&name) {

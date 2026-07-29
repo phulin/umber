@@ -142,8 +142,8 @@ pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
     FormatError, GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
     InputOpenState, InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine,
-    PenaltyArrayKind, ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult,
-    UnboxKind, Universe,
+    PenaltyArrayKind, PreparedPageSuffix, ReplayProbeTransaction, ShipoutTransaction, Snapshot,
+    TakeUnboxResult, UnboxKind, Universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

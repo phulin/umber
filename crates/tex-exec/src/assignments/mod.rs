@@ -58,7 +58,7 @@ mod variables;
 pub fn retry_unavailable_stream_open(
     stores: &mut Universe,
     failed_path: &std::path::Path,
-) -> Result<(), ExecError> {
+) -> Result<std::path::PathBuf, ExecError> {
     shipout::retry_unavailable_stream_open(stores, failed_path)
 }
 

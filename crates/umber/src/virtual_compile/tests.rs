@@ -115,6 +115,43 @@ fn accepted_finalization_transfers_uncommitted_engine_state() {
 }
 
 #[test]
+fn accepted_finalization_keeps_openout_page_unpublished() {
+    let mut session = session(
+        "\\setbox0=\\hbox{\\openout2=original.out \\write2{x}\\closeout2}\
+         \\shipout\\copy0\\end",
+    );
+    let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
+        panic!("revision should complete");
+    };
+
+    let finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    assert!(
+        finalization.stores.world().committed_artifacts().is_empty(),
+        "fallible page artifact must not publish before authoritative open"
+    );
+    assert!(
+        finalization.stores.pdf_pages().is_empty(),
+        "fallible PDF page must not publish before authoritative open"
+    );
+    let prepared = finalization
+        .prepared_pages
+        .as_ref()
+        .expect("openout page stays prepared");
+    assert_eq!(prepared.artifacts().len(), 1);
+    let page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[0].bytes())
+        .expect("prepared artifact parses");
+    assert!(page.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            tex_out::PageEffect::OpenOut { stream: 2, path }
+                if path == "original.out"
+        )
+    }));
+}
+
+#[test]
 fn finalization_rejects_a_session_without_accepted_output() {
     let error = session("\\end")
         .into_accepted_finalization()

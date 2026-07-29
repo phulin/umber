@@ -220,10 +220,14 @@ fn finalize_run(
     }
     let virtual_font_resources = finalization.virtual_font_resources;
     let mut stores = finalization.stores;
+    let prepared_pages = finalization.prepared_pages;
     let dumped_format = finalization.dumped_format;
     #[cfg_attr(not(feature = "profiling"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
-    let committed_artifacts = stores.world().committed_artifacts().to_vec();
+    let mut committed_artifacts = stores.world().committed_artifacts().to_vec();
+    if let Some(pages) = &prepared_pages {
+        committed_artifacts.extend_from_slice(pages.artifacts());
+    }
     if opts.format_out.is_some() && !dumped_format {
         return Err(CliError::MissingFormatDump);
     }
@@ -436,7 +440,8 @@ fn finalize_run(
     }
     let effect_pos = stores.world().effect_pos();
     let materialize_started = std::time::Instant::now();
-    let mut finalization = PlannedFinalization::new(effect_pos, driver_files)?;
+    let mut finalization =
+        PlannedFinalization::new(effect_pos, driver_files)?.with_prepared_pages(prepared_pages);
     if opts.show_fixtures {
         print!("{}", String::from_utf8_lossy(&output.terminal));
         finalization.discard_uncommitted();
@@ -450,8 +455,9 @@ fn finalize_run(
                     .stream_open_unavailable()
                     .expect("retryable finalization identifies the failed open")
                     .to_owned();
-                tex_exec::retry_unavailable_stream_open(&mut stores, &failed)?;
+                let replacement = tex_exec::retry_unavailable_stream_open(&mut stores, &failed)?;
                 finalization = plan;
+                finalization.retarget_prepared_open(&failed, &replacement)?;
             }
         }
     };
