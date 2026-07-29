@@ -244,6 +244,21 @@ impl<'a> CanonicalEngineSession<'a> {
         self.control.command_profile()
     }
 
+    /// Configures a positive finite canonical command-work limit.
+    pub fn set_fuel_limit(&mut self, limit: u64) {
+        self.control.set_fuel_limit(limit);
+    }
+
+    #[must_use]
+    pub const fn fuel_limit(&self) -> u64 {
+        self.control.fuel_limit()
+    }
+
+    #[must_use]
+    pub const fn fuel_burned(&self) -> u64 {
+        self.control.fuel_burned()
+    }
+
     #[must_use]
     pub fn stores(&self) -> &Universe {
         self.stores
@@ -954,5 +969,19 @@ mod tests {
             error,
             CanonicalSessionError::UnexpectedFulfillment { .. }
         ));
+    }
+
+    #[test]
+    fn canonical_session_has_finite_configurable_command_fuel() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        assert_eq!(
+            session.fuel_limit(),
+            tex_command::DEFAULT_COMMAND_FUEL_LIMIT
+        );
+        assert_ne!(session.fuel_limit(), u64::MAX);
+        session.set_fuel_limit(17);
+        assert_eq!(session.fuel_limit(), 17);
+        assert_eq!(session.fuel_burned(), 0);
     }
 }

@@ -70,6 +70,7 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 pub struct CanonicalMainControl {
     command: CommandState,
     runtime: CommandRuntime,
+    fuel: tex_command::CommandFuel,
     capabilities: CommandHostCapabilities,
     modes: ModeNest,
     next_alignment_identity: u64,
@@ -409,6 +410,7 @@ impl CommandObserver for ObservationBuffer {
 struct CommandMachine<'a> {
     state: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,
+    fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
     /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
@@ -422,6 +424,7 @@ impl CommandMachine<'_> {
         command_processor(
             self.state,
             self.runtime,
+            self.fuel,
             self.capabilities,
             self.observations,
             stores,
@@ -432,6 +435,7 @@ impl CommandMachine<'_> {
 fn command_processor<'a>(
     command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,
+    fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
     stores: &'a mut Universe,
@@ -441,7 +445,8 @@ fn command_processor<'a>(
         runtime,
         stores.command_context(),
         CommandHostContext::new(capabilities),
-    );
+    )
+    .with_fuel(fuel);
     match observations.as_mut() {
         Some(buffer) => processor.with_observer(buffer),
         None => processor,
@@ -449,6 +454,8 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
+
     /// Creates command-owned state without changing the shared `Universe`.
     ///
     /// Composed sessions use this when their profile/format initializer has
@@ -508,6 +515,24 @@ impl CanonicalMainControl {
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
         self.command.profile()
+    }
+
+    /// Replaces the command-work ledger before or during a run.
+    ///
+    /// Installing a new limit intentionally starts a new accounting episode;
+    /// ordinary rollback and runtime reset never call this.
+    pub fn set_fuel_limit(&mut self, limit: u64) {
+        self.fuel = tex_command::CommandFuel::new(limit);
+    }
+
+    #[must_use]
+    pub const fn fuel_limit(&self) -> u64 {
+        self.fuel.limit()
+    }
+
+    #[must_use]
+    pub const fn fuel_burned(&self) -> u64 {
+        self.fuel.burned()
     }
 
     /// Reports whether this job terminated through an effective INITEX
@@ -787,6 +812,7 @@ impl CanonicalMainControl {
         CommandMachine {
             state: &mut self.command,
             runtime: &mut self.runtime,
+            fuel: &mut self.fuel,
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
             initex: self.initex,
@@ -999,6 +1025,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1041,6 +1068,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
+                fuel: &mut self.fuel,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -1054,6 +1082,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1358,6 +1387,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1424,6 +1454,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
+                fuel: &mut self.fuel,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -1437,6 +1468,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1548,6 +1580,7 @@ impl CanonicalMainControl {
                 let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
+                    &mut self.fuel,
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     stores,
@@ -1594,6 +1627,7 @@ impl CanonicalMainControl {
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         runtime: &mut self.runtime,
+                        fuel: &mut self.fuel,
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
                         initex: self.initex,
@@ -1615,6 +1649,7 @@ impl CanonicalMainControl {
                     let opened = command_processor(
                         &mut self.command,
                         &mut self.runtime,
+                        &mut self.fuel,
                         &mut self.capabilities,
                         &mut self.operation_observations,
                         stores,
@@ -2245,6 +2280,7 @@ impl CanonicalMainControl {
         command_processor(
             &mut self.command,
             &mut self.runtime,
+            &mut self.fuel,
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -2260,6 +2296,7 @@ impl CanonicalMainControl {
         command_processor(
             &mut self.command,
             &mut self.runtime,
+            &mut self.fuel,
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -2443,6 +2480,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -2560,6 +2598,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
+                fuel: &mut self.fuel,
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -2681,6 +2720,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
+                &mut self.fuel,
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -2712,6 +2752,7 @@ impl CanonicalMainControl {
                 let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
+                    &mut self.fuel,
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     stores,
@@ -2754,6 +2795,7 @@ impl CanonicalMainControl {
         let exhausted = command_processor(
             &mut self.command,
             &mut self.runtime,
+            &mut self.fuel,
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -8650,9 +8692,11 @@ pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
     let mut command = CommandMachine {
         state: &mut CommandState::default(),
         runtime: &mut CommandRuntime::default(),
+        fuel: &mut fuel,
         capabilities: &mut CommandHostCapabilities::default(),
         observations: &mut None,
         initex: true,
@@ -11774,6 +11818,7 @@ fn schedule_aftergroup(
 fn schedule_afterassignment(
     command: &mut CommandState,
     runtime: &mut CommandRuntime,
+    fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
     stores: &mut Universe,
@@ -11786,7 +11831,7 @@ fn schedule_afterassignment(
         token,
         tex_state::token::OriginId::UNKNOWN,
     );
-    command_processor(command, runtime, capabilities, observations, stores)
+    command_processor(command, runtime, fuel, capabilities, observations, stores)
         .back_input_token(tex_state::token::TracedTokenWord::pack(token, origin))
         .map_err(command_error)
 }
@@ -13032,7 +13077,8 @@ fn command_error(error: CommandError) -> ExecError {
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.
         CommandError::Fatal(fatal) => ExecError::Fatal(fatal),
-        CommandError::InputInvariant(_)
+        CommandError::FuelExhausted { .. }
+        | CommandError::InputInvariant(_)
         | CommandError::StaleDelivery
         | CommandError::MacroPrefixMismatch
         | CommandError::ParagraphInMacroArgument

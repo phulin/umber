@@ -2699,6 +2699,14 @@ owner.
 Host capabilities, `CurrentCommand`, delivery stamps, cache contents, spare
 buffer capacity, timers, and profiling counters are absent.
 
+Command resource fuel is absent as well. `CommandFuel` is a distinct
+monotonic run ledger lent to every `CommandProcessor` episode. It charges
+before each central raw-delivery attempt, including attempts nested beneath
+expanded delivery, macro matching, and scanners. A failed semantic step may
+restore `CommandState` and discard `CommandRuntime`, but neither operation
+restores the ledger. Its finite limit and burned count are host telemetry and
+never enter snapshot, checkpoint, format, or semantic identity.
+
 Summary restoration likewise validates the summary's profile fingerprint
 before mutation. The same typed mismatch reports format and checkpoint
 identity failures, so no persistent boundary can silently change a job's
@@ -3660,7 +3668,10 @@ these exact normal-dependency edges:
 - `tex-expand -> tex-lex` remains the retired expansion engine's own input
   path. Its TeX82, e-TeX 2.6, and pdfTeX 1.40.27 expandable primitive
   installation entry points now forward to `tex-command`; the identity tables
-  and fresh-INITEX/format-restore policy no longer have a second owner.
+  and fresh-INITEX/format-restore policy no longer have a second owner. Its
+  legacy expansion-session fuel remains only a compatibility-path guard;
+  canonical delivery and scanner termination are owned by
+  `tex_command::CommandFuel`.
 - `tex-exec -> tex-expand, tex-lex` remains for the retired `Executor`, its
   scanner/error/checkpoint types, legacy alignment and assignment modules, and
   two canonical executor token-string formatting calls. `umber2-johp.14` owns

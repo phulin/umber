@@ -473,6 +473,7 @@ impl CommandProcessor<'_> {
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
         loop {
+            self.charge_command_action()?;
             match self.get_next_with_control_sequence_creation(false)? {
                 Some(CommandReplayDelivery::Command(command)) => {
                     match self.insert_alignment_entry_v_template(command)? {
@@ -493,6 +494,7 @@ impl CommandProcessor<'_> {
         &mut self,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         self.last_delivery = None;
+        self.charge_command_action()?;
         self.get_next_with_control_sequence_creation(false)
     }
 
@@ -525,6 +527,7 @@ impl CommandProcessor<'_> {
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
         loop {
+            self.charge_command_action()?;
             match self.get_next_with_control_sequence_creation(true)? {
                 Some(CommandReplayDelivery::Command(command)) => {
                     match self.insert_alignment_entry_v_template(command)? {

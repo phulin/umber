@@ -571,8 +571,11 @@ impl CommandProcessor<'_> {
             Vec::new()
         };
         output.extend(tokens);
-        self.command.expansion.cumulative_expansions =
-            self.command.expansion.cumulative_expansions.wrapping_add(1);
+        self.command.expansion.cumulative_expansions = self
+            .command
+            .expansion
+            .cumulative_expansions
+            .saturating_add(1);
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         // Keep the observation on that same semantic boundary: an empty
         // internal token list contributes no splice transition at all.
@@ -614,8 +617,11 @@ impl CommandProcessor<'_> {
             }),
         );
         output.extend(raw);
-        self.command.expansion.cumulative_expansions =
-            self.command.expansion.cumulative_expansions.wrapping_add(1);
+        self.command.expansion.cumulative_expansions = self
+            .command
+            .expansion
+            .cumulative_expansions
+            .saturating_add(1);
         // TeX82 §478 attaches the list returned by `the_toks` only when it is
         // nonempty. e-TeX's §27.465 `\unexpanded` return follows that same
         // direct-splice boundary after `scan_general_text` has completed.

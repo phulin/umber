@@ -64,6 +64,50 @@ fn install_macro(
     name
 }
 
+#[test]
+fn cyclic_macro_exhausts_shared_command_fuel() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let cycle = universe.intern("cycle").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&[Token::Cs(cycle)]);
+    let definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+    universe.set_meaning(
+        cycle,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(cycle))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuel::new(7);
+    let error = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_fuel(&mut fuel)
+    .get_x_token()
+    .expect_err("cyclic expansion must terminate inside tex-command");
+    assert_eq!(
+        error,
+        crate::CommandError::FuelExhausted {
+            limit: 7,
+            burned: 7
+        }
+    );
+    assert_eq!(fuel.burned(), 7);
+}
+
 fn install_expandable(
     universe: &mut Universe,
     name: &str,

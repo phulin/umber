@@ -421,8 +421,11 @@ impl CommandProcessor<'_> {
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
     pub(crate) fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
-        self.command.expansion.cumulative_expansions =
-            self.command.expansion.cumulative_expansions.wrapping_add(1);
+        self.command.expansion.cumulative_expansions = self
+            .command
+            .expansion
+            .cumulative_expansions
+            .saturating_add(1);
         match command.meaning() {
             Meaning::ExpandablePrimitive(primitive)
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
@@ -1192,8 +1195,9 @@ mod tests;
 
 /// Future-relevant expansion facts.
 ///
-/// Per-request fuel is deliberately absent: it is call-local and recreated
-/// when an executor step is retried. Caches and profiling likewise belong to
+/// Resource fuel is deliberately absent: [`crate::CommandFuel`] is a
+/// monotonic owner lent to processor episodes and is not restored with
+/// semantic state. Caches and profiling likewise belong to
 /// [`crate::CommandRuntime`].
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ExpansionState {

@@ -9,7 +9,8 @@ pub(crate) mod status;
 use tex_state::CommandContext;
 
 use crate::{
-    CommandHostContext, CommandReplayEpisode, CommandRuntime, CommandState, DeliveryStamp,
+    CommandFuel, CommandHostContext, CommandReplayEpisode, CommandRuntime, CommandState,
+    DeliveryStamp,
 };
 
 use crate::input::InputLevelId;
@@ -51,6 +52,7 @@ pub struct CommandProcessor<'a> {
     pub(crate) state: CommandContext<'a>,
     pub(crate) host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
+    fuel: ProcessorFuel<'a>,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this
@@ -95,6 +97,20 @@ pub struct CommandProcessor<'a> {
     pub(crate) expression_depth: u32,
 }
 
+enum ProcessorFuel<'a> {
+    Owned(CommandFuel),
+    Shared(&'a mut CommandFuel),
+}
+
+impl ProcessorFuel<'_> {
+    fn charge(&mut self) -> Result<(), crate::CommandError> {
+        match self {
+            Self::Owned(fuel) => fuel.charge(),
+            Self::Shared(fuel) => fuel.charge(),
+        }
+    }
+}
+
 impl<'a> CommandProcessor<'a> {
     /// Borrows every ownership domain needed by one command operation.
     #[must_use]
@@ -110,6 +126,7 @@ impl<'a> CommandProcessor<'a> {
             state,
             host,
             observer: None,
+            fuel: ProcessorFuel::Owned(CommandFuel::default()),
             immediate_write_retirement: None,
             last_delivery: None,
             replay_completion: None,
@@ -122,6 +139,17 @@ impl<'a> CommandProcessor<'a> {
             restricted_integer_recoveries: Vec::new(),
             expression_depth: 0,
         }
+    }
+
+    /// Lends a run-owned monotonic ledger to this processor episode.
+    #[must_use]
+    pub fn with_fuel(mut self, fuel: &'a mut CommandFuel) -> Self {
+        self.fuel = ProcessorFuel::Shared(fuel);
+        self
+    }
+
+    pub(crate) fn charge_command_action(&mut self) -> Result<(), crate::CommandError> {
+        self.fuel.charge()
     }
 
     /// Claims restricted-integer reports in their scan-detection order.

@@ -908,7 +908,7 @@ impl ExecutionRun {
             publish_job_start,
             suspension_serial: 0,
             checkpoint_mode_projection: None,
-            cumulative_fuel_limit: u64::MAX,
+            cumulative_fuel_limit: 100_000_000,
             budgets: ExecutionBudgets::default(),
             budget_counters: ExecutionBudgetCounters::default(),
             emit_dvi: true,

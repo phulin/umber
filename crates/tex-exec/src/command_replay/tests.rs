@@ -6068,6 +6068,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut CommandMachine {
             state: &mut control.command,
             runtime: &mut control.runtime,
+            fuel: &mut control.fuel,
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
             initex: control.initex,
@@ -6099,6 +6100,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut CommandMachine {
             state: &mut control.command,
             runtime: &mut control.runtime,
+            fuel: &mut control.fuel,
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
             initex: control.initex,
@@ -6331,6 +6333,8 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
         failed_observations.0.is_empty(),
         "failed delivery leaked observation"
     );
+    let burned_before_retry = failed.fuel_burned();
+    assert!(burned_before_retry > 0);
 
     failed
         .capabilities_mut()
@@ -6340,6 +6344,10 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
             .advance_with_observer(&mut failed_universe, &mut failed_observations)
             .expect("retry succeeds"),
         CanonicalStepResult::Progress(ReplayStep::Continue)
+    );
+    assert!(
+        failed.fuel_burned() > burned_before_retry,
+        "resource rollback refunded command work"
     );
 
     let mut fresh_universe = Universe::new_with_plain_catcodes();
