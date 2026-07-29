@@ -612,9 +612,21 @@ impl CommandProcessor<'_> {
                     .known_control_sequence(&name)
                     .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined))
             }
-            ConditionalKind::IfFontChar | ConditionalKind::IfInCsName | ConditionalKind::IfCase => {
+            // e-TeX 2.6 etex.ch [17.4797--4805]: `\iffontchar` uses the
+            // ordinary §577 font-identifier scanner followed by §434's
+            // character-number scanner, then tests the TFM character-info
+            // existence bit. The restricted scan owns out-of-range recovery,
+            // and the immutable metric lookup works identically for fonts
+            // restored from a format and fonts loaded in this session.
+            ConditionalKind::IfFontChar => {
+                let font = self.scan_font_selector()?;
+                let character = self.scan_character_number()?;
+                Ok(u8::try_from(u32::from(character))
+                    .ok()
+                    .is_some_and(|code| self.state.font_char_metrics(font, code).is_some()))
+            }
+            ConditionalKind::IfInCsName | ConditionalKind::IfCase => {
                 Err(CommandError::UnsupportedExpandablePrimitive(match kind {
-                    ConditionalKind::IfFontChar => ExpandablePrimitive::IfFontChar,
                     ConditionalKind::IfInCsName => ExpandablePrimitive::IfInCsName,
                     _ => unreachable!(),
                 }))

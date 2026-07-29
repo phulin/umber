@@ -2188,3 +2188,102 @@ fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
         ]
     );
 }
+
+#[test]
+fn etex_iffontchar_tests_metric_existence_and_unless_inverts_the_same_frame() {
+    use tex_state::font::{CharMetrics, CharTag, FontMetrics, LoadedFont};
+    use tex_state::scaled::Scaled;
+
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let iffontchar = install(&mut universe, "iffontchar", ExpandablePrimitive::IfFontChar);
+    let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let font_symbol = universe.intern("metric-font").symbol();
+    let mut characters = vec![None; 256];
+    characters[0] = Some(CharMetrics {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: CharTag::None,
+    });
+    characters[65] = Some(CharMetrics {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: CharTag::None,
+    });
+    let font = universe.intern_font_with_identifier(
+        LoadedFont::new(
+            "metric-font",
+            "metric-font.tfm",
+            [9; 32],
+            0,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+        ),
+        font_symbol,
+    );
+    universe.set_meaning(font_symbol, Meaning::Font(font));
+
+    push(
+        &mut command,
+        vec![
+            // Present character.
+            iffontchar,
+            Token::Cs(font_symbol),
+            other('6'),
+            other('5'),
+            other('p'),
+            otherwise,
+            other('x'),
+            fi,
+            // In-range but absent character.
+            iffontchar,
+            Token::Cs(font_symbol),
+            other('6'),
+            other('6'),
+            other('x'),
+            otherwise,
+            other('a'),
+            fi,
+            // `\unless` negates the same predicate rather than nesting a
+            // second condition frame.
+            unless,
+            iffontchar,
+            Token::Cs(font_symbol),
+            other('6'),
+            other('6'),
+            other('u'),
+            otherwise,
+            other('x'),
+            fi,
+            // §434 recovers 256 as character zero, whose existence is then
+            // tested normally.
+            iffontchar,
+            Token::Cs(font_symbol),
+            other('2'),
+            other('5'),
+            other('6'),
+            other('r'),
+            otherwise,
+            other('x'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'p');
+    assert_eq!(next_character(&mut processor), 'a');
+    assert_eq!(next_character(&mut processor), 'u');
+    assert_eq!(next_character(&mut processor), 'r');
+    assert!(processor.get_x_token().expect("final fi expands").is_none());
+    assert!(processor.command.conditions.current().is_none());
+}
