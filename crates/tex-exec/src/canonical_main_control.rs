@@ -5492,7 +5492,10 @@ fn scan_command(
         ) => {
             if matches!(
                 primitive,
-                UnexpandablePrimitive::PdfOutline
+                UnexpandablePrimitive::PdfAnnot
+                    | UnexpandablePrimitive::PdfStartLink
+                    | UnexpandablePrimitive::PdfEndLink
+                    | UnexpandablePrimitive::PdfOutline
                     | UnexpandablePrimitive::PdfDest
                     | UnexpandablePrimitive::PdfThread
                     | UnexpandablePrimitive::PdfStartThread
@@ -5500,6 +5503,9 @@ fn scan_command(
             ) && processor.int_param(IntParam::PDF_OUTPUT) <= 0
             {
                 let name = match primitive {
+                    UnexpandablePrimitive::PdfAnnot => "pdfannot",
+                    UnexpandablePrimitive::PdfStartLink => "pdfstartlink",
+                    UnexpandablePrimitive::PdfEndLink => "pdfendlink",
                     UnexpandablePrimitive::PdfOutline => "pdfoutline",
                     UnexpandablePrimitive::PdfDest => "pdfdest",
                     UnexpandablePrimitive::PdfThread => "pdfthread",

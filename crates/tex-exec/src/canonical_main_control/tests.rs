@@ -404,6 +404,105 @@ fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfannot", UnexpandablePrimitive::PdfAnnot),
+        ("pdfstartlink", UnexpandablePrimitive::PdfStartLink),
+        ("pdfendlink", UnexpandablePrimitive::PdfEndLink),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
+    // pdftex.web §§1558, 1560, and 1561 call `check_pdfoutput` before object
+    // allocation, mode legality, dimensions, attributes, actions, or body
+    // text. A failed step must therefore retain the complete command.
+    for (source, primitive) in [
+        (
+            br"\pdfannot width 5pt height 6pt depth 7pt {/Subtype /Text}".as_slice(),
+            "pdfannot",
+        ),
+        (
+            br"\pdfstartlink width 8pt height 9pt depth 10pt attr{/Border [0 0 0]} user{/Subtype /Link}"
+                .as_slice(),
+            "pdfstartlink",
+        ),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_annotation_control(&mut stores);
+        control.modes.push(Mode::Horizontal);
+        register_source(&mut control, source);
+        assert!(
+            matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+        );
+        assert!(control.modes.current_list().nodes().is_empty());
+
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        assert_eq!(
+            control
+                .step(&mut stores)
+                .expect("PDF retry preserves the complete command"),
+            MainControlStep::Continue
+        );
+        assert_eq!(control.modes.current_list().nodes().len(), 1);
+    }
+
+    // The source orders the PDF-output check before the vertical-mode check
+    // for both link commands.
+    for primitive in ["pdfstartlink", "pdfendlink"] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_annotation_control(&mut stores);
+        register_source(&mut control, format!("\\{primitive}").as_bytes());
+        assert!(
+            matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+        );
+        assert!(control.modes.current_list().nodes().is_empty());
+    }
+}
+
+#[test]
+fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
+    // pdftex.web §1561 rejects DVI mode before appending the end whatsit. The
+    // open-link stack and the unconsumed command both survive for retry.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_annotation_control(&mut stores);
+    control.modes.push(Mode::Horizontal);
+    register_source(
+        &mut control,
+        br"\pdfstartlink height 4pt user{/Subtype /Link}\pdfendlink",
+    );
+    assert_eq!(
+        control.step(&mut stores).expect("start link"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.modes.current_list().nodes().len(), 1);
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 0);
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfendlink"))
+    ));
+    assert_eq!(control.modes.current_list().nodes().len(), 1);
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        control.step(&mut stores).expect("end-link retry"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [
+            Node::Whatsit(Whatsit::PdfLinkStart { .. }),
+            Node::Whatsit(Whatsit::PdfLinkEnd { .. })
+        ]
+    ));
+}
+
 #[test]
 fn pdf_thread_family_rejects_dvi_before_operand_scan() {
     // pdftex.web §1567 checks pdfoutput before allocation and operand scanning.

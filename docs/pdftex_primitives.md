@@ -79,9 +79,8 @@ The backend-action row is partial because registration and retired-executor
 coverage do not establish canonical command-core coverage. The canonical
 `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`,
 `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont`,
-`\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfoutline`, and
-`\pdfdest` are
-complete.
+`\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfannot`,
+`\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, and `\pdfdest` are complete.
 pdftex.web §§1527 and 1594–1598 make the first five operand-free any-mode
 commands that append ordered whatsits, with their accessibility or
 continuation-link effect interpreted during shipout. The running-link policy
@@ -119,6 +118,15 @@ pdftex.web §§1524 and 1567 make `\pdfthread`, `\pdfstartthread`, and
 allocation and every dimension, attribute, and identifier scan; PDF-mode
 scanner, checkpoint, positioned traversal, and article-thread graph semantics
 remain owned by `pdftex_navigation.md`.
+
+pdftex.web §§1524, 1556, 1558, 1560, and 1561 make `\pdfannot`,
+`\pdfstartlink`, and `\pdfendlink` PDF-only extensions. Each checks
+`\pdfoutput` before allocation or operand scanning. For the two link commands,
+that check also precedes the horizontal/math-mode legality check. A DVI failure
+therefore leaves dimensions, attributes, actions, annotation text, the current
+list, and the open-link stack intact for transactional retry. The complete
+PDF-mode scanner, object-ledger, lifecycle, checkpoint, shipout, and typed
+writer contracts remain owned by `pdf_annotations.md`.
 
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in
