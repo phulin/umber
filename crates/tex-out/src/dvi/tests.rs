@@ -711,6 +711,36 @@ fn dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82() {
 }
 
 #[test]
+fn dvi_movement_signed_width_boundaries_choose_shortest_opcode() {
+    let cases: &[(i32, &[u8])] = &[
+        (-8_388_609, &[RIGHT1 + 3, 0xff, 0x7f, 0xff, 0xff]),
+        (-8_388_608, &[RIGHT1 + 2, 0x80, 0x00, 0x00]),
+        (-8_388_607, &[RIGHT1 + 2, 0x80, 0x00, 0x01]),
+        (-32_769, &[RIGHT1 + 2, 0xff, 0x7f, 0xff]),
+        (-32_768, &[RIGHT1 + 1, 0x80, 0x00]),
+        (-32_767, &[RIGHT1 + 1, 0x80, 0x01]),
+        (-129, &[RIGHT1 + 1, 0xff, 0x7f]),
+        (-128, &[RIGHT1, 0x80]),
+        (-127, &[RIGHT1, 0x81]),
+        (127, &[RIGHT1, 0x7f]),
+        (128, &[RIGHT1 + 1, 0x00, 0x80]),
+        (129, &[RIGHT1 + 1, 0x00, 0x81]),
+        (32_767, &[RIGHT1 + 1, 0x7f, 0xff]),
+        (32_768, &[RIGHT1 + 2, 0x00, 0x80, 0x00]),
+        (32_769, &[RIGHT1 + 2, 0x00, 0x80, 0x01]),
+        (8_388_607, &[RIGHT1 + 2, 0x7f, 0xff, 0xff]),
+        (8_388_608, &[RIGHT1 + 3, 0x00, 0x80, 0x00, 0x00]),
+        (8_388_609, &[RIGHT1 + 3, 0x00, 0x80, 0x00, 0x01]),
+    ];
+
+    for &(movement, expected) in cases {
+        let mut bytes = Vec::new();
+        super::movement::MovementStack::default().movement(&mut bytes, sp(movement), RIGHT1);
+        assert_eq!(bytes, expected, "movement {movement}");
+    }
+}
+
+#[test]
 fn hlist_out_node_positioning_and_coordinate_restoration_match_tex82() {
     let mut page = empty_page(0);
     let mut shifted = box_node(4, 3, 0, vec![rule_node(4, 3, 0)]);

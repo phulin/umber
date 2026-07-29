@@ -4,8 +4,9 @@ use tex_arith::Scaled;
 // newest-to-oldest search, its six `info` states, and the order in which y/z
 // (or w/x) hits restrict intervening entries are semantic: changing any of
 // them changes later opcode reuse.  `emit_explicit_movement` is the final
-// `Generate a down or right command` fragment, including TeX's exact signed
-// one/two/three/four-byte thresholds and two's-complement byte order.
+// `Generate a down or right command` fragment (tex.web §611), including the
+// DVI operands' signed one/two/three/four-byte widths and two's-complement
+// byte order.
 //
 // Umber policy: a page is staged in one growable byte vector, so every prior
 // opcode remains patchable; TeX's `dvi_gone` rejection for already-flushed
@@ -17,9 +18,8 @@ const Z0_OFFSET: u8 = 166 - 157;
 const Y1_OFFSET: u8 = 162 - 157;
 const Z1_OFFSET: u8 = 167 - 157;
 
-const ONE_BYTE_LIMIT: i64 = 0o200;
-const TWO_BYTE_LIMIT: i64 = 0o100000;
-const THREE_BYTE_LIMIT: i64 = 0o40000000;
+const THREE_BYTE_MIN: i32 = -0o40000000;
+const THREE_BYTE_MAX: i32 = 0o37777777;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct MovementStack {
@@ -155,24 +155,18 @@ enum MovementState {
 }
 
 fn emit_explicit_movement(bytes: &mut Vec<u8>, w: i32, o: u8) {
-    let abs_w = i64::from(w).abs();
-    if abs_w >= THREE_BYTE_LIMIT {
+    if (i32::from(i8::MIN)..=i32::from(i8::MAX)).contains(&w) {
+        bytes.push(o); // down1 or right1
+        bytes.push(w as u8);
+    } else if (i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&w) {
+        bytes.push(o + 1); // down2 or right2
+        bytes.extend_from_slice(&(w as i16).to_be_bytes());
+    } else if (THREE_BYTE_MIN..=THREE_BYTE_MAX).contains(&w) {
+        bytes.push(o + 2); // down3 or right3
+        let encoded = w.to_be_bytes();
+        bytes.extend_from_slice(&encoded[1..]);
+    } else {
         bytes.push(o + 3); // down4 or right4
         bytes.extend_from_slice(&w.to_be_bytes());
-    } else if abs_w >= TWO_BYTE_LIMIT {
-        bytes.push(o + 2); // down3 or right3
-        let w = if w < 0 { w + 0o100000000 } else { w };
-        bytes.push((w / 0o200000) as u8);
-        bytes.push(((w % 0o200000) / 0o400) as u8);
-        bytes.push((w % 0o400) as u8);
-    } else if abs_w >= ONE_BYTE_LIMIT {
-        bytes.push(o + 1); // down2 or right2
-        let w = if w < 0 { w + 0o200000 } else { w };
-        bytes.push((w / 0o400) as u8);
-        bytes.push((w % 0o400) as u8);
-    } else {
-        bytes.push(o); // down1 or right1
-        let w = if w < 0 { w + 0o400 } else { w };
-        bytes.push((w % 0o400) as u8);
     }
 }
