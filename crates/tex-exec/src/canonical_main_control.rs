@@ -6726,11 +6726,20 @@ fn scan_unclassified_primitive(
             token: command.spelling().semantic_token(),
         }),
         // TeX82 §1048's `any_mode(last_item)` Forbidden case: see
-        // `ScannedStep::IllegalLastItem`. These three reach this function
+        // `ScannedStep::IllegalLastItem`. These internal-only quantities
+        // reach this function
         // only when delivered standalone (not mid-scan, where
         // `internal_value_from_command` already consumes them), exactly
         // like `\eqno`/`\leqno` above.
-        P::LastKern | P::LastPenalty | P::LastSkip => Ok(ScannedStep::IllegalLastItem {
+        P::LastKern
+        | P::LastPenalty
+        | P::LastSkip
+        | P::NumExpr
+        | P::DimExpr
+        | P::GlueExpr
+        | P::MuExpr
+        | P::GlueToMu
+        | P::MuToGlue => Ok(ScannedStep::IllegalLastItem {
             token: command.spelling().semantic_token(),
         }),
         // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
@@ -6749,17 +6758,11 @@ fn scan_unclassified_primitive(
         P::NoAlign | P::Omit => Ok(ScannedStep::Continue),
         P::BeginL
         | P::BeginR
-        | P::DimExpr
         | P::DiscretionaryHyphen
         | P::EndL
         | P::EndR
         | P::GlobalDefs
-        | P::GlueExpr
-        | P::GlueToMu
         | P::LetterspaceFont
-        | P::MuExpr
-        | P::MuToGlue
-        | P::NumExpr
         | P::PageDiscards
         | P::ParShapeDimen
         | P::ParShapeIndent

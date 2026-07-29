@@ -393,6 +393,30 @@
         "count:0=511"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "etex-expressions",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-expressions.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [4945, 5002, 5065, 5138, 5173, 5185, 5194, 5212, 5227, 5242, 5250, 5404]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["effect"],
+        "count_registers": [0, 1, 2, 3, 4]
+      },
+      "expected": [
+        "count:0=14",
+        "count:1=20",
+        "count:2=8191",
+        "count:3=16",
+        "count:4=7"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

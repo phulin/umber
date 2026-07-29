@@ -1,5 +1,6 @@
 //! Private typed scanner family.
 
+mod expression;
 mod font;
 mod hyphenation;
 mod restricted;

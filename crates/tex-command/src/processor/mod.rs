@@ -89,6 +89,10 @@ pub struct CommandProcessor<'a> {
     /// This is processor-local rather than snapshot state: the executor
     /// claims it before ending the borrow and prints through `Universe`.
     pub(crate) restricted_integer_recoveries: Vec<crate::RestrictedIntegerRecovery>,
+    /// Web2C's process-local `expand_depth_count` contribution from nested
+    /// e-TeX expression primitives. Parentheses use `scan_expr`'s explicit
+    /// stack and do not enter this counter.
+    pub(crate) expression_depth: u32,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -116,6 +120,7 @@ impl<'a> CommandProcessor<'a> {
             outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
             restricted_integer_recoveries: Vec::new(),
+            expression_depth: 0,
         }
     }
 

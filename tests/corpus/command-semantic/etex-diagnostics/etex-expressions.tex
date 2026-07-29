@@ -1,0 +1,28 @@
+\nonstopmode
+\count0=\numexpr2+3*4\relax
+\count1=\numexpr(2+3)*4\relax
+\dimen0=\dimexpr5sp/2\relax
+\skip0=\glueexpr(1pt plus 2fil+3pt plus 4fil)*3/2\relax
+\muskip0=\muexpr(2mu plus 3fil minus 1mu)*3/2\relax
+\skip1=\mutoglue\muskip0
+\muskip1=\gluetomu\skip0
+\count2=0
+\ifnum\count0=14 \advance\count2 by1 \fi
+\ifnum\count1=20 \advance\count2 by2 \fi
+\ifdim\dimen0=3sp \advance\count2 by4 \fi
+\ifdim\skip0=6pt \advance\count2 by8 \fi
+\ifdim\gluestretch\skip0=9pt \advance\count2 by16 \fi
+\ifnum\gluestretchorder\skip0=1 \advance\count2 by32 \fi
+\ifdim\mutoglue\muskip0=3pt \advance\count2 by64 \fi
+\ifdim\gluestretch\mutoglue\muskip0=4.5pt \advance\count2 by128 \fi
+\ifdim\glueshrink\mutoglue\muskip0=1.5pt \advance\count2 by256 \fi
+\ifdim\skip1=3pt \advance\count2 by512 \fi
+\ifdim\mutoglue\muskip1=6pt \advance\count2 by1024 \fi
+\ifdim\gluestretch\mutoglue\muskip1=9pt \advance\count2 by2048 \fi
+\ifnum\gluestretchorder\mutoglue\muskip1=1 \advance\count2 by4096 \fi
+\count3=\numexpr7+8 \advance\count3 by1
+\count4=0
+\setbox0=\hbox{\ifnum\numexpr4*5\relax=20 \global\advance\count4 by1 \fi}
+\setbox1=\vbox{\ifdim\dimexpr1pt+2pt\relax=3pt \global\advance\count4 by2 \fi}
+$\ifdim\glueexpr1pt+2pt\relax=3pt \global\advance\count4 by4 \fi$
+\end

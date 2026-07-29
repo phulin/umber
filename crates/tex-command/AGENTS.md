@@ -81,6 +81,10 @@ print channel of its own.
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
   classification loops rather than `scan_toks` collections and so must never
   enter the `absorbing` scanner status or track a brace depth.
+  `expression.rs` and `expression/tests.rs` own e-TeX 2.6's four typed
+  expression scanners and two glue-level conversions, including their
+  explicit parenthesis stack, arithmetic recovery, glue-order rules,
+  observations, and checkpoint-retry tests.
   `structured.rs`'s `scan_accent_base` is deliberately a one-command step
   rather than a loop: TeX82 §1123 runs §1270's `do_assignments` between the
   accent code and §1124's base character, and executing an assignment is the

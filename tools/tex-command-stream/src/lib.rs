@@ -1387,17 +1387,23 @@ fn translate_observation(
                         CanonicalValue::Integer,
                     )
                 }
-            } else if matches!(record.kind, "integer" | "interaction_mode") {
+            } else if matches!(
+                record.kind,
+                "integer" | "interaction_mode" | "expression_integer"
+            ) {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
                 )
-            } else if record.kind == "dimension" {
+            } else if matches!(record.kind, "dimension" | "expression_dimension") {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Scaled,
                 )
-            } else if record.kind == "glue" {
+            } else if matches!(
+                record.kind,
+                "glue" | "expression_glue" | "expression_muglue" | "mu_to_glue" | "glue_to_mu"
+            ) {
                 parse_glue_scanner_value(&record.value)
                     .unwrap_or(CanonicalValue::Name(record.value))
             } else {

@@ -1907,6 +1907,22 @@ impl CommandProcessor<'_> {
                     _ => unreachable!("outer match restricts primitive"),
                 }
             }
+            // e-TeX 2.6 etex.ch [53a.4945--5360]: all four expression
+            // primitives are `last_item` internal quantities. `scan_expr`
+            // owns their complete typed factor/operator grammar and publishes
+            // its result before §413's common internal-value exit below.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::NumExpr
+                | UnexpandablePrimitive::DimExpr
+                | UnexpandablePrimitive::GlueExpr
+                | UnexpandablePrimitive::MuExpr),
+            ) => self.scan_expression_primitive(primitive)?,
+            // e-TeX 2.6 etex.ch [53a.5404--5425]: conversions run the source
+            // glue scanner at its own level and return the identical
+            // components and orders at the destination level.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::GlueToMu | UnexpandablePrimitive::MuToGlue),
+            ) => self.scan_glue_conversion_primitive(primitive)?,
             // e-TeX 2.6 etex.ch §3736 extends TeX82's `set_page_int`
             // internal-value fetch: chr_code 2 returns the live global
             // `interaction` scalar before the same primitive's assignment
