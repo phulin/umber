@@ -75,6 +75,13 @@ l.2 {\endgroup
 ! Too many }'s.
 l.2 {\endgroup}
                
+
+! You can't use `macro parameter character #' in horizontal mode.
+l.4 #
+     
+! Extra \endcsname.
+l.5 \endcsname
+              
 UMBER-TEX82-OFF-SAVE-PROGRESS) [42.42.7.42] UMBER-TEX82-TRANSITIONS
 (./expansion-macros.tex
 Runaway argument?

@@ -116,6 +116,9 @@ off_save|above-bottom backup|off-save.tex|off_save back_input replay seam|"kind"
 off_save|above-bottom inserted closer|off-save.tex|off_save ins_list right-brace insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
 off_save|bottom-level drop|off-save.tex|off_save bottom-level branch|"diagnostic":"off_save_bottom_drop","arguments":[{"type":"token","value":{"character":0,"catcode":"escape","control_sequence":"endgroup"}}]
 off_save|bottom-level bounded progress|off-save.tex|off_save return to ordinary command loop|"kind":"message","channel":"terminal","value":{"type":"bytes","value":[85,77,66,69,82,45,84,69,88,56,50,45,79,70,70,45,83,65,86,69,45,80,82,79,71,82,69,83,83]}
+command|bare macro parameter illegal case|off-save.tex|main_control any_mode mac_param branch|"command":"mac_param","operand":{"type":"integer","value":35},"location":{"source":"off-save.tex","line":4,"byte":0}
+command|stray endcsname error and ignore|off-save.tex|main_control any_mode end_cs_name branch|"command":"end_cs_name","operand":{"type":"integer","value":0},"control_sequence":"endcsname","location":{"source":"off-save.tex","line":5,"byte":9}
+command|end-v delivery|alignment-delivery.tex|get_x_token end_template conversion|"command":"endv","operand":{"type":"integer","value":249988},"control_sequence":"endtemplate"
 alignment|begin|alignment-delivery.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin","align_state":-1000000,"nesting":1
 alignment|finish|alignment-delivery.tex|pop_alignment pre-retirement seam|"event":"alignment","data":{"transition":"finish","align_state":999999,"nesting":1
 alignment|nested suspension|alignment-delivery.tex|push_alignment outer suspension|"transition":"suspend","align_state":1,"nesting":1

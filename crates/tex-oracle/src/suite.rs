@@ -13,7 +13,7 @@ const TEX82_GEOMETRY_SOURCE: &str = "tests/tex82-oracle/geometry.tex";
 const TEX82_GEOMETRY_EVENTS: &str = "tests/tex82-oracle/geometry-expected.jsonl";
 
 #[cfg(test)]
-pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_391;
+pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_399;
 
 /// A deterministic inventory of the offline TeX82 command-trace suite.
 #[derive(Clone, Debug, Eq, PartialEq)]
