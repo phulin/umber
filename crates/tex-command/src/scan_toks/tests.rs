@@ -1017,14 +1017,7 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
                 ]);
                 tokens
             },
-            {
-                let mut expected = (1_u8..=9).map(Token::Param).collect::<Vec<_>>();
-                expected.push(Token::Char {
-                    ch: '0',
-                    cat: Catcode::Other,
-                });
-                expected
-            },
+            { (1_u8..=9).map(Token::Param).collect::<Vec<_>>() },
         ),
     ] {
         let mut command = CommandState::default();

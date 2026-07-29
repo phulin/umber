@@ -80,6 +80,7 @@ struct ScannedParameterText {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacroParameterDiagnostic {
     NonconsecutiveNumber,
+    TooManyParameters,
     IllegalReplacementNumber { target: Option<Symbol> },
 }
 
@@ -327,6 +328,14 @@ impl CommandProcessor<'_> {
                 next_parameter += 1;
                 continue;
             }
+            if next_parameter > 9 {
+                // TeX82 §476 has already consumed both the parameter
+                // character and its follower when `t=#9`; it diagnoses and
+                // returns to `continue` without backing either token up.
+                self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::TooManyParameters);
+                malformed_parameter = true;
+                continue;
+            }
             // Canonical recovery keeps the rejected follower available and
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
@@ -476,6 +485,7 @@ impl CommandProcessor<'_> {
                 diagnostic: match diagnostic {
                     MacroParameterDiagnostic::NonconsecutiveNumber =>
                         "nonconsecutive_macro_parameter",
+                    MacroParameterDiagnostic::TooManyParameters => "too_many_macro_parameters",
                     MacroParameterDiagnostic::IllegalReplacementNumber { .. } => {
                         "illegal_replacement_parameter"
                     }
@@ -491,6 +501,14 @@ impl CommandProcessor<'_> {
                 report.help(&[
                     "I've inserted the digit you should have used after the #.",
                     "Type `1' to delete what you did use.",
+                ]);
+                report.error();
+            }
+            MacroParameterDiagnostic::TooManyParameters => {
+                let mut report = self.state.print_err("You already have nine parameters");
+                report.help(&[
+                    "I'm going to ignore the # sign you just used,",
+                    "as well as the token that followed it.",
                 ]);
                 report.error();
             }
@@ -664,8 +682,8 @@ fn is_parameter(token: Token) -> bool {
     matches!(
         token,
         Token::Char {
-            ch: '#',
-            cat: Catcode::Parameter
+            cat: Catcode::Parameter,
+            ..
         }
     )
 }

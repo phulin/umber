@@ -39,6 +39,14 @@ fn run_source(source: &[u8]) -> Universe {
     stores
 }
 
+#[test]
+fn ninth_parameter_recovery_preserves_the_mismatched_delimiter() {
+    let stores = run_source(
+        br"\catcode`U=6 \long\def\lo#1#2U3#4#5#6#7#8#8#99#{\relax}\lo\par\par\par P\par\par\par\par\par\par89{}\count0=37\end",
+    );
+    assert_eq!(stores.count(0), 37, "{:?}", stores.world().effect_records());
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 
