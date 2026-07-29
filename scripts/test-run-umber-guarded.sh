@@ -15,6 +15,10 @@ set -e
 
 test "$status" -eq 124
 
+# trip.sh's documented defaults must remain admissible to the shared guard.
+# An explicit command skips both live-reference observer scripts.
+"$root/scripts/trip.sh" true
+
 set +e
 UMBER_TRIP_TIMEOUT_SECONDS=10 \
 UMBER_TRIP_MAX_RSS_MIB=128 \

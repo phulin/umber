@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+MAX_TIMEOUT_SECONDS = 1800
+
 
 def ps_process_rows():
     result = subprocess.run(
@@ -132,8 +134,10 @@ def parse_args():
         args.command = args.command[1:]
     if not args.command:
         parser.error("a command is required after --")
-    if not 0 < args.timeout_seconds <= 600:
-        parser.error("timeout must be in (0, 600] seconds")
+    if not 0 < args.timeout_seconds <= MAX_TIMEOUT_SECONDS:
+        parser.error(
+            f"timeout must be in (0, {MAX_TIMEOUT_SECONDS}] seconds"
+        )
     if not 0 < args.max_rss_mib <= 6144:
         parser.error("aggregate RSS limit must be in (0, 6144] MiB")
     if not 0 <= args.term_grace_seconds <= 5:

@@ -218,6 +218,16 @@ fn run_file_in_process_captured(
     } else {
         CanonicalEngineSession::prepared_initex(&mut stores, engine.command_profile())
     };
+    assert_eq!(
+        session.fuel_limit(),
+        tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+        "canonical e2e sessions must use the finite command-fuel default"
+    );
+    assert_ne!(
+        session.fuel_limit(),
+        u64::MAX,
+        "canonical e2e sessions must never run with unbounded command fuel"
+    );
     let root_source = session
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
@@ -434,6 +444,16 @@ fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
     // These staged gates bootstrap plain.tex from source, so this phase is
     // INITEX rather than a cold job loaded from an already-built format.
     let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+    assert_eq!(
+        session.fuel_limit(),
+        tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+        "canonical e2e sessions must use the finite command-fuel default"
+    );
+    assert_ne!(
+        session.fuel_limit(),
+        u64::MAX,
+        "canonical e2e sessions must never run with unbounded command fuel"
+    );
     session
         .register_authored_root(&job_name, Arc::from(job_bytes))
         .map_err(|error| format!("register canonical root {job_name}: {error}"))?;
