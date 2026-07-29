@@ -49,7 +49,7 @@ impl CommandProcessor<'_> {
         }));
     }
 
-    /// Records TeX82 §1132's correction of an unbalanced alignment delimiter.
+    /// Records TeX82 §1127's correction of an unbalanced alignment delimiter.
     ///
     /// `transition` names the brace the correction inserted; the pair of
     /// records is the insertion itself followed by the `align_state` it moved.
@@ -77,7 +77,7 @@ impl CommandProcessor<'_> {
         }));
     }
 
-    /// Records TeX82 §1132's correction of an inserted brace's backup,
+    /// Records TeX82 §1127's correction of an inserted brace's backup,
     /// carrying the `align_state` the correction started from.
     pub(crate) fn observe_alignment_backup_correction(&mut self, previous: i32) {
         if !self.is_observed() {

@@ -471,14 +471,7 @@
         "alignment:recovery:1"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-55mp",
-        "mismatch": {
-          "index": 0,
-          "kind": "missing",
-          "expected": "alignment:recovery:1",
-          "actual": "<end>"
-        }
+        "kind": "pass"
       }
     },
     {

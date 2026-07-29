@@ -2208,6 +2208,31 @@ mod tests {
     }
 
     #[test]
+    fn missing_right_brace_alignment_correction_is_canonical_recovery() {
+        assert_eq!(
+            translate_alignment(
+                AlignmentRecord {
+                    transition: "missing_right_brace",
+                    alignment: Some(1),
+                    align_state: 1,
+                    delimiter: None,
+                    previous_align_state: None,
+                },
+                Some(1),
+            ),
+            Event::Alignment(AlignmentEvent {
+                transition: AlignmentTransition::Recovery,
+                align_state: 1,
+                template: None,
+                nesting: Some(1),
+                previous_align_state: None,
+                delimiter: None,
+                recovery: Some("missing_right_brace".into()),
+            })
+        );
+    }
+
+    #[test]
     fn alignment_nesting_returns_to_one_after_nested_finish() {
         let mut nesting = AlignmentNesting::default();
         let record = |transition, alignment| AlignmentRecord {

@@ -975,6 +975,25 @@ fn observed_tokens_text(tokens: &[ObservedToken]) -> String {
         .join(",")
 }
 
+/// Returns the canonical schema transition for a command-owned alignment
+/// observation.
+///
+/// Recovery records retain their exact reason internally so the schema
+/// translator can populate `recovery`; tex-oracle schema v1 represents all of
+/// those reasons with the single `recovery` transition. Semantic fixture
+/// filters operate on that canonical transition, not the internal reason.
+fn canonical_alignment_transition(transition: &str) -> &str {
+    match transition {
+        "missing_parameter"
+        | "extra_parameter"
+        | "missing_left_brace"
+        | "missing_right_brace"
+        | "extra_tab"
+        | "outer_validity" => "recovery",
+        transition => transition,
+    }
+}
+
 fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<String> {
     let mut output = Vec::new();
     for observation in &run.observations {
@@ -1037,14 +1056,14 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
             CommandObservation::Alignment(record)
                 if projection.kinds.contains(&ObservationKind::Alignment)
                     && (projection.alignment_transitions.is_empty()
-                        || projection
-                            .alignment_transitions
-                            .iter()
-                            .any(|transition| transition == record.transition)) =>
+                        || projection.alignment_transitions.iter().any(|transition| {
+                            transition == canonical_alignment_transition(record.transition)
+                        })) =>
             {
                 Some(format!(
                     "alignment:{}:{}",
-                    record.transition, record.align_state
+                    canonical_alignment_transition(record.transition),
+                    record.align_state
                 ))
             }
             CommandObservation::Recovery(record)
