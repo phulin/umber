@@ -965,6 +965,28 @@ mod tests {
     }
 
     #[test]
+    fn penalty_array_addresses_dispatch_by_profile() {
+        for (primitive, offset) in [
+            (UnexpandablePrimitive::InterLinePenalties, 0),
+            (UnexpandablePrimitive::ClubPenalties, 1),
+            (UnexpandablePrimitive::WidowPenalties, 2),
+            (UnexpandablePrimitive::DisplayWidowPenalties, 3),
+        ] {
+            let meaning = Meaning::UnexpandablePrimitive(primitive);
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::ETEX26, meaning),
+                ("set_shape".into(), Some(25_324 + offset)),
+                "e-TeX [17.230] and [49.1248] retain the penalty cell's eqtb address"
+            );
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::PDFTEX14027, meaning),
+                ("set_shape".into(), Some(25_328 + offset)),
+                "pdfTeX's four token-list parameters precede the e-TeX penalty cells"
+            );
+        }
+    }
+
+    #[test]
     fn tex82_diagnostics_use_shared_xray_selectors() {
         let mut universe = tex_state::Universe::new();
 

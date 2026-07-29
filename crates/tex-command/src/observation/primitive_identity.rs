@@ -103,6 +103,22 @@ const fn math_font_base(dialect: CommandDialect) -> i64 {
     }
 }
 
+/// Build-specific `etex_pen_base` selected by the observed engine layout.
+///
+/// e-TeX 2.6 changes [17.230] and [49.1248] install each penalty-array
+/// primitive with its region-4 eqtb address as `cur_chr`; the pinned Web2C
+/// change stack places `inter_line_penalties_loc` at 25324. pdfTeX 1.40.27
+/// inserts its four token-list parameters before `every_eof_loc`, so its
+/// corresponding base is four cells later. TeX82 does not install these
+/// primitives, but retaining the e-TeX base makes an explicitly constructed
+/// extension meaning deterministic under that otherwise impossible profile.
+const fn penalty_array_base(dialect: CommandDialect) -> i64 {
+    match dialect {
+        CommandDialect::Tex82 | CommandDialect::Etex26 => 25_324,
+        CommandDialect::Pdftex14027 => 25_328,
+    }
+}
+
 /// Canonical TeX82/e-TeX/pdfTeX command identity for a delivered
 /// `UnexpandablePrimitive`. See the module documentation for the ground
 /// truth each arm is based on.
@@ -288,14 +304,12 @@ pub(crate) fn unexpandable_primitive_identity(
         P::DimExpr => ("last_item".into(), Some(26)),
         P::GlueExpr => ("last_item".into(), Some(27)),
         P::MuExpr => ("last_item".into(), Some(28)),
-        // e-TeX `set_shape` penalty-list extension: BEST-EFFORT ordinal, not
-        // the real `etex_pen_base`-relative eqtb address (that base chains
-        // through `int_base`, which this build's confirmed value shows is
-        // not the vanilla tex.web offset -- see the module documentation).
-        P::InterLinePenalties => ("set_shape".into(), Some(1)),
-        P::ClubPenalties => ("set_shape".into(), Some(2)),
-        P::WidowPenalties => ("set_shape".into(), Some(3)),
-        P::DisplayWidowPenalties => ("set_shape".into(), Some(4)),
+        // e-TeX [17.230] and [49.1248] use each penalty array's real eqtb
+        // address as `set_shape`'s selector, not a small ordinal.
+        P::InterLinePenalties => ("set_shape".into(), Some(penalty_array_base(dialect))),
+        P::ClubPenalties => ("set_shape".into(), Some(penalty_array_base(dialect) + 1)),
+        P::WidowPenalties => ("set_shape".into(), Some(penalty_array_base(dialect) + 2)),
+        P::DisplayWidowPenalties => ("set_shape".into(), Some(penalty_array_base(dialect) + 3)),
         // e-TeX: `primitive("pagediscards",un_vbox,last_box_code)`,
         // `primitive("splitdiscards",un_vbox,vsplit_code)`.
         P::PageDiscards => ("un_vbox".into(), Some(2)),
