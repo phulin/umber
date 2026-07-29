@@ -146,7 +146,7 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<CurrentCommand>, CommandError> {
         self.command.transient.active_expansion_depth += 1;
         let result = loop {
-            match self.expanded_delivery(pending.take(), fetch)? {
+            match self.expanded_delivery(pending.take(), fetch, true)? {
                 Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => break Ok(None),
@@ -256,6 +256,55 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §§785/789's `align_peek` fetch, whose final command is handed
+    /// directly to `init_col`.
+    ///
+    /// `init_col` backs an ordinary command up before the expanded-delivery
+    /// boundary is committed: the command is observed as expanded only when
+    /// the backup is read again above its u-template. Spacers skipped by
+    /// §406 are complete deliveries and are committed here normally.
+    pub fn next_alignment_peek_token(
+        &mut self,
+    ) -> Result<Option<(CurrentCommand, bool)>, CommandError> {
+        loop {
+            let expansions_before = self.command.expansion.cumulative_expansions;
+            self.command.transient.active_expansion_depth += 1;
+            let result = self.expanded_delivery(None, ExpandedFetch::GetXToken, false);
+            self.command.transient.active_expansion_depth -= 1;
+            let Some(delivery) = result? else {
+                return Ok(None);
+            };
+            let CommandReplayDelivery::Command(command) = delivery else {
+                continue;
+            };
+            if matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                self.observe_expanded_delivery(&command);
+                continue;
+            }
+            // A command that §406 fetched directly has completed the ordinary
+            // get_x_token boundary already. Only the result reached through
+            // §381's expansion loop remains pending across §789's back_input.
+            let expanded_through_call =
+                self.command.expansion.cumulative_expansions != expansions_before;
+            if !expanded_through_call {
+                self.observe_expanded_delivery(&command);
+            }
+            return Ok(Some((command, expanded_through_call)));
+        }
+    }
+
+    /// Commits a final alignment-peek delivery that §785 consumes instead of
+    /// passing to §789's ordinary `back_input` branch.
+    pub fn commit_alignment_peek_delivery(&mut self, command: &CurrentCommand) {
+        self.observe_expanded_delivery(command);
+    }
+
     /// Delivers one expanded command or the completion of an executor-owned
     /// stored replay episode.
     ///
@@ -304,11 +353,11 @@ impl CommandProcessor<'_> {
         if is_main_loop_character(command.meaning()) {
             return Ok(Some(CommandReplayDelivery::Command(command)));
         }
-        self.expanded_delivery(Some(command), ExpandedFetch::XToken)
+        self.expanded_delivery(Some(command), ExpandedFetch::XToken, true)
     }
 
     fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
-        self.expanded_delivery(None, ExpandedFetch::GetXToken)
+        self.expanded_delivery(None, ExpandedFetch::GetXToken, true)
     }
 
     /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
@@ -318,6 +367,7 @@ impl CommandProcessor<'_> {
         &mut self,
         mut pending: Option<CurrentCommand>,
         fetch: ExpandedFetch,
+        observe_final: bool,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
             let command = match pending.take() {
@@ -354,11 +404,15 @@ impl CommandProcessor<'_> {
                     continue;
                 }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                self.observe_expanded_delivery(&command);
+                if observe_final {
+                    self.observe_expanded_delivery(&command);
+                }
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
             if !is_expandable_command(&command) {
-                self.observe_expanded_delivery(&command);
+                if observe_final {
+                    self.observe_expanded_delivery(&command);
+                }
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
             // TeX82 §394 aborts a non-`\long` macro call after its recovery

@@ -4228,27 +4228,41 @@ fn scan_alignment_peek(
     processor
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
-    let command = processor
-        .next_non_blank_x_token()
+    let (command, pending_expanded_delivery) = processor
+        .next_alignment_peek_token()
         .map_err(command_error)?
         .ok_or(ExecError::MissingToken {
             context: "alignment lookahead",
         })?;
     match command.meaning() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
+            if pending_expanded_delivery {
+                processor.commit_alignment_peek_delivery(&command);
+            }
             processor
                 .scan_alignment_noalign_opening()
                 .map_err(command_error)?;
             Ok(ScannedStep::BeginNoAlign { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
+            if pending_expanded_delivery {
+                processor.commit_alignment_peek_delivery(&command);
+            }
             Ok(ScannedStep::AlignPeekRestart { alignment })
         }
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => Ok(ScannedStep::AlignmentFinish { alignment }),
+        } => {
+            if pending_expanded_delivery {
+                processor.commit_alignment_peek_delivery(&command);
+            }
+            Ok(ScannedStep::AlignmentFinish { alignment })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
+            if pending_expanded_delivery {
+                processor.commit_alignment_peek_delivery(&command);
+            }
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,
                 omit: true,

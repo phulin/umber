@@ -2452,6 +2452,71 @@ fn a_noalign_from_everycr_is_delivered_before_the_v_template_retires() {
     );
 }
 
+/// TeX82 §§785/789 pass `align_peek`'s final command straight to `init_col`.
+/// Its ordinary branch runs `back_input` before the u-template starts, so a
+/// command produced by macro expansion has a raw delivery followed by the
+/// backup; its expanded delivery belongs to the later replay above the
+/// u-template.
+#[test]
+fn align_peek_backs_a_macro_produced_relax_before_expanded_redelivery() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\def\next{\relax}\halign{#\cr\next\cr}\end");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical alignment executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let script: Vec<&'static str> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(delivery)
+                if delivery.command == "relax"
+                    && delivery.boundary == CommandDeliveryBoundary::Raw =>
+            {
+                Some("raw relax")
+            }
+            CommandObservation::Command(delivery)
+                if delivery.command == "relax"
+                    && delivery.boundary == CommandDeliveryBoundary::Expanded =>
+            {
+                Some("expanded relax")
+            }
+            CommandObservation::Input(record) if record.transition == InputTransition::Backup => {
+                Some("push backup")
+            }
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Push
+                    && record.reason == InputReason::AlignmentUTemplate =>
+            {
+                Some("push u_template")
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        script.windows(5).any(|window| {
+            window
+                == [
+                    "raw relax",
+                    "push backup",
+                    "push u_template",
+                    "raw relax",
+                    "expanded relax",
+                ]
+        }),
+        "§789 must back up before the u-template and expanded replay: {script:?}"
+    );
+}
+
 /// `\everycr` is an ordinary token parameter, so a later assignment governs
 /// the next alignment and an empty value makes both guards `null` again --
 /// plain.tex's `\ialign` and `\@lign` both rely on exactly that.
