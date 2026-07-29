@@ -148,6 +148,12 @@ them there; this document does not restate them.
 - Implement the generic behavior that cited section describes. Never
   special-case a fixture, source file name, or specific token sequence to
   make one input pass.
+- If the tracer cannot observe the defect, add the smallest canonical
+  semantic or geometry event that exposes it and a bounded committed
+  microfixture that proves the event. Permanent automated tracer fixtures
+  are microfixtures only: never add Gentle, TRIP, e-TRIP, or another full
+  document to the routine tracer gate. Full-document traces remain a manual
+  diagnostic tier (§2).
 - The dispatch-completeness invariant (`docs/tex_command_core.md` §33.2)
   applies to every `UnexpandablePrimitive` in `scan_command`: it is routed by
   a named arm or fails loudly via `ExecError::UnimplementedPrimitive`. Never
@@ -170,6 +176,13 @@ them there; this document does not restate them.
   wrong title costs the next agent more than no title does.
 - The next agent renames the issue once the real cause is known, and
   re-derives any theory itself rather than trusting the placeholder's guess.
+- Keep only one active issue and one implementation agent per divergence
+  front. A successor is a placeholder for the newly observed front, not a
+  second speculative implementation stream.
+- After a completed branch is integrated, remove its worktree and local
+  branch. Preserve unfinished or conflicting work by attaching its exact
+  disposition to the owning bd issue before cleanup, not by leaving an
+  unowned worktree or coordinator handoff.
 
 ## 5. Standing gates
 
