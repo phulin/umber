@@ -2044,6 +2044,8 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
     // TeX82 §§936-937 and §§961-963: scanner othercases retain the
     // partially collected word; invalid lccodes are diagnosed during apply;
     // a duplicate is diagnosed after its replacement has been installed.
+    // The schema-v1 TeX82 instrumentation publishes no diagnostic event for
+    // either the scanner or apply sites.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
@@ -2053,9 +2055,25 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
            \patterns{a\relax b a!b a1b a2b}
            \count0=1\end",
     );
-    run_to_end(&mut control, &mut stores);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
 
     assert_eq!(stores.count(0), 1);
+    assert!(
+        !observations
+            .0
+            .iter()
+            .any(|event| matches!(event, CommandObservation::Diagnostic(_))),
+        "§§936/961/963/966 have no schema-v1 diagnostic observation"
+    );
     let output = terminal_text(&stores);
     for expected in [
         "! Improper \\hyphenation will be flushed.",

@@ -78,7 +78,6 @@ pub(crate) use hmode::{
     flush_pending_hchars, flush_pending_hchars_without_right_boundary, norm_min,
     try_append_character, try_append_tfm_character_span,
 };
-pub(crate) use hyphenation::HyphenationApplyDiagnostic;
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]

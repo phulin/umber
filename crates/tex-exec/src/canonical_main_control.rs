@@ -10316,25 +10316,11 @@ fn apply_scanned_step(
             } else {
                 crate::assignments::apply_hyphenation_exceptions(stores, words)
             };
-            if let Some(buffer) = command.observations.as_mut() {
-                buffer.0.extend(diagnostics.iter().map(|diagnostic| {
-                    CommandObservation::Diagnostic(DiagnosticRecord {
-                        severity: "error",
-                        diagnostic: match diagnostic {
-                            crate::assignments::HyphenationApplyDiagnostic::NotALetter => {
-                                "hyphenation_not_a_letter"
-                            }
-                            crate::assignments::HyphenationApplyDiagnostic::Nonletter => {
-                                "patterns_nonletter"
-                            }
-                            crate::assignments::HyphenationApplyDiagnostic::DuplicatePattern => {
-                                "duplicate_pattern"
-                            }
-                        },
-                        arguments: Vec::new(),
-                    })
-                }));
-            }
+            // §§963/966 print these diagnostics while applying the collected
+            // words, but the schema-v1 TeX82 instrumentation records no
+            // semantic event at either site. Keep the diagnostic and
+            // recovery behavior below without inserting observations ahead
+            // of the command that follows the scanned group.
             crate::assignments::report_apply_diagnostics(stores, diagnostics);
             Ok(ReplayStep::Continue)
         }
