@@ -803,8 +803,8 @@ Unlike the legacy runner (`EngineSession` over `ExecutionContext`/
 `umber::CanonicalEngineSession` directly: it seeds the staged directory into a
 memory `World` (via the shared `staged_world` helper both runners now use),
 installs the canonical primitive tables with
-`tex_expand::install_expandable_primitives`/
-`tex_exec::install_unexpandable_primitives` (matching
+`CanonicalEngineSession::tex82_initex`, whose command core owns the expandable
+table and composes it with `tex_exec::install_unexpandable_primitives` (matching
 `examples/first_failure_locator.rs`'s proven-working setup rather than the
 CLI's `prepare_run_stores`), registers the staged job wrapper as an authored
 root, and answers `\input`/font resource suspensions from a `StagedDirResourceHost`
