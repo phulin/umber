@@ -3050,7 +3050,7 @@ fn exact_immutable_store_root_survives_format_reconstruction() {
 }
 
 #[test]
-fn format_dump_compacts_to_the_reachable_name_macro_and_token_closure() {
+fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
     let mut universe = Universe::new();
     let dead_name = universe.intern("dead-format-history");
     let dead_tokens = universe.intern_token_list(&[Token::Cs(dead_name.symbol())]);
@@ -3085,7 +3085,9 @@ fn format_dump_compacts_to_the_reachable_name_macro_and_token_closure() {
             .as_ref();
         u32::from_le_bytes(bytes[4..8].try_into().expect("count field"))
     };
-    assert_eq!(count(crate::stores::NAMES_SECTION), 1);
+    // TeX82 §§256 and 1309 retain the complete occupied control-sequence
+    // namespace even when an entry has no reachable meaning.
+    assert_eq!(count(crate::stores::NAMES_SECTION), 2);
     assert_eq!(count(crate::stores::TOKEN_LISTS_SECTION), 2);
     assert_eq!(count(crate::stores::MACROS_SECTION), 1);
 
@@ -3097,7 +3099,10 @@ fn format_dump_compacts_to_the_reachable_name_macro_and_token_closure() {
         restored.meaning(restored_live),
         Meaning::Macro { .. }
     ));
-    assert!(restored.symbol("dead-format-history").is_none());
+    let restored_dead = restored
+        .symbol("dead-format-history")
+        .expect("occupied undefined name remains interned");
+    assert_eq!(restored.meaning(restored_dead), Meaning::Undefined);
 }
 
 #[test]

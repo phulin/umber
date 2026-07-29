@@ -137,6 +137,86 @@ fn format_preserves_known_undefined_control_sequence_names() {
 }
 
 #[test]
+fn format_preserves_multiple_undefined_names_in_interner_order() {
+    let mut stores = Stores::new();
+    let first = stores.intern("first-undefined");
+    let middle = stores.intern("middle-defined");
+    stores.set_meaning(middle, crate::meaning::Meaning::Relax);
+    let last = stores.intern("last-undefined");
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture ordered namespace")
+        .restore()
+        .expect("restore ordered namespace");
+
+    for (name, raw) in [
+        ("first-undefined", first.raw()),
+        ("middle-defined", middle.raw()),
+        ("last-undefined", last.raw()),
+    ] {
+        assert_eq!(
+            restored.symbol(name).expect("name survives").raw(),
+            raw,
+            "format round trip preserves the occupied hash-table order"
+        );
+    }
+}
+
+#[test]
+fn format_preserves_undefined_active_character_names() {
+    let mut stores = Stores::new();
+    let active = stores.intern_active_character('~');
+    assert_eq!(stores.meaning(active), crate::meaning::Meaning::Undefined);
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture active-character namespace")
+        .restore()
+        .expect("restore active-character namespace");
+
+    let restored_active = restored
+        .active_character_symbol('~')
+        .expect("undefined active character remains known");
+    assert_eq!(
+        restored.meaning(restored_active),
+        crate::meaning::Meaning::Undefined
+    );
+}
+
+#[test]
+fn format_preserves_names_reverted_to_undefined() {
+    let mut stores = Stores::new();
+    let name = stores.intern("reverted-to-undefined");
+    stores.set_meaning(name, crate::meaning::Meaning::Relax);
+    stores.set_meaning(name, crate::meaning::Meaning::Undefined);
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture reverted namespace")
+        .restore()
+        .expect("restore reverted namespace");
+
+    let restored_name = restored
+        .symbol("reverted-to-undefined")
+        .expect("reverted name remains known");
+    assert_eq!(
+        restored.meaning(restored_name),
+        crate::meaning::Meaning::Undefined
+    );
+}
+
+#[test]
+fn format_does_not_invent_absent_control_sequence_names() {
+    let stores = Stores::new();
+    assert!(stores.symbol("never-interned").is_none());
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture namespace")
+        .restore()
+        .expect("restore namespace");
+
+    assert!(restored.symbol("never-interned").is_none());
+}
+
+#[test]
 fn reserved_environment_cell_key_fails_before_store_publication() {
     let stores = Stores::new();
     let mut format = StoreFormat::capture(&stores).expect("capture valid format");
