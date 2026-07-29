@@ -988,10 +988,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
     assert_eq!(request.width, Some(Scaled::from_raw(10 * Scaled::UNITY)));
     assert_eq!(request.height, Some(Scaled::from_raw(20 * Scaled::UNITY)));
     assert_eq!(request.depth, Some(Scaled::from_raw(3 * Scaled::UNITY)));
-    assert_eq!(
-        request.page,
-        tex_command::PdfImagePageSelection::Number(2)
-    );
+    assert_eq!(request.page, tex_command::PdfImagePageSelection::Number(2));
     assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
     assert!(request.page_box_explicit);
     assert!(request.attr.is_some());
@@ -1060,10 +1057,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
     assert_eq!(request.width, Some(Scaled::from_raw(7 * Scaled::UNITY)));
     assert_eq!(request.height, Some(Scaled::from_raw(8 * Scaled::UNITY)));
     assert_eq!(request.depth, Some(Scaled::from_raw(2 * Scaled::UNITY)));
-    assert_eq!(
-        request.page,
-        tex_command::PdfImagePageSelection::Number(3)
-    );
+    assert_eq!(request.page, tex_command::PdfImagePageSelection::Number(3));
     assert_eq!(request.page_box, tex_command::PdfImagePageBox::Crop);
     assert!(request.attr.is_some());
 

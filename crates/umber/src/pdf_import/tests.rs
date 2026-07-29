@@ -14,10 +14,7 @@ fn named_destination_pdf(name_tree: bool) -> Vec<u8> {
             )
             .expect("destination name tree");
         document
-            .add_dictionary(
-                6,
-                Dictionary::new().entry("Dests", reference(5)),
-            )
+            .add_dictionary(6, Dictionary::new().entry("Dests", reference(5)))
             .expect("names dictionary");
         Dictionary::new()
             .entry("Type", name("Catalog"))
@@ -29,12 +26,12 @@ fn named_destination_pdf(name_tree: bool) -> Vec<u8> {
             .entry("Pages", reference(2))
             .entry(
                 "Dests",
-                Dictionary::new().entry("chapter", b"[4 0 R /Fit]").to_bytes(),
+                Dictionary::new()
+                    .entry("chapter", b"[4 0 R /Fit]")
+                    .to_bytes(),
             )
     };
-    document
-        .add_dictionary(1, catalog)
-        .expect("catalog");
+    document.add_dictionary(1, catalog).expect("catalog");
     document
         .add_dictionary(
             2,
@@ -158,7 +155,7 @@ fn recent_arxiv_dct_resources_import_as_encoded_streams_when_available() {
             &tex_exec::PdfImagePageSelection::Number(1),
             PdfImagePageBox::Media,
         )
-            .unwrap_or_else(|error| panic!("inspect {}: {error}", path.display()));
+        .unwrap_or_else(|error| panic!("inspect {}: {error}", path.display()));
         assert_eq!(inspected.total_pages, 1, "{}", path.display());
         let mut next_object = 100;
         let imported = import_pdf_page(bytes.into(), 1, &mut next_object)

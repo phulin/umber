@@ -2190,7 +2190,7 @@ fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
         processor
             .get_x_token()
             .expect("read following token")
-            .unwrap()
+            .expect("following token exists")
             .spelling()
             .semantic_token(),
         Token::Char {

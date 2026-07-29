@@ -123,11 +123,7 @@ fn named_destination_page(pdf: &Pdf, wanted: &[u8]) -> Result<u32, String> {
 
 const MAX_NAME_TREE_DEPTH: usize = 256;
 
-fn name_tree_destination<'a>(
-    node: &Dict<'a>,
-    wanted: &[u8],
-    depth: usize,
-) -> Option<Object<'a>> {
+fn name_tree_destination<'a>(node: &Dict<'a>, wanted: &[u8], depth: usize) -> Option<Object<'a>> {
     if depth >= MAX_NAME_TREE_DEPTH {
         return None;
     }
