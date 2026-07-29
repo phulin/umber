@@ -40,9 +40,22 @@ The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.
 
-The warmed `scripts/run-native-tests.py` target is under 10 seconds on the
-current macOS development workspace; investigate a sustained run above 15
-seconds or any default test that invokes live TeX. `scripts/check.sh` checks dprint and
+A warmed `scripts/run-native-tests.py` is roughly 50 seconds on the current
+24-core Linux development workspace, of which about 19 seconds is test
+execution across its 48 binaries and the rest is Cargo overhead plus the
+preflight self-tests, worktree asset provisioning, and the property-catalogue
+gate. Investigate any default test that invokes live TeX, and treat a
+sustained run well above that figure as worth measuring rather than absorbing.
+
+That number is a measurement of one machine, not a target every machine owes.
+It replaces an "under 10 seconds, investigate above 15" budget that no
+measurement on this hardware could ever satisfy, which is worse than no budget
+at all: a threshold every run exceeds is one nobody acts on. Re-measure it
+where the gate actually runs rather than porting the figure. A warmed
+`scripts/check.sh clippy` is about 2 seconds against 85 seconds cold, because
+both lint passes reuse one `target/clippy` tree.
+
+`scripts/check.sh` checks dprint and
 rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
 two-minute local budget. Naming gates on its command line, as in
 `scripts/check.sh clippy`, runs exactly those gates with the same commands the
