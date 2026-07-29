@@ -7037,7 +7037,7 @@ fn scan_arithmetic_assignment(
     })
 }
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(test)]
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
     tokens
         .iter()
@@ -8364,7 +8364,12 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         }),
         ScannedStep::Message { tokens, .. } => Some(EffectRecord {
             kind: "message",
-            detail: replay_text(stores.tokens(tokens.token_list())),
+            // TeX82 §1279 observes the string produced by
+            // `token_show(def_ref)`, not a character-only projection of the
+            // expanded list. Control-sequence tokens can deliberately survive
+            // expansion through `\noexpand` and must retain `print_cs`'s
+            // spelling and separator.
+            detail: message_text(stores, tokens.token_list()),
             tokens: None,
         }),
         ScannedStep::ShowTokens { tokens } => Some(EffectRecord {

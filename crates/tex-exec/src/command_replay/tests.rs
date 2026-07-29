@@ -4142,6 +4142,41 @@ fn canonical_initex_replay_observes_committed_message_effects() {
 }
 
 #[test]
+fn canonical_message_observation_preserves_control_sequences_across_retry() {
+    // TeX82 §1279 renders the expanded token list with `token_show`. A
+    // `\noexpand` result is therefore still printed as a control sequence;
+    // the observer must not project it away. Roll back the command state and
+    // repeat the same bounded step to pin aggregate retry determinism.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\message{\noexpand\one \noexpand\csname on line 60}\end",
+    );
+    let snapshot = control.command_mut().snapshot();
+
+    let first = step_observations(&mut control, &mut universe, "mixed-token message");
+    assert!(matches!(
+        first.last(),
+        Some(CommandObservation::Effect(effect))
+            if effect.kind == "message" && effect.detail == r"\one \csname on line 60"
+    ));
+
+    control
+        .command_mut()
+        .rollback(snapshot)
+        .expect("message input rolls back for a deterministic retry");
+    let mut retried_universe = Universe::new_with_plain_catcodes();
+    let _initialized = CommandReplayControl::tex82_initex(&mut retried_universe);
+    let retried = step_observations(
+        &mut control,
+        &mut retried_universe,
+        "retried mixed-token message",
+    );
+    assert_eq!(retried, first);
+}
+
+#[test]
 fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
     // TeX82 §1095 (`hmode+stop` / `head_for_vmode`) first backs up \end,
     // then backs up inserted \par. The command processor owns both input
