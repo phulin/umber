@@ -40,20 +40,27 @@ The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.
 
-A warmed `scripts/run-native-tests.py` is roughly 50 seconds on the current
-24-core Linux development workspace, of which about 19 seconds is test
-execution across its 48 binaries and the rest is Cargo overhead plus the
-preflight self-tests, worktree asset provisioning, and the property-catalogue
-gate. Investigate any default test that invokes live TeX, and treat a
-sustained run well above that figure as worth measuring rather than absorbing.
+A warmed `scripts/run-native-tests.py` spends about 19 seconds inside its test
+binaries, summed from the 48 `test result:` lines it prints. That figure is
+worth stating because it is the one part of the run that does not depend on
+build state: it is the same whether the tree is cold, warm, or contended.
+Investigate any default test that invokes live TeX.
 
-That number is a measurement of one machine, not a target every machine owes.
-It replaces an "under 10 seconds, investigate above 15" budget that no
-measurement on this hardware could ever satisfy, which is worse than no budget
-at all: a threshold every run exceeds is one nobody acts on. Re-measure it
-where the gate actually runs rather than porting the figure. A warmed
-`scripts/check.sh clippy` is about 2 seconds against 85 seconds cold, because
-both lint passes reuse one `target/clippy` tree.
+Wall-clock budgets are deliberately not stated here. The previous one --
+"under 10 seconds on the current macOS development workspace; investigate a
+sustained run above 15 seconds" -- was a number from one machine that no run
+on other hardware could satisfy, and a threshold every run exceeds is one
+nobody acts on. Replacing it with a second machine's number reproduces the
+defect, and the replacement attempt demonstrated why: on the Linux workspace
+the same warm command measured 17.9s, 22.4s, 25.2s, 33.0s, and 41.9s in one
+sitting, drifting upward as an unrelated `k3s` workload took the load average
+to 40 on 24 cores with swap fully exhausted.
+
+So: measure wall clock against itself, back to back and alternating, on a
+quiet machine, and never compare a figure taken before a `Cargo.toml` edit
+with one taken after -- a feature change invalidates the build, and the
+rebuild lands in whichever run happens to follow it. Two of this repository's
+own optimization proposals died on exactly that mistake.
 
 `scripts/check.sh` checks dprint and
 rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
