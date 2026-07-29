@@ -33,6 +33,9 @@ pub struct TripTriageSource<'a> {
 /// The compared channels for one side of the two-phase workload.
 #[derive(Clone, Copy, Debug)]
 pub struct TripTriageChannels<'a> {
+    /// Optional earlier command history that established format-loaded macro
+    /// meanings on this same side.
+    pub initialization_events: Option<&'a [u8]>,
     /// Canonical schema-v1 JSONL. `None` is itself a meaningful mismatch.
     pub command_events: Option<&'a [u8]>,
     /// Canonical schema-v2 geometry JSONL, kept identity-separate from v1.
@@ -104,6 +107,8 @@ fn first_divergence(
         "command_events",
         input.expected.command_events,
         input.actual.command_events,
+        input.expected.initialization_events,
+        input.actual.initialization_events,
     )? {
         return Ok(Some(divergence));
     }
@@ -111,6 +116,8 @@ fn first_divergence(
         "geometry_events",
         input.expected.geometry_events,
         input.actual.geometry_events,
+        None,
+        None,
     )? {
         return Ok(Some(divergence));
     }
@@ -147,6 +154,8 @@ fn event_divergence(
     channel: &'static str,
     expected: Option<&[u8]>,
     actual: Option<&[u8]>,
+    expected_initialization: Option<&[u8]>,
+    actual_initialization: Option<&[u8]>,
 ) -> Result<Option<Divergence>> {
     match (expected, actual) {
         (None, None) => Ok(None),
@@ -170,7 +179,10 @@ fn event_divergence(
                     &actual.header.manifest,
                 )));
             }
-            let mut projection = TripProjection::default();
+            let mut projection = TripProjection::from_initialization(
+                expected_initialization,
+                actual_initialization,
+            )?;
             let index = expected
                 .events
                 .iter()
@@ -209,6 +221,26 @@ struct TripProjection {
 }
 
 impl TripProjection {
+    fn from_initialization(expected: Option<&[u8]>, actual: Option<&[u8]>) -> Result<Self> {
+        let mut projection = Self::default();
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            return Ok(projection);
+        };
+        let expected = ObservationStream::from_canonical_json_lines(expected)
+            .context("expected initialization history is not canonical schema-v1 JSONL")?;
+        let actual = ObservationStream::from_canonical_json_lines(actual)
+            .context("actual initialization history is not canonical schema-v1 JSONL")?;
+        if expected.events.len() != actual.events.len() {
+            return Ok(Self::default());
+        }
+        for (expected, actual) in expected.events.iter().zip(&actual.events) {
+            if !projection.events_match("command_events", expected, actual) {
+                return Ok(Self::default());
+            }
+        }
+        Ok(projection)
+    }
+
     fn events_match(
         &mut self,
         channel: &str,
@@ -386,11 +418,15 @@ fn report_text(
         "command_events",
         input.expected.command_events,
         input.actual.command_events,
+        input.expected.initialization_events,
+        input.actual.initialization_events,
     );
     let geometry_accounting = event_accounting(
         "geometry_events",
         input.expected.geometry_events,
         input.actual.geometry_events,
+        None,
+        None,
     );
     for (key, value) in [
         ("schema", "umber.trip-triage.v1".to_string()),
@@ -484,6 +520,8 @@ fn event_accounting(
     channel: &str,
     expected: Option<&[u8]>,
     actual: Option<&[u8]>,
+    expected_initialization: Option<&[u8]>,
+    actual_initialization: Option<&[u8]>,
 ) -> EventAccounting {
     let (Some(expected), Some(actual)) = (expected, actual) else {
         return EventAccounting {
@@ -497,7 +535,9 @@ fn event_accounting(
         .expect("event streams were validated before report rendering");
     let actual = ObservationStream::from_canonical_json_lines(actual)
         .expect("event streams were validated before report rendering");
-    let mut projection = TripProjection::default();
+    let mut projection =
+        TripProjection::from_initialization(expected_initialization, actual_initialization)
+            .expect("initialization streams were validated before report rendering");
     let mut projected_equivalent_count = 0;
     let mut projected_divergence_count = 0;
     for (left, right) in expected.events.iter().zip(&actual.events) {
@@ -724,6 +764,28 @@ mod tests {
         out
     }
 
+    fn macro_initialization_events(bodies: &[CanonicalValue]) -> Vec<u8> {
+        let mut normalizer = Normalizer::new();
+        let mut out = format!(
+            "{{\"schema\":{SCHEMA_VERSION},\"manifest\":\"{}\"}}\n",
+            "a".repeat(64)
+        )
+        .into_bytes();
+        for body in bodies {
+            let event = Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name("probe".into()),
+                value: body.clone(),
+                scope: "local".into(),
+            });
+            out.extend_from_slice(
+                &serde_json::to_vec(&normalizer.normalize(event)).expect("event"),
+            );
+            out.push(b'\n');
+        }
+        out
+    }
+
     fn macro_call_only_events(operand: CanonicalValue, name: &str, command: &str) -> Vec<u8> {
         let mut normalizer = Normalizer::new();
         let event = Event::Command(CommandEvent {
@@ -784,6 +846,7 @@ mod tests {
         let reference_dvi = dvi(b"ref", &[140]);
         let actual_dvi = dvi(b"other", &[141]);
         let base = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&reference_events),
             geometry_events: None,
             transcript: b"alpha",
@@ -791,6 +854,7 @@ mod tests {
             dvi: Some(&reference_dvi),
         };
         let event_mismatch = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&actual_events),
             ..base
         };
@@ -798,6 +862,7 @@ mod tests {
             (event_mismatch, "command_events"),
             (
                 TripTriageChannels {
+                    initialization_events: None,
                     transcript: b"alpHa",
                     ..base
                 },
@@ -805,6 +870,7 @@ mod tests {
             ),
             (
                 TripTriageChannels {
+                    initialization_events: None,
                     log: b"loG",
                     ..base
                 },
@@ -812,6 +878,7 @@ mod tests {
             ),
             (
                 TripTriageChannels {
+                    initialization_events: None,
                     dvi: Some(&actual_dvi),
                     ..base
                 },
@@ -857,6 +924,7 @@ mod tests {
         ] {
             let actual = macro_command_events(operand);
             let expected = TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(&reference),
                 geometry_events: None,
                 transcript: b"same",
@@ -864,6 +932,7 @@ mod tests {
                 dvi: None,
             };
             let actual = TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(&actual),
                 ..expected
             };
@@ -874,6 +943,94 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn format_loaded_macro_call_uses_matching_initialization_definition() {
+        // TeX82 §§382/1309: a loaded call has no in-phase meaning mutation,
+        // so the completed INITEX definition is the proof that only the
+        // allocation-owned `def_ref` differs.
+        let temp = tempfile::tempdir().expect("temp");
+        let reference_history = macro_history_events(
+            CanonicalValue::Integer(249_985),
+            "probe",
+            "call",
+            macro_body(b'a'),
+        );
+        let actual_history = macro_history_events(
+            CanonicalValue::Integer(17),
+            "probe",
+            "call",
+            macro_body(b'a'),
+        );
+        let reference_call =
+            macro_call_only_events(CanonicalValue::Integer(249_985), "probe", "call");
+        let actual_call = macro_call_only_events(CanonicalValue::Integer(17), "probe", "call");
+        let expected = TripTriageChannels {
+            initialization_events: Some(&reference_history),
+            command_events: Some(&reference_call),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            initialization_events: Some(&actual_history),
+            command_events: Some(&actual_call),
+            ..expected
+        };
+        assert!(
+            write_trip_triage_artifact(temp.path(), input(expected, actual))
+                .expect("comparison")
+                .is_none()
+        );
+
+        let changed_history = macro_history_events(
+            CanonicalValue::Integer(17),
+            "probe",
+            "call",
+            macro_body(b'b'),
+        );
+        let artifact = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                expected,
+                TripTriageChannels {
+                    initialization_events: Some(&changed_history),
+                    ..actual
+                },
+            ),
+        )
+        .expect("comparison")
+        .expect("changed loaded definition must diverge");
+        assert!(
+            fs::read_to_string(artifact)
+                .expect("report")
+                .contains("earliest.position: event[0]")
+        );
+
+        let reference_history = macro_initialization_events(&[macro_body(b'a'), macro_body(b'b')]);
+        let actual_history = macro_initialization_events(&[macro_body(b'a')]);
+        let artifact = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                TripTriageChannels {
+                    initialization_events: Some(&reference_history),
+                    ..expected
+                },
+                TripTriageChannels {
+                    initialization_events: Some(&actual_history),
+                    ..actual
+                },
+            ),
+        )
+        .expect("comparison")
+        .expect("one-sided loaded redefinition must invalidate the proof");
+        assert!(
+            fs::read_to_string(artifact)
+                .expect("report")
+                .contains("earliest.position: event[0]")
+        );
     }
 
     #[test]
@@ -892,6 +1049,7 @@ mod tests {
             macro_body(b'b'),
         );
         let expected = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&reference),
             geometry_events: None,
             transcript: b"same",
@@ -899,6 +1057,7 @@ mod tests {
             dvi: None,
         };
         let actual = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&actual),
             ..expected
         };
@@ -932,6 +1091,7 @@ mod tests {
         let reference = macro_command_events_named(CanonicalValue::Integer(249_985), "older");
         let actual = macro_command_events_named(CanonicalValue::Integer(249_986), "newer");
         let expected = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&reference),
             geometry_events: None,
             transcript: b"same",
@@ -939,6 +1099,7 @@ mod tests {
             dvi: None,
         };
         let actual = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&actual),
             ..expected
         };
@@ -972,6 +1133,7 @@ mod tests {
         );
         for actual in [&unmatched, &changed_flags] {
             let expected = TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(&reference),
                 geometry_events: None,
                 transcript: b"same",
@@ -979,6 +1141,7 @@ mod tests {
                 dvi: None,
             };
             let actual = TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(actual),
                 ..expected
             };
@@ -997,6 +1160,7 @@ mod tests {
         let dvi = dvi(b"ref", &[140]);
         let long_log = vec![b'x'; ARTIFACT_LIMIT * 4];
         let expected = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&events),
             geometry_events: None,
             transcript: b"same",
@@ -1004,6 +1168,7 @@ mod tests {
             dvi: Some(&dvi),
         };
         let actual = TripTriageChannels {
+            initialization_events: None,
             log: b"different",
             ..expected
         };
@@ -1027,6 +1192,7 @@ mod tests {
         let changed_geometry = geometry_events(118);
         let dvi = dvi(b"ref", &[140]);
         let base = TripTriageChannels {
+            initialization_events: None,
             command_events: Some(&command),
             geometry_events: Some(&geometry),
             transcript: b"same",
@@ -1038,6 +1204,7 @@ mod tests {
             input(
                 base,
                 TripTriageChannels {
+                    initialization_events: None,
                     command_events: Some(&changed_command),
                     geometry_events: Some(&changed_geometry),
                     transcript: b"different",
@@ -1058,6 +1225,7 @@ mod tests {
             input(
                 base,
                 TripTriageChannels {
+                    initialization_events: None,
                     geometry_events: Some(&changed_geometry),
                     transcript: b"different",
                     ..base

@@ -645,6 +645,12 @@ fn compare_trip_phase(
     let expected_terminal =
         fs::read(oracle_root.join(format!("{phase}-terminal.txt"))).expect("terminal oracle");
     let expected_log = fs::read(oracle_root.join(format!("{phase}.log"))).expect("log oracle");
+    let expected_initialization = (phase == "format-loaded").then(|| {
+        fs::read(oracle_root.join("initex-command.jsonl")).expect("INITEX command oracle")
+    });
+    let actual_initialization = (phase == "format-loaded").then(|| {
+        fs::read(artifact_root.join("initex-command.jsonl")).expect("INITEX command artifact")
+    });
     let actual_command = run.capture.streams(&expected_command).diagnostic;
     let actual_geometry = run.capture.geometry(&expected_geometry);
     fs::write(
@@ -672,6 +678,7 @@ fn compare_trip_phase(
                 identity: actual_identity,
             },
             expected: TripTriageChannels {
+                initialization_events: expected_initialization.as_deref(),
                 command_events: Some(&expected_command),
                 geometry_events: Some(&expected_geometry),
                 transcript: &expected_terminal,
@@ -679,6 +686,7 @@ fn compare_trip_phase(
                 dvi: dvi_pair.map(|(expected, _)| expected),
             },
             actual: TripTriageChannels {
+                initialization_events: actual_initialization.as_deref(),
                 command_events: Some(&actual_command),
                 geometry_events: Some(&actual_geometry),
                 transcript: &run.terminal,
@@ -748,6 +756,7 @@ fn compare_trip_failure(
                 identity: &identity,
             },
             expected: TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(&expected_command),
                 geometry_events: Some(&expected_geometry),
                 transcript: &expected_terminal,
@@ -755,6 +764,7 @@ fn compare_trip_failure(
                 dvi: None,
             },
             actual: TripTriageChannels {
+                initialization_events: None,
                 command_events: Some(&actual_command),
                 geometry_events: actual_geometry.as_deref(),
                 transcript: &capture.terminal,
