@@ -855,11 +855,18 @@ impl CommandProcessor<'_> {
         if !units.attach_sign {
             self.scan_optional_space()?;
         }
-        Ok(if flip {
+        let value = if flip {
             Scaled::from_raw(-units.value.raw())
         } else {
             units.value
-        })
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "dimension",
+            value: value.raw().to_string(),
+            tokens: None,
+        }));
+        Ok(value)
     }
 
     /// Scans a normal or mu glue specification.

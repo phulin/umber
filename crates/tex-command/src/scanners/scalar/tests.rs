@@ -126,6 +126,67 @@ fn scalar_forms_recovery_and_snapshot_use_only_command_input() {
 }
 
 #[test]
+fn internal_integer_glue_width_observes_dimension_on_retry() {
+    // TeX82 §461 sends an internal integer width through §448's
+    // `scan_dimen(mu,false,true)`. The shortcut skips the integer scan but
+    // still completes and observes one dimension scan before `plus`.
+    let mut command = CommandState::default();
+    let mut universe = Universe::new();
+    let count = universe.intern("count-width").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(33));
+    universe.set_count(33, -3);
+    push(
+        &mut command,
+        vec![
+            char_token('-'),
+            Token::Cs(count),
+            char_token('s'),
+            char_token('p'),
+            char_token(' '),
+            char_token('p'),
+            char_token('l'),
+            char_token('u'),
+            char_token('s'),
+            char_token(' '),
+            char_token('4'),
+            char_token('6'),
+            char_token('p'),
+            char_token('t'),
+        ],
+    );
+    let snapshot = command.snapshot();
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut attempts = Vec::new();
+
+    for _ in 0..2 {
+        let mut recorder = Recorder::default();
+        let glue = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder);
+            processor.scan_glue(false).expect("glue scans").value
+        };
+        assert_eq!(glue.width.raw(), 3);
+        assert_eq!(glue.stretch.raw(), 46 * Scaled::UNITY);
+        assert_eq!(
+            scanner_kinds(&recorder),
+            vec!["internal", "dimension", "integer", "dimension", "glue"]
+        );
+        attempts.push(recorder.0);
+        command
+            .rollback(snapshot.clone())
+            .expect("retry rolls back");
+    }
+
+    assert_eq!(attempts[0], attempts[1]);
+}
+
+#[test]
 fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
     let mut command = CommandState::default();
     push(
