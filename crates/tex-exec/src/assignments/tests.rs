@@ -299,7 +299,11 @@ fn brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer() {
     assert_eq!(stores.count(0), 0);
     assert_eq!(stores.count(1), 0);
     assert_eq!(stores.count(2), 3);
-    assert_eq!(stores.group_depth(), 0);
+    assert_eq!(
+        stores.group_depth(),
+        1,
+        "TeX82 §1068 discards the mismatched brace without unsaving"
+    );
     let output = terminal_text(&stores);
     assert!(output.contains("Too many }'s"), "{output}");
     assert!(output.contains("Extra \\endgroup"), "{output}");

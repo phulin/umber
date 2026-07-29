@@ -3837,7 +3837,7 @@ enum ScannedStep {
     BeginSemiSimpleGroup,
     EndSemiSimpleGroup,
     ExtraRightBrace,
-    ExtraRightBraceEndsSemiSimpleGroup,
+    ExtraRightBraceInSemiSimpleGroup,
     /// TeX82 §1186: the closing brace of a `math_group` opened by §1153's
     /// `push_math`, or §1174's `build_choices` closing a `math_choice_group`
     /// opened by §1172/§1174. Applying it only `unsave`s; the nested loop in
@@ -5045,7 +5045,7 @@ fn scan_command(
             cat: Catcode::EndGroup,
             ..
         } if innermost_group == Some(GroupKind::SemiSimple) => {
-            Ok(ScannedStep::ExtraRightBraceEndsSemiSimpleGroup)
+            Ok(ScannedStep::ExtraRightBraceInSemiSimpleGroup)
         }
         Meaning::CharToken {
             cat: Catcode::EndGroup,
@@ -8522,7 +8522,7 @@ fn applied_mutation_observation(
         | ScannedStep::BeginSemiSimpleGroup
         | ScannedStep::EndSemiSimpleGroup
         | ScannedStep::ExtraRightBrace
-        | ScannedStep::ExtraRightBraceEndsSemiSimpleGroup
+        | ScannedStep::ExtraRightBraceInSemiSimpleGroup
         | ScannedStep::OffSave(..)
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
@@ -11234,17 +11234,13 @@ fn apply_scanned_step(
                 .write_text(PrintSink::TerminalAndLog, "\n! Too many }'s.\n");
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ExtraRightBraceEndsSemiSimpleGroup => {
+        ScannedStep::ExtraRightBraceInSemiSimpleGroup => {
+            // TeX82 §1068's `extra_right_brace` reports and discards the
+            // mismatched brace. It does not `unsave` the semisimple group.
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\n! Extra }, or forgotten \\endgroup.\n",
             );
-            let aftergroup = stores
-                .leave_group_with_kind(GroupKind::SemiSimple)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "semi simple group right-brace recovery",
-                })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSave(message) => {

@@ -48,6 +48,43 @@ fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
 }
 
 #[test]
+fn extra_right_brace_keeps_semisimple_group_and_exact_bop_counts() {
+    // TeX82 §1068: `}` cannot close a `\begingroup`; `extra_right_brace`
+    // diagnoses and discards it without `unsave`. The later `\endgroup`
+    // therefore releases both §280 `\aftergroup` tokens, which compose the
+    // `\count0=24` assignment captured by §617's exact BOP register snapshot.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\begingroup}\aftergroup\count\aftergroup0\endgroup=24\shipout\hbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let artifact = universe
+        .world()
+        .committed_artifacts()
+        .first()
+        .expect("microfixture ships one page");
+    let page = tex_out::PageArtifact::from_bytes(artifact.bytes()).expect("artifact parses");
+    assert_eq!(page.counts, [24, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+    let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+    writer.write_page(&page).expect("page writes");
+    let dvi = writer.finish().expect("DVI finishes");
+    let bop = 15 + page.job.banner.len();
+    assert_eq!(dvi[bop], 139);
+    assert_eq!(
+        &dvi[bop + 1..bop + 41],
+        &[
+            0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
+}
+
+#[test]
 fn failed_operation_commits_after_consuming_its_enclosing_group() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::TEX82);
