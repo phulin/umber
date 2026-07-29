@@ -32,6 +32,42 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn hbox_group_type_respects_box_context_and_vertical_mode() {
+    // TeX82 §1083: a register-bound hbox uses hbox_group (e-TeX code 2),
+    // even in vertical mode. The neighboring bare hbox is append-like and
+    // therefore uses adjusted_hbox_group (code 3) in that same mode.
+    for (source, expected) in [
+        (br"\setbox0=\hbox{}".as_slice(), GroupKind::HBox),
+        (br"\hbox{}".as_slice(), GroupKind::AdjustedHBox),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        control
+            .set_fuel_limit(1_000)
+            .expect("bounded canonical fuel");
+        register_source(&mut control, source);
+
+        assert_eq!(
+            control.step(&mut stores).expect("prefix executes"),
+            MainControlStep::Continue
+        );
+        if expected == GroupKind::HBox {
+            assert_eq!(
+                control.step(&mut stores).expect("setbox target scans"),
+                MainControlStep::Continue
+            );
+        }
+        assert_eq!(stores.innermost_group_kind(), Some(expected));
+        assert_eq!(
+            stores
+                .innermost_group_kind()
+                .map(tex_state::GroupKind::etex_code),
+            Some(if expected == GroupKind::HBox { 2 } else { 3 })
+        );
+    }
+}
+
+#[test]
 fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     // TeX82 §§1051--1052 run `normal_paragraph` after opening a `\vtop`.
     // The display therefore uses the box-local 100pt hsize, not the inherited

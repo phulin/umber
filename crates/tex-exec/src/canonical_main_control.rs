@@ -11064,7 +11064,17 @@ fn apply_scanned_step(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            let group_kind = if kind == ReplayBoxKind::HBox && target.is_none() && !ships_out {
+            // TeX82 §1083 uses `adjusted_hbox_group` only when the hbox will
+            // be appended (`box_context<box_flag`) in either vertical mode
+            // (`abs(mode)=vmode`). A register or shipout construction, and
+            // an ordinary hbox in a nonvertical mode, use `hbox_group`.
+            let group_kind = if kind == ReplayBoxKind::HBox
+                && target.is_none()
+                && !ships_out
+                && matches!(
+                    modes.current_mode(),
+                    Mode::Vertical | Mode::InternalVertical
+                ) {
                 GroupKind::AdjustedHBox
             } else {
                 kind.group_kind()
