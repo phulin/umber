@@ -51,17 +51,17 @@ PASS = {
     "summary": "synthetic",
     "args": (),
     "select": "workspace",
-    "features": {"tex-command": ["observe"]},
+    "features": {"tex-command": ["profiling"]},
     "quarantine": {("tex-command", "unused_variables"): (9, "umber2-johp.200")},
 }
 
 expect_success(
     "declared resolution matches",
-    lambda: module.check_features(PASS, {"tex-command": {"observe"}}),
+    lambda: module.check_features(PASS, {"tex-command": {"profiling"}}),
 )
 expect_failure(
     "a package resolving a feature the declaration omits",
-    lambda: module.check_features(PASS, {"tex-command": {"observe"}, "umber": {"shadow"}}),
+    lambda: module.check_features(PASS, {"tex-command": {"profiling"}, "umber": {"shadow"}}),
 )
 expect_failure(
     "a package no longer resolving its declared feature",
@@ -93,10 +93,10 @@ expect_failure(
 )
 
 MEMBERS = {
-    "tex-command": {"features": {"observe": []}},
+    "tex-command": {"features": {"profiling": []}},
     "umber": {"features": {"default": [], "shadow": []}},
 }
-COVERED = {"tex-command": {"observe"}, "umber": set()}
+COVERED = {"tex-command": {"profiling"}, "umber": set()}
 OUT_OF_SCOPE = {"umber/shadow": "no routine build enables it"}
 
 expect_success(
@@ -105,7 +105,7 @@ expect_success(
 )
 expect_failure(
     "a workspace member no pass lints",
-    lambda: module.check_coverage(MEMBERS, {"tex-command": {"observe"}}, OUT_OF_SCOPE),
+    lambda: module.check_coverage(MEMBERS, {"tex-command": {"profiling"}}, OUT_OF_SCOPE),
 )
 expect_failure(
     "a new feature nobody decided coverage for",

@@ -1,31 +1,23 @@
-#[cfg(feature = "observe")]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-#[cfg(feature = "observe")]
 use std::{collections::BTreeMap, mem};
 
 use parity_harness::run_named_fixture_document;
-#[cfg(feature = "observe")]
 use parity_harness::{
     ManifestBoundSource, TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource,
     compare_dvi_files, write_trip_triage_artifact,
 };
-#[cfg(feature = "observe")]
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-#[cfg(feature = "observe")]
 use tex_command::CommandObserver;
 use tex_command::FontResource;
-#[cfg(feature = "observe")]
 use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineCheckpoint};
-#[cfg(feature = "observe")]
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
-#[cfg(feature = "observe")]
 use tex_state::{EffectRecord, PrintSink};
 use tex_state::{JobClock, Universe, World};
 
@@ -39,7 +31,6 @@ mod assets;
 
 use assets::GateAssets;
 
-#[cfg(feature = "observe")]
 fn target_dir(repo_root: &Path) -> PathBuf {
     env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -57,19 +48,14 @@ fn target_dir(repo_root: &Path) -> PathBuf {
 
 struct InProcessRun {
     dvi: Option<Vec<u8>>,
-    #[cfg(feature = "observe")]
     format: Option<Vec<u8>>,
     provenance: ProvenanceStats,
     macro_provenance: MacroInvocationProvenanceStats,
-    #[cfg(feature = "observe")]
     terminal: Vec<u8>,
-    #[cfg(feature = "observe")]
     log: Vec<u8>,
-    #[cfg(feature = "observe")]
     capture: LiveCapture,
 }
 
-#[cfg(feature = "observe")]
 struct LiveCapture {
     root: LiveSource,
     registered_inputs: BTreeMap<String, Arc<[u8]>>,
@@ -79,7 +65,6 @@ struct LiveCapture {
     log: Vec<u8>,
 }
 
-#[cfg(feature = "observe")]
 impl LiveCapture {
     fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
         let header = ObservationStream::from_canonical_json_lines(oracle)
@@ -108,7 +93,6 @@ impl LiveCapture {
     }
 }
 
-#[cfg(feature = "observe")]
 fn transcript_channels(effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
     let mut terminal = String::new();
     let mut log = String::new();
@@ -183,21 +167,13 @@ fn run_file_in_process(
     format: Option<&[u8]>,
     engine: EngineMode,
 ) -> Result<InProcessRun, String> {
-    #[cfg(feature = "observe")]
     let mut failure = None;
     let source_name = path
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    run_file_in_process_captured(
-        path,
-        &source_name,
-        format,
-        engine,
-        #[cfg(feature = "observe")]
-        &mut failure,
-    )
+    run_file_in_process_captured(path, &source_name, format, engine, &mut failure)
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
@@ -206,7 +182,7 @@ fn run_file_in_process_captured(
     _canonical_source_name: &str,
     format: Option<&[u8]>,
     engine: EngineMode,
-    #[cfg(feature = "observe")] failure: &mut Option<LiveCapture>,
+    failure: &mut Option<LiveCapture>,
 ) -> Result<InProcessRun, String> {
     let (world, path) = staged_world(path)?;
 
@@ -223,7 +199,6 @@ fn run_file_in_process_captured(
         .world_mut()
         .read_file(&path)
         .map_err(|error| error.to_string())?;
-    #[cfg(feature = "observe")]
     let root_bytes = content.shared_bytes();
     let base_dir = path
         .parent()
@@ -241,9 +216,6 @@ fn run_file_in_process_captured(
     let root_source = session
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
-    #[cfg(not(feature = "observe"))]
-    let _ = root_source;
-    #[cfg(feature = "observe")]
     let registered_inputs = fs::read_dir(&base_dir)
         .map_err(|error| error.to_string())?
         .filter_map(Result::ok)
@@ -257,9 +229,7 @@ fn run_file_in_process_captured(
         })
         .collect::<BTreeMap<_, _>>();
     let mut host = StagedDirResourceHost { base_dir };
-    #[cfg(feature = "observe")]
     let mut observers = TripObservers::default();
-    #[cfg(feature = "observe")]
     let run = match session.run_with_observer(&mut host, &mut NoCheckpoints, &mut observers) {
         Ok(run) => run,
         Err(error) => {
@@ -283,10 +253,6 @@ fn run_file_in_process_captured(
             return Err(message);
         }
     };
-    #[cfg(not(feature = "observe"))]
-    let run = session
-        .run(&mut host, &mut NoCheckpoints)
-        .map_err(|error| canonical_error_message(&session, &error))?;
     drop(session);
     for (index, committed) in run.committed_artifacts.iter().enumerate() {
         let page = tex_out::PageArtifact::from_bytes(committed.bytes())
@@ -301,7 +267,6 @@ fn run_file_in_process_captured(
     } else {
         Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
     };
-    #[cfg(feature = "observe")]
     let format = if run.dumped_format {
         Some(stores.dump_format().map_err(|error| error.to_string())?)
     } else {
@@ -309,19 +274,14 @@ fn run_file_in_process_captured(
     };
     let provenance = stores.provenance_stats();
     let macro_provenance = stores.macro_invocation_provenance_stats();
-    #[cfg(feature = "observe")]
     let (terminal, log) = transcript_channels(&run.effects);
     Ok(InProcessRun {
         dvi,
-        #[cfg(feature = "observe")]
         format,
         provenance,
         macro_provenance,
-        #[cfg(feature = "observe")]
         terminal: terminal.clone(),
-        #[cfg(feature = "observe")]
         log: log.clone(),
-        #[cfg(feature = "observe")]
         capture: LiveCapture {
             root: LiveSource {
                 name: _canonical_source_name.to_owned(),
@@ -639,7 +599,6 @@ fn e2e_conformance_gentle_canonical() {
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
-#[cfg(feature = "observe")]
 fn compare_trip_phase(
     root: &Path,
     fixture_name: &str,
@@ -706,7 +665,6 @@ fn compare_trip_phase(
     .expect("write bounded TRIP triage artifact");
 }
 
-#[cfg(feature = "observe")]
 #[allow(clippy::disallowed_methods)] // Host-side oracle and triage artifact boundary.
 fn compare_trip_failure(
     root: &Path,
@@ -783,7 +741,6 @@ fn compare_trip_failure(
     .expect("write failed-run triage");
 }
 
-#[cfg(feature = "observe")]
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
 fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
     let root = &gate.repo_root;
@@ -907,7 +864,6 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
 }
 
 #[test]
-#[cfg(feature = "observe")]
 #[ignore = "manual full-document TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_trip() {
     assets::with_gate("trip", |gate| {
@@ -916,7 +872,6 @@ fn e2e_conformance_trip() {
 }
 
 #[test]
-#[cfg(feature = "observe")]
 #[ignore = "manual full-document e-TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_etrip() {
     assets::with_gate("etrip", |gate| {

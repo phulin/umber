@@ -20,22 +20,22 @@ use crate::input::InputLevelId;
 
 use super::CommandProcessor;
 
-#[cfg(any(test, feature = "observe"))]
 use tex_state::token::{OriginId, TracedTokenWord};
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticRecord, InputReason,
     InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
 
-#[cfg(any(test, feature = "observe"))]
 impl CommandProcessor<'_> {
     /// Records a recovery level that replays one inserted token.
     ///
     /// TeX's trace names the input push and the recovery insertion separately,
     /// so both records are emitted here rather than folded into one.
     pub(crate) fn observe_inserted_token_recovery(&mut self, level: InputLevelId, token: Token) {
+        if !self.is_observed() {
+            return;
+        }
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Recovery,
             reason: InputReason::Recovery,
@@ -58,6 +58,9 @@ impl CommandProcessor<'_> {
         transition: &'static str,
         previous: i32,
     ) {
+        if !self.is_observed() {
+            return;
+        }
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition,
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
@@ -77,6 +80,9 @@ impl CommandProcessor<'_> {
     /// Records TeX82 §1132's correction of an inserted brace's backup,
     /// carrying the `align_state` the correction started from.
     pub(crate) fn observe_alignment_backup_correction(&mut self, previous: i32) {
+        if !self.is_observed() {
+            return;
+        }
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition: "backup_correction",
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
@@ -92,6 +98,9 @@ impl CommandProcessor<'_> {
     /// classification at the scanner/control seam is what lets the raw
     /// delivery loop stay free of the level's trace.
     pub(crate) fn observe_write_list_push(&mut self, level: InputLevelId) {
+        if !self.is_observed() {
+            return;
+        }
         self.observe_immediate_write_retirement(level);
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
@@ -108,7 +117,7 @@ impl CommandProcessor<'_> {
     /// pass, including after an ignored `\crcr`, so an idempotent assignment
     /// remains a canonical transition.
     pub(crate) fn observe_alignment_peek_sentinel(&mut self, announce: bool) {
-        if !announce {
+        if !announce || !self.is_observed() {
             return;
         }
         self.observe(CommandObservation::Alignment(AlignmentRecord {
@@ -127,6 +136,9 @@ impl CommandProcessor<'_> {
         diagnostic: &'static str,
         command: &CurrentCommand,
     ) {
+        if !self.is_observed() {
+            return;
+        }
         self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
             severity: "error",
             diagnostic,
@@ -134,31 +146,5 @@ impl CommandProcessor<'_> {
                 self.observed_command_spelling(command),
             )],
         }));
-    }
-}
-
-/// The shipping definitions: the same signatures, and no observation.
-#[cfg(not(any(test, feature = "observe")))]
-impl CommandProcessor<'_> {
-    pub(crate) fn observe_inserted_token_recovery(&mut self, _level: InputLevelId, _token: Token) {}
-
-    pub(crate) fn observe_unbalanced_delimiter_correction(
-        &mut self,
-        _transition: &'static str,
-        _previous: i32,
-    ) {
-    }
-
-    pub(crate) fn observe_alignment_backup_correction(&mut self, _previous: i32) {}
-
-    pub(crate) fn observe_write_list_push(&mut self, _level: InputLevelId) {}
-
-    pub(crate) fn observe_alignment_peek_sentinel(&mut self, _announce: bool) {}
-
-    pub(crate) fn observe_command_diagnostic(
-        &mut self,
-        _diagnostic: &'static str,
-        _command: &CurrentCommand,
-    ) {
     }
 }

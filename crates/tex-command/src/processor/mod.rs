@@ -12,10 +12,8 @@ use crate::{
     CommandHostContext, CommandReplayEpisode, CommandRuntime, CommandState, DeliveryStamp,
 };
 
-#[cfg(any(test, feature = "observe"))]
 use crate::input::InputLevelId;
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::CommandObserver;
 
 pub(crate) use alignment::CELL_ALIGN_STATE;
@@ -32,7 +30,6 @@ pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 pub use expand::{character_command_text, command_token_text};
 pub(crate) use expand::{meaning_text, render_the_value, string_text};
-#[cfg(any(test, feature = "observe"))]
 pub(crate) use next::stored_input_reason;
 #[cfg(test)]
 pub(crate) use status::{
@@ -53,13 +50,11 @@ pub struct CommandProcessor<'a> {
     runtime: &'a mut CommandRuntime,
     pub(crate) state: CommandContext<'a>,
     pub(crate) host: CommandHostContext<'a>,
-    #[cfg(any(test, feature = "observe"))]
     observer: Option<&'a mut dyn CommandObserver>,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this
     /// value affect input semantics.
-    #[cfg(any(test, feature = "observe"))]
     immediate_write_retirement: Option<InputLevelId>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
@@ -110,9 +105,7 @@ impl<'a> CommandProcessor<'a> {
             runtime,
             state,
             host,
-            #[cfg(any(test, feature = "observe"))]
             observer: None,
-            #[cfg(any(test, feature = "observe"))]
             immediate_write_retirement: None,
             last_delivery: None,
             replay_completion: None,
@@ -139,12 +132,25 @@ impl<'a> CommandProcessor<'a> {
     }
 
     /// Installs a non-fallible semantic observer for this bounded processor
-    /// episode. This exists only in tests and explicit instrumentation builds.
-    #[cfg(any(test, feature = "observe"))]
+    /// episode.
+    ///
+    /// An episode without one pays a single `Option` test per observation
+    /// site and builds no records: every site goes through the `observe!`
+    /// macro, which does not evaluate its payload unless this returns true.
     #[must_use]
     pub fn with_observer(mut self, observer: &'a mut dyn CommandObserver) -> Self {
         self.observer = Some(observer);
         self
+    }
+
+    /// Whether this episode publishes observations.
+    ///
+    /// Observation-only: no delivery, expansion, scanner, conditional, or
+    /// alignment decision may branch on this, and no committed artifact may
+    /// differ by it.
+    #[must_use]
+    pub(crate) fn is_observed(&self) -> bool {
+        self.observer.is_some()
     }
 
     /// Records a completed typed mutation selected by the replay consumer.
@@ -152,7 +158,6 @@ impl<'a> CommandProcessor<'a> {
     /// The command processor remains the sole owner of the observer stream;
     /// replay supplies only a value it has already scanned through this
     /// processor and will apply after the processor borrow ends.
-    #[cfg(any(test, feature = "observe"))]
     pub fn observe_typed_mutation(&mut self, target: &'static str, value: impl Into<String>) {
         self.observe(crate::observation::CommandObservation::Mutation(
             crate::observation::MutationRecord {
@@ -165,7 +170,6 @@ impl<'a> CommandProcessor<'a> {
         ));
     }
 
-    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
         if let Some(observer) = self.observer.as_deref_mut() {
             observer.committed(observation);
@@ -175,7 +179,6 @@ impl<'a> CommandProcessor<'a> {
     /// Registers the write-list lifetime established by TeX82 §53's
     /// `write_out`. The scanner owns this classification; raw delivery only
     /// consumes the already-registered observer identity when the level ends.
-    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn observe_immediate_write_retirement(&mut self, level: InputLevelId) {
         debug_assert!(self.immediate_write_retirement.is_none());
         self.immediate_write_retirement = Some(level);
@@ -185,7 +188,6 @@ impl<'a> CommandProcessor<'a> {
     /// This deliberately consumes identity rather than consulting `ReplayTrace`:
     /// trace/provenance explains an input frame but cannot select delivery
     /// observation semantics.
-    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn take_immediate_write_retirement(&mut self, level: InputLevelId) -> bool {
         if self.immediate_write_retirement == Some(level) {
             self.immediate_write_retirement = None;

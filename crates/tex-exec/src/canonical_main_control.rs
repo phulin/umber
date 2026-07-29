@@ -23,13 +23,11 @@ use tex_command::{
     ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
     SourceRegistration, SourceRegistrationError,
 };
-#[cfg(any(test, feature = "observe"))]
 use tex_command::{
     CommandObservation, CommandObserver, DiagnosticRecord, EffectRecord, GeometryRecord,
     MutationRecord, ObservedToken, ParameterClass, canonical_names::glue_order_name,
     parameter_mutation_key,
 };
-#[cfg(any(test, feature = "observe"))]
 use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -110,7 +108,6 @@ pub struct CanonicalMainControl {
     dumped_format: bool,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
-    #[cfg(any(test, feature = "observe"))]
     page_output_observations: Vec<CommandObservation>,
     /// The commit buffer for the operation in flight, occupied exactly while
     /// an observed operation is running.
@@ -361,20 +358,14 @@ impl CanonicalStepSnapshot {
 
 /// Where one command-processor episode publishes its committed records.
 ///
-/// Outside instrumented builds there is no observer to install, so the slot
-/// carries nothing. It still exists as a parameter of [`command_processor`]
-/// so that no episode can be constructed without stating which commit buffer
-/// it belongs to.
-#[cfg(any(test, feature = "observe"))]
+/// An episode with no observer carries `None`. The slot is still a parameter
+/// of [`command_processor`] so that no episode can be constructed without
+/// stating which commit buffer it belongs to.
 type ObservationSlot = Option<ObservationBuffer>;
-#[cfg(not(any(test, feature = "observe")))]
-type ObservationSlot = ();
 
-#[cfg(any(test, feature = "observe"))]
 #[derive(Debug, Default)]
 struct ObservationBuffer(Vec<CommandObservation>);
 
-#[cfg(any(test, feature = "observe"))]
 impl ObservationBuffer {
     fn flush_into(self, observer: &mut dyn CommandObserver) {
         for observation in self.0 {
@@ -383,7 +374,6 @@ impl ObservationBuffer {
     }
 }
 
-#[cfg(any(test, feature = "observe"))]
 impl CommandObserver for ObservationBuffer {
     fn committed(&mut self, observation: CommandObservation) {
         self.0.push(observation);
@@ -452,14 +442,10 @@ fn command_processor<'a>(
         stores.command_context(),
         CommandHostContext::new(capabilities),
     );
-    #[cfg(not(any(test, feature = "observe")))]
-    let _ = observations;
-    #[cfg(any(test, feature = "observe"))]
-    let processor = match observations.as_mut() {
+    match observations.as_mut() {
         Some(buffer) => processor.with_observer(buffer),
         None => processor,
-    };
-    processor
+    }
 }
 
 impl CanonicalMainControl {
@@ -965,7 +951,6 @@ impl CanonicalMainControl {
 
     /// Appends already-committed records to the operation's commit buffer.
     /// They are published only when the whole operation commits.
-    #[cfg(any(test, feature = "observe"))]
     fn observe_committed(&mut self, records: impl IntoIterator<Item = CommandObservation>) {
         if let Some(buffer) = self.operation_observations.as_mut() {
             buffer.0.extend(records);
@@ -1154,7 +1139,6 @@ impl CanonicalMainControl {
         let applied = match applied {
             Ok(applied) => applied,
             Err(error) => {
-                #[cfg(any(test, feature = "observe"))]
                 self.page_output_observations.clear();
                 return Err(error);
             }
@@ -1162,11 +1146,9 @@ impl CanonicalMainControl {
         // Only an episode this step actually starts publishes records: when
         // nothing is pending, draining the command state's held named
         // token-list pushes here would reorder pushes another step owns.
-        #[cfg(any(test, feature = "observe"))]
         let opens_output_episode =
             stores.page_fire_up().is_some() && !self.boxes.output_routine_active;
         self.fire_pending_page_output(stores)?;
-        #[cfg(any(test, feature = "observe"))]
         {
             if opens_output_episode {
                 // Same order as the ordinary tail: the named token-list push
@@ -1461,7 +1443,6 @@ impl CanonicalMainControl {
             )?;
         }
         self.fire_pending_page_output(stores)?;
-        #[cfg(any(test, feature = "observe"))]
         self.page_output_observations.clear();
         if stores.world().artifact_commits().len() != artifact_count {
             self.completed_boundaries
@@ -1489,7 +1470,6 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         redispatch: Option<tex_command::CurrentCommand>,
     ) -> Result<ReplayStep, ExecError> {
-        #[cfg(any(test, feature = "observe"))]
         if self.operation_observations.is_some() {
             return self.step_with_observer_once(stores, redispatch);
         }
@@ -1628,9 +1608,7 @@ impl CanonicalMainControl {
                     // own mutation and effect records.  Redirect the commit
                     // buffer for the episode's duration instead of letting
                     // this call site decide whether to observe at all.
-                    #[cfg(any(test, feature = "observe"))]
                     let enclosing = self.operation_observations.take();
-                    #[cfg(any(test, feature = "observe"))]
                     if enclosing.is_some() {
                         self.operation_observations = Some(ObservationBuffer::default());
                     }
@@ -1643,7 +1621,6 @@ impl CanonicalMainControl {
                     )
                     .begin_selected_output_routine()
                     .map_err(command_error);
-                    #[cfg(any(test, feature = "observe"))]
                     if enclosing.is_some() {
                         let deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -2293,7 +2270,6 @@ impl CanonicalMainControl {
 
     /// Delivers and executes one replay command while forwarding committed
     /// command-owned observations in their original order.
-    #[cfg(any(test, feature = "observe"))]
     pub fn step_with_observer(
         &mut self,
         stores: &mut Universe,
@@ -2319,7 +2295,6 @@ impl CanonicalMainControl {
 
     /// Atomic observed variant of [`Self::advance`]. Observations are held
     /// until both command delivery and executor application have committed.
-    #[cfg(any(test, feature = "observe"))]
     pub fn advance_with_observer(
         &mut self,
         stores: &mut Universe,
@@ -2382,7 +2357,6 @@ impl CanonicalMainControl {
         }
     }
 
-    #[cfg(any(test, feature = "observe"))]
     fn geometry_observation(observation: GeometryObservation) -> CommandObservation {
         let record = match observation {
             GeometryObservation::Hpack {
@@ -2438,7 +2412,6 @@ impl CanonicalMainControl {
         self.fatal
     }
 
-    #[cfg(any(test, feature = "observe"))]
     fn step_with_observer_once(
         &mut self,
         stores: &mut Universe,
@@ -2719,7 +2692,6 @@ impl CanonicalMainControl {
 
     /// Scans TeX's initial terminal filename through the canonical command
     /// path, retaining every committed observation for the caller.
-    #[cfg(any(test, feature = "observe"))]
     pub fn scan_startup_file_name(
         &mut self,
         stores: &mut Universe,
@@ -2734,7 +2706,6 @@ impl CanonicalMainControl {
         scanned
     }
 
-    #[cfg(any(test, feature = "observe"))]
     fn scan_startup_file_name_once(&mut self, stores: &mut Universe) -> Result<String, ExecError> {
         let filename =
             {
@@ -3610,10 +3581,6 @@ enum ScannedStep {
     /// no operand: `begin_diagnostic; show_activities`. The mode is carried
     /// so the committed effect can name the nest it reported.
     ShowLists {
-        #[cfg_attr(
-            not(any(test, feature = "observe")),
-            expect(dead_code, reason = "read only by the committed effect observation")
-        )]
         mode: Mode,
     },
     /// e-TeX 2.6 `etex.ch` [17.3623--3671]'s `\\showtokens`: command
@@ -4399,7 +4366,6 @@ fn dispatch_main_control_command(
 
 /// The canonical hyphenated name of one mode, as committed observations and
 /// the semantic corpus spell it.
-#[cfg(any(test, feature = "observe"))]
 fn canonical_mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Vertical => "vertical",
@@ -7589,7 +7555,6 @@ fn replay_openout_target(name: String) -> String {
 /// canonical order. TeX82 §1236's `do_register_command` is the exception: it
 /// folds the target's *current* `eqtb` value into the result, so its record
 /// can only be read after the single `word_define`/`define` exit commits.
-#[cfg(any(test, feature = "observe"))]
 enum PendingMutation {
     Captured(MutationRecord),
     Arithmetic {
@@ -7598,7 +7563,6 @@ enum PendingMutation {
     },
 }
 
-#[cfg(any(test, feature = "observe"))]
 impl PendingMutation {
     fn resolve(self, stores: &Universe) -> MutationRecord {
         match self {
@@ -7612,7 +7576,6 @@ impl PendingMutation {
 
 /// Serializes a committed glue value the way the reference instrumentation's
 /// `umber_trace_glue_value` does.
-#[cfg(any(test, feature = "observe"))]
 fn glue_mutation_value(value: &GlueSpec) -> String {
     format!(
         "glue:width={};stretch={};stretch_order={};shrink={};shrink_order={}",
@@ -7636,7 +7599,6 @@ fn glue_mutation_value(value: &GlueSpec) -> String {
 /// than before it. An `arith_error` return in §1236 leaves `eqtb` untouched
 /// and is observed as no mutation at all, which falls out of resolving this
 /// only when application succeeded.
-#[cfg(any(test, feature = "observe"))]
 fn committed_arithmetic_mutation(
     target: ArithmeticTarget,
     global: bool,
@@ -7736,7 +7698,6 @@ fn committed_arithmetic_mutation(
 /// - `unreachable!()`: [`CanonicalMainControl::apply_host_owned_step`] applies
 ///   the step before this classifier runs, so reaching it means that routing
 ///   was removed without updating this classifier.
-#[cfg(any(test, feature = "observe"))]
 fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
@@ -8298,7 +8259,6 @@ fn canonical_pdf_image_page_box(
 ///
 /// `total_pages` is incremented before the trace, so the published number is
 /// the one-based ordinal of the page just committed.
-#[cfg(any(test, feature = "observe"))]
 fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<EffectRecord> {
     (before..stores.world().artifact_commits().len())
         .map(|committed| EffectRecord {
@@ -8313,7 +8273,6 @@ fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<Effec
 /// reached it immediately or a whatsit reached it during later shipout.
 /// Observe the committed `tex_state::EffectRecord` delta, not the command
 /// spelling, so both entry paths publish the same ordered event exactly once.
-#[cfg(any(test, feature = "observe"))]
 fn committed_stream_effect_observations(
     before: usize,
     prepared_before: usize,
@@ -8352,7 +8311,6 @@ fn committed_stream_effect_observations(
         .collect()
 }
 
-#[cfg(any(test, feature = "observe"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
         // TeX82 §1293's `show_activities` reports the whole mode nest; the
@@ -8489,7 +8447,6 @@ pub(crate) fn test_shipout_replay_box(
     shipout_replay_box(node, stores, &mut command)
 }
 
-#[cfg(any(test, feature = "observe"))]
 /// Renders a committed meaning the way the reference instrumentation's
 /// `umber_trace_meaning_value` does.
 ///
@@ -8506,7 +8463,6 @@ pub(crate) fn test_shipout_replay_box(
 /// It must never fall back to a spelling (the source control sequence of a
 /// `\let`) or to a Rust `Debug` rendering: both name where the meaning came
 /// from rather than what it is (`umber2-johp.141`).
-#[cfg(any(test, feature = "observe"))]
 fn meaning_mutation_value(
     meaning: Meaning,
     stores: &Universe,
@@ -8534,7 +8490,6 @@ fn meaning_mutation_value(
 
 /// §294's stored macro body: parameter text, the separating `end_match`, then
 /// replacement text, as one token sequence.
-#[cfg(any(test, feature = "observe"))]
 fn observed_macro_body(
     parameter_text: TokenListId,
     replacement_text: TokenListId,
@@ -8561,7 +8516,6 @@ fn observed_macro_body(
 }
 
 /// §482 constructs a parameterless macro body for §1225's `define`.
-#[cfg(any(test, feature = "observe"))]
 fn observed_read_body(replacement_text: TokenListId, stores: &Universe) -> Vec<ObservedToken> {
     let mut tokens = vec![ObservedToken::MacroEndMatch];
     tokens.extend(
@@ -8574,7 +8528,6 @@ fn observed_read_body(replacement_text: TokenListId, stores: &Universe) -> Vec<O
     tokens
 }
 
-#[cfg(any(test, feature = "observe"))]
 fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
     match token {
         // §353 gives an active character the control sequence
@@ -10273,7 +10226,6 @@ fn apply_scanned_step(
             // group, and returns with the trie unchanged; `\hyphenation`
             // stays legal in both binaries.
             if patterns && !command.initex {
-                #[cfg(any(test, feature = "observe"))]
                 if let Some(buffer) = command.observations.as_mut() {
                     buffer
                         .0
@@ -10293,7 +10245,6 @@ fn apply_scanned_step(
             } else {
                 crate::assignments::apply_hyphenation_exceptions(stores, words)
             };
-            #[cfg(any(test, feature = "observe"))]
             if let Some(buffer) = command.observations.as_mut() {
                 buffer.0.extend(diagnostics.iter().map(|diagnostic| {
                     CommandObservation::Diagnostic(DiagnosticRecord {

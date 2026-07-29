@@ -9,7 +9,6 @@ use tex_state::interner::Symbol;
 
 use crate::{CommandProcessor, CommandState};
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::{CommandObservation, ScannerStatusRecord};
 
 /// Persistent scanner status and the warning context owned by that status.
@@ -91,11 +90,13 @@ impl CommandProcessor<'_> {
         from: ScannerStatus,
         to: ScannerStatus,
     ) {
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::ScannerStatus(ScannerStatusRecord {
-            from: crate::observation::canonical_names::scanner_status_name(&from),
-            to: crate::observation::canonical_names::scanner_status_name(&to),
-        }));
+        observe!(
+            self,
+            CommandObservation::ScannerStatus(ScannerStatusRecord {
+                from: crate::observation::canonical_names::scanner_status_name(&from),
+                to: crate::observation::canonical_names::scanner_status_name(&to),
+            }),
+        );
     }
 
     /// Publishes a scoped scanner-status exit before restoring its complete

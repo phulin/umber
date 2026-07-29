@@ -16,9 +16,9 @@ if (($# == 0)); then
   set -- bash -c '
     scripts/test-tex82-trip-observer.sh
     scripts/test-etex26-trip-observer.sh
-    cargo test -q -p umber --features observe --test it \
+    cargo test -q -p umber --test it \
       e2e_conformance_trip -- --ignored --nocapture
-    cargo test -q -p umber --features observe --test it \
+    cargo test -q -p umber --test it \
       e2e_conformance_etrip -- --ignored --nocapture
   '
 fi

@@ -226,10 +226,6 @@ pub(crate) struct ShowGroupsDiagnostic {
     pub(crate) frames: Vec<ShowGroupFrame>,
 }
 
-#[cfg_attr(
-    not(any(test, feature = "observe")),
-    allow(dead_code, reason = "used only by semantic effect observation")
-)]
 pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
     let mut text = String::from("\n");
     for frame in diagnostic.frames.iter().rev() {

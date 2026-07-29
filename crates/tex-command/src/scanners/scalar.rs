@@ -11,14 +11,12 @@ use tex_state::scaled::{
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{BoxDimension, PrepareMagDiagnostic};
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
     CommandError, CurrentCommand,
     processor::{CommandProcessor, meaning_text},
 };
-#[cfg(any(test, feature = "observe"))]
 use crate::{CommandObservation, ScannerRecord};
 
 /// Recovery performed by a canonical scalar scan.
@@ -541,12 +539,14 @@ impl CommandProcessor<'_> {
                 primary: provenance,
             },
         };
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "integer",
-            value: scanned.value.to_string(),
-            tokens: None,
-        }));
+        observe!(
+            self,
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "integer",
+                value: scanned.value.to_string(),
+                tokens: None,
+            }),
+        );
         Ok((scanned, radix))
     }
 
@@ -561,12 +561,14 @@ impl CommandProcessor<'_> {
                 primary: provenance,
             },
         };
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "integer",
-            value: scanned.value.to_string(),
-            tokens: None,
-        }));
+        observe!(
+            self,
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "integer",
+                value: scanned.value.to_string(),
+                tokens: None,
+            }),
+        );
         scanned
     }
 
@@ -682,12 +684,14 @@ impl CommandProcessor<'_> {
             recovery,
             provenance,
         };
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "dimension",
-            value: scanned.value.raw().to_string(),
-            tokens: None,
-        }));
+        observe!(
+            self,
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "dimension",
+                value: scanned.value.raw().to_string(),
+                tokens: None,
+            }),
+        );
         Ok((scanned, order))
     }
 
@@ -860,12 +864,14 @@ impl CommandProcessor<'_> {
         } else {
             units.value
         };
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "dimension",
-            value: value.raw().to_string(),
-            tokens: None,
-        }));
+        observe!(
+            self,
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "dimension",
+                value: value.raw().to_string(),
+                tokens: None,
+            }),
+        );
         Ok(value)
     }
 
@@ -1022,19 +1028,21 @@ impl CommandProcessor<'_> {
             recovery,
             provenance,
         };
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "glue",
-            value: format!(
-                "width={};stretch={};stretch_order={};shrink={};shrink_order={}",
-                scanned.value.width.raw(),
-                scanned.value.stretch.raw(),
-                glue_order_name(scanned.value.stretch_order),
-                scanned.value.shrink.raw(),
-                glue_order_name(scanned.value.shrink_order),
-            ),
-            tokens: None,
-        }));
+        observe!(
+            self,
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "glue",
+                value: format!(
+                    "width={};stretch={};stretch_order={};shrink={};shrink_order={}",
+                    scanned.value.width.raw(),
+                    scanned.value.stretch.raw(),
+                    glue_order_name(scanned.value.stretch_order),
+                    scanned.value.shrink.raw(),
+                    glue_order_name(scanned.value.shrink_order),
+                ),
+                tokens: None,
+            }),
+        );
         Ok(scanned)
     }
 
@@ -1697,7 +1705,6 @@ impl CommandProcessor<'_> {
         } else {
             value
         };
-        #[cfg(any(test, feature = "observe"))]
         self.observe_internal_value(value);
         Ok(InternalScan::Value(value))
     }
@@ -1715,7 +1722,6 @@ impl CommandProcessor<'_> {
         let value = self
             .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)
             .expect("TeX82 §429 always lowers §416's dimen_val zero");
-        #[cfg(any(test, feature = "observe"))]
         self.observe_internal_value(value);
         Ok(InternalScan::Value(value))
     }
@@ -2030,7 +2036,6 @@ impl CommandProcessor<'_> {
     /// The value committed here is the one §413 returns -- after §429's
     /// lowering cascade and §430's negation -- so this must stay reachable
     /// only from [`Self::scan_something_internal`]'s exits.
-    #[cfg(any(test, feature = "observe"))]
     fn observe_internal_value(&mut self, value: InternalValue) {
         let (rendered, tokens) = match value {
             InternalValue::Integer(value) => (value.to_string(), None),

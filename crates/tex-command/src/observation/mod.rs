@@ -1,12 +1,10 @@
-//! Test and instrumentation-only command semantic observation.
+//! Command semantic observation.
 //!
 //! These records deliberately belong to `tex-command`, rather than to the
 //! fixture/oracle crate.  They are built from values already available at the
 //! transition seam and are delivered only after the transition has committed.
 //! In particular, an observer is non-fallible and never participates in
 //! command state, snapshots, delivery, expansion, or scanner control flow.
-
-#![cfg(any(test, feature = "observe"))]
 
 use tex_state::meaning::Meaning;
 

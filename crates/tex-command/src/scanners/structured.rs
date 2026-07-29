@@ -903,14 +903,16 @@ impl CommandProcessor<'_> {
         };
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
-            target: "meaning",
-            value: "relax".into(),
-            key: Some(self.state.resolve(target).to_owned()),
-            tokens: None,
-            global: provisional_global,
-        }));
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: "meaning",
+                value: "relax".into(),
+                key: Some(self.state.resolve(target).to_owned()),
+                tokens: None,
+                global: provisional_global,
+            }),
+        );
         let _ = self.scan_optional_equals()?;
         let scanned = self.scan_restricted_integer(class)?;
         Ok(ScannedCharacterDefinition {
@@ -937,14 +939,16 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
-            target: "meaning",
-            value: "relax".into(),
-            key: Some(self.state.resolve(target).to_owned()),
-            tokens: None,
-            global: provisional_global,
-        }));
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: "meaning",
+                value: "relax".into(),
+                key: Some(self.state.resolve(target).to_owned()),
+                tokens: None,
+                global: provisional_global,
+            }),
+        );
         let _ = self.scan_optional_equals()?;
         Ok(ScannedRegisterDefinition {
             target,
@@ -1844,14 +1848,16 @@ impl CommandProcessor<'_> {
             Meaning::Font(tex_state::font::NULL_FONT),
             provisional_global,
         );
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
-            target: "meaning",
-            value: "set_font".into(),
-            key: Some(self.state.resolve(target).to_owned()),
-            tokens: None,
-            global: provisional_global,
-        }));
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: "meaning",
+                value: "set_font".into(),
+                key: Some(self.state.resolve(target).to_owned()),
+                tokens: None,
+                global: provisional_global,
+            }),
+        );
         let _ = self.scan_optional_equals()?;
         let file_name = self.scan_file_name()?;
         let mut size_recovery = None;
@@ -2704,16 +2710,16 @@ impl CommandProcessor<'_> {
             _prior.status().clone(),
             self.command.scanner.status().clone(),
         );
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(crate::CommandObservation::Alignment(
-            crate::AlignmentRecord {
+        observe!(
+            self,
+            crate::CommandObservation::Alignment(crate::AlignmentRecord {
                 transition: "preamble_start",
                 alignment: Some(alignment.raw()),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
-            },
-        ));
+            },),
+        );
         let mut columns = Vec::new();
         let mut current_tabskip = self
             .state
@@ -2777,16 +2783,16 @@ impl CommandProcessor<'_> {
                         repeat_start = Some(columns.len());
                         continue;
                     }
-                    #[cfg(any(test, feature = "observe"))]
-                    self.observe(crate::CommandObservation::Alignment(
-                        crate::AlignmentRecord {
+                    observe!(
+                        self,
+                        crate::CommandObservation::Alignment(crate::AlignmentRecord {
                             transition: "missing_parameter",
                             alignment: Some(alignment.raw()),
                             align_state: self.command.alignment.align_state,
                             delimiter: None,
                             previous_align_state: None,
-                        },
-                    ));
+                        },),
+                    );
                     self.back_error(command, MISSING_PARAMETER_DIAGNOSTIC)?;
                     break;
                 }
@@ -2847,16 +2853,16 @@ impl CommandProcessor<'_> {
                         ..
                     }
                 ) {
-                    #[cfg(any(test, feature = "observe"))]
-                    self.observe(crate::CommandObservation::Alignment(
-                        crate::AlignmentRecord {
+                    observe!(
+                        self,
+                        crate::CommandObservation::Alignment(crate::AlignmentRecord {
                             transition: "extra_parameter",
                             alignment: Some(alignment.raw()),
                             align_state: self.command.alignment.align_state,
                             delimiter: None,
                             previous_align_state: None,
-                        },
-                    ));
+                        },),
+                    );
                     self.command
                         .expansion
                         .pending_diagnostics
@@ -2888,16 +2894,16 @@ impl CommandProcessor<'_> {
                 },
             )
             .map_err(|_| CommandError::input_invariant())?;
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(crate::CommandObservation::Alignment(
-            crate::AlignmentRecord {
+        observe!(
+            self,
+            crate::CommandObservation::Alignment(crate::AlignmentRecord {
                 transition: "preamble_finish",
                 alignment: Some(alignment.raw()),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
-            },
-        ));
+            },),
+        );
         // TeX's `fin_align` boundary becomes observable before `scanner_status`
         // returns to normal. Retain the live aligning episode while publishing
         // its completion, then restore normal status; otherwise an exit record
@@ -2981,9 +2987,6 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "observe")))]
-        let _ = level;
-        #[cfg(any(test, feature = "observe"))]
         // `back_list` is a plain `begin_token_list`, not §325's `back_input`:
         // it pushes a backed-up level without the accompanying recovery
         // record that a backed-up raw delivery reports.

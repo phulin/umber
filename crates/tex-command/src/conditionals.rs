@@ -15,7 +15,6 @@ use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
 use crate::scanners::RestrictedIntegerClass;
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
     InputTransition, ObservedToken, RecoveryKind, RecoveryRecord,
@@ -119,7 +118,6 @@ pub(crate) enum ConditionalDelimiter {
 
 #[allow(dead_code)] // used by pass_text now; delimiter execution follows next
 impl ConditionalDelimiter {
-    #[cfg(any(test, feature = "observe"))]
     const fn canonical_branch(self) -> &'static str {
         match self {
             Self::Or => "or",
@@ -149,7 +147,6 @@ pub(crate) enum IfLimit {
 }
 
 impl IfLimit {
-    #[cfg(any(test, feature = "observe"))]
     const fn canonical_name(self) -> &'static str {
         match self {
             Self::Evaluating => "evaluating",
@@ -761,12 +758,14 @@ impl CommandProcessor<'_> {
             .expansion
             .pending_diagnostics
             .push(BAD_NUMBER_DIAGNOSTIC);
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
-            severity: "error",
-            diagnostic: "conditional_bad_stream_number",
-            arguments: Vec::new(),
-        }));
+        observe!(
+            self,
+            CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: "conditional_bad_stream_number",
+                arguments: Vec::new(),
+            }),
+        );
     }
 
     /// TeX.web §509's limb skip, spelled `while n<>0 do begin pass_text; if
@@ -914,12 +913,14 @@ impl CommandProcessor<'_> {
         // diagnostic for engine-facing recovery, but publish the detached
         // command event here so it remains ordered after raw delivery and
         // before the following token.
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
-            severity: "error",
-            diagnostic: "conditional_extra_delimiter",
-            arguments: Vec::new(),
-        }));
+        observe!(
+            self,
+            CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: "conditional_extra_delimiter",
+                arguments: Vec::new(),
+            }),
+        );
     }
 
     /// TeX inserts its inaccessible frozen `\\relax` when a delimiter is
@@ -942,10 +943,7 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "observe")))]
-        let _ = level;
-        #[cfg(any(test, feature = "observe"))]
-        {
+        if self.is_observed() {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
@@ -1011,7 +1009,6 @@ impl CommandProcessor<'_> {
     /// scanner-status restoration it follows in the same label.
     #[allow(unused_variables)]
     fn observe_pass_text_branch(&mut self, delimiter: ConditionalDelimiter) {
-        #[cfg(any(test, feature = "observe"))]
         if let Some(frame) = self.command.conditions.current().cloned() {
             self.observe_condition("branch", &frame, Some(delimiter.canonical_branch().into()));
         }
@@ -1024,14 +1021,16 @@ impl CommandProcessor<'_> {
         frame: &ConditionFrame,
         branch: Option<String>,
     ) {
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Condition(ConditionRecord {
-            transition,
-            identity: frame.identity.0,
-            condition: frame.kind.canonical_name(),
-            limit: frame.limit.canonical_name(),
-            branch,
-        }));
+        observe!(
+            self,
+            CommandObservation::Condition(ConditionRecord {
+                transition,
+                identity: frame.identity.0,
+                condition: frame.kind.canonical_name(),
+                limit: frame.limit.canonical_name(),
+                branch,
+            }),
+        );
     }
 
     fn pass_text_scalar(&mut self, condition: ConditionId) -> Result<PassTextStop, CommandError> {

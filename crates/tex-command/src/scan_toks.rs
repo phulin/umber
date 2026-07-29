@@ -20,7 +20,6 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
 use tex_state::CommandLineSource;
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
@@ -124,28 +123,33 @@ impl CommandProcessor<'_> {
         let result = self.scan_toks_inner(mode);
         self.restore_scanner_status_with_observation(status, prior);
         let result = result?;
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::TokenList(TokenListRecord {
-            transition: "complete",
-            purpose: match mode {
-                ScanToksMode::General { expanded: true }
-                | ScanToksMode::GeneralAfterOpening { expanded: true, .. } => "expanded_scan_toks",
-                ScanToksMode::General { expanded: false }
-                | ScanToksMode::GeneralAfterOpening {
-                    expanded: false, ..
-                } => "scan_toks",
-                ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. } => {
-                    "macro_replacement"
-                }
-            },
-            tokens: self
-                .state
-                .tokens(result.replacement_text.token_list())
-                .iter()
-                .copied()
-                .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
-                .collect(),
-        }));
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: match mode {
+                    ScanToksMode::General { expanded: true }
+                    | ScanToksMode::GeneralAfterOpening { expanded: true, .. } =>
+                        "expanded_scan_toks",
+                    ScanToksMode::General { expanded: false }
+                    | ScanToksMode::GeneralAfterOpening {
+                        expanded: false, ..
+                    } => "scan_toks",
+                    ScanToksMode::MacroDefinition { .. }
+                    | ScanToksMode::MacroDefinitionFor { .. } => {
+                        "macro_replacement"
+                    }
+                },
+                tokens: self
+                    .state
+                    .tokens(result.replacement_text.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| self
+                        .observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
+                    .collect(),
+            }),
+        );
         Ok(result)
     }
 
@@ -168,7 +172,6 @@ impl CommandProcessor<'_> {
                     if !is_begin_group(opening.spelling().semantic_token()) {
                         return Err(CommandError::input_invariant());
                     }
-                    #[cfg(any(test, feature = "observe"))]
                     self.observe_expanded_delivery(&opening);
                     (expanded, Vec::new(), None, None, primary, false)
                 }
@@ -399,7 +402,6 @@ impl CommandProcessor<'_> {
             // for each retained unexpandable token. Emit that boundary before
             // storing the spelling, while expandable commands above remain
             // represented by their own expansion transitions.
-            #[cfg(any(test, feature = "observe"))]
             if expanded {
                 self.observe_expanded_delivery(&command);
             }
@@ -426,12 +428,14 @@ impl CommandProcessor<'_> {
                 {
                     let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
                     output.push(converted);
-                    #[cfg(any(test, feature = "observe"))]
-                    self.observe(CommandObservation::TokenList(TokenListRecord {
-                        transition: "splice",
-                        purpose: "parameter_conversion",
-                        tokens: vec![self.observed_token(converted)],
-                    }));
+                    observe!(
+                        self,
+                        CommandObservation::TokenList(TokenListRecord {
+                            transition: "splice",
+                            purpose: "parameter_conversion",
+                            tokens: vec![self.observed_token(converted)],
+                        }),
+                    );
                     continue;
                 }
                 self.back_error(command, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)?;
@@ -463,17 +467,20 @@ impl CommandProcessor<'_> {
     }
 
     fn report_macro_parameter_diagnostic(&mut self, diagnostic: MacroParameterDiagnostic) {
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
-            severity: "error",
-            diagnostic: match diagnostic {
-                MacroParameterDiagnostic::NonconsecutiveNumber => "nonconsecutive_macro_parameter",
-                MacroParameterDiagnostic::IllegalReplacementNumber { .. } => {
-                    "illegal_replacement_parameter"
-                }
-            },
-            arguments: Vec::new(),
-        }));
+        observe!(
+            self,
+            CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: match diagnostic {
+                    MacroParameterDiagnostic::NonconsecutiveNumber =>
+                        "nonconsecutive_macro_parameter",
+                    MacroParameterDiagnostic::IllegalReplacementNumber { .. } => {
+                        "illegal_replacement_parameter"
+                    }
+                },
+                arguments: Vec::new(),
+            }),
+        );
         match diagnostic {
             MacroParameterDiagnostic::NonconsecutiveNumber => {
                 let mut report = self
@@ -552,25 +559,32 @@ impl CommandProcessor<'_> {
                 })
                 .collect(),
         };
-        #[cfg(any(test, feature = "observe"))]
-        let observed: Vec<_> = tokens
-            .iter()
-            .copied()
-            .map(|token| self.observed_token(token))
-            .collect();
+        // Built only for an observed episode: an unobserved one leaves this
+        // empty, which `Vec::new` does without allocating.
+        let observed: Vec<_> = if self.is_observed() {
+            tokens
+                .iter()
+                .copied()
+                .map(|token| self.observed_token(token))
+                .collect()
+        } else {
+            Vec::new()
+        };
         output.extend(tokens);
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         // Keep the observation on that same semantic boundary: an empty
         // internal token list contributes no splice transition at all.
-        #[cfg(any(test, feature = "observe"))]
         if !observed.is_empty() {
-            self.observe(CommandObservation::TokenList(TokenListRecord {
-                transition: "splice",
-                purpose: "the_toks",
-                tokens: observed,
-            }));
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "the_toks",
+                    tokens: observed,
+                }),
+            );
         }
         Ok(true)
     }
@@ -697,16 +711,18 @@ impl CommandProcessor<'_> {
         self.restore_scanner_status_with_observation(status, prior);
         let tokens = result?;
         let list = self.state.finish_traced_token_list(&tokens);
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::TokenList(TokenListRecord {
-            transition: "complete",
-            purpose: "read",
-            tokens: tokens
-                .iter()
-                .copied()
-                .map(|token| self.observed_token(token))
-                .collect(),
-        }));
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "read",
+                tokens: tokens
+                    .iter()
+                    .copied()
+                    .map(|token| self.observed_token(token))
+                    .collect(),
+            }),
+        );
         Ok(list)
     }
 

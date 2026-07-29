@@ -347,7 +347,6 @@ impl<'a> CanonicalEngineSession<'a> {
     /// forwarding its committed semantic observations to a non-fallible
     /// observer. Resource suspensions remain atomic and therefore publish no
     /// observations until their retry commits.
-    #[cfg(feature = "observe")]
     pub fn advance_until_waiting_with_observer(
         &mut self,
         checkpoints: &mut dyn CheckpointSink,
@@ -453,7 +452,6 @@ impl<'a> CanonicalEngineSession<'a> {
     }
 
     /// Observed variant of [`Self::run`] over the same production session.
-    #[cfg(feature = "observe")]
     pub fn run_with_observer(
         &mut self,
         host: &mut dyn CanonicalResourceHost,
@@ -560,21 +558,17 @@ fn canonical_font_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "observe")]
     use tex_command::{CommandObservation, CommandObserver};
     use tex_exec::EngineBoundary;
-    #[cfg(feature = "observe")]
     use tex_state::World;
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     struct WorldHost;
 
-    #[cfg(feature = "observe")]
     #[derive(Default)]
     struct ObservationRecorder(Vec<CommandObservation>);
 
-    #[cfg(feature = "observe")]
     impl CommandObserver for ObservationRecorder {
         fn committed(&mut self, observation: CommandObservation) {
             self.0.push(observation);
@@ -659,7 +653,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "observe")]
     fn retained_observer_captures_fresh_and_format_loaded_production_runs() {
         let source: Arc<[u8]> = Arc::from(&b"\\message{observed}\\end"[..]);
         let mut base = Universe::new_with_plain_catcodes();
@@ -704,7 +697,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "instrumentation")]
     fn etex_alphabetic_constants_preserve_control_symbol_spelling() {
         let source: Arc<[u8]> = Arc::from(&br"\endlinechar=`\^^M \newlinechar=`\^^J \end"[..]);
         let mut stores = Universe::new_with_plain_catcodes();

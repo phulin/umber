@@ -4,12 +4,14 @@
 `cargo clippy` lints one feature resolution per invocation, and Cargo unifies
 features across everything a single invocation selects.  The whole-workspace
 `--all-targets` pass therefore lints `tex-command` and `tex-exec` with
-`observe` enabled, because `tools/tex-command-stream` depends on that
-feature and `tex-exec`'s dev-dependencies enable it.  No invocation of that
-shape can ever lint the resolution the shipped binary is built in, so warnings
-that exist only there -- `cargo build -p umber`, `cargo run-dev -p umber`,
-`cargo test -p umber --test it` -- were invisible to the gate while being
-visible to every agent who typed one of those commands.
+`tex-state/testing` enabled, because every crate's dev-dependencies enable it.
+No invocation of that shape can ever lint the resolution the shipped binary is
+built in, so warnings that exist only there -- `cargo build -p umber`,
+`cargo run-dev -p umber`, `cargo test -p umber --test it` -- were invisible to
+the gate while being visible to every agent who typed one of those commands.
+
+`observe` was a second such divergence until `umber2-johp.310` deleted it; the
+observation vocabulary now compiles in every resolution, guarded at runtime.
 
 This script closes that gap structurally rather than by convention:
 
@@ -51,27 +53,23 @@ PASSES = (
         # repository compiles, and one selected by no pass is one the lint
         # policy does not actually apply to (umber2-johp.201).
         "summary": "every workspace member, all targets, dev-dependency feature union",
-        "args": ("--workspace", "--all-targets", "--features", "umber/observe"),
+        "args": ("--workspace", "--all-targets"),
         "select": "workspace",
         "features": {
-            "parity-harness": ["observe"],
-            "tex-command": ["observe"],
-            "tex-exec": ["observe"],
             "tex-state": ["default", "testing"],
-            "umber": ["default", "observe"],
+            "umber": ["default"],
         },
         "quarantine": {},
     },
     {
         "name": "shipping",
         "summary": "every workspace member's lib and bin targets, no dev-dependencies",
-        # `tex-command-stream` is the one member that forces `observe`
-        # on a dependency, so excluding it is what makes this pass resolve the
-        # features a released `umber` is built with.  It is linted by the union
-        # pass instead.
-        "args": ("--workspace", "--lib", "--bins", "--exclude", "tex-command-stream"),
+        # No member forces a feature on a dependency any more, so this pass
+        # differs from `union` only in dev-dependencies -- which is exactly
+        # `tex-state/testing`, the one axis that cannot be collapsed because
+        # its absence in production is a safety property.
+        "args": ("--workspace", "--lib", "--bins"),
         "select": "workspace",
-        "exclude": ("tex-command-stream",),
         "features": {
             "tex-state": ["default"],
             "umber": ["default"],

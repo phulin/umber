@@ -3,6 +3,32 @@
 //! Semantic state machines are crate-private. The public facade grows only as
 //! executor integration requires stable, end-state operations.
 
+/// Publishes one semantic observation, evaluating its payload only when the
+/// episode has an observer installed.
+///
+/// The payload is a textual argument rather than a closure, so it may borrow
+/// the processor immutably before `observe` takes it mutably, and it costs
+/// nothing beyond one `Option` test in an unobserved episode. Every
+/// observation site in this crate goes through here, which is what lets the
+/// observation vocabulary compile unconditionally without a shipped engine
+/// paying to build records it would immediately drop.
+///
+/// This replaced `#[cfg(any(test, feature = "observe"))]` on roughly 250
+/// sites. Those attributes compiled the engine three different ways -- the
+/// `test` arm, the feature arm, and neither -- so the traced engine the oracle
+/// compares was never literally the engine that ships. They also forced every
+/// entry point in `processor/observe.rs` to be written twice, once real and
+/// once empty, because a cfg'd-out call site leaves its inputs unused
+/// (`umber2-johp.200`). See `docs/cargo_feature_axes.md`.
+macro_rules! observe {
+    ($processor:expr, $observation:expr $(,)?) => {
+        if $processor.is_observed() {
+            let observation = $observation;
+            $processor.observe(observation);
+        }
+    };
+}
+
 mod command;
 mod conditionals;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
@@ -45,9 +71,7 @@ pub use input::{
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
-#[cfg(any(test, feature = "observe"))]
 pub use observation::canonical_names;
-#[cfg(any(test, feature = "observe"))]
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,

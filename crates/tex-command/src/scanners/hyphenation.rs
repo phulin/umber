@@ -18,7 +18,6 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
 use crate::{CommandError, CommandProcessor};
-#[cfg(any(test, feature = "observe"))]
 use crate::{CommandObservation, DiagnosticRecord};
 
 #[cfg(test)]
@@ -128,15 +127,17 @@ impl CommandProcessor<'_> {
             ),
             HyphenationDataKind::Patterns => ("Bad \\patterns", &["(See Appendix H.)"]),
         };
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
-            severity: "error",
-            diagnostic: match kind {
-                HyphenationDataKind::Exceptions => "improper_hyphenation",
-                HyphenationDataKind::Patterns => "bad_patterns",
-            },
-            arguments: Vec::new(),
-        }));
+        observe!(
+            self,
+            CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: match kind {
+                    HyphenationDataKind::Exceptions => "improper_hyphenation",
+                    HyphenationDataKind::Patterns => "bad_patterns",
+                },
+                arguments: Vec::new(),
+            }),
+        );
         let mut report = self.state.print_err(message);
         report.help(help);
         report.error();

@@ -263,11 +263,10 @@ evidence hermetic.
 One `cargo clippy` invocation lints one feature resolution, and Cargo unifies
 features across every package the invocation selects. A whole-workspace
 `--all-targets` run therefore always resolves `tex-command` and `tex-exec` with
-`observe` enabled, because `tools/tex-command-stream` depends on that feature
-and `tex-exec`'s dev-dependencies enable it. No command of that shape
-can lint the resolution a released `umber` is built in, so the gate runs a
-declared set of passes instead of one command. `scripts/check-lint-passes.py`
-holds the declaration and runs them all:
+`tex-state/testing` enabled, because every crate's dev-dependencies enable it.
+No command of that shape can lint the resolution a released `umber` is built
+in, so the gate runs a declared set of passes instead of one command.
+`scripts/check-lint-passes.py` holds the declaration and runs them all:
 
 - **union**: every workspace member, all targets, dev-dependency feature union.
   It selects `--workspace` rather than the default members because a test
@@ -275,9 +274,13 @@ holds the declaration and runs them all:
   compiles, and one selected by no pass is one the lint policy does not
   actually apply to (`umber2-johp.201`).
 - **shipping**: every workspace member's lib and bin targets, no
-  dev-dependencies, `tex-command-stream` excluded. This is the resolution
-  behind `cargo build -p umber`, `cargo run-dev -p umber`, and
-  `cargo test -p umber --test it`.
+  dev-dependencies. This is the resolution behind `cargo build -p umber`,
+  `cargo run-dev -p umber`, and `cargo test -p umber --test it`. It no longer
+  excludes `tex-command-stream`: that exclusion existed because
+  `tex-command-stream` forced `observe` onto `tex-command` and `tex-exec`, and
+  `observe` no longer exists (see
+  [Cargo Feature Axes](cargo_feature_axes.md) §2.1). `tex-state/testing` is
+  now the only thing the two passes differ by.
 
 Together the passes lint every target of every workspace member in at least one
 of the two resolutions.

@@ -10,7 +10,6 @@ use crate::input::SharedTokenBuffer;
 use crate::processor::status::{ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerWarning};
 use crate::{CommandError, CommandProcessor};
 
-#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, MacroRecord, TokenListRecord,
 };
@@ -250,23 +249,27 @@ impl CommandProcessor<'_> {
             meaning.replacement_text(),
             provenance.replacement_origins(),
         );
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Input(InputRecord {
-            transition: InputTransition::Push,
-            reason: InputReason::Macro,
-            source_name: None,
-            level: _level.0,
-            position: 0,
-        }));
-        #[cfg(any(test, feature = "observe"))]
-        self.observe(CommandObservation::Macro(MacroRecord {
-            activation: true,
-            definition: u64::from(definition.raw()),
-            control_sequence: Some(self.state.resolve(macro_name).to_owned()),
-            argument: Some(pattern.parameter_count() as u8),
-            token_count: arguments.buffer.len() as u64,
-            tokens: Vec::new(),
-        }));
+        observe!(
+            self,
+            CommandObservation::Input(InputRecord {
+                transition: InputTransition::Push,
+                reason: InputReason::Macro,
+                source_name: None,
+                level: _level.0,
+                position: 0,
+            }),
+        );
+        observe!(
+            self,
+            CommandObservation::Macro(MacroRecord {
+                activation: true,
+                definition: u64::from(definition.raw()),
+                control_sequence: Some(self.state.resolve(macro_name).to_owned()),
+                argument: Some(pattern.parameter_count() as u8),
+                token_count: arguments.buffer.len() as u64,
+                tokens: Vec::new(),
+            }),
+        );
         if let Some((prior, status)) = prior {
             self.restore_scanner_status_with_observation(status, prior);
         }
@@ -300,31 +303,35 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
-            #[cfg(any(test, feature = "observe"))]
-            self.observe(CommandObservation::TokenList(TokenListRecord {
-                transition: "splice",
-                purpose: "macro_delimiter_match",
-                tokens: delimiter
-                    .iter()
-                    .copied()
-                    .map(|token| {
-                        self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                    })
-                    .collect(),
-            }));
-            #[cfg(any(test, feature = "observe"))]
-            self.observe(CommandObservation::Macro(MacroRecord {
-                activation: false,
-                definition: u64::from(_definition.raw()),
-                control_sequence: None,
-                argument: Some((parameter + 1) as u8),
-                token_count: argument.len() as u64,
-                tokens: argument
-                    .iter()
-                    .copied()
-                    .map(|token| self.observed_token(token))
-                    .collect(),
-            }));
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "macro_delimiter_match",
+                    tokens: delimiter
+                        .iter()
+                        .copied()
+                        .map(|token| {
+                            self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                        })
+                        .collect(),
+                }),
+            );
+            observe!(
+                self,
+                CommandObservation::Macro(MacroRecord {
+                    activation: false,
+                    definition: u64::from(_definition.raw()),
+                    control_sequence: None,
+                    argument: Some((parameter + 1) as u8),
+                    token_count: argument.len() as u64,
+                    tokens: argument
+                        .iter()
+                        .copied()
+                        .map(|token| self.observed_token(token))
+                        .collect(),
+                }),
+            );
             arguments
                 .complete((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::input_invariant())?;
@@ -448,12 +455,14 @@ impl CommandProcessor<'_> {
                     prefix.len() + 1 - retained
                 };
                 for prefix_token in prefix.drain(..committed) {
-                    #[cfg(any(test, feature = "observe"))]
-                    self.observe(CommandObservation::TokenList(TokenListRecord {
-                        transition: "splice",
-                        purpose: "macro_delimiter_recovery",
-                        tokens: vec![self.observed_token(prefix_token)],
-                    }));
+                    observe!(
+                        self,
+                        CommandObservation::TokenList(TokenListRecord {
+                            transition: "splice",
+                            purpose: "macro_delimiter_recovery",
+                            tokens: vec![self.observed_token(prefix_token)],
+                        }),
+                    );
                     push_delimited_argument_token(&mut tokens, &mut depth, prefix_token);
                 }
                 if retained != 0 {

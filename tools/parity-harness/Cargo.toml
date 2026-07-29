@@ -5,7 +5,6 @@ edition.workspace = true
 
 [features]
 reference-tools = ["dep:refexec"]
-observe = ["dep:tex-command"]
 
 [[bin]]
 name = "parity-harness"
@@ -23,7 +22,7 @@ sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 test-support = { path = "../../crates/test-support" }
-tex-command = { path = "../../crates/tex-command", features = ["observe"], optional = true }
+tex-command = { path = "../../crates/tex-command" }
 tex-oracle = { path = "../../crates/tex-oracle" }
 tex-out = { path = "../../crates/tex-out" }
 
