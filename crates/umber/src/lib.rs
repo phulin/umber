@@ -2238,7 +2238,7 @@ mod tests {
 
     #[test]
     fn canonical_pdf_resource_retry_matches_no_failure_effect_sequence() {
-        let source = &b"\\immediate\\write17{once} \\pdfximage image.png \
+        let source = &b"\\immediate\\write17{once} \\pdfximage {image.png} \
                          \\shipout\\hbox{\\pdfrefximage1}\\end"[..];
         let image = tex_state::PdfExternalImageSource {
             identity: tex_state::ContentHash::from_bytes(b"canonical retry image"),
@@ -2453,7 +2453,7 @@ mod tests {
         png[20..24].copy_from_slice(&1_u32.to_be_bytes());
         png[24] = 8;
         png[25] = 0;
-        let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage image.png\\end";
+        let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage {image.png}\\end";
 
         for loaded in [false, true] {
             let mut world = World::memory();
@@ -2638,7 +2638,7 @@ mod tests {
             .register_canonical_root(
                 "job.tex",
                 RegisteredSourceKind::Generated,
-                Arc::from(&b"\\pdfximage absent.png"[..]),
+                Arc::from(&b"\\pdfximage {absent.png}"[..]),
             )
             .expect("root registers");
         let request = match session.advance_canonical().expect("image scan") {
@@ -2689,12 +2689,12 @@ mod tests {
         };
 
         assert_eq!(
-            request_for(1, 0, b"\\pdfximage image.pdf").page_box,
+            request_for(1, 0, b"\\pdfximage {image.pdf}").page_box,
             tex_command::PdfImagePageBox::Media,
             "the live pdfpagebox default is part of the host identity"
         );
         assert_eq!(
-            request_for(2, 5, b"\\pdfximage mediabox image.pdf").page_box,
+            request_for(2, 5, b"\\pdfximage mediabox {image.pdf}").page_box,
             tex_command::PdfImagePageBox::Art,
             "pdfforcepagebox overrides an explicit selector before acquisition"
         );
@@ -2715,7 +2715,7 @@ mod tests {
             .register_canonical_root(
                 "job.tex",
                 RegisteredSourceKind::Generated,
-                Arc::from(&b"\\pdfximage unavailable.png"[..]),
+                Arc::from(&b"\\pdfximage {unavailable.png}"[..]),
             )
             .expect("root registers");
         assert!(matches!(

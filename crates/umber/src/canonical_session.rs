@@ -905,7 +905,7 @@ mod tests {
         let mut image_session =
             CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14027);
         image_session
-            .register_authored_root("image.tex", Arc::from(&b"\\pdfximage image.png\\end"[..]))
+            .register_authored_root("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
             .expect("image root registers");
         image_session
             .run(&mut WorldHost, &mut Vec::new())
