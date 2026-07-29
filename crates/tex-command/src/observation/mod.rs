@@ -522,8 +522,9 @@ pub struct ConditionRecord {
     /// Stable stack identity for diagnostic context only; it is not part of
     /// the portable oracle event.
     pub identity: u64,
-    /// Canonical TeX conditional name, e.g. `iftrue` or `ifcase`.
-    pub condition: &'static str,
+    /// Canonical TeX/e-TeX conditional name, e.g. `iftrue`, `ifcase`, or
+    /// `unless_iftrue`.
+    pub condition: String,
     /// Canonical TeX `if_limit` name at the transition seam.
     pub limit: &'static str,
     /// A branch selected at this seam, when applicable.

@@ -587,9 +587,33 @@ fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
         vec![unless, if_false, other('y'), otherwise, other('n'), fi],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-
-    assert_eq!(next_character(&mut processor), 'y');
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 'y');
+    }
+    let transitions: Vec<_> = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Condition(record) => Some((
+                record.transition,
+                record.condition.as_str(),
+                record.limit,
+                record.branch.as_deref(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        transitions,
+        [
+            ("push", "unless_iffalse", "evaluating", None),
+            ("branch", "iffalse", "evaluating", Some("true")),
+            ("limit", "unless_iffalse", "else", None),
+        ]
+    );
 }
 
 #[test]

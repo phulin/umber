@@ -1678,7 +1678,7 @@ fn translate_condition(record: ConditionRecord) -> Event {
     };
     Event::Condition(ConditionEvent {
         transition,
-        condition: record.condition.into(),
+        condition: record.condition,
         limit: record.limit.into(),
         branch: record.branch,
     })
@@ -2168,7 +2168,7 @@ mod tests {
             translate_condition(ConditionRecord {
                 transition: "push",
                 identity: 17,
-                condition: "iftrue",
+                condition: "iftrue".into(),
                 limit: "evaluating",
                 branch: None,
             }),
@@ -2183,7 +2183,7 @@ mod tests {
             translate_condition(ConditionRecord {
                 transition: "branch",
                 identity: 17,
-                condition: "iftrue",
+                condition: "iftrue".into(),
                 limit: "evaluating",
                 branch: Some("true".into()),
             }),

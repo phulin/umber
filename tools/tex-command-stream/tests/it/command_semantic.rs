@@ -632,11 +632,13 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         SessionProfile::Initex => CanonicalMainControl::tex82_initex(&mut universe),
         SessionProfile::EtexInitex => {
             let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
+            tex_command::install_etex_expandable_primitives(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
             CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
         }
         SessionProfile::EtexLoaded => {
             let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
+            tex_command::install_etex_expandable_primitives(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
             // Exercise e-TeX change [50.1307], which resets optional e-TeX
             // state cells immediately before tex.web §1307 dumps `eqtb`.
@@ -646,6 +648,8 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 .map_err(|error| format!("e-TeX format creation: {error}"))?;
             universe = Universe::from_format(tex_state::World::memory(), &format)
                 .map_err(|error| format!("e-TeX format restore: {error}"))?;
+            tex_command::register_tex82_expandable_primitives(&mut universe);
+            tex_command::register_etex_expandable_primitives(&mut universe);
             CanonicalMainControl::with_profile(CommandProfile::ETEX26)
         }
         SessionProfile::Production => {
@@ -875,13 +879,13 @@ fn condition_observations(run: &SemanticRun) -> Vec<String> {
 
 fn predicate_outcomes(run: &SemanticRun) -> Vec<String> {
     let mut stack = Vec::new();
-    let mut active = BTreeMap::<u64, (&str, Vec<(&str, String)>)>::new();
+    let mut active = BTreeMap::<u64, (String, Vec<(&str, String)>)>::new();
     let mut outcomes = Vec::new();
     for observation in &run.observations {
         match observation {
             CommandObservation::Condition(record) if record.transition == "push" => {
                 stack.push(record.identity);
-                active.insert(record.identity, (record.condition, Vec::new()));
+                active.insert(record.identity, (record.condition.clone(), Vec::new()));
             }
             CommandObservation::Scanner(record) => {
                 if let Some(identity) = stack.last()

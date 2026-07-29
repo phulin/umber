@@ -1021,12 +1021,25 @@ impl CommandProcessor<'_> {
         frame: &ConditionFrame,
         branch: Option<String>,
     ) {
+        // e-TeX 2.6 etex.ch [17.4713--4751] stores `\unless` by adding
+        // `unless_code` to `cur_if`. The immediate boolean-result observation
+        // is deliberately about `this_if` (the unprefixed predicate), while
+        // the pushed and subsequently retained frame observations use
+        // `cur_if` and therefore retain the prefix.
+        let evaluating_boolean_result = transition == "branch"
+            && frame.limit == IfLimit::Evaluating
+            && matches!(branch.as_deref(), Some("true" | "false"));
+        let condition = if frame.inverted && !evaluating_boolean_result {
+            format!("unless_{}", frame.kind.canonical_name())
+        } else {
+            frame.kind.canonical_name().into()
+        };
         observe!(
             self,
             CommandObservation::Condition(ConditionRecord {
                 transition,
                 identity: frame.identity.0,
-                condition: frame.kind.canonical_name(),
+                condition,
                 limit: frame.limit.canonical_name(),
                 branch,
             }),
