@@ -31,6 +31,35 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
     }
 }
 
+#[test]
+fn vtop_resets_inherited_parshape_before_display_line_measurement() {
+    // TeX82 §§1051--1052 run `normal_paragraph` after opening a `\vtop`.
+    // The display therefore uses the box-local 100pt hsize, not the inherited
+    // 12pt second `\parshape` line. The empty display's centered reference
+    // point therefore extends the vtop's exact natural width to 50pt.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode
+          \hsize=100pt
+          \parshape=2 1pt 11pt 2pt 12pt
+          \setbox0=\vtop{\noindent$$\kern5pt$$}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let root = stores.box_reg(0).expect("vtop is assigned to box 0");
+    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    assert_eq!(boxed.width.raw(), 3_276_800);
+}
+
 fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);

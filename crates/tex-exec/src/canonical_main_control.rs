@@ -11036,12 +11036,6 @@ fn apply_scanned_step(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            // TeX82 §1167's `scan_spec(vcenter_group,false); normal_paragraph`.
-            // (§1083's `\vbox`/`\vtop` branch runs the same `normal_paragraph`;
-            // that call is still missing here and is tracked separately.)
-            if kind == ReplayBoxKind::VCenter {
-                crate::assignments::normal_paragraph(modes, stores);
-            }
             let group_kind = if kind == ReplayBoxKind::HBox && target.is_none() && !ships_out {
                 GroupKind::AdjustedHBox
             } else {
@@ -11053,6 +11047,12 @@ fn apply_scanned_step(
             } else {
                 Mode::InternalVertical
             });
+            // TeX82 §§1051--1052 and §1167 run `normal_paragraph` after
+            // opening every internal-vertical box body. In particular, a
+            // `\vbox`/`\vtop` must not inherit the enclosing `\parshape`.
+            if !kind.horizontal() {
+                crate::assignments::normal_paragraph(modes, stores);
+            }
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 ships_out,
@@ -11159,6 +11159,9 @@ fn apply_scanned_step(
             } else {
                 Mode::InternalVertical
             });
+            if !kind.horizontal() {
+                crate::assignments::normal_paragraph(modes, stores);
+            }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
@@ -12420,6 +12423,9 @@ fn apply_box_shift(
             } else {
                 Mode::InternalVertical
             });
+            if !kind.horizontal() {
+                crate::assignments::normal_paragraph(modes, stores);
+            }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
