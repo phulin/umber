@@ -1239,18 +1239,15 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
 }
 
 #[test]
-fn discretionary_raw_delivers_first_body_call_before_collection() {
-    // TeX82 §1117 enters each discretionary body through `get_x_token`, so
-    // the raw half of the first call precedes the migration collector's
-    // absorbing transition and is not delivered a second time.
+fn discretionary_matches_first_body_macro_before_collection() {
+    // TeX82 §1117 returns to main control after opening the discretionary
+    // group. Its first `get_x_token` must therefore complete macro argument
+    // matching before the migration collector enters `absorbing`.
     let mut command = CommandState::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let call = universe.intern("body").symbol();
-    let replacement = universe.intern_token_list(&[Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    }]);
-    let parameters = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&[Token::Param(1)]);
+    let parameters = universe.intern_token_list(&[Token::Param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::EMPTY,
         parameters,
@@ -1266,7 +1263,7 @@ fn discretionary_raw_delivers_first_body_call_before_collection() {
     let source = command
         .register_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(b"{\\body}{b}{c}".as_slice()),
+            Arc::<[u8]>::from(b"{\\body x}{b}{c}".as_slice()),
         ))
         .expect("source registers");
     command
@@ -1276,42 +1273,115 @@ fn discretionary_raw_delivers_first_body_call_before_collection() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
 
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let discretionary = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_observer(&mut recorder)
         .scan_discretionary()
         .expect("discretionary scans");
 
-    let call_deliveries = recorder
+    let events = recorder
         .0
+        .iter()
+        .filter_map(|event| match event {
+            CommandObservation::Command(command)
+                if command.spelling == crate::ObservedToken::ControlSequence("body".into()) =>
+            {
+                Some("call")
+            }
+            CommandObservation::ScannerStatus(status)
+                if status.from == "normal" && status.to == "matching" =>
+            {
+                Some("matching")
+            }
+            CommandObservation::ScannerStatus(status)
+                if status.from == "matching" && status.to == "normal" =>
+            {
+                Some("matched")
+            }
+            CommandObservation::ScannerStatus(status)
+                if status.from == "normal" && status.to == "absorbing" =>
+            {
+                Some("absorbing")
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &events[..4],
+        &["call", "matching", "matched", "absorbing"],
+        "{:?}",
+        recorder.0
+    );
+    assert_eq!(
+        events.iter().filter(|event| **event == "call").count(),
+        1,
+        "{:?}",
+        recorder.0
+    );
+    assert_eq!(
+        universe.tokens(discretionary.pre_break.tokens.token_list()),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
+fn discretionary_nonmacro_front_is_delivered_once_before_collection() {
+    // The same §1117 handoff must not duplicate an already unexpandable first
+    // command merely because no macro expansion occurs.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{x}{b}{c}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+
+    let discretionary = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_discretionary()
+        .expect("discretionary scans");
+
+    let first_absorbing = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::ScannerStatus(status)
+                    if status.from == "normal" && status.to == "absorbing"
+            )
+        })
+        .expect("first collection begins");
+    let x_deliveries = recorder.0[..first_absorbing]
         .iter()
         .filter(|event| {
             matches!(
                 event,
                 CommandObservation::Command(command)
-                    if command.spelling
-                        == crate::ObservedToken::ControlSequence("body".into())
+                    if command.spelling == crate::ObservedToken::Character {
+                        character: 'x',
+                        catcode: Catcode::Letter,
+                    }
             )
         })
         .count();
-    assert_eq!(call_deliveries, 1, "{:?}", recorder.0);
-    assert!(matches!(
-        recorder.0.as_slice(),
-        [
-            CommandObservation::Command(opening_raw),
-            CommandObservation::Command(opening_expanded),
-            CommandObservation::Command(call_raw),
-            CommandObservation::ScannerStatus(status),
-            ..
-        ] if matches!(opening_raw.spelling, crate::ObservedToken::Character {
-                character: '{', catcode: Catcode::BeginGroup
-            })
-            && matches!(opening_expanded.spelling, crate::ObservedToken::Character {
-                character: '{', catcode: Catcode::BeginGroup
-            })
-            && call_raw.spelling == crate::ObservedToken::ControlSequence("body".into())
-            && status.from == "normal"
-            && status.to == "absorbing"
-    ));
+    assert_eq!(x_deliveries, 2, "{:?}", recorder.0);
+    assert_eq!(
+        universe.tokens(discretionary.pre_break.tokens.token_list()),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
 }
 
 #[test]
