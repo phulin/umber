@@ -14,6 +14,9 @@
 //!
 //! tex.web spreads the pieces this module owns across:
 //! - §61 `wterm(banner)` and §536 `open_log_file`: the start-up banner.
+//! - etex.ch's patches at tex.web §536 (log) and §1337 (terminal): e-TeX's
+//!   "entering extended mode" notice, printed on both channels immediately
+//!   after the banner and before §534's `**` line.
 //! - §534: the `**` line that echoes the job's first input line.
 //! - §537 `start_input` and §362: `(name` and `)` around each opened file.
 //! - §1335 `final_cleanup`: closing every still-open paren, reporting
@@ -76,23 +79,29 @@ pub struct DviJobOutput {
     pub byte_len: u64,
 }
 
-/// tex.web §536's `format_ident`.
+/// tex.web §61's `format_ident`: printed right after the banner both on the
+/// terminal (§61's `if format_ident=0 then wterm_ln(' (no format preloaded)')
+/// else begin slow_print(format_ident); print_ln end`) and, with the clock
+/// appended, on the log (§536's `open_log_file`).
 ///
-/// Only INITEX's `" (INITEX)"` is implemented. The minifixture corpus this
-/// module was built for drives every job through
-/// [`crate::CanonicalMainControl::tex82_initex`], so a loaded-format run's
-/// `" (preloaded format=" name ")"` has no reachable caller to write or check
-/// against; guessing a format name here would look correct and be silently
-/// wrong, which is worse than not implementing it. A loaded-format
-/// [`begin_job`] call fails loudly instead, so the gap stays visible until a
-/// caller that actually needs it exists.
+/// INITEX sets `format_ident:=" (INITEX)"` while its own tables are still
+/// loading, so by the time §61 runs, `format_ident` is never really `0` for
+/// an INITEX job -- the only kind [`begin_job`] currently frames
+/// (`tools/tex-command-stream`'s `SessionProfile::Initex`/`EtexInitex` both
+/// pass `initex: true`; no caller currently reaches the `false` branch at
+/// all). A loaded-format job's `format_ident` would instead be `"
+/// (preloaded format=" name " " year "." month "." day ")"` (§1336's
+/// `store_fmt_file`), which this module has no format name or dump date to
+/// spell -- guessing one would look correct and be silently wrong. Rather
+/// than refuse outright, an unreached `initex: false` call reports tex.web's
+/// *other* honest branch instead: `format_ident=0`'s `" (no format
+/// preloaded)"`, true of a job that has loaded no format at all.
 fn format_ident(initex: bool) -> &'static str {
-    assert!(
-        initex,
-        "job::begin_job: format_ident for a loaded (non-INITEX) format is not implemented; \
-         see this function's doc comment"
-    );
-    " (INITEX)"
+    if initex {
+        " (INITEX)"
+    } else {
+        " (no format preloaded)"
+    }
 }
 
 /// tex.web's month-name table, indexed by `(month-1)*3..(month-1)*3+3`.
@@ -124,8 +133,9 @@ fn clock_suffix(stores: &Universe) -> String {
     )
 }
 
-/// tex.web §61's `wterm(banner)`, §536's clock-stamped log banner, and
-/// §534's `**` first line.
+/// tex.web §61's `wterm(banner)` plus `format_ident`, §536's clock-stamped
+/// log banner, etex.ch's "entering extended mode" notice, and §534's `**`
+/// first line.
 ///
 /// Idempotent: only the first call prints anything, matching tex.web's own
 /// one-shot start-up (`job_name=0` guards `open_log_file`). A driver calls
@@ -137,6 +147,7 @@ pub(crate) fn begin_job(
     stores: &mut Universe,
     capabilities: &mut CommandHostCapabilities,
     initex: bool,
+    etex: bool,
     first_line: &str,
 ) {
     if job.started {
@@ -148,21 +159,44 @@ pub(crate) fn begin_job(
     // `CommandHostCapabilities::set_startup_job_name`.
     capabilities.set_startup_job_name(first_line);
 
-    // §61: the terminal's very first output. No `format_ident`, no clock, no
-    // trailing newline -- whatever prints next (§537's `(` for the root
-    // file) decides its own line break from `term_offset`.
-    stores.world_mut().write_text(PrintSink::Terminal, BANNER);
+    // §61: the terminal's very first output -- `format_ident` and a
+    // terminating `print_ln`, no clock (the clock is §536's log-only
+    // addition). Whatever prints next (etex.ch's notice below, or §537's `(`
+    // for the root file) starts its own fresh line.
+    let terminal_banner = format!("{BANNER}{}\n", format_ident(initex));
+    stores
+        .world_mut()
+        .write_text(PrintSink::Terminal, &terminal_banner);
 
     // §536 `open_log_file`: the log's banner additionally carries
-    // `format_ident` and the clock.
+    // `format_ident` and the clock, with no trailing newline yet -- §534's
+    // `print_nl("**")` below supplies it.
     let log_banner = format!("{BANNER}{}{}", format_ident(initex), clock_suffix(stores));
     stores.world_mut().write_text(PrintSink::Log, &log_banner);
 
-    // §534: `**` plus the job's first line, log only -- a non-interactive
-    // job's terminal never shows the typed `**` prompt line.
+    if etex {
+        // etex.ch's patch at tex.web §1337 (`init_prim`'s caller, run once
+        // right after the terminal banner): `wterm_ln('entering extended
+        // mode')`, its own line, before anything else reaches the terminal.
+        stores
+            .world_mut()
+            .write_text(PrintSink::Terminal, "entering extended mode\n");
+        // etex.ch's patch at tex.web §536 (`open_log_file`, right after the
+        // clock): `wlog_cr; wlog('entering extended mode')` -- a fresh line,
+        // then the text with no trailing newline; §534's `print_nl("**")`
+        // below supplies the line break before `**`.
+        stores
+            .world_mut()
+            .write_text(PrintSink::Log, "\nentering extended mode");
+    }
+
+    // §534: `**` plus the job's first line, then `open_log_file`'s own
+    // `print_ln` -- log only, since a non-interactive job's terminal never
+    // shows the typed `**` prompt line.
     Printer::new(stores, Selector::LogOnly)
         .print_nl("**")
-        .print(first_line);
+        .print(first_line)
+        .print_ln();
 }
 
 /// Renders one step's drained §537/§362 file-bracketing queue.

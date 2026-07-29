@@ -93,6 +93,24 @@ pub struct Case {
     pub terminal_lines: Vec<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
+    /// tex.web's `-interaction` mode this case's job runs under.
+    ///
+    /// Defaults to `scrollmode`: `scripts/run-minifixture-oracle.sh` runs
+    /// every case that way (see its "Interaction mode" comment for why), so a
+    /// case's channels are comparable to that sweep's oracle capture only
+    /// under the default. A case that needs a different mode -- e.g.
+    /// `main-control/show-completion`, which exists to exercise the `?`
+    /// prompt only `errorstopmode` issues -- declares one explicitly, and
+    /// [`validate_case`] then requires [`Self::interaction_mode_note`] to say
+    /// why, so the corpus records the deviation instead of leaving it to be
+    /// discovered by a confused diff against the standard sweep.
+    #[serde(default)]
+    pub interaction_mode: CaseInteractionMode,
+    /// Required exactly when [`Self::interaction_mode`] is not the default,
+    /// explaining what that case's channels are being compared against
+    /// instead of a standard `scrollmode` oracle capture.
+    #[serde(default)]
+    pub interaction_mode_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,6 +170,32 @@ pub enum SessionProfile {
     EtexInitex,
     EtexLoaded,
     Production,
+}
+
+/// tex.web's four `-interaction` modes, spelled exactly as pdfTeX's own flag
+/// does (`-interaction=scrollmode`, ...) so a case's declared value can be
+/// handed straight to the oracle runner's command line.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaseInteractionMode {
+    #[default]
+    Scrollmode,
+    Errorstopmode,
+    Nonstopmode,
+    Batchmode,
+}
+
+impl CaseInteractionMode {
+    /// The engine-level mode this case's declared value selects.
+    #[must_use]
+    pub const fn engine_mode(self) -> tex_state::InteractionMode {
+        match self {
+            Self::Scrollmode => tex_state::InteractionMode::Scroll,
+            Self::Errorstopmode => tex_state::InteractionMode::ErrorStop,
+            Self::Nonstopmode => tex_state::InteractionMode::Nonstop,
+            Self::Batchmode => tex_state::InteractionMode::Batch,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -727,6 +771,36 @@ pub fn validate_case(
             case.id
         ));
     }
+    // A case that declares a non-default interaction mode is declaring that
+    // its channels are not comparable to `scripts/run-minifixture-oracle.sh`'s
+    // standard scrollmode sweep the way every other case's are, and that fact
+    // must be visible in the corpus rather than left to be rediscovered from
+    // a confusing diff. A required, nonempty note is the chosen mechanism
+    // (over silent documentation or a separate validator) because it keeps
+    // the explanation in the one place a reader of the manifest will already
+    // be looking, and [`validate_case`] enforces it exactly like every other
+    // committed invariant here rather than trusting it to stay written.
+    match (
+        case.interaction_mode == CaseInteractionMode::default(),
+        case.interaction_mode_note.as_deref().unwrap_or(""),
+    ) {
+        (false, "") => {
+            return Err(format!(
+                "case {} declares interaction_mode {:?} but no interaction_mode_note \
+                 explaining why its channels are not comparable to the standard scrollmode \
+                 oracle sweep",
+                case.id, case.interaction_mode
+            ));
+        }
+        (true, note) if !note.is_empty() => {
+            return Err(format!(
+                "case {} has an interaction_mode_note but interaction_mode is the default \
+                 scrollmode",
+                case.id
+            ));
+        }
+        _ => {}
+    }
     validate_expectation(&case.expectation).map_err(|error| format!("case {}: {error}", case.id))
 }
 pub fn claim_case_identity(
@@ -943,17 +1017,22 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         );
     }
 
-    // The oracle this corpus is measured against always runs
-    // `-interaction=scrollmode`. `scripts/run-minifixture-oracle.sh`'s
-    // "Interaction mode" comment works through why: it is the one mode that
-    // both tolerates the `\read`/`\pausing` cases that need `>nonstop_mode`
-    // *and* "omits error stops" (tex.web §1749) the way batch/nonstop do, so
-    // an error this simulation didn't anticipate still just prints and lets
-    // the run finish instead of demanding an unanswerable `?` prompt. This is
-    // set on the constructed `Universe` -- after the profile match above,
-    // because `EtexLoaded`/`Production` replace `universe` with one restored
-    // from a dumped format, and a format dump carries no interaction mode.
-    universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
+    // The oracle this corpus is measured against runs whatever
+    // `-interaction` mode the case declares (`Case::interaction_mode`,
+    // default `scrollmode`). `scripts/run-minifixture-oracle.sh`'s
+    // "Interaction mode" comment works through why `scrollmode` is the
+    // default: it is the one mode that both tolerates the `\read`/`\pausing`
+    // cases that need `>nonstop_mode` *and* "omits error stops" (tex.web
+    // §1749) the way batch/nonstop do, so an error this simulation didn't
+    // anticipate still just prints and lets the run finish instead of
+    // demanding an unanswerable `?` prompt. A case that needs a real `?`
+    // prompt -- `main-control/show-completion` -- declares `errorstopmode`
+    // instead, with `interaction_mode_note` recording why (see
+    // [`validate_case`]). This is set on the constructed `Universe` -- after
+    // the profile match above, because `EtexLoaded`/`Production` replace
+    // `universe` with one restored from a dumped format, and a format dump
+    // carries no interaction mode.
+    universe.set_interaction_mode(case.interaction_mode.engine_mode());
 
     // `EtexLoaded` and `Production` construct `control` past INITEX
     // (`with_profile`/`new` rather than `tex82_initex`/`prepared_initex`), so

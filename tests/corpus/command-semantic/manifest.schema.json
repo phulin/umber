@@ -51,6 +51,16 @@
           "type": "object",
           "propertyNames": { "type": "string", "minLength": 1 },
           "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "interaction_mode": {
+          "description": "tex.web's -interaction mode this case's job runs under. Defaults to scrollmode, the mode scripts/run-minifixture-oracle.sh's standard sweep runs every case under. A case that declares any other value must also carry interaction_mode_note explaining why its channels are not comparable to that standard sweep.",
+          "enum": ["scrollmode", "errorstopmode", "nonstopmode", "batchmode"]
+        },
+        "interaction_mode_note": {
+          "description": "Required exactly when interaction_mode is not scrollmode: explains what this case's channels are compared against instead of the standard scrollmode oracle sweep.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         }
       }
     },

@@ -249,14 +249,23 @@ real TeX job, not a bare command loop: it is framed with
 `docs/job_framing.md` describes -- the start-up banner, the `**` line, the
 root source registered by name so §537/§362 bracket it in `(name`/`)`, and
 §642's page report and transcript line once the run ends -- and it runs in
-`InteractionMode::Scroll`, matching the oracle runner's own
+`Case::interaction_mode`'s engine mode, which defaults to
+`InteractionMode::Scroll`, matching the oracle runner's own default
 `-interaction=scrollmode` (see that script's "Interaction mode" comment for
 why: scrollmode is the one mode that both tolerates the `\read`/`\pausing`
 cases this corpus feeds terminal answers to and omits the error-stop prompt
-an undeclared divergence would otherwise demand an answer for). The two
-profiles built past INITEX (`etex-loaded`, `production`) cannot take
-`begin_job`'s INITEX-only banner, and the oracle runner cannot reproduce
-either profile at all, so their 5 cases run unframed, exactly as every case
+an undeclared divergence would otherwise demand an answer for). A case that
+needs a different mode declares one explicitly, together with a nonempty
+`interaction_mode_note` explaining why its channels are not comparable to the
+standard scrollmode sweep (`validate_case` requires the note whenever the mode
+is non-default, and requires its absence otherwise); the oracle runner reads
+the same declared mode per case, so the two sides stay comparable even away
+from the default. `main-control/show-completion` is the one committed case
+that does this: it exists to exercise the `?␣` prompt only `errorstopmode`
+issues after `\showthe` (tex.web §1298), which no scrollmode run could ever
+produce. The two profiles built past INITEX (`etex-loaded`, `production`)
+cannot take `begin_job`'s banner at all, and the oracle runner cannot
+reproduce either profile, so their 5 cases run unframed, exactly as every case
 did before this framing existed. The runner compares the declared concise
 projection of committed command observations or selected
 canonical-main-control boundaries -- mode changes, final box-register node
@@ -368,15 +377,26 @@ work is visible rather than assumed. Promoting them is `umber2-alfh.1`, which
 job framing unblocks but does not itself perform: comparing the regenerated
 `terminal`/`log` channels against a pinned pdfTeX 1.40.27 oracle capture
 (`scripts/run-minifixture-oracle.sh`, after only the documented clock
-normalization) now finds 29 of 122 comparable log channels and 0 of 122
+normalization) now finds 38 of 122 comparable log channels and 38 of 122
 comparable terminal channels byte-identical, up from 0 of 39 log channels
-before this framing existed. Of the remainder, 30 log divergences are
-`umber2-alfh.8` (missing `show_context`) and the rest split across several
-gaps this framing did not close: e-TeX's own "entering extended mode" banner
-line, pdfTeX's `[<count0>...]` page-shipment marker, the bare `*` prompt
-before an extra terminal read, and (on every terminal channel) `begin_job`
-writing the terminal banner without INITEX's `(INITEX)` suffix that the log
-banner and the oracle's own terminal both carry.
+before framing existed and up from an initial framed pass of 29 log/0
+terminal. That initial pass had four defects of its own: the terminal banner
+omitted `format_ident` (`" (INITEX)"`) and its terminating newline that §61
+actually prints; the log's `**` line was missing §534's trailing `print_ln`,
+merging it with the root file's own `(name`; e-TeX's "entering extended mode"
+notice was never printed on either channel; and `main-control/show-completion`
+had lost the very `terminal-check:?␣` property it exists to pin, once every
+case started running in scrollmode. All four are fixed: `begin_job` now
+prints `format_ident` and a newline on the terminal, the log's `**` line ends
+with `print_ln`, e-TeX profiles print "entering extended mode" on both
+channels immediately after the banner, and `show-completion` declares
+`interaction_mode: errorstopmode` (with a required note) so both Umber and
+the oracle run it under the mode its `?␣` prompt needs. Of the remaining
+divergences, the largest classes are `umber2-alfh.8` (missing `show_context`),
+`umber2-alfh.10` (pdfTeX's `[<count0>...]` page-shipment marker), and
+`umber2-alfh.11` (the bare `*` prompt before an extra terminal read); the rest
+are a mix of smaller pre-existing diagnostic wording and execution gaps this
+framing does not address.
 
 **A committed `expected/<case-id>.<channel>` file for an `xfail` channel is
 understood to hold the reference engine's bytes, exactly like a `file`

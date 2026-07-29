@@ -78,18 +78,52 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         &mut stores,
         &mut capabilities,
         true,
+        false,
         "show-box.tex",
     );
 
-    // §61: the terminal's banner alone, no clock, no trailing newline.
-    assert_eq!(terminal_text(&stores), BANNER);
+    // §61: the terminal's banner plus `format_ident` and a trailing newline,
+    // no clock.
+    assert_eq!(terminal_text(&stores), format!("{BANNER} (INITEX)\n"));
     // §536/§534: the log's banner carries `format_ident` and the clock, then
-    // a `**` line with the job's first line.
+    // a `**` line with the job's first line and a trailing newline.
     assert_eq!(
         log_text(&stores),
-        format!("{BANNER} (INITEX)  9 JUL 2026 13:36\n**show-box.tex")
+        format!("{BANNER} (INITEX)  9 JUL 2026 13:36\n**show-box.tex\n")
     );
     assert_eq!(capabilities.job_name(), "show-box");
+}
+
+#[test]
+fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star_line() {
+    let clock = JobClock {
+        time: 13 * 60 + 36,
+        second: 7,
+        day: 9,
+        month: 7,
+        year: 2026,
+    };
+    let mut stores = Universe::with_world(World::memory_with_clock(clock));
+    let mut job = JobFraming::default();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    begin_job(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        true,
+        true,
+        "etex.tex",
+    );
+
+    assert_eq!(
+        terminal_text(&stores),
+        format!("{BANNER} (INITEX)\nentering extended mode\n")
+    );
+    assert_eq!(
+        log_text(&stores),
+        format!("{BANNER} (INITEX)  9 JUL 2026 13:36\nentering extended mode\n**etex.tex\n")
+    );
 }
 
 #[test]
@@ -98,11 +132,29 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
     let mut job = JobFraming::default();
     let mut capabilities = CommandHostCapabilities::default();
 
-    begin_job(&mut job, &mut stores, &mut capabilities, true, "a.tex");
-    begin_job(&mut job, &mut stores, &mut capabilities, true, "a.tex");
+    begin_job(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        true,
+        false,
+        "a.tex",
+    );
+    begin_job(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        true,
+        false,
+        "a.tex",
+    );
 
-    assert_eq!(terminal_text(&stores), BANNER);
-    assert_eq!(terminal_text(&stores).matches(BANNER).count(), 1);
+    assert_eq!(terminal_text(&stores), format!("{BANNER} (INITEX)\n"));
+    assert_eq!(
+        terminal_text(&stores).matches(BANNER).count(),
+        1,
+        "begin_job must print the banner only once even when called twice"
+    );
 }
 
 #[test]

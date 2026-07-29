@@ -604,17 +604,21 @@ impl CanonicalMainControl {
         &mut self.capabilities
     }
 
-    /// tex.web §61/§534/§536: prints the start-up banner and the `**` first
-    /// line. Idempotent -- only the first call prints anything. Call this
-    /// before registering the root source (e.g. before
-    /// [`Self::register_root_source`]), so the banner and `**` line precede
-    /// the root file's own `(`. See [`crate::job`].
+    /// tex.web §61/§534/§536, plus etex.ch's "entering extended mode" notice:
+    /// prints the start-up banner, that notice when this session's profile is
+    /// [`CommandProfile::ETEX26`], and the `**` first line. Idempotent --
+    /// only the first call prints anything. Call this before registering the
+    /// root source (e.g. before [`Self::register_root_source`]), so the
+    /// banner and `**` line precede the root file's own `(`. See
+    /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
+        let etex = self.command_profile() == CommandProfile::ETEX26;
         crate::job::begin_job(
             &mut self.job,
             stores,
             &mut self.capabilities,
             self.initex,
+            etex,
             first_line,
         );
     }

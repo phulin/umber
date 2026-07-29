@@ -34,9 +34,10 @@ pinned oracle -- was blocked behind this document's subject.
 
 | tex.web               | Text                                                   | Sink                     |
 | --------------------- | ------------------------------------------------------ | ------------------------ |
-| §61 `wterm(banner)`   | `This is …␣(INITEX)`                                   | terminal, before the log |
+| §61 `wterm(banner)`   | `This is …␣(INITEX)`, then a newline                   | terminal, before the log |
 | §536                  | the same banner plus `format_ident` and the clock      | log                      |
-| §534                  | `**` and the job's first line                          | log                      |
+| etex.ch §536/§1337    | `entering extended mode`                               | both                     |
+| §534                  | `**` and the job's first line, then a newline          | log                      |
 | §537 `start_input`    | `(` and the opened file's name                         | both                     |
 | §362                  | `)` when a file's last line is consumed                | both                     |
 | §1335 `final_cleanup` | `␣)` once per still-open file                          | both                     |
@@ -44,8 +45,12 @@ pinned oracle -- was blocked behind this document's subject.
 | §1335                 | `(see the transcript file for additional information)` | terminal only            |
 | §1333                 | `Transcript written on ␣<jobname>.log.`                | terminal only            |
 
-Two of those lines are conditional on state Umber did not track:
+Three of those lines are conditional:
 
+- etex.ch's "entering extended mode" line prints only when the job's command
+  profile is `CommandProfile::ETEX26`; `begin_job` takes this as an explicit
+  `etex: bool` rather than inferring it from `initex`, which means something
+  different (tex.web's `init`/`tini` split, not the e-TeX extension set).
 - §1335's "see the transcript file" note appears only when `history` is worse
   than `spotless` _and_ the job is not in `errorstopmode`. tex.web §76's
   `history` is a four-valued job-outcome high-water mark, raised by §82's

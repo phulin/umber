@@ -142,7 +142,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:ccb78ed0669389e813b202a8e2122e0d44d9450fe70e8285b3556f2dec2bf6fd"
+        "artifact:d080b0ba24eae8225fb892c0b2134626cb9c6285366b411f3191b9f279d1b7dc"
       ],
       "channels": {
         "events": 107,
@@ -179,7 +179,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:0af1317817f622978119981b4795c71f9fa0a80278cd71034ec19e78844fecd5"
+        "artifact:dabe87db3f9427077ee41398f7ab2f346ebea3192fb6d76d167fbcc706eb7e45"
       ],
       "channels": {
         "events": 141,

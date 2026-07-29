@@ -175,20 +175,28 @@ engine_args_for_profile() {
 # work under it, unlike batch/nonstopmode), and it "omits error stops"
 # (tex.web section 1749) exactly like nonstopmode/batchmode do, so an
 # undeclared error still just prints and the run completes instead of
-# demanding an answer this runner has no way to supply. It is used
-# unconditionally below, with each case's `terminal_lines` (empty by default)
-# piped in as answers to whatever prompts scrollmode *does* still honor.
+# demanding an answer this runner has no way to supply. It is therefore this
+# runner's default, with each case's `terminal_lines` (empty by default) piped
+# in as answers to whatever prompts scrollmode *does* still honor.
 #
-# Known gap: main-control/show-completion specifically exercises the
-# errorstopmode-only "? " prompt after `\showthe` (its `terminal_lines` answer
-# "s" is meant to switch interaction to \scrollmode from that prompt). Under
-# -interaction=scrollmode the `\showthe` diagnostic still prints, but no `? `
-# prompt appears and the fed "s" line is simply unused stdin. That one case's
-# `terminal-check:? ` projection cannot be reproduced under this single-mode
-# choice; every other terminal_lines case (7 read/pausing-based) is
-# reproduced faithfully. This is reported rather than special-cased per-case
-# to keep the runner's behavior uniform and easy to reason about.
-interaction_mode=scrollmode
+# A case can declare a different `interaction_mode` in its manifest entry
+# instead (`Case::interaction_mode` on the `tools/tex-command-stream` side,
+# `CaseInteractionMode::engine_mode` for what it selects on the engine). Doing
+# so is that case's declaration that its channels are not comparable to this
+# runner's standard scrollmode sweep, and the corpus requires a nonempty
+# `interaction_mode_note` alongside it saying why (enforced by `validate_case`
+# in `tools/tex-command-stream/src/semantic.rs`). `main-control/show-completion`
+# is the one committed case that does this: it exists specifically to exercise
+# the errorstopmode-only "? " prompt after `\showthe` (its `terminal_lines`
+# answer "s" switches interaction to \scrollmode from that prompt, exactly
+# as tex.web section 1298 describes), which no scrollmode run -- oracle or
+# Umber's own -- can ever produce. Reading the declared mode per case below is
+# what lets this one case run under the mode its channels actually need
+# instead of being permanently unreproducible against this runner, which used
+# to be this comment's "Known gap".
+case_interaction_mode() {
+  jq -r '.interaction_mode // "scrollmode"' <<<"$1"
+}
 
 # Job-startup notices this runner's texmf.cnf defaults would otherwise add.
 #
@@ -254,9 +262,10 @@ run_one_case() {
   local domain="$1" case_id="$2"
   local case_json
   case_json="$(case_json_for "$domain" "$case_id")"
-  local source_name profile
+  local source_name profile interaction_mode
   source_name="$(jq -r '.source' <<<"$case_json")"
   profile="$(jq -r '.profile // "initex"' <<<"$case_json")"
+  interaction_mode="$(case_interaction_mode "$case_json")"
 
   local engine_args
   if ! engine_args="$(engine_args_for_profile "$profile")"; then
@@ -320,7 +329,8 @@ run_one_case() {
     [[ "$found" -eq 1 ]] || effect_artifacts+=("$entry")
   done
 
-  printf 'case %s/%s profile=%s status=%s' "$domain" "$case_id" "$profile" "$status"
+  printf 'case %s/%s profile=%s interaction=%s status=%s' \
+    "$domain" "$case_id" "$profile" "$interaction_mode" "$status"
   printf ' terminal=%s' "$(byte_size "${run_dir}/terminal.txt")"
   printf ' log=%s' "$(byte_size "${run_dir}/${stem}.log")"
   printf ' ordinary.log=%s' "$(byte_size "${run_dir}/ordinary.log")"
