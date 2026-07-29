@@ -1355,6 +1355,7 @@ pub struct WorldError {
     message: String,
     committed_effects_through: Option<EffectPos>,
     retry_safety: EffectRetrySafety,
+    stream_open_unavailable: bool,
 }
 
 /// Whether an effect commit can be retried after a reported failure.
@@ -1392,6 +1393,7 @@ impl WorldError {
             message: message.into(),
             committed_effects_through: None,
             retry_safety: EffectRetrySafety::NotAnEffectCommit,
+            stream_open_unavailable: false,
         }
     }
 
@@ -1412,6 +1414,20 @@ impl WorldError {
     fn effect_retry(mut self, retry_safety: EffectRetrySafety) -> Self {
         self.retry_safety = retry_safety;
         self
+    }
+
+    fn mark_stream_open_unavailable(mut self) -> Self {
+        self.stream_open_unavailable = true;
+        self
+    }
+
+    /// Returns the output target when an authoritative stream-open attempt
+    /// failed before creating or truncating it.
+    #[must_use]
+    pub fn stream_open_unavailable(&self) -> Option<&Path> {
+        self.stream_open_unavailable
+            .then_some(self.path.as_deref())
+            .flatten()
     }
 
     #[must_use]
@@ -2872,6 +2888,44 @@ impl World {
         self.effects.as_slice()
     }
 
+    /// Retargets the first pending stream-open after an authoritative,
+    /// retry-safe failure.
+    ///
+    /// Earlier effects have already been drained by [`Self::commit_effects`];
+    /// the failed open and its following suffix remain ordered and untouched.
+    /// TeX82 §1374 changes only the failed open's filename before retrying.
+    pub fn retarget_pending_stream_open(
+        &mut self,
+        failed_path: &Path,
+        replacement: impl Into<PathBuf>,
+    ) -> Result<(), WorldError> {
+        let replacement = replacement.into();
+        let slot = {
+            let Some(EffectRecord::StreamOpen { slot, target }) =
+                Arc::make_mut(&mut self.effects).first_mut()
+            else {
+                return Err(WorldError::new(
+                    "retarget stream open",
+                    Some(failed_path.to_owned()),
+                    "the pending effect prefix does not begin with a stream open",
+                ));
+            };
+            if target.path != failed_path {
+                return Err(WorldError::new(
+                    "retarget stream open",
+                    Some(failed_path.to_owned()),
+                    "the pending stream open names a different target",
+                ));
+            }
+            target.path = replacement.clone();
+            *slot
+        };
+        if let Some(live) = self.stream_bufs_mut().write_streams[slot.index()].as_mut() {
+            live.path = replacement;
+        }
+        Ok(())
+    }
+
     /// Opens a rollback-capable editor branch before any host-visible effect commits.
     pub(crate) fn begin_retained_session(&mut self) -> Result<(), WorldError> {
         if self.shell_escape_policy == ShellEscapePolicy::Enabled {
@@ -3309,7 +3363,7 @@ impl World {
         match &self.effects[index] {
             EffectRecord::StreamOpen { slot, target } => {
                 Self::truncate_output(&mut self.backend, target.path())
-                    .map_err(|error| error.effect_retry(EffectRetrySafety::Poisoned))?;
+                    .map_err(|error| error.effect_retry(EffectRetrySafety::Safe))?;
                 self.committed_output_paths.insert(target.path().to_owned());
                 self.committed_write_streams[slot.index()] = Some(target.clone());
             }
@@ -3360,6 +3414,7 @@ impl World {
         match backend {
             WorldBackend::Real { .. } => std::fs::write(path, []).map_err(|err| {
                 WorldError::new("open output", Some(path.to_owned()), err.to_string())
+                    .mark_stream_open_unavailable()
             }),
             WorldBackend::Memory(memory) => {
                 memory.outputs.insert(path.to_owned(), Vec::new());

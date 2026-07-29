@@ -1236,6 +1236,56 @@ fn failure_before_effect_reports_prefix_and_retries_without_duplication() {
 }
 
 #[test]
+fn real_stream_open_failure_is_typed_and_retains_ordered_suffix_for_retry() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let prior = temp.path().join("prior.out");
+    let unavailable = temp.path().join("missing").join("blocked.out");
+    let replacement = temp.path().join("replacement.out");
+    let slot = StreamSlot::new(2);
+    let mut universe = Universe::with_world(World::real());
+    universe
+        .begin_retained_session()
+        .expect("retained real session");
+    universe.world_mut().open_out(slot, &prior);
+    universe
+        .world_mut()
+        .write_text(PrintSink::Stream(slot), "prior");
+    universe.world_mut().close_out(slot);
+    universe.world_mut().open_out(slot, &unavailable);
+    universe
+        .world_mut()
+        .write_text(PrintSink::Stream(slot), "suffix");
+
+    let error = universe
+        .export_retained_effects()
+        .expect_err("authoritative open fails");
+    assert_eq!(error.stream_open_unavailable(), Some(unavailable.as_path()));
+    assert_eq!(error.retry_safety(), EffectRetrySafety::Safe);
+    assert_eq!(
+        std::fs::read(&prior).expect("prior effects committed"),
+        b"prior"
+    );
+    assert!(!unavailable.exists(), "failed open creates no file");
+    assert!(matches!(
+        universe.world().effect_records(),
+        [EffectRecord::StreamOpen { target, .. }, EffectRecord::StreamWrite { .. }]
+            if target.path() == unavailable
+    ));
+
+    universe
+        .world_mut()
+        .retarget_pending_stream_open(&unavailable, &replacement)
+        .expect("retarget pending open");
+    universe
+        .export_retained_effects()
+        .expect("ordered suffix retry succeeds");
+    assert_eq!(
+        std::fs::read(&replacement).expect("replacement output"),
+        b"suffix"
+    );
+}
+
+#[test]
 fn ambiguous_partial_effect_poisons_retries_without_duplicate_bytes() {
     let mut world = World::memory();
     world.write_text(PrintSink::Terminal, "abcdef");
