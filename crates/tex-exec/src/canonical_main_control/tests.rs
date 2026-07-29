@@ -1081,16 +1081,67 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
 
     let mut tex82 = Universe::new_with_plain_catcodes();
     assert!(
-        !etex_redundant_local_int_parameter_assignment(&tex82, 13, 13),
+        !etex_redundant_local_word_assignment(&tex82, true, 13, 13),
         "TeX82 has no e-TeX reassignment shortcut"
     );
     tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
-    assert!(etex_redundant_local_int_parameter_assignment(
-        &tex82, 13, 13
+    assert!(etex_redundant_local_word_assignment(&tex82, true, 13, 13));
+    assert!(!etex_redundant_local_word_assignment(&tex82, true, 13, 12));
+}
+
+#[test]
+fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
+    // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
+    // fullword eqtb location, including the code tables. The nested identical
+    // assignment must not create a save-stack entry that can roll back over
+    // the later global assignment.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(&mut control, br"{\lccode`A=`a \global\lccode`A=`z}\end");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("e-TeX code-table reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(stores.lccode('A'), u32::from('z'));
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "code_table" => {
+                Some((record.value.as_str(), record.global))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mutations, [("lccode:65=122", true)]);
+
+    let mut tex82 = Universe::new_with_plain_catcodes();
+    assert!(
+        !etex_redundant_local_word_assignment(&tex82, true, tex82.lccode('A'), u32::from('a')),
+        "TeX82 performs the identical local eq_word_define"
+    );
+    tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
+    assert!(etex_redundant_local_word_assignment(
+        &tex82,
+        true,
+        tex82.lccode('A'),
+        u32::from('a')
     ));
-    assert!(!etex_redundant_local_int_parameter_assignment(
-        &tex82, 13, 12
-    ));
+    assert!(
+        !etex_redundant_local_word_assignment(&tex82, false, tex82.lccode('A'), u32::from('a')),
+        "loaded-format e-TeX has not entered extended INITEX mode"
+    );
 }
 
 #[test]
