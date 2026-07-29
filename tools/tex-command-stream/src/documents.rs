@@ -117,10 +117,10 @@ fn load_trace(directory: &Path, record: DocumentRecord) -> Result<DocumentTrace,
             record.events
         )));
     }
-    if !fixture.manifest.sources.contains_key(&record.root_source) {
+    if fixture.manifest.root_source != record.root_source {
         return Err(RunnerError::Document(format!(
-            "{} does not declare root source {}",
-            record.name, record.root_source
+            "{} fixture root source {} disagrees with {DOCUMENT_CONTRACT} root source {}",
+            record.name, fixture.manifest.root_source, record.root_source
         )));
     }
     let fonts = load_fonts(directory)?;
@@ -134,10 +134,7 @@ fn load_trace(directory: &Path, record: DocumentRecord) -> Result<DocumentTrace,
         name: record.name,
         directory: directory.to_path_buf(),
         fixture,
-        resources: ReplayResources {
-            root_source: record.root_source,
-            fonts,
-        },
+        resources: ReplayResources { fonts },
     })
 }
 

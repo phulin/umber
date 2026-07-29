@@ -53,7 +53,6 @@ const MAX_DIAGNOSTIC_CHARS: usize = 960;
 const DIFFERENCE_LEAD_CHARS: usize = 120;
 const DIFFERENCE_TRAIL_CHARS: usize = 360;
 const MAX_DELIVERIES_OVERHEAD: usize = 64;
-const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
 const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
@@ -167,7 +166,7 @@ pub fn run_committed_repository(
         collect_fixture_divergences(
             &fixture_directory,
             &fixture,
-            &ReplayResources::committed(),
+            &ReplayResources::default(),
             options,
             &mut report,
         )?;
@@ -669,10 +668,12 @@ fn replay_fixture(
     CanonicalStartup::from_fixture(directory, fixture, resources)?.replay()
 }
 
-/// Replay inputs a fixture needs that its committed `.tex` sources do not
-/// carry: which declared source TeX's terminal filename scan selects, and the
-/// opaque font metrics canonical `\font` resolution must find already
-/// registered.
+/// Replay inputs a fixture needs beyond its own manifest: the opaque font
+/// metrics canonical `\font` resolution must find already registered. Which
+/// declared source TeX's terminal filename scan selects is not a replay
+/// input at all -- it is the fixture's own [`FixtureManifest::root_source`],
+/// tex.web §537's `start_input` target, so [`CanonicalStartup::from_fixture`]
+/// reads it from the fixture being replayed instead of from here.
 ///
 /// `CanonicalMainControl::resolve_font_resource` never suspends -- an
 /// unregistered font is an immediate `ExecError::MissingCanonicalFont` -- so
@@ -680,19 +681,7 @@ fn replay_fixture(
 /// step, rather than through a lazy resource-host retry loop.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReplayResources {
-    root_source: String,
     fonts: BTreeMap<String, Arc<[u8]>>,
-}
-
-impl ReplayResources {
-    /// The committed suite's convention: a fixed root-source name and
-    /// font-independent sources.
-    fn committed() -> Self {
-        Self {
-            root_source: CANONICAL_ROOT_SOURCE.into(),
-            fonts: BTreeMap::new(),
-        }
-    }
 }
 
 /// Observer output plus a contained, nonterminal replay failure, if one
@@ -750,10 +739,10 @@ impl CanonicalStartup {
         fixture: &CommittedFixture,
         resources: &ReplayResources,
     ) -> Result<Self, RunnerError> {
-        let root_source = resources.root_source.as_str();
+        let root_source = fixture.manifest.root_source.as_str();
         let artifact = fixture.manifest.sources.get(root_source).ok_or_else(|| {
             RunnerError::Replay(format!(
-                "{} does not declare canonical root source {root_source}",
+                "{} does not declare its root source {root_source}",
                 fixture.manifest.name
             ))
         })?;
@@ -2638,7 +2627,7 @@ mod tests {
         CanonicalStartup {
             profile: CommandProfile::TEX82,
             terminal_filename: Arc::from(&b"transitions.tex "[..]),
-            root_name: CANONICAL_ROOT_SOURCE.into(),
+            root_name: "transitions.tex".into(),
             root_bytes: Arc::from(&b"a\\input child b"[..]),
             input_capabilities: BTreeMap::from([("child.tex".into(), Arc::from(&b"c"[..]))]),
             fonts: BTreeMap::new(),
@@ -2735,12 +2724,12 @@ mod tests {
         let startup = CanonicalStartup::from_fixture(
             &repository.join(FIXTURE_ROOT).join("command-transitions-v1"),
             &fixture,
-            &ReplayResources::committed(),
+            &ReplayResources::default(),
         )
         .expect("canonical startup");
 
         assert_eq!(startup.profile, CommandProfile::TEX82);
-        assert_eq!(startup.root_name, CANONICAL_ROOT_SOURCE);
+        assert_eq!(startup.root_name, fixture.manifest.root_source);
         let actual = startup.replay().expect("canonical startup replays");
         let actual_events = actual.events[..40]
             .iter()

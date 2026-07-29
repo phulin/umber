@@ -10,12 +10,12 @@ event-schema 1
 engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt b645a2a5f252f03f80698f50fee874f63425362a76d73f756aabf2bb7df61a3d tex82-oracle-web2c-texlive-2025
 engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt 6fe33cb32ee042016c3bd1ac0076eb4752c769078ff0e09e9676ab37ff3b19a6 etex26-oracle-web2c-texlive-2025
 engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt 9841528765723d64c32f9f6e7d59c64cf6029c9b90ef9e50e40c4e53d551ca58 pdftex14027-oracle-web2c-texlive-2025
-fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json 7b332f42e979b24b2b10271e5d75b5df87519621c65bd8e1a6b4e717745c8896
-fixture tex82/case-shift-v1 tex82 initex-eight-bit tests/corpus/command/tex82/case-shift-v1/manifest.json 116214fc57a6e13097089518a2557e02547835b363f4b58bb1be450122e265b1
-fixture tex82/expansion-macros-v1 tex82 initex-eight-bit tests/corpus/command/tex82/expansion-macros-v1/manifest.json 72a0e0436aae77df55a9a5ccc0fe0683a38cbcefba06548f8a26eab8482422dc
-fixture tex82/alignment-delivery-v1 tex82 initex-eight-bit tests/corpus/command/tex82/alignment-delivery-v1/manifest.json 334e542954c1bcb1bafda7fdeaf38ddb67ed5c013b8dd489ffd86961b76cfcbc
-fixture tex82/off-save-v1 tex82 initex-eight-bit tests/corpus/command/tex82/off-save-v1/manifest.json bc6f2fd9ed1603545573c5394c8e35288af47362c1fd68e3d435bf5b38382504
-fixture tex82/scanner-conditionals-v1 tex82 initex-eight-bit tests/corpus/command/tex82/scanner-conditionals-v1/manifest.json f2ed2bf1b2eab7d650587bd70b5d0f0bfb4032d43f8f6cd8357b9e0ced0546d0
+fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json ce1df24b7688f30204f8ec8277b271b0d51699f6cf86f55692e979024e5059d1
+fixture tex82/case-shift-v1 tex82 initex-eight-bit tests/corpus/command/tex82/case-shift-v1/manifest.json 59c99449dd7816352931799152c3fe9bc1842e33b61a8cb25bbef3a4c4c79a9d
+fixture tex82/expansion-macros-v1 tex82 initex-eight-bit tests/corpus/command/tex82/expansion-macros-v1/manifest.json 5744953a6a7a130ffa8f0ba65247bcc8c0812f4b8dbcbefb7568a415ab4a9495
+fixture tex82/alignment-delivery-v1 tex82 initex-eight-bit tests/corpus/command/tex82/alignment-delivery-v1/manifest.json c483c1c08a2dcd68a1a0d8c2d6c1acd8b1c75ada6f28c68eb319e7a5736ec128
+fixture tex82/off-save-v1 tex82 initex-eight-bit tests/corpus/command/tex82/off-save-v1/manifest.json c44f1c6906f3c9c3fe9087cf855e09fe802acba6e10578322771674fef871875
+fixture tex82/scanner-conditionals-v1 tex82 initex-eight-bit tests/corpus/command/tex82/scanner-conditionals-v1/manifest.json 4a945b7786cf3711cda5a5a2fe4bab903b49098699fb3cdd6b6940444f2228f1
 fixture-audit tex82/command-transitions-v1 tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt 2802a9c14dc8906eec751623a56cc383268182b8d37121c7864c09cbdd14ea7e tests/tex82-oracle/command-transitions-v1-audit-matrix.txt 93a5205afaaf6b0d5ac208515fe2857c0c730c5ec60380c45f44c2b372022818
 fixture-audit tex82/case-shift-v1 tests/tex82-oracle/case-shift-v1-semantic-matrix.txt d2f47a744a644381c091bd05bbdadc011bb6a1436db733b9b47784cdc2638a5b tests/tex82-oracle/case-shift-v1-audit-matrix.txt 44c6fafdc94c7e31f07f987a68d70e8adde5deac71525cc38814403eb7c2caa1
 fixture-audit tex82/expansion-macros-v1 tests/tex82-oracle/expansion-macros-v1-semantic-matrix.txt 760f81c64b88c4d13f7d13305bd0ff400af2a0a190181b6f99baf770527935f6 tests/tex82-oracle/expansion-macros-v1-audit-matrix.txt dbb275ecc811ba5146b9afb80658339e799fb705c2df53f34e47ada0c1d953d8

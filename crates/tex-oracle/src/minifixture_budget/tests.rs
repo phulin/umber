@@ -43,7 +43,7 @@ fn synthetic_fixture(sources: usize, source_bytes: u64, events: usize) -> Commit
         );
     }
     let manifest = FixtureManifest {
-        contract: 1,
+        contract: 2,
         name: "tex82/synthetic-budget".into(),
         profile: FixtureProfile {
             invocation: "initex".into(),
@@ -53,6 +53,7 @@ fn synthetic_fixture(sources: usize, source_bytes: u64, events: usize) -> Commit
         tools: BTreeMap::new(),
         citations: Vec::new(),
         sources: source_map,
+        root_source: "source-0.tex".into(),
         events: FixtureArtifact {
             path: "events.jsonl".into(),
             bytes: 0,

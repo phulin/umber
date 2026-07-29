@@ -366,7 +366,7 @@ mod tests {
         oracle.distribution_sha256 = HASH.into();
         oracle.environment.insert("locale".into(), "C".into());
         oracle.inputs.insert(
-            "old.tex".into(),
+            "transitions.tex".into(),
             crate::ManifestInput {
                 bytes: 0,
                 sha256: HASH.into(),
@@ -376,7 +376,7 @@ mod tests {
             .ordinary_output_sha256
             .insert("status".into(), HASH.into());
         let manifest = FixtureManifest {
-            contract: 1,
+            contract: 2,
             name: "tex82/synthetic".into(),
             profile: FixtureProfile {
                 invocation: "initex".into(),
@@ -393,7 +393,11 @@ mod tests {
                 section: "get_next".into(),
                 description: "delivery".into(),
             }],
-            sources: BTreeMap::from([("old.tex".into(), artifact("sources/old.tex"))]),
+            sources: BTreeMap::from([(
+                "transitions.tex".into(),
+                artifact("sources/transitions.tex"),
+            )]),
+            root_source: "transitions.tex".into(),
             events: artifact("events.jsonl"),
             outputs: BTreeMap::from([("status".into(), artifact("outputs/status.txt"))]),
         };

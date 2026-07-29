@@ -251,7 +251,7 @@ fn fixture_manifest() -> FixtureManifest {
     let mut oracle = manifest();
     oracle.clock = "2000-01-01T00:00:00Z".into();
     FixtureManifest {
-        contract: 1,
+        contract: 2,
         name: "tex82/synthetic".into(),
         profile: FixtureProfile {
             invocation: "initex".into(),
@@ -278,6 +278,7 @@ fn fixture_manifest() -> FixtureManifest {
                 sha256: HASH_A.into(),
             },
         )]),
+        root_source: "job/main.tex".into(),
         events: FixtureArtifact {
             path: "events.jsonl".into(),
             bytes: 1,
@@ -310,6 +311,16 @@ fn fixture_manifest_rejects_schema_profile_output_and_citation_drift() {
     value = fixture_manifest();
     value.citations.clear();
     assert!(value.validate().is_err());
+}
+
+#[test]
+fn fixture_manifest_rejects_a_root_source_absent_from_declared_sources() {
+    let mut value = fixture_manifest();
+    assert!(value.validate().is_ok());
+
+    value.root_source = "job/undeclared.tex".into();
+    let error = value.validate().expect_err("undeclared root source");
+    assert!(error.to_string().contains("job/undeclared.tex"));
 }
 
 #[test]

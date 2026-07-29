@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Current repository contract for committed semantic fixtures.
-pub const FIXTURE_CONTRACT_VERSION: u32 = 1;
+pub const FIXTURE_CONTRACT_VERSION: u32 = 2;
 pub const FIXTURE_MANIFEST_NAME: &str = "manifest.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,6 +71,13 @@ pub struct FixtureManifest {
     pub citations: Vec<CanonicalCitation>,
     /// Stable logical source name to committed source file.
     pub sources: BTreeMap<String, FixtureArtifact>,
+    /// The `sources` key TeX was invoked on: the job's root file, as
+    /// tex.web §537's `start_input` opens it, distinct from every other
+    /// declared source, which the root reaches only through `\input`.
+    /// `oracle.inputs` lists every input a run touched with no entry-point
+    /// distinction, so this cannot be recovered from it or from any other
+    /// existing field.
+    pub root_source: String,
     pub events: FixtureArtifact,
     /// Ordinary-output channel to committed artifact observation.
     pub outputs: BTreeMap<String, FixtureArtifact>,
@@ -153,6 +160,12 @@ impl FixtureManifest {
             return Err(FixtureError::Invalid(
                 "fixture must contain at least one focused INITEX source".into(),
             ));
+        }
+        if !self.sources.contains_key(&self.root_source) {
+            return Err(FixtureError::Invalid(format!(
+                "root source {} is not a declared fixture source",
+                self.root_source
+            )));
         }
         if self.outputs.is_empty() {
             return Err(FixtureError::Invalid(
