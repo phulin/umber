@@ -1922,6 +1922,36 @@ impl CanonicalMainControl {
                 })
             }
             CanonicalMathRequest::EquationNumber(number) => {
+                if self.modes.current_mode() == Mode::DisplayMath
+                    && let Some((nodes, aux_prev_depth)) =
+                        self.modes.current_list_mutation().take_display_alignment()
+                {
+                    // TeX82 §§812 and 1206 require the next non-assignment
+                    // command after a display alignment to be `$$`. §1207's
+                    // recovery inserts that closer before retrying the
+                    // offending command, so `\eqno` must not consume the
+                    // finished rows as an ordinary display mlist.
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! Missing $$ inserted.\nDisplays can use special alignments (like \\eqalignno)\nonly if nothing but the alignment itself is between $$'s.\n",
+                    );
+                    self.finish_canonical_display_alignment(
+                        stores,
+                        crate::align::FinishedAlignment {
+                            nodes,
+                            aux_prev_depth,
+                        },
+                    )?;
+                    let primitive = match number.side {
+                        tex_command::EquationNumberSide::Left => "leqno",
+                        tex_command::EquationNumberSide::Right => "eqno",
+                    };
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        &format!("\n! You can't use `\\{primitive}' in horizontal mode.\n"),
+                    );
+                    return Ok(ReplayStep::Continue);
+                }
                 if self.modes.current_mode() != Mode::DisplayMath {
                     stores.world_mut().write_text(
                         PrintSink::TerminalAndLog,

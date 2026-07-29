@@ -9243,6 +9243,35 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 }
 
 #[test]
+fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
+    // TeX82 §§812 and 1206–1207 insert the missing `$$` before retrying
+    // `\eqno`; the completed alignment remains vertical display material.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\hsize=20pt\noindent x$$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    assert!(output.contains("Missing $$ inserted"));
+    assert!(output.contains("You can't use `\\eqno' in horizontal mode"));
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    let root = universe.box_reg(0).expect("vbox register");
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = universe.nodes(root).first() else {
+        panic!("box0 should contain a vbox");
+    };
+    assert!(
+        universe
+            .nodes(vbox.children)
+            .iter()
+            .any(|node| matches!(node, tex_state::node_arena::NodeRef::HList(boxed) if boxed.width.raw() == 20 * Scaled::UNITY)),
+        "the alignment row remains display material instead of being math-packed"
+    );
+}
+
+#[test]
 fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
