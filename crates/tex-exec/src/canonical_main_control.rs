@@ -140,6 +140,9 @@ pub struct CanonicalMainControl {
     /// operation reports [`MainControlStep::End`] without delivering a
     /// command, and the host reads the cause from [`Self::fatal_error`].
     fatal: Option<FatalError>,
+    /// tex.web's job-framing state: see [`crate::job`] and
+    /// `docs/job_framing.md`.
+    job: crate::job::JobFraming,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -310,6 +313,12 @@ struct CanonicalStepSnapshot {
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// A step's §537/§362 open-paren accounting is engine state outside
+    /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
+    /// a step that prints `(name` and then rolls back must have
+    /// `open_parens` roll back with it too, or a later `\end` would close a
+    /// paren that was never really opened.
+    job: crate::job::JobFraming,
     universe: tex_state::Snapshot,
 }
 
@@ -326,6 +335,7 @@ impl CanonicalStepSnapshot {
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
+            job: control.job,
             universe: stores.snapshot(),
         }
     }
@@ -356,6 +366,7 @@ impl CanonicalStepSnapshot {
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
+        control.job = self.job;
     }
 
     fn can_rollback(&self, stores: &Universe) -> bool {
@@ -591,6 +602,73 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn capabilities_mut(&mut self) -> &mut CommandHostCapabilities {
         &mut self.capabilities
+    }
+
+    /// tex.web §61/§534/§536: prints the start-up banner and the `**` first
+    /// line. Idempotent -- only the first call prints anything. Call this
+    /// before registering the root source (e.g. before
+    /// [`Self::register_root_source`]), so the banner and `**` line precede
+    /// the root file's own `(`. See [`crate::job`].
+    pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
+        crate::job::begin_job(
+            &mut self.job,
+            stores,
+            &mut self.capabilities,
+            self.initex,
+            first_line,
+        );
+    }
+
+    /// tex.web §1333 `close_files_and_terminate`'s prints: §642's DVI page
+    /// report and the transcript-closing note. Call this once, after a step
+    /// has reported [`MainControlStep::End`] and, if the job shipped any
+    /// pages, after serializing them to a `.dvi` file so `dvi` can report its
+    /// name and exact length. `dvi` is `None` when the job shipped no pages;
+    /// see [`crate::DviJobOutput`].
+    ///
+    /// # Panics
+    ///
+    /// If the job shipped pages and `dvi` is `None`. §642 prints the DVI
+    /// file's exact byte length, which no engine-level state holds, so the
+    /// alternative to refusing here is printing a fabricated number.
+    pub fn finish_job(&mut self, stores: &mut Universe, dvi: Option<crate::DviJobOutput>) {
+        crate::job::finish_job(stores, self.capabilities.job_name(), dvi);
+    }
+
+    /// Renders one step's drained §537/§362 file-bracketing queue. Every step
+    /// driver (`step_once`, `alignment_step_once`, `step_with_observer_once`)
+    /// calls this once, immediately after it reports the step's other
+    /// diagnostics.
+    fn drain_file_framing_events(&mut self, stores: &mut Universe) {
+        let events = self.command.take_file_framing_events();
+        crate::job::render_file_framing_events(&mut self.job, stores, events);
+    }
+
+    /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
+    /// [`ReplayStep::End`]: closing every still-open paren, reporting
+    /// unfinished conditionals, the "(see the transcript file..." note, and
+    /// the `\dump`-outside-INITEX note, in that exact order. The first of
+    /// those needs `self`'s job-framing state, which the free function
+    /// `apply_scanned_step` that scans `ScannedStep::End` does not have; the
+    /// other three used to run inside that free function and are moved here,
+    /// not copied, so they run after the paren close instead of before it.
+    fn end_of_job_final_cleanup(
+        &mut self,
+        stores: &mut Universe,
+        dump: bool,
+        incomplete_conditions: Vec<tex_command::IncompleteCondition>,
+    ) {
+        crate::job::close_open_parens(&mut self.job, stores);
+        report_incomplete_conditions(stores, incomplete_conditions);
+        crate::job::print_history_note(stores);
+        // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
+        // production binary keeps only the `print_nl` that says so. `\end`
+        // reaches neither.
+        if dump && !self.initex {
+            stores
+                .printer()
+                .print_nl("(\\dump is performed only by INITEX)");
+        }
     }
 
     fn resolve_font_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
@@ -1068,6 +1146,7 @@ impl CanonicalMainControl {
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
+        self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -1078,6 +1157,13 @@ impl CanonicalMainControl {
         };
         let fires_afterassignment = scanned.fires_afterassignment();
         let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
+        let end_tail = match &scanned {
+            ScannedStep::End {
+                dump,
+                incomplete_conditions,
+            } => Some((*dump, incomplete_conditions.clone())),
+            _ => None,
+        };
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -1096,6 +1182,9 @@ impl CanonicalMainControl {
             &mut self.prepared_dvi_pages,
         )?;
         self.dumped_format |= dumped_format;
+        if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
+            self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
+        }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(
@@ -1500,6 +1589,7 @@ impl CanonicalMainControl {
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
+        self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -1521,6 +1611,13 @@ impl CanonicalMainControl {
         };
         let fires_afterassignment = scanned.fires_afterassignment();
         let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
+        let end_tail = match &scanned {
+            ScannedStep::End {
+                dump,
+                incomplete_conditions,
+            } => Some((*dump, incomplete_conditions.clone())),
+            _ => None,
+        };
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -1539,6 +1636,9 @@ impl CanonicalMainControl {
             &mut self.prepared_dvi_pages,
         )?;
         self.dumped_format |= dumped_format;
+        if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
+            self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
+        }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
             schedule_afterassignment(
@@ -2690,6 +2790,7 @@ impl CanonicalMainControl {
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
+        self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -2781,6 +2882,16 @@ impl CanonicalMainControl {
         );
         if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
             self.dumped_format = true;
+        }
+        if let (
+            Ok(ReplayStep::End),
+            ScannedStep::End {
+                dump,
+                incomplete_conditions,
+            },
+        ) = (&result, &scanned)
+        {
+            self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
         }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
@@ -9914,9 +10025,20 @@ fn apply_scanned_step(
         ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
         ScannedStep::End {
             dump,
-            incomplete_conditions,
+            incomplete_conditions: _,
         } => {
-            report_incomplete_conditions(stores, incomplete_conditions);
+            // §1335's final_cleanup tail -- closing every still-open paren,
+            // reporting `incomplete_conditions`, the "(see the transcript
+            // file..." note, and this same `dump` flag's
+            // `(\dump is performed only by INITEX)` note, in that exact
+            // order -- runs in `CanonicalMainControl::end_of_job_final_cleanup`
+            // once this returns: the paren close needs `self`'s job-framing
+            // state, which this free function does not have, and tex.web
+            // orders it first. `incomplete_conditions` is discarded here
+            // rather than used, because the caller re-derives it from the
+            // `ScannedStep::End` it matched before moving `scanned` into this
+            // call (see `step_once` and its siblings).
+            //
             // TeX82 §1335's INITEX tail releases `last_glue` before
             // `store_fmt_file`; e-TeX 2.6's [45.999] change may meanwhile
             // have retained top-of-page glue, kerns, and penalties in
@@ -9930,19 +10052,21 @@ fn apply_scanned_step(
             if dump && command.initex && crate::output::job_is_all_over(stores) {
                 stores.start_new_page();
             }
-            // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
-            // production binary keeps only the `print_nl` that says so. `\end`
-            // reaches neither.
-            if dump && !command.initex {
-                stores
-                    .printer()
-                    .print_nl("(\\dump is performed only by INITEX)");
-            }
             // TeX82 §1378 closes every still-open numbered output file after
             // `final_cleanup`. The two normalized fallback selectors are not
             // file slots (§1342), so the state boundary exposes only 0..15
             // here. `close_out` preserves §1378's `if write_open[k]` guard:
             // never-opened and already-closed slots produce no close effect.
+            // This runs here, synchronously with `\end`/`\dump` applying,
+            // rather than in the driver-facing §1333 `finish_job` that prints
+            // §642's DVI report: it is a `World` state effect, not a print,
+            // and it has already happened by the time a driver can call
+            // `finish_job` (which only runs after this step has already
+            // returned), so its position here can't reorder anything
+            // `finish_job` prints. Leaving it here also keeps it exactly
+            // where `effects::tests::
+            // output_stream_final_cleanup_closes_only_live_numbered_files`
+            // already observes it, synchronous with the terminating step.
             for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
                 stores.world_mut().close_out(StreamSlot::new(raw));
             }

@@ -1,0 +1,325 @@
+//! TeX's job framing: the start-up banner, the per-file `(name`/`)`
+//! bracketing, and the tail every job ends with.
+//!
+//! See `docs/job_framing.md` for the full account of what a job prints, when,
+//! and why the pieces live where they do. In short: printing is
+//! `tex-state`'s (`tex_state::print::Printer` over §54's `selector`), file
+//! opening is `tex-command`'s (§537's `start_input` is an input-stack
+//! operation, queued as a drained [`tex_command::FileFramingEvent`] rather
+//! than printed), and the job lifecycle -- when a job starts, when a file's
+//! open/close reaches the transcript, and how a job ends -- is
+//! `CanonicalMainControl`'s, because it is the one layer that sees a
+//! `Universe` and a driver both. This module is where that lifecycle lives;
+//! `canonical_main_control.rs` only exposes it.
+//!
+//! tex.web spreads the pieces this module owns across:
+//! - §61 `wterm(banner)` and §536 `open_log_file`: the start-up banner.
+//! - §534: the `**` line that echoes the job's first input line.
+//! - §537 `start_input` and §362: `(name` and `)` around each opened file.
+//! - §1335 `final_cleanup`: closing every still-open paren, reporting
+//!   unfinished conditionals, the "(see the transcript file..." note, and
+//!   the `\dump`-outside-INITEX note.
+//! - §1333 `close_files_and_terminate`: §642's DVI page report and the
+//!   "Transcript written on..." note.
+
+use std::sync::Arc;
+
+use tex_command::{CommandHostCapabilities, FileFramingEvent};
+use tex_state::Universe;
+use tex_state::env::banks::IntParam;
+use tex_state::print::{History, MAX_PRINT_LINE, Printer, Selector};
+use tex_state::world::PrintSink;
+
+/// tex.web's `banner`: the reference engine's own start-up string.
+///
+/// Byte-for-byte comparison against a pinned reference engine is the whole
+/// point of the minifixture corpus this module was built for (see
+/// `docs/job_framing.md`), so this is the reference engine's banner, not
+/// Umber's name -- the same string `umber::pdf_output` writes as the PDF
+/// `PTEX.Fullbanner`/`PTEX_Fullbanner` key, which is why this is the single
+/// place either crate spells it.
+pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
+
+/// tex.web §54's `open_parens`, plus enough to make [`begin_job`] a one-shot.
+///
+/// Both fields are engine state that lives outside `Universe`, alongside
+/// `CanonicalMainControl`'s other replay-owned fields (`next_alignment_identity`,
+/// `boxes`, ...): a step that prints `(name` or `)` and then rolls back must
+/// have `open_parens` roll back with it, so `CanonicalStepSnapshot` captures
+/// and restores this whole value exactly as it does those.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct JobFraming {
+    /// Guards [`begin_job`] against printing the banner twice.
+    started: bool,
+    /// tex.web §54's `open_parens`: how many `(` have been printed with no
+    /// matching `)` yet.
+    open_parens: u32,
+}
+
+/// Immutable facts about a serialized `.dvi` file that only the driver which
+/// wrote it can know.
+///
+/// tex.web's §642 `finish_dvi` prints the current job's total page count
+/// alongside the file's name and final byte length. The page count is
+/// durable engine state (`Universe::world().artifact_commits()`, incremented
+/// at every `\shipout`), so it is not a field here: threading it through
+/// this struct would let a caller's wrong number silently override the
+/// engine's own count. Only the name and byte length are supplied, because
+/// only the caller that finished serializing the file to bytes can know
+/// them -- no engine-level API produces a DVI file's length, since nothing
+/// below the driver ever serializes one.
+#[derive(Clone, Debug)]
+pub struct DviJobOutput {
+    /// §642's `slow_print(output_file_name)`.
+    pub file_name: String,
+    /// §642's `dvi_offset+dvi_ptr`: the serialized file's exact byte length.
+    pub byte_len: u64,
+}
+
+/// tex.web §536's `format_ident`.
+///
+/// Only INITEX's `" (INITEX)"` is implemented. The minifixture corpus this
+/// module was built for drives every job through
+/// [`crate::CanonicalMainControl::tex82_initex`], so a loaded-format run's
+/// `" (preloaded format=" name ")"` has no reachable caller to write or check
+/// against; guessing a format name here would look correct and be silently
+/// wrong, which is worse than not implementing it. A loaded-format
+/// [`begin_job`] call fails loudly instead, so the gap stays visible until a
+/// caller that actually needs it exists.
+fn format_ident(initex: bool) -> &'static str {
+    assert!(
+        initex,
+        "job::begin_job: format_ident for a loaded (non-INITEX) format is not implemented; \
+         see this function's doc comment"
+    );
+    " (INITEX)"
+}
+
+/// tex.web's month-name table, indexed by `(month-1)*3..(month-1)*3+3`.
+const MONTH_NAMES: &[u8] = b"JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC";
+
+fn month_name(month: i32) -> &'static str {
+    let index = month.clamp(1, 12) as usize - 1;
+    std::str::from_utf8(&MONTH_NAMES[index * 3..index * 3 + 3])
+        .expect("MONTH_NAMES is a fixed ASCII table")
+}
+
+/// tex.web §65's `print_two`: zero-padded to two digits.
+fn print_two(value: i32) -> String {
+    format!("{:02}", value.rem_euclid(100))
+}
+
+/// §536's clock suffix: `"  " print_int(day) " " month print_int(year) " "
+/// print_two(hour) ":" print_two(minute)`.
+fn clock_suffix(stores: &Universe) -> String {
+    let day = stores.int_param(IntParam::DAY);
+    let month = stores.int_param(IntParam::MONTH);
+    let year = stores.int_param(IntParam::YEAR);
+    let time = stores.int_param(IntParam::TIME);
+    format!(
+        "  {day} {} {year} {}:{}",
+        month_name(month),
+        print_two(time.div_euclid(60)),
+        print_two(time.rem_euclid(60)),
+    )
+}
+
+/// tex.web §61's `wterm(banner)`, §536's clock-stamped log banner, and
+/// §534's `**` first line.
+///
+/// Idempotent: only the first call prints anything, matching tex.web's own
+/// one-shot start-up (`job_name=0` guards `open_log_file`). A driver calls
+/// this before it opens the root source (via
+/// [`crate::CanonicalMainControl::register_root_source`] or a wrapper over
+/// it), so the banner and `**` line precede the root file's own `(`.
+pub(crate) fn begin_job(
+    job: &mut JobFraming,
+    stores: &mut Universe,
+    capabilities: &mut CommandHostCapabilities,
+    initex: bool,
+    first_line: &str,
+) {
+    if job.started {
+        return;
+    }
+    job.started = true;
+    // §537's `a_make_name_string`-derived `\jobname` reuses tex.web's own
+    // stem derivation rather than re-deriving it here; see
+    // `CommandHostCapabilities::set_startup_job_name`.
+    capabilities.set_startup_job_name(first_line);
+
+    // §61: the terminal's very first output. No `format_ident`, no clock, no
+    // trailing newline -- whatever prints next (§537's `(` for the root
+    // file) decides its own line break from `term_offset`.
+    stores.world_mut().write_text(PrintSink::Terminal, BANNER);
+
+    // §536 `open_log_file`: the log's banner additionally carries
+    // `format_ident` and the clock.
+    let log_banner = format!("{BANNER}{}{}", format_ident(initex), clock_suffix(stores));
+    stores.world_mut().write_text(PrintSink::Log, &log_banner);
+
+    // §534: `**` plus the job's first line, log only -- a non-interactive
+    // job's terminal never shows the typed `**` prompt line.
+    Printer::new(stores, Selector::LogOnly)
+        .print_nl("**")
+        .print(first_line);
+}
+
+/// Renders one step's drained §537/§362 file-bracketing queue.
+///
+/// Every driver that advances the engine (`step_once`, `alignment_step_once`,
+/// `step_with_observer_once`) must call this once per step, immediately after
+/// it reports the step's other diagnostics -- see `docs/job_framing.md` for
+/// why the queue lives on `tex_command::CommandState` rather than here.
+pub(crate) fn render_file_framing_events(
+    job: &mut JobFraming,
+    stores: &mut Universe,
+    events: Vec<FileFramingEvent>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    let mut printer = stores.printer();
+    for event in events {
+        match event {
+            FileFramingEvent::Open { name } => open_paren(job, &mut printer, &name),
+            FileFramingEvent::Close => close_paren(job, &mut printer),
+        }
+    }
+}
+
+/// tex.web §537's `(name`.
+///
+/// The line-break decision tests `term_offset` alone, exactly as tex.web
+/// does -- not `file_offset`/`log_offset` -- even though the resulting
+/// `print_ln` or space is written through the ambient selector to every
+/// channel it routes to. This is tex.web's own asymmetry, not an
+/// approximation of it.
+fn open_paren(job: &mut JobFraming, printer: &mut Printer<'_>, name: &Arc<str>) {
+    let term_offset = printer.terminal_offset();
+    if term_offset + name.chars().count() > MAX_PRINT_LINE - 2 {
+        printer.print_ln();
+    } else if term_offset > 0 || printer.log_offset() > 0 {
+        printer.print_char(' ');
+    }
+    printer.print_char('(');
+    job.open_parens = job.open_parens.saturating_add(1);
+    printer.print(name);
+}
+
+/// tex.web §362's bare `)`.
+fn close_paren(job: &mut JobFraming, printer: &mut Printer<'_>) {
+    printer.print_char(')');
+    job.open_parens = job.open_parens.saturating_sub(1);
+}
+
+/// tex.web §1335's `while open_parens>0 do begin print(" )"); decr(open_parens); end`.
+pub(crate) fn close_open_parens(job: &mut JobFraming, stores: &mut Universe) {
+    let mut printer = stores.printer();
+    while job.open_parens > 0 {
+        printer.print(" )");
+        job.open_parens -= 1;
+    }
+}
+
+/// tex.web §1335's "(see the transcript file for additional information)"
+/// note.
+///
+/// tex.web's guard is `if history<>spotless then if
+/// (history=warning_issued)or(interaction<error_stop_mode) then if
+/// selector=term_and_log then ...`. Umber's transcript is "constantly open"
+/// (see `tex_state::print`'s module doc), so `selector=term_and_log` reduces
+/// to `Selector::for_interaction(interaction) == Selector::TermAndLog`
+/// -- i.e. `interaction<>batch_mode` -- rather than a real closed/open log
+/// test.
+pub(crate) fn print_history_note(stores: &mut Universe) {
+    let history = stores.world().error_channel().history();
+    if history == History::Spotless {
+        return;
+    }
+    let interaction = stores.interaction_mode();
+    let severity_warrants_note =
+        history == History::WarningIssued || interaction != tex_state::InteractionMode::ErrorStop;
+    if !severity_warrants_note {
+        return;
+    }
+    if Selector::for_interaction(interaction) != Selector::TermAndLog {
+        return;
+    }
+    Printer::new(stores, Selector::TermOnly)
+        .print_nl("(see the transcript file for additional information)");
+}
+
+/// tex.web §1333's `close_files_and_terminate`, minus §1378's write-stream
+/// closing loop.
+///
+/// §1378 already ran synchronously when the engine applied the `\end`/
+/// `\dump` step that ended the job -- closing a write stream is a `World`
+/// state effect, not a print, so its position relative to this call (which a
+/// driver makes only after that step has already returned
+/// [`crate::MainControlStep::End`]) can't reorder anything this function
+/// prints. What remains here is exactly §642's DVI report and the
+/// transcript-closing note.
+pub(crate) fn finish_job(stores: &mut Universe, job_name: &str, dvi: Option<DviJobOutput>) {
+    print_dvi_report(stores, dvi);
+    print_transcript_note(stores, job_name);
+    stores.printer().print_ln();
+}
+
+/// tex.web §642's `<Finish the DVI file>`.
+///
+/// The page count is read from the engine's own durable commit log
+/// (`Universe::world().artifact_commits()`), never from `dvi`: a caller
+/// cannot make this print "Output written on..." with a fabricated page
+/// count, and cannot make it print a byte count when the engine committed no
+/// pages, because the zero-page branch never inspects `dvi` at all.
+fn print_dvi_report(stores: &mut Universe, dvi: Option<DviJobOutput>) {
+    let total_pages = i32::try_from(stores.world().artifact_commits().len()).unwrap_or(i32::MAX);
+    if total_pages == 0 {
+        stores.printer().print_nl("No pages of output.");
+        return;
+    }
+    let dvi = dvi.unwrap_or_else(|| {
+        panic!(
+            "job::finish_job: the engine committed {total_pages} page(s) but no `DviJobOutput` \
+             was supplied; §642's byte count cannot be fabricated, so the caller must serialize \
+             the DVI file and report its name and length before calling `finish_job`"
+        )
+    });
+    let mut printer = stores.printer();
+    printer
+        .print_nl("Output written on ")
+        .print(&dvi.file_name)
+        .print(" (")
+        .print_int(total_pages)
+        .print(" page");
+    if total_pages != 1 {
+        printer.print_char('s');
+    }
+    printer
+        .print(", ")
+        .print_int(i32::try_from(dvi.byte_len).unwrap_or(i32::MAX))
+        .print(" bytes).");
+}
+
+/// tex.web §1333's `if selector=term_only then begin print_nl("Transcript
+/// written on "); slow_print(log_name); print_char("."); end`.
+fn print_transcript_note(stores: &mut Universe, job_name: &str) {
+    // Real tex.web reaches this only after `a_close(log_file);
+    // selector:=selector-2` has just taken `selector` from `term_and_log` to
+    // `term_only`. Umber's transcript never really closes (see
+    // `tex_state::print`'s module doc), so the honest reading of that
+    // transition is: print this note exactly when the ambient selector was
+    // `term_and_log`, i.e. the job was writing both channels.
+    if Selector::for_interaction(stores.interaction_mode()) != Selector::TermAndLog {
+        return;
+    }
+    Printer::new(stores, Selector::TermOnly)
+        .print_nl("Transcript written on ")
+        .print(job_name)
+        .print(".log")
+        .print_char('.');
+}
+
+#[cfg(test)]
+mod tests;

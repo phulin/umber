@@ -295,9 +295,27 @@ impl CommandState {
             // `pop_input_level_at_end_of_job` deliberately does not mirror
             // it: its unconditional §1335 unwinding is the *other* closing
             // mechanism, `final_cleanup`'s `␣)` per still-open file, which
-            // the engine renders from its own `open_parens` count.
+            // the engine renders from its own `open_parens` count rather than
+            // from this queue.
+            //
+            // The name presence check mirrors `push_source_level`'s Open
+            // gating exactly, and deliberately so: in real tex.web every
+            // `File`-classed level has a name (§537 always calls
+            // `a_make_name_string` before a level can become `File`-classed),
+            // so the two gates are the same test there. A `File`-classed
+            // registration that reached this queue with no
+            // `SourceRegistration::with_name` -- every caller that predates
+            // this queue's introduction, and any future one that forgets --
+            // is not that; without this check it would queue an orphan
+            // `Close` with no matching `Open`, printing an unbalanced `)`
+            // into a transcript that never opened one.
+            //
+            // §362 clears the process-global `force_eof` for the same
+            // `name>17` case, which is why both live under this gate.
             if name_class == SourceNameClass::File {
                 self.input.force_eof = false;
+            }
+            if name_class == SourceNameClass::File && source.cursor.backing.name.is_some() {
                 self.file_framing_events.push(FileFramingEvent::Close);
             }
             self.input.levels.pop();

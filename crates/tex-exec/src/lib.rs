@@ -14,6 +14,7 @@ mod diagnostics;
 mod dispatch;
 mod error;
 mod executor;
+mod job;
 mod math;
 mod mode;
 mod node_dump;
@@ -49,6 +50,7 @@ pub use executor::{
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
 };
+pub use job::{BANNER, DviJobOutput};
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,

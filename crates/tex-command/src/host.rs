@@ -213,6 +213,20 @@ impl CommandHostCapabilities {
         self.job_name = name.into();
     }
 
+    /// Returns the job name installed by [`Self::set_job_name`] or
+    /// [`Self::set_startup_job_name`].
+    ///
+    /// tex.web §1333's `close_files_and_terminate` prints this as the
+    /// transcript file's stem (`slow_print(log_name)`, where `log_name` is
+    /// this name with `.log` appended); that print lives in `tex-exec`, past
+    /// this crate's no-printing boundary, so it needs read access rather than
+    /// the `pub(crate)` accessor [`CommandHostContext::job_name`] already
+    /// gives command-internal callers.
+    #[must_use]
+    pub fn job_name(&self) -> &str {
+        &self.job_name
+    }
+
     /// Installs the TeX job name selected by startup input.
     ///
     /// TeX's filename scanner separates the supplied terminal filename into
@@ -227,11 +241,6 @@ impl CommandHostCapabilities {
             .expect("splitting a string always yields one component");
         let name = leaf.rsplit_once('.').map_or(leaf, |(stem, _)| stem);
         self.set_job_name(name);
-    }
-
-    #[must_use]
-    pub fn job_name(&self) -> &str {
-        &self.job_name
     }
 
     /// Installs the current executor-owned mode query result for this command

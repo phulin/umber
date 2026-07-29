@@ -3278,7 +3278,6 @@ fn document_info_dictionary(
     parameters: PdfOutputParameters,
 ) -> Result<PdfDictionary, PdfModelError> {
     const PRODUCER: &[u8] = b"pdfTeX-1.40.27";
-    const FULL_BANNER: &[u8] = b"This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
 
     let mut info = PdfDictionary::new();
     info.insert("Producer", PdfValue::String(PRODUCER.to_vec()))?;
@@ -3297,7 +3296,7 @@ fn document_info_dictionary(
         } else {
             "PTEX.Fullbanner"
         };
-        info.insert(key, PdfValue::String(FULL_BANNER.to_vec()))?;
+        info.insert(key, PdfValue::String(tex_exec::BANNER.as_bytes().to_vec()))?;
     }
     Ok(info)
 }
@@ -6989,10 +6988,7 @@ mod tests {
             (b"Creator".as_slice(), b"TeX".as_slice()),
             (b"CreationDate".as_slice(), b"D:20260709133607Z".as_slice()),
             (b"ModDate".as_slice(), b"D:20260709133607Z".as_slice()),
-            (
-                b"PTEX.Fullbanner".as_slice(),
-                b"This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)".as_slice(),
-            ),
+            (b"PTEX.Fullbanner".as_slice(), tex_exec::BANNER.as_bytes()),
         ] {
             assert_eq!(
                 value_string(

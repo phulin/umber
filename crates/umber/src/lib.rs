@@ -2045,14 +2045,18 @@ mod tests {
         // bridge contract. `execute` owns the canonical loop through its
         // command-delivered `MainControlStep::End` instead.
         let result = session.execute().expect("canonical root terminates");
-        // TeX82 §1280's separating space between two `\message` texts.
-        assert_eq!(result.terminal_text, "report nested");
+        // TeX82 §1280's separating space between two `\message` texts, plus
+        // §537/§362's parens bracketing the nested `\input child`.
+        assert_eq!(result.terminal_text, "report (child nested)");
         assert!(matches!(
             session.stores().world().input_records(),
             [record] if record.hash() == root_hash
                 && record.path() == std::path::Path::new("selected/report.tex")
         ));
-        assert_eq!(uncommitted_terminal_text(session.stores()), "report nested");
+        assert_eq!(
+            uncommitted_terminal_text(session.stores()),
+            "report (child nested)"
+        );
     }
 
     #[test]

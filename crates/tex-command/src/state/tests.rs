@@ -362,6 +362,35 @@ fn read_stream_and_terminal_source_levels_queue_no_framing_events() {
 }
 
 #[test]
+fn unnamed_file_class_source_queues_no_close_without_a_matching_open() {
+    // `push_source_level` only queues `Open` when the registration carries a
+    // §537 name (`SourceRegistration::with_name`); a `File`-classed source
+    // with none -- every registration built before this queue existed, and
+    // any future one that forgets to name it -- must not queue an orphan
+    // `Close` either, or the engine would print an unbalanced `)` for a
+    // paren it never opened.
+    let mut state = CommandState::default();
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"x\n".to_vec(),
+        ))
+        .expect("unnamed source registers");
+    state
+        .open_registered_source(source)
+        .expect("unnamed source opens as a text file");
+    let identity = source_level_identity(&state);
+
+    assert!(state.take_file_framing_events().is_empty());
+
+    state
+        .retire_exhausted_input(identity)
+        .expect("the exact opened level retires");
+
+    assert!(state.take_file_framing_events().is_empty());
+}
+
+#[test]
 fn draining_file_framing_events_twice_yields_them_only_once() {
     let mut state = CommandState::default();
     let source = register_named(&mut state, "once.tex", b"x\n");

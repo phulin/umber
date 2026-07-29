@@ -1142,7 +1142,10 @@ mod tests {
         assert_eq!(host.calls, 1);
         assert_eq!(
             session.stores().world().memory_terminal_output(),
-            Some(&b"(job.tex once"[..]),
+            // §537/§362 bracket the retried `\input child` exactly once:
+            // `(child)` with nothing between the parens, since `child`'s
+            // sole line is `\relax`, which prints nothing.
+            Some(&b"once (child)"[..]),
             "aggregate rollback must not repeat an already committed write"
         );
         // Two pages: the explicit `\shipout`, then TeX82 §1054's residual
@@ -1458,8 +1461,9 @@ mod tests {
             .expect("world-backed input completes");
 
         // TeX82 §1280 separates the two messages with one space, because
-        // the first left `term_offset` nonzero.
-        assert_eq!(run.terminal_text, "(job.tex once child");
+        // the first left `term_offset` nonzero. §537/§362 additionally
+        // bracket `\input child` in parens around its own message.
+        assert_eq!(run.terminal_text, "once (child child)");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));
