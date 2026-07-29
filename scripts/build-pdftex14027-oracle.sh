@@ -615,7 +615,11 @@ audit_extension_primitives() {
       print substr($0,RSTART+11,RLENGTH-12)
     }' "$etex_change_source"
   } | LC_ALL=C sort -u >"$shared_inventory"
-  comm -23 "$pdf_inventory" "$shared_inventory" >"$extension_inventory"
+  # Both inventories are `LC_ALL=C sort -u`ed above, so the comparison has to
+  # use the same collation. Without this the script aborts under any ordinary
+  # UTF-8 locale with "comm: input is not in sorted order", which is why it
+  # only ever ran clean in a C environment.
+  LC_ALL=C comm -23 "$pdf_inventory" "$shared_inventory" >"$extension_inventory"
   while IFS='|' read -r primitive owner phase gate seam extra; do
     [[ -z "$primitive" || "$primitive" == \#* ]] && continue
     [[ -n "$owner" && -n "$phase" && -n "$gate" && -n "$seam" &&
