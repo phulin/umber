@@ -11615,10 +11615,22 @@ fn arithmetic_glue(
 
 fn glue_component_add(
     left: Scaled,
-    left_order: Order,
+    mut left_order: Order,
     right: Scaled,
-    right_order: Order,
+    mut right_order: Order,
 ) -> Result<(Scaled, Order), ExecError> {
+    // TeX82 §1238 first normalizes a zero component on the newly scanned
+    // specification before comparing its order, and only lets the stored
+    // component replace it when that stored component is nonzero. Normalizing
+    // both operands expresses the same value-based rule without depending on
+    // which side happened to be scanned: a zero `fill` must never erase a
+    // nonzero `fil` component during `\advance`.
+    if left.raw() == 0 {
+        left_order = Order::Normal;
+    }
+    if right.raw() == 0 {
+        right_order = Order::Normal;
+    }
     if left_order == right_order {
         return Ok((
             left.checked_add(right)

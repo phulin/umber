@@ -5230,6 +5230,47 @@ fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
+#[test]
+fn canonical_glue_advance_ignores_zero_higher_order_component_on_retry() {
+    fn run(control: &mut CommandReplayControl, universe: &mut Universe) {
+        for context in ["left glue", "right glue", "glue advance"] {
+            assert_eq!(control.step(universe).expect(context), ReplayStep::Continue);
+        }
+        let glue = universe.glue(universe.skip(100));
+        assert_eq!(glue.width.raw(), -8 * Scaled::UNITY);
+        assert_eq!(
+            (glue.stretch.raw(), glue.stretch_order),
+            (5 * Scaled::UNITY, tex_state::glue::Order::Filll)
+        );
+        assert_eq!(
+            (glue.shrink.raw(), glue.shrink_order),
+            (10 * Scaled::UNITY, tex_state::glue::Order::Fil)
+        );
+    }
+
+    // TeX82 §1238 normalizes a zero component before comparing glue orders.
+    // The right-hand zero `fill` shrink must therefore not erase the left-hand
+    // nonzero `fil` shrink. Keep the exact state-machine retry bounded to
+    // these three assignments so scanner replay covers the same rule.
+    let source = br"\skip100=-18pt plus 2fil minus10fil
+        \skip200=10pt plus5filll minus0fill
+        \advance\skip100 by\skip200\end";
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+    let snapshot = control.command_mut().snapshot();
+
+    run(&mut control, &mut universe);
+
+    control
+        .command_mut()
+        .rollback(snapshot)
+        .expect("scanner input rolls back for a deterministic retry");
+    let mut retried_universe = Universe::new_with_plain_catcodes();
+    let _initialized = CommandReplayControl::tex82_initex(&mut retried_universe);
+    run(&mut control, &mut retried_universe);
+}
+
 /// Steps once and returns everything the step committed.
 fn step_observations(
     control: &mut CommandReplayControl,
