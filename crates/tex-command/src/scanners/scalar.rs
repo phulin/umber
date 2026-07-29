@@ -2119,6 +2119,16 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
         Ok(scanned.value as u16)
     }
+
+    /// Scans e-TeX 2.6 `etex.ch`'s `scan_register_num`.
+    ///
+    /// Extension primitives using this scanner are absent from TeX82.
+    /// e-TeX and pdfTeX accept `0..=32767`, with invalid selectors diagnosed
+    /// and recovered to zero.
+    pub fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::Register)?;
+        Ok(scanned.value as u16)
+    }
 }
 
 #[cfg(test)]

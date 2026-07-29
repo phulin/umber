@@ -3767,9 +3767,12 @@ enum ScannedStep {
     BoxEndGroup {
         ships_out: bool,
     },
-    /// TeX82 §1101's `make_mark`: a fully expanded balanced general text,
-    /// appended as a class-0 mark node wherever `\mark` was encountered.
-    Mark(TracedTokenList),
+    /// TeX82 §1101 and e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: a fully
+    /// expanded balanced general text, appended as the selected mark class.
+    Mark {
+        class: u16,
+        tokens: TracedTokenList,
+    },
     Paragraph,
     MathShift {
         paired: bool,
@@ -5979,15 +5982,30 @@ fn scan_command(
         }
         // TeX82 §1101's `make_mark` -- any_mode(mark). `p:=scan_toks(false,
         // true)`: a fully expanded balanced general text, exactly like
-        // `\special`'s and `\message`'s bodies. The e-TeX numbered `\marks`
-        // variant needs its own class-index scan and is not implemented here
-        // (tracked separately for the e-TeX phase).
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mark) => Ok(ScannedStep::Mark(
-            processor
+        // `\special`'s and `\message`'s bodies. Plain `\mark` fixes class
+        // zero; the e-TeX numbered variant below scans its class first.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mark) => Ok(ScannedStep::Mark {
+            class: 0,
+            tokens: processor
                 .scan_balanced_text(true)
                 .map_err(command_error)?
                 .tokens,
-        )),
+        }),
+        // e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: `\marks` first scans
+        // one extended register number (recovering an invalid selector to
+        // class zero), then performs TeX82's expanded mark-text scan.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => {
+            let class = processor
+                .scan_extended_register_index()
+                .map_err(command_error)?;
+            Ok(ScannedStep::Mark {
+                class,
+                tokens: processor
+                    .scan_balanced_text(true)
+                    .map_err(command_error)?
+                    .tokens,
+            })
+        }
         // TeX82 §1095's `hmode+halign: head_for_vmode` ends an unrestricted
         // paragraph and retries the alignment in vertical mode.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
@@ -6397,6 +6415,7 @@ fn scan_unclassified_primitive(
         | P::Let
         | P::Lower
         | P::Lowercase
+        | P::Marks
         | P::MathCharDef
         | P::MathCode
         | P::Message
@@ -6626,7 +6645,6 @@ fn scan_unclassified_primitive(
         | P::GlueToMu
         | P::InterLinePenalties
         | P::LetterspaceFont
-        | P::Marks
         | P::MuExpr
         | P::MuToGlue
         | P::NumExpr
@@ -8215,7 +8233,7 @@ fn applied_mutation_observation(
         | ScannedStep::IllegalEqNo { .. }
         | ScannedStep::IllegalLastItem { .. }
         | ScannedStep::BoxEndGroup { .. }
-        | ScannedStep::Mark(..)
+        | ScannedStep::Mark { .. }
         | ScannedStep::Paragraph
         | ScannedStep::ParagraphStart
         | ScannedStep::Character { .. } => return None,
@@ -10707,18 +10725,16 @@ fn apply_scanned_step(
             crate::diagnostics::report_misplaced_alignment_delimiter(stores, token);
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Mark(tokens) => {
-            // no `build_page` call afterward (unlike `\penalty`/`\insert`,
-            // TeX82 §1101's `make_mark`: no mode check (`any_mode(mark)`) and
-            // which both invoke it in outer vertical mode). Plain `\mark`
-            // always uses class 0; the e-TeX `\marks<n>` variant is not
-            // wired here.
+        ScannedStep::Mark { class, tokens } => {
+            // No `build_page` call afterward (unlike `\penalty`/`\insert`):
+            // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
+            // node in every mode and leave page building to a later trigger.
             crate::assignments::flush_pending_hchars(modes, stores)?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
                 Node::Mark {
-                    class: 0,
+                    class,
                     tokens: tokens.token_list(),
                 },
             );

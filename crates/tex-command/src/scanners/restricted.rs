@@ -28,6 +28,9 @@ use crate::{CommandError, processor::CommandProcessor};
 pub enum RestrictedIntegerClass {
     /// §433's `scan_eight_bit_int`: a classical register selector.
     EightBit,
+    /// e-TeX 2.6 `etex.ch`'s `scan_register_num`: an extended register or
+    /// mark-class selector.
+    Register,
     /// §434's `scan_char_num`: a character code.
     CharacterCode,
     /// §435's `scan_four_bit_int`: a math family or an input/output stream.
@@ -43,6 +46,7 @@ impl RestrictedIntegerClass {
     pub const fn message(self) -> &'static str {
         match self {
             Self::EightBit => "Bad register code",
+            Self::Register => "Bad register code",
             Self::CharacterCode => "Bad character code",
             Self::FourBit => "Bad number",
             Self::FifteenBit => "Bad mathchar",
@@ -54,6 +58,7 @@ impl RestrictedIntegerClass {
     pub const fn help(self) -> &'static str {
         match self {
             Self::EightBit => "A register number must be between 0 and 255.",
+            Self::Register => "A register number must be between 0 and 32767.",
             Self::CharacterCode => "A character number must be between 0 and 255.",
             Self::FourBit => "Since I expected to read a number between 0 and 15,",
             Self::FifteenBit => "A mathchar number must be between 0 and 32767.",
@@ -70,6 +75,9 @@ impl RestrictedIntegerClass {
     pub fn accepts(self, profile: CommandProfile, value: i32) -> bool {
         match self {
             Self::EightBit => (0..=255).contains(&value),
+            Self::Register => {
+                profile.capabilities().supports_etex() && (0..=32_767).contains(&value)
+            }
             Self::CharacterCode => match profile.character_mode() {
                 CharacterMode::EightBitExact => (0..=255).contains(&value),
                 CharacterMode::UnicodeExtended => {

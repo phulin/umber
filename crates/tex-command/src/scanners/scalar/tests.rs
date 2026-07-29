@@ -4521,6 +4521,7 @@ fn restricted_integer_all_five_classes_min_max_and_recovery_matrix() {
 
     for (class, maximum) in [
         (Class::EightBit, 255),
+        (Class::Register, 32_767),
         (Class::CharacterCode, 255),
         (Class::FourBit, 15),
         (Class::FifteenBit, 32_767),
@@ -4533,8 +4534,14 @@ fn restricted_integer_all_five_classes_min_max_and_recovery_matrix() {
             ((maximum + 1).to_string(), 0, true),
         ] {
             let mut universe = Universe::new();
-            let (scanned, recoveries) = scan_with(
+            let profile = if class == Class::Register {
+                CommandProfile::ETEX26
+            } else {
+                CommandProfile::TEX82
+            };
+            let (scanned, recoveries) = scan_with_profile(
                 &mut universe,
+                profile,
                 source.chars().map(char_token).collect(),
                 |processor| {
                     let scanned = processor

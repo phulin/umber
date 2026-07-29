@@ -94,8 +94,11 @@ contract and the official e-TRIP workload:
   undefined.
 - The mark-class family tracks independent top/first/bottom values through
   page fire-up and independent split-first/split-bottom values through
-  `\vsplit`. `\pagediscards` and `\splitdiscards` destructively splice the
-  lists retained when `\savingvdiscards` is positive.
+  `\vsplit`. Canonical `\marks` follows `etex.ch` [26.424]: it scans a
+  `0..=32767` class with recover-to-zero diagnostics, expands its balanced
+  mark text, and appends the selected class in every mode; TeX82 retains only
+  class-zero `\mark`. `\pagediscards` and `\splitdiscards` destructively
+  splice the lists retained when `\savingvdiscards` is positive.
 - All four penalty arrays implement manual-defined assignment, repeated final
   entries, grouping, and forward/reverse line indexing. The interline array is
   reset at paragraph completion as specified.

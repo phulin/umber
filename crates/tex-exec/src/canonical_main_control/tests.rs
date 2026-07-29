@@ -104,6 +104,78 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
 }
 
 #[test]
+fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
+    // e-TeX 2.6 `etex.ch` [26.424]: `make_mark` scans an extended register
+    // number before TeX82 §1101's expanded mark text and appends the node in
+    // every mode. Invalid selectors recover to class zero before the text.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\def\payload{expanded}
+          \marks32767{\payload}
+          {\global\marks-1{recovered}}
+          \hbox{\marks7{horizontal}}
+          \vbox{\marks8{vertical}}
+          $\marks9{math}1$",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let nodes = stores
+        .current_page_nodes()
+        .into_iter()
+        .chain(stores.page_contributions().iter().cloned())
+        .collect::<Vec<_>>();
+    assert!(
+        nodes
+            .iter()
+            .any(|node| matches!(node, Node::Mark { class: 32_767, .. }))
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| matches!(node, Node::Mark { class: 0, .. }))
+    );
+    let expanded = nodes
+        .iter()
+        .find_map(|node| match node {
+            Node::Mark {
+                class: 32_767,
+                tokens,
+            } => Some(
+                stores
+                    .tokens(*tokens)
+                    .iter()
+                    .filter_map(|token| match token {
+                        Token::Char { ch, .. } => Some(*ch),
+                        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
+                    })
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .expect("class 32767 mark");
+    assert_eq!(expanded, "expanded");
+    assert!(terminal_text(&stores).contains("Bad register code"));
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert!(!terminal_text(&stores).contains("Unimplemented primitive"));
+}
+
+#[test]
+fn tex82_profile_leaves_numbered_marks_undefined() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let _control = CanonicalMainControl::tex82_initex(&mut stores);
+    let marks = stores.intern("marks");
+    assert_eq!(stores.meaning(marks), Meaning::Undefined);
+    assert_eq!(stores.primitive_meaning("marks"), None);
+}
+
+#[test]
 fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     let mut stores = Universe::new();
     let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
