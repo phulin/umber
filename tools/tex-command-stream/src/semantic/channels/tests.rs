@@ -149,25 +149,189 @@ fn a_truncated_channel_reports_the_end_rather_than_matching() {
     );
 }
 
-/// An `xfail` channel pins the known-wrong bytes, so byte-identity passes.
-/// Nothing here can call a change a fix; that is the bug's own gate's job.
-#[test]
-fn an_xfail_channel_pins_its_observed_bytes() {
-    let mut declared = contract();
-    declared.effects = StreamDisposition::Xfail {
+/// The committed file under an `xfail` disposition always holds the
+/// *reference engine's* bytes. `mismatch` pins exactly where Umber's own
+/// output first diverges from them, and matching that pin exactly is what
+/// passes -- unlike the old contract, byte-identity to the committed file is
+/// not what passes here; it is what triggers an xpass instead (below).
+fn xfail_effects(mismatch: ChannelMismatch) -> StreamDisposition {
+    StreamDisposition::Xfail {
         bug: "umber2-johp.246".into(),
-        authority: ChannelAuthority::UmberBaseline,
-    };
+        authority: ChannelAuthority::Oracle,
+        mismatch,
+    }
+}
+
+#[test]
+fn an_xfail_channel_matching_its_pinned_divergence_passes() {
+    let mut declared = contract();
+    declared.effects = xfail_effects(ChannelMismatch {
+        line: 1,
+        expected: "special:dvi:reference".into(),
+        actual: "special:dvi:wrong".into(),
+    });
     let mut run = captured();
     run.streams[3] = "special:dvi:wrong\n".into();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Effects => Some("special:dvi:wrong\n".to_owned()),
+        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
         _ => None,
     };
     assert_eq!(compare(&run, &declared, &committed), Vec::new());
+}
 
-    run.streams[3] = "special:dvi:changed\n".into();
-    assert_eq!(compare(&run, &declared, &committed).len(), 1);
+/// Umber now produces exactly the reference bytes: the pin no longer
+/// describes anything, so this is a failure (an xpass) rather than a quiet
+/// improvement, and it names the bug the author must close.
+#[test]
+fn an_xfail_channel_that_now_matches_the_reference_is_an_xpass() {
+    let mut declared = contract();
+    declared.effects = xfail_effects(ChannelMismatch {
+        line: 1,
+        expected: "special:dvi:reference".into(),
+        actual: "special:dvi:wrong".into(),
+    });
+    let mut run = captured();
+    run.streams[3] = "special:dvi:reference\n".into();
+    let committed = |channel: StreamChannel| match channel {
+        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
+        _ => None,
+    };
+    assert_eq!(
+        compare(&run, &declared, &committed),
+        vec![ChannelFailure::Xpass {
+            channel: "effects",
+            bug: "umber2-johp.246".into(),
+        }]
+    );
+}
+
+/// Umber diverges from the reference, but not the way the pin says: this is
+/// a changed failure, reporting the pinned divergence alongside the one now
+/// observed, so a shift in bug behavior cannot be mistaken for the pinned one.
+#[test]
+fn an_xfail_channel_diverging_differently_is_a_changed_failure() {
+    let mut declared = contract();
+    let pinned = ChannelMismatch {
+        line: 1,
+        expected: "special:dvi:reference".into(),
+        actual: "special:dvi:wrong".into(),
+    };
+    declared.effects = xfail_effects(pinned.clone());
+    let mut run = captured();
+    run.streams[3] = "special:dvi:different\n".into();
+    let committed = |channel: StreamChannel| match channel {
+        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
+        _ => None,
+    };
+    assert_eq!(
+        compare(&run, &declared, &committed),
+        vec![ChannelFailure::ChangedFailure {
+            channel: "effects",
+            bug: "umber2-johp.246".into(),
+            pinned,
+            observed: ChannelMismatch {
+                line: 1,
+                expected: "special:dvi:reference".into(),
+                actual: "special:dvi:different".into(),
+            },
+        }]
+    );
+}
+
+/// A changed failure also fires when the divergence moves to a different
+/// line rather than just changing its text on the same line.
+#[test]
+fn an_xfail_channel_diverging_at_a_different_line_is_a_changed_failure() {
+    let mut declared = contract();
+    let pinned = ChannelMismatch {
+        line: 1,
+        expected: "reference-one".into(),
+        actual: "wrong-one".into(),
+    };
+    declared.effects = xfail_effects(pinned.clone());
+    let mut run = captured();
+    run.streams[3] = "reference-one\nwrong-two\n".into();
+    let committed = |channel: StreamChannel| match channel {
+        StreamChannel::Effects => Some("reference-one\nreference-two\n".to_owned()),
+        _ => None,
+    };
+    assert_eq!(
+        compare(&run, &declared, &committed),
+        vec![ChannelFailure::ChangedFailure {
+            channel: "effects",
+            bug: "umber2-johp.246".into(),
+            pinned,
+            observed: ChannelMismatch {
+                line: 2,
+                expected: "reference-two".into(),
+                actual: "wrong-two".into(),
+            },
+        }]
+    );
+}
+
+/// An `xfail` channel with no committed reference file fails the same way a
+/// `file` channel does: the reference bytes are still mandatory to commit.
+#[test]
+fn an_xfail_channel_without_a_committed_file_fails() {
+    let mut declared = contract();
+    declared.effects = xfail_effects(ChannelMismatch {
+        line: 1,
+        expected: "a".into(),
+        actual: "b".into(),
+    });
+    let mut run = captured();
+    run.streams[3] = "anything".into();
+    assert_eq!(
+        compare(&run, &declared, &no_files),
+        vec![ChannelFailure::MissingFile {
+            channel: "effects",
+            path: "expected/<case>.effects".into()
+        }]
+    );
+}
+
+#[test]
+fn validate_xfail_disposition_rejects_a_malformed_bug_id() {
+    let mismatch = ChannelMismatch {
+        line: 1,
+        expected: "a".into(),
+        actual: "b".into(),
+    };
+    assert!(
+        validate_xfail_disposition(StreamChannel::Effects, "not-a-bead", &mismatch)
+            .expect_err("malformed bug id must be rejected")
+            .contains("malformed bug")
+    );
+}
+
+#[test]
+fn validate_xfail_disposition_accepts_a_well_formed_bug_id() {
+    let mismatch = ChannelMismatch {
+        line: 1,
+        expected: "a".into(),
+        actual: "b".into(),
+    };
+    assert!(
+        validate_xfail_disposition(StreamChannel::Effects, "umber2-johp.246", &mismatch).is_ok()
+    );
+}
+
+/// A mismatch whose `expected` and `actual` are equal pins nothing: it does
+/// not describe any divergence at all, so it must be rejected rather than
+/// silently accepted as a no-op pin.
+#[test]
+fn validate_xfail_disposition_rejects_a_mismatch_that_pins_nothing() {
+    let mismatch = ChannelMismatch {
+        line: 1,
+        expected: "same".into(),
+        actual: "same".into(),
+    };
+    assert!(
+        validate_xfail_disposition(StreamChannel::Effects, "umber2-johp.246", &mismatch)
+            .expect_err("an equal expected/actual pair pins nothing")
+            .contains("pins nothing")
+    );
 }
 
 #[test]
@@ -204,4 +368,40 @@ fn the_committed_schema_requires_exactly_the_contract_fields() {
     expected.sort_unstable();
 
     assert_eq!(declared, expected);
+
+    // The `xfail` branch of `streamDisposition` must require exactly the
+    // fields `StreamDisposition::Xfail` carries: a bug id, an authority, and
+    // a mismatch pin. Missing `mismatch` here is exactly the drift this test
+    // exists to catch -- a schema that still allowed an `xfail` with no pin
+    // would document a contract Rust no longer accepts.
+    let one_of = schema["$defs"]["streamDisposition"]["oneOf"]
+        .as_array()
+        .expect("streamDisposition is a oneOf");
+    let xfail_required = one_of
+        .iter()
+        .find(|branch| branch["properties"]["kind"]["const"] == "xfail")
+        .expect("streamDisposition declares an xfail branch")["required"]
+        .as_array()
+        .expect("the xfail branch declares required keys");
+    let mut xfail_declared: Vec<&str> = xfail_required
+        .iter()
+        .map(|value| value.as_str().expect("required keys are strings"))
+        .collect();
+    xfail_declared.sort_unstable();
+    let mut xfail_expected = vec!["kind", "bug", "authority", "mismatch"];
+    xfail_expected.sort_unstable();
+    assert_eq!(xfail_declared, xfail_expected);
+
+    // `channelMismatch` must require exactly `ChannelMismatch`'s own fields.
+    let mismatch_required = schema["$defs"]["channelMismatch"]["required"]
+        .as_array()
+        .expect("channelMismatch declares required keys");
+    let mut mismatch_declared: Vec<&str> = mismatch_required
+        .iter()
+        .map(|value| value.as_str().expect("required keys are strings"))
+        .collect();
+    mismatch_declared.sort_unstable();
+    let mut mismatch_expected = vec!["line", "expected", "actual"];
+    mismatch_expected.sort_unstable();
+    assert_eq!(mismatch_declared, mismatch_expected);
 }

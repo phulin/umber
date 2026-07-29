@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 use serde::Deserialize;
 use tex_state::{EffectRecord, PrintSink};
 
-use super::SemanticRun;
+use super::{SemanticRun, valid_bug_id};
 
 /// The stream channels, in the order a report prints them.
 ///
@@ -173,12 +173,35 @@ pub enum StreamDisposition {
     /// implementation's observed output, recorded so it cannot change
     /// silently, and still owed an oracle adjudication.
     File { authority: ChannelAuthority },
-    /// The channel is known-divergent. The committed file holds the observed
-    /// bytes, and `bug` names the issue that will retire this disposition.
+    /// The committed file always holds the reference engine's bytes for this
+    /// channel -- that is the one meaning a committed channel file has, `file`
+    /// or `xfail` alike. This disposition instead says Umber does not yet
+    /// produce those bytes, and pins exactly how: `mismatch` names the first
+    /// line at which Umber's output diverges from the committed reference, so
+    /// a change in *what* diverges cannot be mistaken for the pinned bug.
+    /// `bug` names the issue that will retire this disposition.
     Xfail {
         bug: String,
         authority: ChannelAuthority,
+        mismatch: ChannelMismatch,
     },
+}
+
+/// Where an `xfail` channel's observed divergence from its committed
+/// reference bytes was first pinned.
+///
+/// `expected` and `actual` are the two sides' rendering of that one line,
+/// using the literal `<end of channel>` for a side that ran out first --
+/// exactly as a `file` channel's own line-difference report does.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelMismatch {
+    /// 1-based line number of the first divergence.
+    pub line: usize,
+    /// The committed reference engine's line at that point.
+    pub expected: String,
+    /// Umber's observed line at that point.
+    pub actual: String,
 }
 
 /// Where a committed channel expectation's bytes came from.
@@ -219,6 +242,29 @@ impl ChannelContract {
     }
 }
 
+/// Validates one channel's `xfail` disposition in isolation from the
+/// filesystem: `bug` must be a concrete Beads id, and `mismatch` must
+/// actually pin a divergence -- an `expected` equal to `actual` pins nothing.
+pub fn validate_xfail_disposition(
+    channel: StreamChannel,
+    bug: &str,
+    mismatch: &ChannelMismatch,
+) -> Result<(), String> {
+    if !valid_bug_id(bug) {
+        return Err(format!(
+            "channel {} pins malformed bug {bug:?}",
+            channel.name()
+        ));
+    }
+    if mismatch.expected == mismatch.actual {
+        return Err(format!(
+            "channel {} mismatch has equal expected and actual, which pins nothing",
+            channel.name()
+        ));
+    }
+    Ok(())
+}
+
 /// One way a run failed to match its declared channel contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelFailure {
@@ -228,14 +274,29 @@ pub enum ChannelFailure {
     Status { declared: String, observed: String },
     /// A channel declared `empty` produced output.
     NotEmpty { channel: &'static str, bytes: usize },
-    /// A channel declared `file` had no committed file.
+    /// A channel declared `file` or `xfail` had no committed reference file.
     MissingFile { channel: &'static str, path: String },
-    /// A channel's content diverged from its committed file.
+    /// A channel declared `file` diverged from its committed reference.
     Content {
         channel: &'static str,
         line: usize,
         declared: String,
         observed: String,
+    },
+    /// An `xfail` channel now byte-matches its committed reference exactly.
+    /// The pin describes a divergence, so this is a failure and not a quiet
+    /// improvement: the author must promote the channel to `file` and close
+    /// `bug`, or the fix stays unrecorded and can regress unnoticed.
+    Xpass { channel: &'static str, bug: String },
+    /// An `xfail` channel still diverges from its committed reference, but
+    /// not the way `pinned` says: a different line, or the same line with
+    /// different text. Reports both so the failure shows what was pinned
+    /// alongside what Umber now actually does.
+    ChangedFailure {
+        channel: &'static str,
+        bug: String,
+        pinned: ChannelMismatch,
+        observed: ChannelMismatch,
     },
 }
 
@@ -274,13 +335,7 @@ pub fn compare(
                     });
                 }
             }
-            // `xfail` compares exactly like `file`. The committed bytes are the
-            // observed, known-wrong ones, so byte-identity is what pins the
-            // divergence; the disposition differs only in what it claims those
-            // bytes mean. Without an oracle for this channel a change cannot be
-            // told apart from a fix, so the pin is deliberately not an xpass
-            // detector -- that adjudication belongs to the bug's own gate.
-            StreamDisposition::File { .. } | StreamDisposition::Xfail { .. } => {
+            StreamDisposition::File { .. } => {
                 let Some(declared) = committed(channel) else {
                     failures.push(ChannelFailure::MissingFile {
                         channel: name,
@@ -288,8 +343,43 @@ pub fn compare(
                     });
                     continue;
                 };
-                if let Some(failure) = first_line_difference(name, &declared, observed) {
-                    failures.push(failure);
+                if let Some(divergence) = first_line_difference(&declared, observed) {
+                    failures.push(ChannelFailure::Content {
+                        channel: name,
+                        line: divergence.line,
+                        declared: divergence.expected,
+                        observed: divergence.actual,
+                    });
+                }
+            }
+            // The committed file always holds the reference engine's bytes,
+            // exactly as a `file` channel's does. `mismatch` pins where
+            // Umber's own output first diverges from those bytes, so the
+            // three outcomes mirror `evaluate_expectation`'s own projection
+            // discipline: an unchanged divergence passes quietly, a
+            // divergence that vanished is an xpass (Umber owes a promotion to
+            // `file` and the bug owes closing), and a divergence that moved is
+            // a changed failure reporting pinned against observed.
+            StreamDisposition::Xfail { bug, mismatch, .. } => {
+                let Some(reference) = committed(channel) else {
+                    failures.push(ChannelFailure::MissingFile {
+                        channel: name,
+                        path: format!("expected/<case>.{name}"),
+                    });
+                    continue;
+                };
+                match first_line_difference(&reference, observed) {
+                    None => failures.push(ChannelFailure::Xpass {
+                        channel: name,
+                        bug: bug.clone(),
+                    }),
+                    Some(divergence) if divergence == *mismatch => {}
+                    Some(divergence) => failures.push(ChannelFailure::ChangedFailure {
+                        channel: name,
+                        bug: bug.clone(),
+                        pinned: mismatch.clone(),
+                        observed: divergence,
+                    }),
                 }
             }
         }
@@ -297,13 +387,10 @@ pub fn compare(
     failures
 }
 
-/// Locates the first differing line so a failure names what moved rather than
-/// printing two transcripts.
-fn first_line_difference(
-    channel: &'static str,
-    declared: &str,
-    observed: &str,
-) -> Option<ChannelFailure> {
+/// Locates the first line at which two channel renderings differ, so a
+/// failure names what moved rather than printing two transcripts. `None`
+/// means the two sides match exactly.
+fn first_line_difference(declared: &str, observed: &str) -> Option<ChannelMismatch> {
     if declared == observed {
         return None;
     }
@@ -316,11 +403,10 @@ fn first_line_difference(
             (None, None) => return None,
             (declared_line, observed_line) => {
                 if declared_line != observed_line {
-                    return Some(ChannelFailure::Content {
-                        channel,
+                    return Some(ChannelMismatch {
                         line,
-                        declared: declared_line.unwrap_or("<end of channel>").to_owned(),
-                        observed: observed_line.unwrap_or("<end of channel>").to_owned(),
+                        expected: declared_line.unwrap_or("<end of channel>").to_owned(),
+                        actual: observed_line.unwrap_or("<end of channel>").to_owned(),
                     });
                 }
             }

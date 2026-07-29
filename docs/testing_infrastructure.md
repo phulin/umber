@@ -312,9 +312,10 @@ run produces, and the gate compares all of them alongside the projection:
   `tests/corpus/command/tex82` fixture tree and duplicating it here would
   commit an Umber self-golden;
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
-- `terminal`, `log`, `dvi`, and `effects`, each either `empty` or byte-identical
-  to `expected/<case-id>.<channel>`. The corpus commits 118 such files today:
-  53 terminal, 39 log, and 26 dvi.
+- `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
+  A committed `expected/<case-id>.<channel>` file is required for the latter
+  two. The corpus commits 118 such files today: 53 terminal, 39 log, and 26
+  dvi.
 
 A case with no `channels` block fails validation. The one exemption is a case
 whose engine run does not complete and therefore has no channels to record;
@@ -331,11 +332,32 @@ owed an oracle adjudication, which `authority: "oracle"` records once a
 reference engine has produced them. The count is greppable, so the remaining
 work is visible rather than assumed.
 
-A stream channel may also be `xfail` with a Beads id. It compares exactly like
-`file` -- the committed bytes are the observed, known-wrong ones, so
-byte-identity is what pins the divergence. It is deliberately not an xpass
-detector: without an oracle for that channel a change cannot be told apart from
-a fix, and that adjudication belongs to the bug's own gate.
+**A committed `expected/<case-id>.<channel>` file for an `xfail` channel is
+understood to hold the reference engine's bytes, exactly like a `file`
+channel's -- that is the one meaning a committed channel file has.** This
+replaces the disposition's earlier meaning, under which the committed bytes
+were Umber's own known-wrong output and the comparison was byte-identity
+against that self-pin, indistinguishable from `file` except in name. An
+`xfail` channel instead carries a `mismatch`: the first line at which Umber's
+own output diverges from the committed reference, both sides rendered so a
+divergent channel legibly records what TeX does and what Umber does instead
+(using the literal `<end of channel>` for a side that runs out first).
+Comparing an `xfail` channel then has three outcomes, mirroring the
+case-level `expectation`'s own pass/xpass/changed-failure discipline:
+
+- Umber's output still diverges exactly where and how `mismatch` says: pass.
+- Umber's output now equals the committed reference bytes exactly: fail, as an
+  xpass -- the pin no longer describes anything, so the fix must be recorded
+  by promoting the channel to `file` and closing the bug, not left to a
+  disposition that quietly keeps "passing" a bug that is gone.
+- Umber's output diverges some other way -- a different line, or the same
+  line with different text: fail, as a changed failure, reporting the pinned
+  divergence next to the one now observed so a shift in behavior is never
+  mistaken for the one `bug` names.
+
+No committed case uses `xfail` for a stream channel today, so this is a
+contract change with no corpus edit behind it yet: the next channel pinned as
+`xfail` is the first to commit its reference bytes under the new meaning.
 
 Regenerate the contract with:
 

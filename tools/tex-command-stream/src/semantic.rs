@@ -35,8 +35,8 @@ pub mod channels;
 mod tests;
 
 pub use channels::{
-    CapturedChannels, ChannelAuthority, ChannelContract, ChannelFailure, STREAM_CHANNELS,
-    StreamChannel, StreamDisposition,
+    CapturedChannels, ChannelAuthority, ChannelContract, ChannelFailure, ChannelMismatch,
+    STREAM_CHANNELS, StreamChannel, StreamDisposition, validate_xfail_disposition,
 };
 
 pub const SCHEMA: u32 = 1;
@@ -394,14 +394,9 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
             }
             _ => {}
         }
-        if let StreamDisposition::Xfail { bug, .. } = declared
-            && !valid_bug_id(bug)
-        {
-            return Err(format!(
-                "case {} pins channel {} to malformed bug {bug:?}",
-                case.id,
-                channel.name()
-            ));
+        if let StreamDisposition::Xfail { bug, mismatch, .. } = declared {
+            validate_xfail_disposition(channel, bug, mismatch)
+                .map_err(|error| format!("case {}: {error}", case.id))?;
         }
     }
     Ok(())

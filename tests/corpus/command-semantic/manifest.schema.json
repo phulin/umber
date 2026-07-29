@@ -111,17 +111,33 @@
           }
         },
         {
-          "description": "The channel is known-divergent. The committed file holds the observed, wrong bytes so the divergence is pinned; `bug` names the issue that retires the pin.",
+          "description": "The committed file holds the reference engine's bytes, exactly as `file` does. Umber does not yet match them; `mismatch` pins where its output first diverges, and `bug` names the issue that retires the pin.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "bug", "authority"],
+          "required": ["kind", "bug", "authority", "mismatch"],
           "properties": {
             "kind": { "const": "xfail" },
             "bug": { "type": "string", "pattern": "^umber2-[a-z0-9]+(?:\\.[a-z0-9]+)*$" },
-            "authority": { "$ref": "#/$defs/channelAuthority" }
+            "authority": { "$ref": "#/$defs/channelAuthority" },
+            "mismatch": { "$ref": "#/$defs/channelMismatch" }
           }
         }
       ]
+    },
+    "channelMismatch": {
+      "description": "Where Umber's output for one channel first diverges from the committed reference bytes. `expected` and `actual` use the literal `<end of channel>` for a side that ran out first.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "expected", "actual"],
+      "properties": {
+        "line": {
+          "description": "1-based line number of the first divergence.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" }
+      }
     },
     "channelAuthority": {
       "description": "Where a committed channel's bytes came from. `oracle` means a pinned reference engine produced them. `umber-baseline` means Umber produced them: they are pinned against silent drift and still owed an oracle adjudication.",
