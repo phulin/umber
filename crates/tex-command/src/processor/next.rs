@@ -744,6 +744,23 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Installs TeX82 §395's frozen `\par` after an extra right brace in a
+    /// macro argument. The offending brace has already been backed up.
+    pub(crate) fn insert_macro_argument_recovery_par(&mut self) -> Result<(), CommandError> {
+        let par = self.frozen_primitive_token("par")?;
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                par,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Inserted,
+        );
+        self.observe_inserted_token_recovery(level, par);
+        Ok(())
+    }
+
     /// Performs TeX82 §1047's `insert_dollar_sign` replay for a command that
     /// §1046 lists among the "math-only cases in non-math modes, or vice
     /// versa" (for example `mmode+hrule`). TeX backs the offending command

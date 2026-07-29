@@ -416,6 +416,16 @@ fn paragraph_is_rejected_only_for_non_long_macros() {
 }
 
 #[test]
+fn extra_right_brace_aborts_even_a_long_macro() {
+    // TeX82 §§394-395: a bare `}` is backed up, then an inserted `\par`
+    // aborts the match after §395 sets `long_state := call`.
+    assert_eq!(
+        run_macro(b"\\m}", MeaningFlags::LONG, &[Token::param(1)], false),
+        Err(CommandError::ParagraphInMacroArgument)
+    );
+}
+
+#[test]
 fn non_long_paragraph_backs_up_before_restoring_matching_status() {
     let mut command = CommandState::default();
     let source = command

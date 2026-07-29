@@ -14,6 +14,8 @@ use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, MacroRecord, TokenListRecord,
 };
 
+const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
+
 /// Persistent ownership of live macro-argument activations.
 ///
 /// This is the sole owner of the activation chain. Macro-body input behavior
@@ -358,6 +360,29 @@ impl CommandProcessor<'_> {
                 }
             ) {
                 continue;
+            }
+            if matches!(
+                command.spelling().semantic_token(),
+                Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                }
+            ) {
+                // TeX82 §395 backs up a bare extra `}`, inserts frozen
+                // `\par`, and sets `long_state := call`. The inserted
+                // paragraph therefore takes §394's ordinary back_error path
+                // even when this macro was originally declared `\long`.
+                self.back_input(command)?;
+                self.command
+                    .expansion
+                    .pending_diagnostics
+                    .push(EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC);
+                self.insert_macro_argument_recovery_par()?;
+                let par = self
+                    .get_token()?
+                    .ok_or(CommandError::ParagraphInMacroArgument)?;
+                self.back_input(par)?;
+                return Err(CommandError::ParagraphInMacroArgument);
             }
             break command;
         };
