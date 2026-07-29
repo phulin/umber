@@ -8894,6 +8894,7 @@ fn shipout_replay_box(
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
     let input_summary = stores.input_summary().clone();
+    let output_open_context = command.state.output_open_context();
     let mut expand_write = |stores: &mut Universe, tokens: tex_state::ids::TokenListId| {
         let traced = stores
             .tokens(tokens)
@@ -8922,6 +8923,7 @@ fn shipout_replay_box(
     let receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
+        Some(output_open_context),
         stores,
         &mut execution,
         &mut expand_write,

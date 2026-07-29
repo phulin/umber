@@ -418,6 +418,13 @@ beginning with a deferred `OpenOut` a typed prepared owner at the `tex-incr`
 finalization handoff. That suffix remains outside the committed artifact and
 PDF-page prefixes until the authoritative host open succeeds; a replacement
 filename is serialized and hashed before the suffix publishes.
+The retry token is the failed append-only effect position, with stream and
+path retained as validation rather than lookup keys. Prepared artifacts map
+that position through their ordered page-effect projection, so equal paths,
+different streams, and repeated opens cannot redirect a retry. The page also
+retains the command core's detached §530 input display; interactive failure
+prints it before requesting a replacement even when host commit happens after
+the source stack has retired.
 
 ## 7. Typesetting kernels
 

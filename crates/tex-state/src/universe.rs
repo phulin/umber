@@ -562,9 +562,11 @@ pub struct ShipoutTransaction<'a> {
 ///
 /// Native finalization owns this value across retry. Dropping it is rollback:
 /// neither its artifacts nor its PDF page records can become observable.
+#[derive(Clone)]
 pub struct PreparedPageSuffix {
     artifacts: Vec<CommittedArtifact>,
     pdf_pages: Vec<crate::PdfPageRecord>,
+    effects: Vec<(EffectPos, EffectRecord)>,
 }
 
 impl PreparedPageSuffix {
@@ -575,6 +577,11 @@ impl PreparedPageSuffix {
 
     pub fn artifacts_mut(&mut self) -> &mut [CommittedArtifact] {
         &mut self.artifacts
+    }
+
+    #[must_use]
+    pub fn effects(&self) -> &[(EffectPos, EffectRecord)] {
+        &self.effects
     }
 }
 
@@ -1377,9 +1384,26 @@ impl Default for Universe {
 impl Universe {
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
+        let effect_base = self.world.effect_pos().raw()
+            - u64::try_from(self.world.effect_records().len()).unwrap_or(u64::MAX);
         PreparedPageSuffix {
             artifacts: self.world.take_artifact_suffix(start),
             pdf_pages: self.pdf.take_page_suffix(start),
+            effects: self
+                .world
+                .effect_records()
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, effect)| {
+                    (
+                        EffectPos::from_raw(
+                            effect_base + u64::try_from(index).unwrap_or(u64::MAX) + 1,
+                        ),
+                        effect,
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -3009,6 +3033,18 @@ impl Universe {
     pub fn export_retained_effects(&mut self) -> Result<(), WorldError> {
         let hash_base = self.state_hash_base.clone();
         self.world.export_retained_effects()?;
+        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+        Ok(())
+    }
+
+    /// Exposes one retained prefix while preserving its ordered suffix.
+    #[doc(hidden)]
+    pub fn export_retained_effects_through(
+        &mut self,
+        effect_pos: EffectPos,
+    ) -> Result<(), WorldError> {
+        let hash_base = self.state_hash_base.clone();
+        self.world.commit_effects(effect_pos)?;
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
     }

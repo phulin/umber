@@ -129,6 +129,13 @@ impl CommandState {
         u32::try_from(self.input.current_file_line_number()).unwrap_or(0)
     }
 
+    /// Captures TeX82 §530's current input display before deferred shipout
+    /// releases the command processor borrow.
+    #[must_use]
+    pub fn output_open_context(&self) -> String {
+        self.input.output_open_context()
+    }
+
     /// Schedules one completed `\\discretionary` part for canonical replay.
     ///
     /// This is deliberately a stored command level, not an executor-owned

@@ -324,6 +324,13 @@ effects. Prompt retry rewrites the `PageEffect::OpenOut` target before artifact
 hashing; successful effect export then publishes the whole prepared suffix.
 Dropping the retry plan discards it, and an already-drained effect prefix is
 never replayed.
+The suspended open is named by its absolute effect-log position. Stream and
+path validate that identity but never select an artifact occurrence.
+Retargeting first prepares a replacement suffix, then validates and changes
+the exact pending World effect, and only then swaps in the prepared suffix;
+an absent or stale identity leaves both histories unchanged. Each fallible
+page also retains the canonical §530 input display captured at shipout so
+commit-time interaction does not reconstruct context from consumed input.
 
 Retained session effect, stream, and artifact history is owned by the session
 outside any single `Universe`'s `World` state, or shared through immutable

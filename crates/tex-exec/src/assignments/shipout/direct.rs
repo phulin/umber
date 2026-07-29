@@ -66,7 +66,7 @@ fn stage_form_inner(
     let overlay = normalize_page(
         children,
         vertical,
-        Vec::new(),
+        (Vec::new(), String::new()),
         stores,
         expansion,
         &mut legacy_write_expander,
@@ -139,6 +139,7 @@ fn stage_form_inner(
 pub(super) fn stage_shipout(
     node: Node,
     input_summary: tex_state::InputSummary,
+    output_open_context: Option<String>,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     write_expander: &mut WriteExpander<'_>,
@@ -189,11 +190,13 @@ pub(super) fn stage_shipout(
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
+    let output_open_context =
+        output_open_context.unwrap_or_else(|| input_summary.output_open_context());
     let overlay = execution.with_nested(|expansion| {
         normalize_page(
             children,
             vertical,
-            pending_effects,
+            (pending_effects, output_open_context),
             stores,
             expansion,
             write_expander,

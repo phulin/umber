@@ -23,14 +23,16 @@ const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 
 pub(super) fn retry_unavailable_stream_open(
     stores: &mut Universe,
-    failed_path: &std::path::Path,
+    failed: &tex_state::StreamOpenFailure,
 ) -> Result<std::path::PathBuf, ExecError> {
     let interaction = stores.interaction_mode();
-    let failed_name = failed_path.to_string_lossy();
+    let failed_name = failed.path().to_string_lossy();
     let mut report = stores.print_err("I can't write on file `");
     report
         .print(&failed_name)
-        .print("'.\nPlease type another output file name");
+        .print("'.")
+        .print(failed.context())
+        .print("\nPlease type another output file name");
     drop(report);
     if matches!(
         interaction,
@@ -47,9 +49,6 @@ pub(super) fn retry_unavailable_stream_open(
             "End of file on the terminal!",
         )))?;
     let replacement = direct::terminal_output_name(&replacement);
-    stores
-        .world_mut()
-        .retarget_pending_stream_open(failed_path, &replacement)?;
     Ok(replacement.into())
 }
 
@@ -82,6 +81,7 @@ pub(crate) fn shipout_node(
     shipout_node_with_input_summary(
         node,
         input_summary,
+        None,
         stores,
         execution,
         &mut legacy_write_expander,
@@ -97,6 +97,7 @@ pub(crate) fn shipout_node(
 pub(crate) fn shipout_node_with_input_summary(
     node: Node,
     input_summary: tex_state::InputSummary,
+    output_open_context: Option<String>,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     write_expander: &mut direct::WriteExpander<'_>,
@@ -181,6 +182,7 @@ pub(crate) fn shipout_node_with_input_summary(
     let staged = direct::stage_shipout(
         node,
         input_summary,
+        output_open_context,
         &mut transaction,
         execution,
         write_expander,
@@ -252,6 +254,7 @@ pub(crate) fn test_stage_shipout_artifact(
     let staged = direct::stage_shipout(
         node,
         tex_state::InputSummary::default(),
+        None,
         stores,
         &mut execution,
         &mut legacy_write_expander,

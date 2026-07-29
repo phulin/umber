@@ -10,6 +10,7 @@ pub(super) struct PageOverlay {
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     color_target: tex_state::PdfColorStackTarget,
     running_thread_depth: Option<usize>,
+    output_open_context: String,
 }
 
 pub(super) struct MathSubstitution {
@@ -31,12 +32,13 @@ struct NormalizeExpansion<'a, 'b> {
 pub(super) fn normalize_page(
     root: NodeListId,
     root_vertical: bool,
-    effects: Vec<PageEffect>,
+    effects_and_context: (Vec<PageEffect>, String),
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     write_expander: &mut super::WriteExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
+    let (effects, output_open_context) = effects_and_context;
     let mut effects = effects;
     let snap_reference = if color_target == tex_state::PdfColorStackTarget::Page {
         stores.pdf_snap_reference()
@@ -75,6 +77,7 @@ pub(super) fn normalize_page(
         diagnostics: Vec::new(),
         color_target,
         running_thread_depth: None,
+        output_open_context,
     };
     let mut expansion = NormalizeExpansion {
         expansion,
@@ -283,6 +286,7 @@ fn append_whatsit_effect(
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
     let color_target = overlay.color_target;
+    let output_open_context = overlay.output_open_context.clone();
     let effects = &mut overlay.effects;
     let diagnostics = &mut overlay.diagnostics;
     let running_thread_depth = &mut overlay.running_thread_depth;
@@ -291,8 +295,11 @@ fn append_whatsit_effect(
             // TeX82 §1374 closes the old stream before it attempts the
             // replacement, even when every subsequent open attempt fails.
             stores.world_mut().close_out(slot);
-            let path = retry_openout_target(stores, path)?;
+            let path = retry_openout_target(stores, path, &output_open_context)?;
             stores.world_mut().open_out(slot, path.clone());
+            stores
+                .world_mut()
+                .set_last_stream_open_context(output_open_context);
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),
                 path,
@@ -628,7 +635,11 @@ fn append_whatsit_effect(
 }
 
 /// TeX82 §§1373--1374's `out_what` open loop.
-fn retry_openout_target(stores: &mut Universe, name: String) -> Result<String, ExecError> {
+fn retry_openout_target(
+    stores: &mut Universe,
+    name: String,
+    context: &str,
+) -> Result<String, ExecError> {
     let mut path = super::super::super::variables::openout_target(name);
     while stores.world().retained_output_open_outcome(&path)
         == tex_state::RetainedOutputOpenOutcome::Unavailable
@@ -637,7 +648,9 @@ fn retry_openout_target(stores: &mut Universe, name: String) -> Result<String, E
         let mut report = stores.print_err("I can't write on file `");
         report
             .print(&path)
-            .print("'.\nPlease type another output file name");
+            .print("'.")
+            .print(context)
+            .print("\nPlease type another output file name");
         drop(report);
         if matches!(
             interaction,

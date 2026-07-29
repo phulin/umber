@@ -1259,7 +1259,11 @@ fn real_stream_open_failure_is_typed_and_retains_ordered_suffix_for_retry() {
     let error = universe
         .export_retained_effects()
         .expect_err("authoritative open fails");
-    assert_eq!(error.stream_open_unavailable(), Some(unavailable.as_path()));
+    let failed = error
+        .stream_open_unavailable()
+        .expect("typed unavailable open")
+        .clone();
+    assert_eq!(failed.path(), unavailable.as_path());
     assert_eq!(error.retry_safety(), EffectRetrySafety::Safe);
     assert_eq!(
         std::fs::read(&prior).expect("prior effects committed"),
@@ -1274,7 +1278,7 @@ fn real_stream_open_failure_is_typed_and_retains_ordered_suffix_for_retry() {
 
     universe
         .world_mut()
-        .retarget_pending_stream_open(&unavailable, &replacement)
+        .retarget_pending_stream_open(&failed, &replacement)
         .expect("retarget pending open");
     universe
         .export_retained_effects()

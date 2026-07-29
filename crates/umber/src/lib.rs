@@ -895,6 +895,33 @@ pub enum FinalizationCommit {
     },
 }
 
+fn page_effect_matches_world(page: &tex_out::PageEffect, world: &tex_state::EffectRecord) -> bool {
+    match (page, world) {
+        (
+            tex_out::PageEffect::OpenOut { stream, path },
+            tex_state::EffectRecord::StreamOpen { slot, target },
+        ) => *stream == slot.raw() && Path::new(path) == target.path(),
+        (
+            tex_out::PageEffect::CloseOut { stream },
+            tex_state::EffectRecord::StreamClose { slot },
+        ) => *stream == slot.raw(),
+        (
+            tex_out::PageEffect::Write { text, .. },
+            tex_state::EffectRecord::StreamWrite {
+                text: world_text, ..
+            },
+        ) => text == world_text,
+        (
+            tex_out::PageEffect::Special { class, payload },
+            tex_state::EffectRecord::Special {
+                class: world_class,
+                payload: world_payload,
+            },
+        ) => class == world_class && payload == world_payload,
+        _ => false,
+    }
+}
+
 impl PlannedFinalization {
     pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
         let mut paths = BTreeSet::new();
@@ -916,29 +943,84 @@ impl PlannedFinalization {
         self
     }
 
-    pub fn retarget_prepared_open(
+    pub fn retarget_stream_open(
         &mut self,
-        failed: &Path,
+        stores: &mut Universe,
+        failed: &tex_state::StreamOpenFailure,
         replacement: &Path,
     ) -> Result<(), FinalizationError> {
-        let Some(pages) = self.prepared_pages.as_mut() else {
-            return Ok(());
+        let Some(mut pages) = self.prepared_pages.clone() else {
+            return Err(FinalizationError::PreparedArtifact(
+                "the failed stream open has no prepared page suffix".to_owned(),
+            ));
         };
-        let failed = failed.to_string_lossy();
-        let replacement = replacement.to_string_lossy();
+        let failed_path = failed.path().to_string_lossy();
+        let replacement_text = replacement.to_string_lossy();
+        let effect_index = pages
+            .effects()
+            .iter()
+            .position(|(position, effect)| {
+                *position == failed.position()
+                    && matches!(
+                        effect,
+                        tex_state::EffectRecord::StreamOpen { slot, target }
+                            if *slot == failed.slot() && target.path() == failed.path()
+                    )
+            })
+            .ok_or_else(|| {
+                FinalizationError::PreparedArtifact(
+                    "the failed stream-open identity is absent or stale".to_owned(),
+                )
+            })?;
+        let effects = pages.effects().to_vec();
+        let mut retargeted = 0usize;
         for artifact in pages.artifacts_mut() {
             let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
                 .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-            for stream in 0..16 {
-                if page.retarget_open_out(stream, &failed, &replacement) {
-                    let bytes = page
-                        .to_bytes()
-                        .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-                    *artifact = artifact.clone().with_prepared_bytes(bytes);
-                    return Ok(());
+            let mut world_index = 0usize;
+            let mut target_page_index = None;
+            for (page_index, page_effect) in page.effects.iter().enumerate() {
+                let Some(relative) = effects[world_index..]
+                    .iter()
+                    .position(|(_, world)| page_effect_matches_world(page_effect, world))
+                else {
+                    continue;
+                };
+                world_index += relative;
+                if world_index == effect_index {
+                    target_page_index = Some(page_index);
                 }
+                world_index += 1;
             }
+            let Some(page_index) = target_page_index else {
+                continue;
+            };
+            if !page.retarget_open_out_at(
+                page_index,
+                failed.slot().raw(),
+                &failed_path,
+                &replacement_text,
+            ) {
+                return Err(FinalizationError::PreparedArtifact(
+                    "the exact prepared page effect does not validate against the failed open"
+                        .to_owned(),
+                ));
+            }
+            let bytes = page
+                .to_bytes()
+                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
+            *artifact = artifact.clone().with_prepared_bytes(bytes);
+            retargeted += 1;
         }
+        if retargeted == 0 {
+            return Err(FinalizationError::PreparedArtifact(
+                "no prepared artifact contains the failed stream-open occurrence".to_owned(),
+            ));
+        }
+        stores
+            .world_mut()
+            .retarget_pending_stream_open(failed, replacement)?;
+        self.prepared_pages = Some(pages);
         Ok(())
     }
 
@@ -964,7 +1046,9 @@ impl PlannedFinalization {
         stores: &mut Universe,
     ) -> Result<FinalizationCommit, FinalizationError> {
         let result = if stores.world().commit_mode() == WorldCommitMode::Retained {
-            debug_assert_eq!(self.effect_pos, stores.world().effect_pos());
+            // §530's retry report is itself selector-routed output appended
+            // while this plan is suspended.
+            self.effect_pos = stores.world().effect_pos();
             stores.export_retained_effects()
         } else {
             stores.commit_effects(self.effect_pos)
@@ -2927,7 +3011,11 @@ mod tests {
         else {
             panic!("directory open must suspend finalization");
         };
-        assert_eq!(error.stream_open_unavailable(), Some(temp.path()));
+        let failed = error
+            .stream_open_unavailable()
+            .expect("typed unavailable open")
+            .clone();
+        assert_eq!(failed.path(), temp.path());
         assert_eq!(
             std::fs::read(&prefix_path).expect("committed prefix"),
             b"once"
@@ -2936,7 +3024,7 @@ mod tests {
 
         stores
             .world_mut()
-            .retarget_pending_stream_open(temp.path(), &replacement_path)
+            .retarget_pending_stream_open(&failed, &replacement_path)
             .expect("retarget pending open");
         let FinalizationCommit::Committed(committed) = plan
             .commit_effects_retryable(&mut stores)

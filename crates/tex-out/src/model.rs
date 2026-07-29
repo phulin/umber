@@ -50,23 +50,24 @@ impl PageArtifact {
         ))
     }
 
-    /// Retargets one deferred `\openout` while the page is still prepared.
-    ///
-    /// Artifact identity is deliberately computed only after this operation:
-    /// TeX82 §§1373--1375 make the replacement name part of the shipped page.
-    pub fn retarget_open_out(&mut self, stream: u8, failed: &str, replacement: &str) -> bool {
-        let Some(effect) = self.0.effects.iter_mut().find(|effect| {
-            matches!(
-                effect,
-                PageEffect::OpenOut { stream: candidate, path }
-                    if *candidate == stream && path == failed
-            )
-        }) else {
+    /// Retargets one exact ordered page-effect occurrence.
+    pub fn retarget_open_out_at(
+        &mut self,
+        index: usize,
+        stream: u8,
+        failed: &str,
+        replacement: &str,
+    ) -> bool {
+        let Some(PageEffect::OpenOut {
+            stream: candidate,
+            path,
+        }) = self.0.effects.get_mut(index)
+        else {
             return false;
         };
-        let PageEffect::OpenOut { path, .. } = effect else {
-            unreachable!("the matching effect is an openout")
-        };
+        if *candidate != stream || path != failed {
+            return false;
+        }
         replacement.clone_into(path);
         true
     }

@@ -454,10 +454,10 @@ fn finalize_run(
                 let failed = error
                     .stream_open_unavailable()
                     .expect("retryable finalization identifies the failed open")
-                    .to_owned();
+                    .clone();
                 let replacement = tex_exec::retry_unavailable_stream_open(&mut stores, &failed)?;
                 finalization = plan;
-                finalization.retarget_prepared_open(&failed, &replacement)?;
+                finalization.retarget_stream_open(&mut stores, &failed, &replacement)?;
             }
         }
     };

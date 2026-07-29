@@ -1068,8 +1068,23 @@ pub struct EffectPos(u64);
 
 impl EffectPos {
     #[must_use]
+    pub(crate) const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
     pub const fn raw(self) -> u64 {
         self.0
+    }
+
+    #[must_use]
+    pub const fn advanced_by(self, count: u64) -> Self {
+        Self(self.0.saturating_add(count))
+    }
+
+    #[must_use]
+    pub const fn retreated_by(self, count: u64) -> Self {
+        Self(self.0.saturating_sub(count))
     }
 }
 
@@ -1365,7 +1380,38 @@ pub struct WorldError {
     message: String,
     committed_effects_through: Option<EffectPos>,
     retry_safety: EffectRetrySafety,
-    stream_open_unavailable: bool,
+    stream_open_unavailable: Option<Box<StreamOpenFailure>>,
+}
+
+/// Exact append-only occurrence of an unavailable `StreamOpen`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamOpenFailure {
+    position: EffectPos,
+    slot: StreamSlot,
+    path: PathBuf,
+    context: String,
+}
+
+impl StreamOpenFailure {
+    #[must_use]
+    pub const fn position(&self) -> EffectPos {
+        self.position
+    }
+
+    #[must_use]
+    pub const fn slot(&self) -> StreamSlot {
+        self.slot
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn context(&self) -> &str {
+        &self.context
+    }
 }
 
 /// Whether an effect commit can be retried after a reported failure.
@@ -1407,7 +1453,7 @@ impl WorldError {
             message: message.into(),
             committed_effects_through: None,
             retry_safety: EffectRetrySafety::NotAnEffectCommit,
-            stream_open_unavailable: false,
+            stream_open_unavailable: None,
         }
     }
 
@@ -1430,18 +1476,10 @@ impl WorldError {
         self
     }
 
-    fn mark_stream_open_unavailable(mut self) -> Self {
-        self.stream_open_unavailable = true;
-        self
-    }
-
-    /// Returns the output target when an authoritative stream-open attempt
-    /// failed before creating or truncating it.
+    /// Returns the exact output-open occurrence that failed before mutation.
     #[must_use]
-    pub fn stream_open_unavailable(&self) -> Option<&Path> {
-        self.stream_open_unavailable
-            .then_some(self.path.as_deref())
-            .flatten()
+    pub fn stream_open_unavailable(&self) -> Option<&StreamOpenFailure> {
+        self.stream_open_unavailable.as_deref()
     }
 
     #[must_use]
@@ -1534,6 +1572,7 @@ pub struct World {
     #[cfg(test)]
     publish_rename_fault: Option<usize>,
     unavailable_memory_outputs: BTreeSet<PathBuf>,
+    stream_open_contexts: BTreeMap<EffectPos, String>,
 }
 
 #[cfg(test)]
@@ -1578,6 +1617,7 @@ impl Clone for World {
             #[cfg(test)]
             publish_rename_fault: self.publish_rename_fault,
             unavailable_memory_outputs: self.unavailable_memory_outputs.clone(),
+            stream_open_contexts: self.stream_open_contexts.clone(),
         }
     }
 }
@@ -1601,6 +1641,7 @@ impl PartialEq for World {
             && self.input_dependencies == other.input_dependencies
             && self.terminal_inputs == other.terminal_inputs
             && self.unavailable_memory_outputs == other.unavailable_memory_outputs
+            && self.stream_open_contexts == other.stream_open_contexts
             && self.shell_escapes == other.shell_escapes
             && self.artifact_base == other.artifact_base
             && self.artifact_commits == other.artifact_commits
@@ -1793,6 +1834,7 @@ impl World {
             #[cfg(test)]
             publish_rename_fault: None,
             unavailable_memory_outputs: BTreeSet::new(),
+            stream_open_contexts: BTreeMap::new(),
         }
     }
 
@@ -2600,6 +2642,16 @@ impl World {
         self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
+    /// Attaches the canonical input display captured for the just-recorded open.
+    pub fn set_last_stream_open_context(&mut self, context: impl Into<String>) {
+        let position = self.effect_pos();
+        assert!(
+            matches!(self.effects.last(), Some(EffectRecord::StreamOpen { .. })),
+            "stream-open context must follow its exact effect"
+        );
+        self.stream_open_contexts.insert(position, context.into());
+    }
+
     /// Returns a retained host outcome for an output target when one exists.
     ///
     /// The memory backend has an authoritative, immutable answer. A real
@@ -2933,7 +2985,7 @@ impl World {
     /// TeX82 §1374 changes only the failed open's filename before retrying.
     pub fn retarget_pending_stream_open(
         &mut self,
-        failed_path: &Path,
+        failed: &StreamOpenFailure,
         replacement: impl Into<PathBuf>,
     ) -> Result<(), WorldError> {
         let replacement = replacement.into();
@@ -2943,15 +2995,18 @@ impl World {
             else {
                 return Err(WorldError::new(
                     "retarget stream open",
-                    Some(failed_path.to_owned()),
+                    Some(failed.path.clone()),
                     "the pending effect prefix does not begin with a stream open",
                 ));
             };
-            if target.path != failed_path {
+            if self.effect_base.0 + 1 != failed.position.0
+                || *slot != failed.slot
+                || target.path != failed.path
+            {
                 return Err(WorldError::new(
                     "retarget stream open",
-                    Some(failed_path.to_owned()),
-                    "the pending stream open names a different target",
+                    Some(failed.path.clone()),
+                    "the pending stream open identity, slot, or target is stale",
                 ));
             }
             target.path = replacement.clone();
@@ -3399,8 +3454,20 @@ impl World {
         }
         match &self.effects[index] {
             EffectRecord::StreamOpen { slot, target } => {
-                Self::truncate_output(&mut self.backend, target.path())
-                    .map_err(|error| error.effect_retry(EffectRetrySafety::Safe))?;
+                let position = EffectPos(self.effect_base.0 + index as u64 + 1);
+                Self::truncate_output(&mut self.backend, target.path()).map_err(|mut error| {
+                    error.stream_open_unavailable = Some(Box::new(StreamOpenFailure {
+                        position,
+                        slot: *slot,
+                        path: target.path().to_owned(),
+                        context: self
+                            .stream_open_contexts
+                            .get(&position)
+                            .cloned()
+                            .unwrap_or_default(),
+                    }));
+                    error.effect_retry(EffectRetrySafety::Safe)
+                })?;
                 self.committed_output_paths.insert(target.path().to_owned());
                 self.committed_write_streams[slot.index()] = Some(target.clone());
             }
@@ -3451,7 +3518,6 @@ impl World {
         match backend {
             WorldBackend::Real { .. } => std::fs::write(path, []).map_err(|err| {
                 WorldError::new("open output", Some(path.to_owned()), err.to_string())
-                    .mark_stream_open_unavailable()
             }),
             WorldBackend::Memory(memory) => {
                 memory.outputs.insert(path.to_owned(), Vec::new());

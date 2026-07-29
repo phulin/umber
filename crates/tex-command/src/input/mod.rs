@@ -49,6 +49,40 @@ pub(crate) struct InputState {
 }
 
 impl InputState {
+    pub(crate) fn output_open_context(&self) -> String {
+        let Some(source) = self.levels.iter().rev().find_map(|level| {
+            let InputLevel::Source(source) = level else {
+                return None;
+            };
+            Some(source)
+        }) else {
+            return String::new();
+        };
+        let Some(line) = source.cursor.line.as_ref() else {
+            return String::new();
+        };
+        let bytes = &source.cursor.current_backing().bytes;
+        let start = line.physical.content_range().start();
+        let end = line.retained_end;
+        let cursor = line.byte_cursor.clamp(start, end);
+        let Ok(start) = usize::try_from(start) else {
+            return String::new();
+        };
+        let Ok(end) = usize::try_from(end) else {
+            return String::new();
+        };
+        let Ok(cursor) = usize::try_from(cursor) else {
+            return String::new();
+        };
+        let read = String::from_utf8_lossy(&bytes[start..cursor]);
+        let remaining = String::from_utf8_lossy(&bytes[cursor..end]);
+        let label = format!("l.{} ", line.physical.number());
+        format!(
+            "\n{label}{read}\n{}{remaining}",
+            " ".repeat(label.chars().count())
+        )
+    }
+
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.
     ///
     /// Token-list levels retain the source line they interrupted; terminal and

@@ -205,13 +205,9 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
         .stream_open_unavailable()
         .expect("failed target")
         .to_owned();
-    finalization
-        .stores
-        .world_mut()
-        .retarget_pending_stream_open(&failed, &replacement)
-        .expect("retarget pending effect");
+    assert_eq!(failed.context(), format!("\nl.1 {source}\n    "));
     plan = retained;
-    plan.retarget_prepared_open(&failed, &replacement)
+    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
         .expect("retarget prepared page");
     assert!(matches!(
         plan.commit_effects_retryable(&mut finalization.stores)
@@ -231,6 +227,125 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
                 if path == &replacement.to_string_lossy()
         )
     }));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Exercises ordered real-backend occurrence identity.
+fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
+    let temp = tempfile::Builder::new()
+        .prefix("openout-duplicate.")
+        .tempdir_in(".")
+        .expect("temporary output root");
+    let target =
+        Path::new(temp.path().file_name().expect("relative temporary name")).join("same.out");
+    let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
+        .join("replacement.out");
+    let source = format!(
+        "\\immediate\\openout2={0} \
+         \\setbox0=\\hbox{{\\openout1={0} \\openout1={0} \\write1{{second}}}}\
+         \\shipout\\copy0\\end",
+        target.display()
+    );
+    let mut session = session(&source);
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let mut finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    finalization
+        .stores
+        .world_mut()
+        .retarget_output_backend(&World::real_with_artifact_dir(
+            temp.path().join("artifacts"),
+        ))
+        .expect("real finalization backend");
+    let first_target = match &finalization.stores.world().effect_records()[0] {
+        tex_state::EffectRecord::StreamOpen { target, .. } => target.path().to_owned(),
+        effect => panic!("first occurrence is not open: {effect:?}"),
+    };
+    assert_eq!(first_target, target);
+    let remaining = u64::try_from(finalization.stores.world().effect_records().len())
+        .expect("effect count fits");
+    let first_open = finalization
+        .stores
+        .world()
+        .effect_pos()
+        .retreated_by(remaining - 1);
+    finalization
+        .stores
+        .export_retained_effects_through(first_open)
+        .expect("first same-path occurrence commits");
+    std::fs::remove_file(&first_target).expect("replace first output with unavailable directory");
+    std::fs::create_dir(&first_target).expect("second occurrence becomes unavailable");
+
+    let mut plan =
+        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
+            .expect("empty driver plan")
+            .with_prepared_pages(finalization.prepared_pages);
+    let crate::FinalizationCommit::Retry {
+        plan: retained,
+        error,
+    } = plan
+        .commit_effects_retryable(&mut finalization.stores)
+        .expect("second occurrence suspends")
+    else {
+        panic!("second occurrence must fail");
+    };
+    let failed = error
+        .stream_open_unavailable()
+        .expect("exact failed occurrence")
+        .clone();
+    assert_eq!(failed.slot(), tex_state::StreamSlot::new(1));
+    assert_eq!(failed.position(), first_open.advanced_by(1));
+    plan = retained;
+    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+        .expect("exact occurrence retargets");
+
+    let prepared = plan
+        .prepared_pages
+        .as_ref()
+        .expect("prepared suffix retained");
+    let page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[0].bytes())
+        .expect("prepared page parses");
+    let opens = page
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_out::PageEffect::OpenOut { stream, path } => Some((*stream, path.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        opens,
+        [
+            (2, target.to_string_lossy().as_ref()),
+            (1, replacement.to_string_lossy().as_ref()),
+            (1, target.to_string_lossy().as_ref()),
+        ]
+    );
+    let retargeted_hash = prepared.artifacts()[0].hash();
+
+    assert!(
+        plan.retarget_stream_open(&mut finalization.stores, &failed, Path::new("stale.out"))
+            .is_err(),
+        "stale occurrence identity must fail"
+    );
+    assert_eq!(
+        plan.prepared_pages
+            .as_ref()
+            .expect("prepared suffix survives")
+            .artifacts()[0]
+            .hash(),
+        retargeted_hash,
+        "stale failure is atomic for prepared history"
+    );
+    assert!(matches!(
+        finalization.stores.world().effect_records().first(),
+        Some(tex_state::EffectRecord::StreamOpen { target, .. })
+            if target.path() == replacement
+    ));
 }
 
 #[test]

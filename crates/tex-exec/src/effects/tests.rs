@@ -482,6 +482,40 @@ fn out_what_retries_unavailable_openout_with_a_replacement_name() {
 }
 
 #[test]
+fn out_what_retry_prints_captured_tex_context_before_prompt() {
+    let source = br"\setbox0=\hbox{\openout2=blocked }\shipout\copy0\end";
+    for interaction in [
+        tex_state::InteractionMode::Scroll,
+        tex_state::InteractionMode::ErrorStop,
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(interaction);
+        stores.world_mut().deny_memory_output("blocked.tex");
+        stores
+            .world_mut()
+            .push_memory_terminal_line("recovered")
+            .expect("terminal replacement");
+        let mut control = CommandReplayControl::tex82_initex(&mut stores);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut stores);
+        let terminal = String::from_utf8(
+            stores
+                .world()
+                .memory_terminal_output()
+                .expect("terminal output")
+                .to_vec(),
+        )
+        .expect("terminal is utf-8");
+        assert!(
+            terminal.contains(
+                "I can't write on file `blocked.tex'.\nl.1 \\setbox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n    \nPlease type another output file name: "
+            ),
+            "{terminal:?}"
+        );
+    }
+}
+
+#[test]
 fn out_what_retries_terminal_names_with_tex_buffer_rules() {
     let mut stores = Universe::new();
     for path in ["blocked.tex", ".tex", "again.tex"] {
@@ -568,8 +602,12 @@ fn commit_time_open_retry_uses_captured_interaction_and_terminal_context() {
         .expect("typed failed target")
         .to_owned();
 
-    crate::retry_unavailable_stream_open(&mut stores, &failed)
+    let replacement = crate::retry_unavailable_stream_open(&mut stores, &failed)
         .expect("captured §530 context supplies replacement");
+    stores
+        .world_mut()
+        .retarget_pending_stream_open(&failed, replacement)
+        .expect("exact failed effect retargets");
 
     assert!(matches!(
         stores.world().effect_records().first(),

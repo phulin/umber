@@ -153,8 +153,8 @@ pub use world::{
     InputDependency, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputRecord,
     InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput, PrintSink, ReadTarget,
     RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
-    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact, World,
-    WorldCommitMode, WorldError, WorldSnapshot,
+    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot,
+    VerifiedArtifact, World, WorldCommitMode, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

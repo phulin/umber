@@ -460,6 +460,35 @@ impl Hash for InputSummary {
 }
 
 impl InputSummary {
+    /// Detached TeX82 §530 source context for a later output-open retry.
+    ///
+    /// Deferred `\openout` executes after its originating token list has been
+    /// consumed. The current physical source frame is therefore captured at
+    /// shipout, while it is still canonical input state.
+    #[must_use]
+    pub fn output_open_context(&self) -> String {
+        let Some(source) = self.semantic_root.0.frames.iter().rev().find_map(|frame| {
+            let InputFrameSummary::Source { source, .. } = frame else {
+                return None;
+            };
+            Some(source)
+        }) else {
+            return String::new();
+        };
+        let line = source.normalized_line().trim_end_matches('\r');
+        let split = source.line_byte_offset().min(line.len());
+        let split = (0..=split)
+            .rev()
+            .find(|offset| line.is_char_boundary(*offset))
+            .unwrap_or(0);
+        let (read, remaining) = line.split_at(split);
+        let label = format!("l.{} ", source.line_number());
+        format!(
+            "\n{label}{read}\n{}{remaining}",
+            " ".repeat(label.chars().count())
+        )
+    }
+
     /// Cheap revision-coordinate-independent candidate identity for a
     /// paragraph beginning while replay input is active.
     #[must_use]
