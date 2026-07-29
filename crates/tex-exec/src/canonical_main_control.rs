@@ -24,8 +24,8 @@ use tex_command::{
     ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
-    CommandObservation, CommandObserver, DiagnosticRecord, EffectRecord, GeometryRecord,
-    MutationRecord, ObservedToken, ParameterClass, canonical_names::glue_order_name,
+    CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
+    ObservedToken, ParameterClass, canonical_names::glue_order_name,
     parameter_mutation_key_for_dialect,
 };
 use tex_state::GeometryObservation;
@@ -3559,6 +3559,7 @@ enum ScannedStep {
     HyphenationData {
         words: Vec<Vec<char>>,
         patterns: bool,
+        too_late: bool,
     },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
@@ -6285,6 +6286,18 @@ fn scan_command(
             // command core -- knows which binary tex.web's `init`/`tini`
             // split would have produced.
             let patterns = primitive == UnexpandablePrimitive::Patterns;
+            if patterns && !processor.hyphenation_patterns_open() {
+                // TeX82 §960's `trie_not_ready=false` branch diagnoses and
+                // discards with `scan_toks(false,false)`. Unlike §961's
+                // pattern-word loop, §473 therefore enters `absorbing`
+                // before §403 reads the opening brace.
+                let _ = processor.scan_balanced_text(false).map_err(command_error)?;
+                return Ok(ScannedStep::HyphenationData {
+                    words: Vec::new(),
+                    patterns: true,
+                    too_late: true,
+                });
+            }
             let words = processor
                 .scan_hyphenation_data(if patterns {
                     HyphenationDataKind::Patterns
@@ -6293,7 +6306,11 @@ fn scan_command(
                 })
                 .map_err(command_error)?
                 .words;
-            Ok(ScannedStep::HyphenationData { words, patterns })
+            Ok(ScannedStep::HyphenationData {
+                words,
+                patterns,
+                too_late: false,
+            })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
         // no named dispatch arm above (or is legal only in a mode this
@@ -8961,6 +8978,14 @@ fn capture_replay_alignment_cell(
         return Ok(());
     }
 
+    // TeX82 §1131's `do_endv` runs `end_graf` before §791's `fin_col`.
+    // Canonical alignment packaging still defers that paragraph's lowering,
+    // but §815's negative pretolerance makes its immediate transition into
+    // the hyphenating pass certain. Publish §919's one-way trie lifecycle at
+    // this canonical boundary, before `align_peek` fetches what follows.
+    if modes.current_mode() == Mode::Horizontal && stores.int_param(IntParam::PRETOLERANCE) < 0 {
+        stores.close_hyphenation_patterns();
+    }
     let mut cell = crate::assignments::commit_current_list(modes, stores)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
@@ -10443,21 +10468,16 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::HyphenationData { words, patterns } => {
+        ScannedStep::HyphenationData {
+            words,
+            patterns,
+            too_late,
+        } => {
             // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
             // "Patterns can be loaded only by INITEX", flushes the braced
             // group, and returns with the trie unchanged; `\hyphenation`
             // stays legal in both binaries.
-            if patterns && !command.initex {
-                if let Some(buffer) = command.observations.as_mut() {
-                    buffer
-                        .0
-                        .push(CommandObservation::Diagnostic(DiagnosticRecord {
-                            severity: "error",
-                            diagnostic: "too_late_for_patterns",
-                            arguments: Vec::new(),
-                        }));
-                }
+            if patterns && (!command.initex || too_late) {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
                 report.error();

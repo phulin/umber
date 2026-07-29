@@ -718,6 +718,13 @@ pub(crate) fn break_hlist(
     hlist: Vec<Node>,
     line_params: LineBreakParams,
 ) -> LineBreakResult {
+    // TeX82 §815 skips the pretolerance pass when `pretolerance<0` and
+    // enters the hyphenating second pass directly. §919 initializes the trie
+    // at that boundary, even if Umber's pure non-hyphenating planner can
+    // already find a layout for the same paragraph.
+    if line_params.pretolerance < 0 {
+        stores.close_hyphenation_patterns();
+    }
     let first = cached_pretolerance_plan(stores, &hlist, &line_params);
     if let Some(first) = first {
         tex_typeset::linebreak::plan_with_nodes(first, hlist)

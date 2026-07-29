@@ -11,13 +11,23 @@ use std::sync::OnceLock;
 pub struct HyphenationTable {
     languages: BTreeMap<u8, LanguageHyphenation>,
     hyphen_codes: BTreeMap<u8, BTreeMap<char, char>>,
+    /// TeX82's `trie_not_ready`: pattern insertion remains legal until the
+    /// first hyphenation pass initializes the runtime trie.
+    ///
+    /// A dumped format has already run §1335's `init_trie`, so this live
+    /// build-state flag is deliberately absent from the format section and
+    /// deserializes as `false`.
+    #[serde(skip)]
+    patterns_open: bool,
     #[serde(skip)]
     dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
 }
 
 impl PartialEq for HyphenationTable {
     fn eq(&self, other: &Self) -> bool {
-        self.languages == other.languages && self.hyphen_codes == other.hyphen_codes
+        self.languages == other.languages
+            && self.hyphen_codes == other.hyphen_codes
+            && self.patterns_open == other.patterns_open
     }
 }
 
@@ -62,8 +72,18 @@ impl HyphenationTable {
         Self {
             languages: BTreeMap::new(),
             hyphen_codes: BTreeMap::new(),
+            patterns_open: true,
             dependency_fingerprints: OnceLock::new(),
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn patterns_open(&self) -> bool {
+        self.patterns_open
+    }
+
+    pub(crate) fn close_patterns(&mut self) {
+        self.patterns_open = false;
     }
 
     pub(crate) fn validate_frozen(&self) -> Result<(), &'static str> {

@@ -39,6 +39,22 @@ fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
 }
 
+fn run_to_end_observed(
+    control: &mut CanonicalMainControl,
+    stores: &mut Universe,
+    observations: &mut dyn CommandObserver,
+) {
+    loop {
+        match control
+            .step_with_observer(stores, observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+}
+
 fn terminal_text(stores: &Universe) -> String {
     let committed = stores
         .world()
@@ -3677,6 +3693,60 @@ fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     assert!(
         output.contains("(\\dump is performed only by INITEX)"),
         "{output}"
+    );
+}
+
+#[test]
+fn initex_late_patterns_absorbs_its_discarded_group() {
+    // TeX82 §919 closes pattern insertion when the first hyphenation pass
+    // initializes the trie. §960's later `\patterns` recovery is
+    // `scan_toks(false,false)`, so §473 enters absorbing status before §403
+    // reads the group's left brace.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    stores.close_hyphenation_patterns();
+    register_source(
+        &mut control,
+        br"\nonstopmode\patterns{toolate}\count0=1\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(stores.count(0), 1);
+    let absorbing = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::ScannerStatus(status)
+                    if status.from == "normal" && status.to == "absorbing"
+            )
+        })
+        .expect("late pattern recovery enters absorbing");
+    let opening = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Command(command)
+                    if command.boundary == tex_command::CommandDeliveryBoundary::Raw
+                        && matches!(
+                            command.spelling,
+                            tex_command::ObservedToken::Character {
+                                character: '{',
+                                ..
+                            }
+                        )
+            )
+        })
+        .expect("late pattern group has an opening brace");
+    assert!(absorbing < opening, "{:?}", observations.0);
+    assert!(
+        terminal_text(&stores).contains("! Too late for \\patterns."),
+        "{}",
+        terminal_text(&stores)
     );
 }
 

@@ -4001,6 +4001,17 @@ impl Universe {
         duplicate
     }
 
+    /// Reports TeX82 §960's live `trie_not_ready` state.
+    #[must_use]
+    pub fn hyphenation_patterns_open(&self) -> bool {
+        self.stores.hyphenation_patterns_open()
+    }
+
+    /// Performs the one-way semantic part of TeX82 §919's `init_trie`.
+    pub fn close_hyphenation_patterns(&mut self) {
+        self.stores.close_hyphenation_patterns();
+    }
+
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
         self.stores.add_hyphenation_exception(exception);
         self.dependencies

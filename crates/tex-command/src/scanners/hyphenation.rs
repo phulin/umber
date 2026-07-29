@@ -49,6 +49,13 @@ pub struct ScannedHyphenationData {
 }
 
 impl CommandProcessor<'_> {
+    /// Reports whether TeX82 §960 may still add patterns to the uninitialized
+    /// hyphenation trie.
+    #[must_use]
+    pub fn hyphenation_patterns_open(&self) -> bool {
+        self.state.hyphenation_patterns_open()
+    }
+
     /// Runs TeX82 §934/§960's hyphenation-data scan to its closing brace.
     ///
     /// §960 runs `set_cur_lang` before `scan_left_brace` and §934 runs it

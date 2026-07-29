@@ -31,6 +31,12 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Reads TeX82 §960's live `trie_not_ready` state.
+    #[must_use]
+    pub fn hyphenation_patterns_open(&self) -> bool {
+        self.universe.hyphenation_patterns_open()
+    }
+
     /// Opens tex.web §73's recoverable-error report through the live command
     /// aggregate borrow.
     ///

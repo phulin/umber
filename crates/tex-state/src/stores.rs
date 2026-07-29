@@ -480,6 +480,15 @@ impl Stores {
         Arc::make_mut(&mut self.hyphenation).add_pattern_for_language(language, pattern)
     }
 
+    #[must_use]
+    pub fn hyphenation_patterns_open(&self) -> bool {
+        self.hyphenation.patterns_open()
+    }
+
+    pub fn close_hyphenation_patterns(&mut self) {
+        Arc::make_mut(&mut self.hyphenation).close_patterns();
+    }
+
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
         self.add_hyphenation_exception_for_language(0, exception);
     }

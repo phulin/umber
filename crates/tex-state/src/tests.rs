@@ -18,6 +18,23 @@ fn smoke() {
 }
 
 #[test]
+fn hyphenation_pattern_lifecycle_rolls_back_and_formats_closed() {
+    // TeX82 §§919/960 and §1335: trie initialization is live rollback state,
+    // while every dumped-and-restored trie is already initialized.
+    let mut universe = Universe::new();
+    assert!(universe.hyphenation_patterns_open());
+    let snapshot = universe.snapshot();
+    universe.close_hyphenation_patterns();
+    assert!(!universe.hyphenation_patterns_open());
+    universe.rollback(&snapshot);
+    assert!(universe.hyphenation_patterns_open());
+
+    let format = universe.dump_format().expect("hyphenation format");
+    let loaded = Universe::from_format(World::default(), &format).expect("load hyphenation format");
+    assert!(!loaded.hyphenation_patterns_open());
+}
+
+#[test]
 fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
     let outer = [ParagraphShapeLine {
         indent: Scaled::from_raw(3),

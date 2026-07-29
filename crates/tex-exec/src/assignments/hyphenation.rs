@@ -117,6 +117,9 @@ pub(crate) fn apply_hyphenation_exceptions(
 }
 
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
+    // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
+    // even when this particular paragraph ultimately supplies no candidate.
+    stores.close_hyphenation_patterns();
     let mut out: Option<Vec<Node>> = None;
     let mut index = 0;
     let mut auto_breaking = true;
