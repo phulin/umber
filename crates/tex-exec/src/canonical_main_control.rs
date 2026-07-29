@@ -4720,16 +4720,11 @@ fn scan_command(
         // this let a literal `=` in `\textfont0=\tenrm` fall through to
         // ordinary main control instead of being consumed here.
         let _ = processor.scan_optional_equals().map_err(command_error)?;
-        let font = match processor.get_x_token().map_err(command_error)? {
-            Some(font) => match font.meaning() {
-                Meaning::Font(id) => id,
-                _ => {
-                    processor.back_input(font).map_err(command_error)?;
-                    tex_state::font::NULL_FONT
-                }
-            },
-            None => tex_state::font::NULL_FONT,
-        };
+        // TeX82 §1234's `def_family` calls §578 `scan_font_ident`; the font
+        // identifier is an assignment operand, not a `set_font` command.
+        // Using the typed scanner also commits its lookahead consumption so
+        // the identifier cannot be backed up and replayed by main control.
+        let font = processor.scan_font_selector().map_err(command_error)?;
         return Ok(ScannedStep::MathFamily {
             family,
             font,

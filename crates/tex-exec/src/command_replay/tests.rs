@@ -7632,6 +7632,35 @@ fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
 }
 
 #[test]
+fn canonical_math_family_assignment_consumes_font_without_selecting_it() {
+    // TeX82 §1234's `def_family` uses §578 `scan_font_ident`: the identifier
+    // supplies the family cell but is not replayed as a `set_font` command.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\text=cmr10 \font\scriptscript=cmr10 at 5pt
+           \text \scriptscriptfont3 \scriptscript \end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = universe.intern("text");
+    let scriptscript = universe.intern("scriptscript");
+    let Meaning::Font(text_font) = universe.meaning(text) else {
+        panic!("text font definition is installed");
+    };
+    let Meaning::Font(scriptscript_font) = universe.meaning(scriptscript) else {
+        panic!("scriptscript font definition is installed");
+    };
+    assert_eq!(universe.current_font(), text_font);
+    assert_eq!(
+        universe.math_family_font(tex_state::math::MathFontSize::ScriptScript, 3),
+        scriptscript_font
+    );
+}
+
+#[test]
 fn canonical_reloaded_font_uses_the_latest_identifier() {
     // TeX82 §1257's `common_ending` assigns `font_id_text(f):=t` even when
     // the metric program was already loaded. Thus two definitions sharing
