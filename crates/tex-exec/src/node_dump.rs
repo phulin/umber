@@ -23,9 +23,17 @@ pub(crate) struct DumpConfig {
 }
 
 impl DumpConfig {
+    /// TeX82 §198's `show_box`: `depth_threshold:=show_box_depth;
+    /// breadth_max:=show_box_breadth` (§236), then `if breadth_max<=0 then
+    /// breadth_max:=5`. INITEX leaves both `\showboxbreadth` and
+    /// `\showboxdepth` at their default of 0 (tex.web §240's `int_par` table
+    /// initialization), so every level's item count must fall back to 5
+    /// rather than truncating to zero items and printing `etc.` immediately;
+    /// `depth_threshold` has no such fallback and is used as read.
     pub(crate) fn read(stores: &Universe) -> Self {
+        let breadth = stores.int_param(IntParam::SHOW_BOX_BREADTH);
         Self {
-            breadth: stores.int_param(IntParam::SHOW_BOX_BREADTH),
+            breadth: if breadth <= 0 { 5 } else { breadth },
             depth: stores.int_param(IntParam::SHOW_BOX_DEPTH),
         }
     }
@@ -718,6 +726,9 @@ fn order_unit(order: Order) -> &'static str {
         Order::Filll => "filll",
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 trait GlueKindDump {
     fn glue_dump_prefix(self) -> &'static str;
