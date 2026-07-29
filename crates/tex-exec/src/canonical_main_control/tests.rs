@@ -40,6 +40,27 @@ fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
 }
 
 #[test]
+fn empty_equation_number_checks_math_fonts_on_both_sides() {
+    // TeX82 §1194 checks the equation-number mlist and then the saved display
+    // mlist independently, even though neither one contains a math noad.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, br"$$\eqno^{}$\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        terminal_text(&stores)
+            .matches("Math formula deleted: Insufficient symbol fonts")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
     // TeX82 §§785, 1068-1069, and 1133: material inside `no_align_group`
     // runs through ordinary main control. Only a right brace delivered while

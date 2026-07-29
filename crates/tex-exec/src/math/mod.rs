@@ -358,14 +358,12 @@ fn finish_math(
         }
     }
     let mut content = finish_current_math_list(nest, stores);
-    let font_failure = math_list_requires_font_parameters(stores, content)
-        .then(|| math_font_failure(stores))
-        .flatten();
-    if let Some(failure) = font_failure {
+    // TeX82 §1194 checks all three sizes of families 2 and 3 before
+    // `fin_mlist`, even when the current mlist is empty. An empty formula (or
+    // an empty equation-number script) must not bypass the check merely
+    // because conversion would not otherwise consult a math font.
+    if reject_invalid_math_fonts(stores) {
         content = stores.freeze_node_list(&[]);
-        stores
-            .world_mut()
-            .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
     let mut level = crate::assignments::commit_current_list(nest, stores)?;
     if display {
@@ -429,27 +427,30 @@ fn finish_equation_number(
     }
 
     let mut content = finish_current_math_list(nest, stores);
-    let font_failure = math_list_requires_font_parameters(stores, content)
-        .then(|| math_font_failure(stores))
-        .flatten();
-    if let Some(failure) = font_failure {
+    // This is §1194's first, equation-number-side check. It precedes
+    // `fin_mlist` and is unconditional, just like the display-side check
+    // below.
+    let font_failure = reject_invalid_math_fonts(stores);
+    if font_failure {
         content = stores.freeze_node_list(&[]);
-        stores
-            .world_mut()
-            .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
     let mut eq_level = crate::assignments::commit_current_list(nest, stores)?;
     let mut eq_no = eq_level
         .list_mutation()
         .take_display_eq_no()
         .expect("equation-number mode carries its enclosing display");
-    if font_failure.is_some() {
+    if font_failure {
         eq_no.display = stores.freeze_node_list(&[]);
     }
     let finished_eq_no = finish_eq_no(stores, eq_no.side, content);
     leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     execution.paragraph_group_exited(stores);
 
+    // TeX82 §1194 repeats the check for the saved display mlist after boxing
+    // the equation number.
+    if reject_invalid_math_fonts(stores) {
+        eq_no.display = stores.freeze_node_list(&[]);
+    }
     let mut display_level = crate::assignments::commit_current_list(nest, stores)?;
     let interrupt = display_level
         .list_mutation()
@@ -523,16 +524,14 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
     None
 }
 
-fn math_list_requires_font_parameters(
-    stores: &Universe,
-    content: tex_state::ids::NodeListId,
-) -> bool {
-    stores.nodes(content).into_iter().any(|node| {
-        matches!(
-            node.to_owned(),
-            Node::MathNoad(_) | Node::FractionNoad(_) | Node::MathChoice(_) | Node::MathList(_)
-        )
-    })
+pub(crate) fn reject_invalid_math_fonts(stores: &mut Universe) -> bool {
+    let Some(failure) = math_font_failure(stores) else {
+        return false;
+    };
+    stores
+        .world_mut()
+        .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
+    true
 }
 
 #[cfg(test)]

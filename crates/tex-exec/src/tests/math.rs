@@ -1823,7 +1823,10 @@ fn canonical_script_after_a_non_noad_tail_is_silent() {
     assert_math_char(&scripted.superscript, 0, '2');
 
     let stores = super::core::run_canonical_tex82(r"$= \mskip3mu ^2$\end");
-    assert_eq!(canonical_log_text(&stores), "");
+    assert!(
+        canonical_log_text(&stores).contains("Math formula deleted: Insufficient symbol fonts"),
+        "the script operation itself stays silent; only §1194 diagnoses the null math fonts"
+    );
 }
 
 /// §687's `scripts_allowed` stops below `left_noad`, so a script following
@@ -1849,7 +1852,10 @@ fn canonical_script_after_left_delimiter_starts_a_fresh_ord_noad() {
     assert_math_char(&scripted.superscript, 0, '2');
 
     let stores = super::core::run_canonical_tex82(r"$\left.^2\right.$\end");
-    assert_eq!(canonical_log_text(&stores), "");
+    assert!(
+        canonical_log_text(&stores).contains("Math formula deleted: Insufficient symbol fonts"),
+        "the script operation itself stays silent; only §1194 diagnoses the null math fonts"
+    );
 }
 
 /// §1177's two messages and `help1` lines run before §1176 calls §1151's
@@ -1863,12 +1869,11 @@ fn canonical_double_script_reports_tex82_message_and_help_before_field_scan() {
     assert_math_char(&math_noad(&nodes[0]).superscript, 0, '1');
     assert_math_char(&math_noad(&nodes[1]).superscript, 0, '2');
     let stores = super::core::run_canonical_tex82(r"$a^1^{\message{SUP-FIELD-SCANNED}}$\end");
-    assert_eq!(
-        canonical_log_text(&stores),
+    assert!(canonical_log_text(&stores).starts_with(
         "! Double superscript.\n\
-         I treat `x^1^2' essentially like `x^1{}^2'.\n\n\
-         SUP-FIELD-SCANNED"
-    );
+             I treat `x^1^2' essentially like `x^1{}^2'.\n\n\
+             SUP-FIELD-SCANNED"
+    ));
 
     let (_, nodes) = super::core::run_canonical_tex82_current_list(r"$a_1_2");
 
@@ -1876,12 +1881,11 @@ fn canonical_double_script_reports_tex82_message_and_help_before_field_scan() {
     assert_math_char(&math_noad(&nodes[0]).subscript, 0, '1');
     assert_math_char(&math_noad(&nodes[1]).subscript, 0, '2');
     let stores = super::core::run_canonical_tex82(r"$a_1_{\message{SUB-FIELD-SCANNED}}$\end");
-    assert_eq!(
-        canonical_log_text(&stores),
+    assert!(canonical_log_text(&stores).starts_with(
         "! Double subscript.\n\
-         I treat `x_1_2' essentially like `x_1{}_2'.\n\n\
-         SUB-FIELD-SCANNED"
-    );
+             I treat `x_1_2' essentially like `x_1{}_2'.\n\n\
+             SUB-FIELD-SCANNED"
+    ));
 }
 
 /// TeX82 §§1151–1153 and §§1176–1177 keep `p`, the selected field pointer,

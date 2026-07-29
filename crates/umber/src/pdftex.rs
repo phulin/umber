@@ -658,6 +658,20 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmsy10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").to_vec(),
+            )
+            .expect("seed symbol font fixture");
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmex10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
+            )
+            .expect("seed extension font fixture");
         let output = crate::run_memory_with_stores(
             include_str!("../../../tests/corpus/tex_exec/pdf_form_state.tex"),
             &mut stores,

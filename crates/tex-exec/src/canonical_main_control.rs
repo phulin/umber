@@ -2047,7 +2047,10 @@ impl CanonicalMainControl {
     }
 
     fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        if crate::math::reject_invalid_math_fonts(stores) {
+            content = stores.freeze_node_list(&[]);
+        }
         let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
@@ -2070,12 +2073,16 @@ impl CanonicalMainControl {
     }
 
     fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
-        let eq = level
+        let mut eq = level
             .list_mutation()
             .take_display_eq_no()
             .expect("equation number mode state");
+        if crate::math::reject_invalid_math_fonts(stores) {
+            content = stores.freeze_node_list(&[]);
+            eq.display = stores.freeze_node_list(&[]);
+        }
         let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
@@ -2140,9 +2147,14 @@ impl CanonicalMainControl {
     fn finish_canonical_display_math_content(
         &mut self,
         stores: &mut Universe,
-        content: tex_state::ids::NodeListId,
+        mut content: tex_state::ids::NodeListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
     ) -> Result<(), ExecError> {
+        // TeX82 §1194 performs this check before every display `fin_mlist`,
+        // including the saved outer mlist after an equation number.
+        if crate::math::reject_invalid_math_fonts(stores) {
+            content = stores.freeze_node_list(&[]);
+        }
         let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
         let interrupt =
             level

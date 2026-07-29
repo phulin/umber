@@ -263,6 +263,10 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
         nest.current_list().nodes(),
         [Node::MathOn(_), Node::MathOff(_)]
     ));
+    assert!(
+        terminal_text(&stores).contains("Math formula deleted: Insufficient symbol fonts"),
+        "TeX82 §1194 checks math font families even for an empty mlist"
+    );
     assert_eq!(nest.current_list().space_factor(), 1000);
 
     let mut stores = Universe::new_with_plain_catcodes();
@@ -310,6 +314,10 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
     .expect("eqno and display finish together");
     assert_eq!(display.current_mode(), Mode::Horizontal);
     assert_eq!(stores.innermost_group_kind(), None);
+    assert!(
+        terminal_text(&stores).contains("Math formula deleted: Insufficient symbol fonts"),
+        "TeX82 §1194 checks the empty equation-number mlist before fin_mlist"
+    );
     assert!(matches!(
         next_semantic(&mut closing, &mut stores),
         Some(Token::Char { ch: 'z', .. })

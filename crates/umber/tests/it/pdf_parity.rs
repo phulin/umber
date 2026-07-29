@@ -247,8 +247,27 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
 fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     let source = fs::read_to_string(corpus_root().join("pdf/form_xobjects.tex"))
         .expect("read Form XObject parity source");
+    let source = format!(
+        "\\font\\sym=cmsy10 \\font\\ext=cmex10 \
+         \\textfont2=\\sym \\scriptfont2=\\sym \\scriptscriptfont2=\\sym \
+         \\textfont3=\\ext \\scriptfont3=\\ext \\scriptscriptfont3=\\ext {source}"
+    );
     let mut stores = Universe::default();
     umber::prepare_pdftex_run_stores(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file(
+            "cmsy10.tfm",
+            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").to_vec(),
+        )
+        .expect("seed symbol font fixture");
+    stores
+        .world_mut()
+        .set_memory_file(
+            "cmex10.tfm",
+            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
+        )
+        .expect("seed extension font fixture");
     stores
         .begin_retained_session()
         .expect("retained form replay session starts");

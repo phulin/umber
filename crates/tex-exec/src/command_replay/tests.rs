@@ -139,6 +139,36 @@ fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Univer
     );
 }
 
+fn register_math_fonts(control: &mut CanonicalMainControl, universe: &mut Universe) {
+    for (name, bytes) in [
+        (
+            "cmsy10.tfm",
+            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").as_slice(),
+        ),
+        (
+            "cmex10.tfm",
+            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm").as_slice(),
+        ),
+    ] {
+        universe
+            .world_mut()
+            .set_memory_file(name, bytes.to_vec())
+            .expect("math font fixture installs");
+        let metrics = tex_state::InputReadState::read_input_file(
+            &mut universe.input_open_context(),
+            std::path::Path::new(name),
+        )
+        .expect("math font fixture reads");
+        control.capabilities_mut().register_font(
+            name,
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
+        );
+    }
+}
+
 fn register_boundary_probe_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
     // A compact valid TFM with boundary character space and a visible kern
     // for both `A + boundary` and `boundary + C`. TeX82 §545's first/last lig-kern instruction
@@ -6031,10 +6061,16 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
         control.step(&mut universe).expect("message"),
         ReplayStep::Continue
     );
-    assert!(matches!(
-        universe.world().effect_records(),
-        [tex_state::EffectRecord::StreamWrite { text, .. }] if text == "ok"
-    ));
+    assert!(
+        universe
+            .world()
+            .effect_records()
+            .iter()
+            .any(|effect| matches!(
+                effect,
+                tex_state::EffectRecord::StreamWrite { text, .. } if text == "ok"
+            ))
+    );
     assert_eq!(
         control.step(&mut universe).expect("alignment"),
         ReplayStep::Continue
@@ -8429,7 +8465,14 @@ fn canonical_italic_correction_in_math_mode_appends_a_font_kind_zero_kern() {
     // `KernKind::Explicit | KernKind::Mu` break-legality check).
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\setbox0=\hbox{$\/$}");
+    register_math_fonts(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\s=cmsy10 \font\e=cmex10
+           \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
+           \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           \setbox0=\hbox{$\/$}",
+    );
     run_to_end(&mut control, &mut universe);
 
     let hbox = universe
@@ -8783,7 +8826,14 @@ fn canonical_noboundary_in_math_mode_is_a_no_op() {
     // TeX82 §1045's `mmode+no_boundary: do_nothing`.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"$\noboundary$\end");
+    register_math_fonts(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\s=cmsy10 \font\e=cmex10
+           \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
+           \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           $\noboundary$\end",
+    );
     run_to_end(&mut control, &mut universe);
 
     assert!(
@@ -8906,7 +8956,14 @@ fn canonical_nonscript_appends_a_zero_glue_in_math_mode() {
     // subtype(tail):=cond_math_glue`.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\setbox0=\hbox{$\nonscript\kern1pt$}");
+    register_math_fonts(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\s=cmsy10 \font\e=cmex10
+           \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
+           \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           \setbox0=\hbox{$\nonscript\kern1pt$}",
+    );
     run_to_end(&mut control, &mut universe);
 
     let hbox = universe
@@ -9481,13 +9538,17 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 fn display_resumption_enters_output_before_the_next_command() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_math_fonts(&mut control, &mut universe);
     register_source(
         &mut control,
         // A 20pt box fills two thirds of a 30pt page; the display contributes
         // a second one, so the penalty after it is the first breakpoint whose
         // cost is `awful_bad`. `\count2` records whether `\output` had
         // already run when the command right after `$$` executed.
-        br"\output={\global\count1=1 \global\setbox9=\box255}\topskip=0pt\vsize=30pt\maxdepth=2pt
+        br"\font\s=cmsy10 \font\e=cmex10
+           \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
+           \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           \output={\global\count1=1 \global\setbox9=\box255}\topskip=0pt\vsize=30pt\maxdepth=2pt
            \setbox0=\hbox{}\ht0=20pt \copy0
            \noindent$$\copy0$$\global\count2=\count1 \end",
     );
