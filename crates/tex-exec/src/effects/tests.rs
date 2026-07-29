@@ -528,7 +528,16 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
         artifact.effects.as_slice(),
         [PageEffect::Write { sink: EffectSink::TerminalAndLog, text }] if text == "new\n"
     ));
-    assert!(stores.world().effect_records().is_empty());
+    // The deferred write's expanded text is fully accounted for as the
+    // page's own effect above, not left dangling here too. What *is* left
+    // live is `ship_out`'s own `[0]` progress marker (§638): it prints after
+    // the page has already been staged (see `print_ship_out_marker`'s doc),
+    // so it is never swept into `committed_effects` and remains uncommitted
+    // until the job's own final cleanup flushes it -- past where this
+    // fixture-level helper stops driving the job.
+    assert!(stores.world().effect_records().iter().all(
+        |record| !matches!(record, EffectRecord::StreamWrite { text, .. } if text.contains("new"))
+    ));
 }
 
 #[test]
@@ -585,7 +594,7 @@ fn deferred_write_stream_selector_and_newline_boundaries_match_tex82() {
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\newlinechar=`|\immediate\write-1{a|b}\immediate\write16{c}\immediate\write17{d}",
+        br"\newlinechar=`|\immediate\write-1{a|b}\immediate\write16{c}\immediate\write17{d}\end",
     );
     run_to_end(&mut control, &mut stores);
     assert!(matches!(
@@ -629,7 +638,7 @@ fn immediate_recognized_default_extension_and_unrecognized_backup_paths_match_te
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\immediate\openout2=trace\immediate\write2{ready}\immediate\closeout2\immediate\catcode`A=12",
+        br"\immediate\openout2=trace\immediate\write2{ready}\immediate\closeout2\immediate\catcode`A=12\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.catcode('A'), tex_state::token::Catcode::Other);

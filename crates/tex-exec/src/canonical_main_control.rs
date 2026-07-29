@@ -1147,6 +1147,13 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
+            // Republishes tex.web §310's context for wherever this delivered
+            // command's scan actually ended, so the execution-time errors
+            // below (printed straight through `World`, after this episode's
+            // processor has gone out of scope) never read a stale context an
+            // earlier command published. See `tex-command`'s `context` module
+            // doc and `CommandProcessor::publish_context`.
+            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -1188,6 +1195,8 @@ impl CanonicalMainControl {
         self.dumped_format |= dumped_format;
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
+        } else if matches!(result, ReplayStep::EndOfInput) {
+            crate::job::print_terminal_exhausted(stores);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -1590,6 +1599,13 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
+            // Republishes tex.web §310's context for wherever this delivered
+            // command's scan actually ended, so the execution-time errors
+            // below (printed straight through `World`, after this episode's
+            // processor has gone out of scope) never read a stale context an
+            // earlier command published. See `tex-command`'s `context` module
+            // doc and `CommandProcessor::publish_context`.
+            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -1642,6 +1658,8 @@ impl CanonicalMainControl {
         self.dumped_format |= dumped_format;
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
+        } else if matches!(result, ReplayStep::EndOfInput) {
+            crate::job::print_terminal_exhausted(stores);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -1769,7 +1787,9 @@ impl CanonicalMainControl {
                     &mut self.operation_observations,
                     stores,
                 );
-                processor.scan_accent_base().map_err(command_error)?
+                let outcome = processor.scan_accent_base();
+                processor.publish_context();
+                outcome.map_err(command_error)?
             };
             match outcome {
                 ScannedAccentBase::Character {
@@ -1830,16 +1850,17 @@ impl CanonicalMainControl {
                     if enclosing.is_some() {
                         self.operation_observations = Some(ObservationBuffer::default());
                     }
-                    let opened = command_processor(
+                    let mut processor = command_processor(
                         &mut self.command,
                         &mut self.runtime,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
                         stores,
-                    )
-                    .begin_selected_output_routine()
-                    .map_err(command_error);
+                    );
+                    let opened = processor.begin_selected_output_routine();
+                    processor.publish_context();
+                    let opened = opened.map_err(command_error);
                     if enclosing.is_some() {
                         let deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -2437,19 +2458,24 @@ impl CanonicalMainControl {
     fn scan_canonical_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut machine = self.command_machine();
         let mut processor = machine.processor(stores);
-        let Some(command) = processor.get_x_token().map_err(command_error)? else {
-            return Ok(());
-        };
-        if !matches!(
-            command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
+        let fetched = processor.get_x_token();
+        let result = match fetched {
+            Ok(Some(command))
+                if !matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                ) =>
+            {
+                processor.back_input(command).map_err(command_error)
             }
-        ) {
-            processor.back_input(command).map_err(command_error)?;
-        }
-        Ok(())
+            Ok(_) => Ok(()),
+            Err(err) => Err(command_error(err)),
+        };
+        processor.publish_context();
+        result
     }
 
     fn apply_canonical_math_delimiter(
@@ -2540,32 +2566,34 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
-        command_processor(
+        let mut processor = command_processor(
             &mut self.command,
             &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
-        )
-        .scan_math_field_episode()
-        .map_err(command_error)
+        );
+        let scanned = processor.scan_math_field_episode();
+        processor.publish_context();
+        scanned.map_err(command_error)
     }
 
     /// TeX82 §1172/§1174's `scan_left_brace` for one `\mathchoice` branch.
     /// §403 recovery opens the group anyway, so the recovered flag is
     /// diagnostic only.
     fn command_scan_math_choice_group(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
-        command_processor(
+        let mut processor = command_processor(
             &mut self.command,
             &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
-        )
-        .scan_math_choice_group()
-        .map_err(command_error)
+        );
+        let scanned = processor.scan_math_choice_group();
+        processor.publish_context();
+        scanned.map_err(command_error)
     }
 
     /// Delivers and executes one replay command while forwarding committed
@@ -2791,6 +2819,13 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
+            // Republishes tex.web §310's context for wherever this delivered
+            // command's scan actually ended, so the execution-time errors
+            // below (printed straight through `World`, after this episode's
+            // processor has gone out of scope) never read a stale context an
+            // earlier command published. See `tex-command`'s `context` module
+            // doc and `CommandProcessor::publish_context`.
+            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -2896,6 +2931,8 @@ impl CanonicalMainControl {
         ) = (&result, &scanned)
         {
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
+        } else if matches!(result, Ok(ReplayStep::EndOfInput)) {
+            crate::job::print_terminal_exhausted(stores);
         }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
@@ -3055,7 +3092,7 @@ impl CanonicalMainControl {
                 )?;
                 processor.back_input(first).map_err(command_error)?;
                 let mut filename = String::new();
-                loop {
+                let filename = loop {
                     let command = processor.get_x_token().map_err(command_error)?.ok_or(
                         ExecError::MissingToken {
                             context: "terminal filename",
@@ -3073,7 +3110,9 @@ impl CanonicalMainControl {
                             });
                         }
                     }
-                }
+                };
+                processor.publish_context();
+                filename
             };
         // The terminal line supplies only the startup filename.  It is not a
         // normal file-input level beneath the selected root, so retire its
@@ -3083,16 +3122,17 @@ impl CanonicalMainControl {
         // this one episode silent, and it is deliberate rather than an
         // omitted observer at the construction site.
         let silenced = self.operation_observations.take();
-        let exhausted = command_processor(
+        let mut processor = command_processor(
             &mut self.command,
             &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
-        )
-        .get_x_token()
-        .map_err(command_error);
+        );
+        let exhausted = processor.get_x_token();
+        processor.publish_context();
+        let exhausted = exhausted.map_err(command_error);
         self.operation_observations = silenced;
         let terminal_exhausted = exhausted?.is_none();
         if !terminal_exhausted {
@@ -3207,10 +3247,10 @@ fn set_canonical_math_char(
 ) -> Result<(), ExecError> {
     let code = stores.mathcode(ch);
     if code >= 0x8000 {
-        command
-            .processor(stores)
-            .treat_as_active_character(ch, origin)
-            .map_err(command_error)?;
+        let mut processor = command.processor(stores);
+        let treated = processor.treat_as_active_character(ch, origin);
+        processor.publish_context();
+        treated.map_err(command_error)?;
         return Ok(());
     }
     append_canonical_math_char(modes.current_list_mutation(), stores, code, origin)
@@ -9088,6 +9128,75 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
 /// published while its command-owned terminator backup is still live.  The
 /// artifact kernel receives only an already-published detached input summary;
 /// it never receives a legacy source stack or scans the command operand.
+/// TeX82 §638's `ship_out` progress marker: a leading separator, `[`, the
+/// nonzero-trimmed `\count0..\count9` values, and -- only under
+/// `\tracingoutput>0` -- an announcement plus a full box dump between `[`
+/// and its matching `]`. `\tracingoutput<=0` (the default) closes with `]`
+/// only after the page is actually written; see [`shipout_replay_box`].
+/// TeX82 §638's `ship_out` progress marker: a leading separator, `[`, the
+/// nonzero-trimmed `\count0..\count9` values, and -- only under
+/// `\tracingoutput>0` -- an announcement plus a full box dump between `[`
+/// and its matching `]`.
+///
+/// tex.web interleaves this with the page write itself (`[` and the counts
+/// print first, the page is shipped, then `]`), but every one of those
+/// prints, if issued before [`crate::assignments::shipout_node_with_input_summary`]
+/// runs, is swept up by `direct::stage_shipout`'s own unscoped
+/// `pending_page_effects(stores.world().effect_records())` -- meant to carry
+/// forward a `\special`/`\write` whatsit still pending from *before* this
+/// page, not commentary about the page itself -- and gets embedded in the
+/// DVI page as a spurious whatsit effect. [`shipout_replay_box`] therefore
+/// prints this marker whole, immediately after the page has already been
+/// staged, rather than interleaved: nothing else prints between the two
+/// halves in the ordinary (`\tracingoutput<=0`) case, so the emitted bytes
+/// land in the same place either way, and only the traced box dump (needing
+/// the page before it is consumed) has to clone it to preserve the interleave.
+fn print_ship_out_marker(
+    stores: &mut Universe,
+    tracing_output: i32,
+    counts: &[i32; 10],
+    traced_node: Option<&Node>,
+) {
+    let last = (1..=9usize).rev().find(|&j| counts[j] != 0).unwrap_or(0);
+    if tracing_output > 0 {
+        let mut printer = stores.printer();
+        printer.print_nl("");
+        printer.print_ln();
+        printer.print("Completed box being shipped out");
+    }
+    {
+        let mut printer = stores.printer();
+        let term = printer.terminal_offset();
+        let log = printer.log_offset();
+        if term > tex_state::print::MAX_PRINT_LINE.saturating_sub(9) {
+            printer.print_ln();
+        } else if term > 0 || log > 0 {
+            printer.print_char(' ');
+        }
+        printer.print_char('[');
+        for (index, &value) in counts.iter().enumerate().take(last + 1) {
+            printer.print_int(value);
+            if index < last {
+                printer.print_char('.');
+            }
+        }
+    }
+    if let Some(node) = traced_node {
+        stores.printer().print_char(']');
+        let frozen = stores.freeze_node_list(std::slice::from_ref(node));
+        let text = crate::node_dump::dump_node_list(
+            stores,
+            frozen,
+            crate::node_dump::DumpConfig::read(stores),
+        );
+        let mut diagnostic = stores.begin_diagnostic();
+        diagnostic.print(&text);
+        diagnostic.end(true);
+    } else {
+        stores.printer().print_char(']');
+    }
+}
+
 fn shipout_replay_box(
     node: Node,
     stores: &mut Universe,
@@ -9168,6 +9277,37 @@ fn shipout_replay_box(
             .to_vec()
             .into_boxed_slice();
     }
+    print_ship_out_marker(stores, tracing_output, &counts, traced_node.as_ref());
+    // The marker above prints after `shipout_node_with_input_summary`'s own
+    // transaction has already committed (see `print_ship_out_marker`'s doc),
+    // so without this call it would sit as a live, uncommitted effect
+    // suffix. A later `\shipout` in the same job would then find
+    // `World::effect_records` non-empty at the exact point
+    // `direct::stage_shipout` unconditionally sweeps it into *that* page's
+    // own committed artifact -- not merely a stray terminal-text
+    // discrepancy, but the marker's literal bytes (`[`, a digit, `]`)
+    // embedded in the next shipped page's serialized content, confirmed
+    // against `canonical_effect_free_shipout_memo_republishes_one_aligned_receipt`'s
+    // two identical `\shipout\copy0` calls (`umber2-alfh.10`). Committing
+    // here closes that: a no-op under retained sessions, which consume
+    // their effect suffix on export instead.
+    //
+    // This is not free: a checkpoint/retry session
+    // (`crates/umber`'s `CanonicalEngineSession`) can still roll this whole
+    // step back if a *later* command turns out to need a resource this
+    // speculative run did not have, and `commit_effects` materializes into
+    // `World::memory_terminal_output`/`memory_log_output`, which that
+    // rollback does not undo -- confirmed to duplicate the marker under
+    // `retained_session_retries_input_without_duplicate_effect_or_receipt`.
+    // Between the two known failure modes, silently corrupting a shipped
+    // page's bytes (affecting any ordinary multi-page job) is worse than a
+    // duplicated marker under a narrower retry scenario this crate's own
+    // tests exercise directly, so this call stays; `umber2-v4dx` tracks the
+    // real fix, which needs a way to distinguish incidental job-framing
+    // prints like this one from the genuine pending whatsit content
+    // `pending_page_effects` exists to carry forward, so neither failure
+    // mode has to be chosen between.
+    stores.commit_effects(stores.world().effect_pos())?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
@@ -10203,6 +10343,17 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::ErrorStopMode => tex_state::InteractionMode::ErrorStop,
                 _ => unreachable!("only the four interaction-mode primitives are scanned"),
             };
+            // TeX82 §1264's `new_interaction`: `print_ln` under the *old*
+            // interaction mode's selector, unconditionally, before
+            // `interaction:=cur_chr` takes effect. Skipping it left whichever
+            // channel's column tracking stale until something else happened
+            // to force a newline later -- invisible while every diagnostic
+            // wrote both channels in lockstep, but a real divergence once
+            // `\tracingonline<=0` redirects one channel alone (`umber2-
+            // alfh.9`): the terminal's stale column then forces an extra,
+            // unwanted newline into the log too, the first time anything
+            // prints through the restored `term_and_log` selector.
+            stores.printer().print_ln();
             stores.set_interaction_mode(mode);
             Ok(ReplayStep::Continue)
         }
@@ -10217,6 +10368,8 @@ fn apply_scanned_step(
                     return Ok(ReplayStep::Continue);
                 }
             };
+            // See the sibling `SetInteractionMode` arm's comment.
+            stores.printer().print_ln();
             stores.set_interaction_mode(mode);
             Ok(ReplayStep::Continue)
         }
@@ -11313,8 +11466,15 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowIfs { conditions } => {
-            stores.printer().print(&render_showifs(&conditions));
-            crate::diagnostics::end_show_diagnostic(stores);
+            // etex.ch [17.3720]'s `show_ifs` is a `begin_diagnostic` form
+            // like `\showbox`/`\showlists`/`\showgroups`, not a direct
+            // print: see `tex-exec::diagnostics`'s module doc for why the
+            // dump must be routed through §245's redirection rather than
+            // written straight to both channels.
+            let mut diagnostic = stores.begin_diagnostic();
+            diagnostic.print_nl("").print_ln();
+            diagnostic.print(&render_showifs(&conditions));
+            diagnostic.end(true);
             crate::diagnostics::complete_show(stores, true);
             Ok(ReplayStep::Continue)
         }
@@ -12476,12 +12636,15 @@ fn schedule_aftergroup(
         })
         .collect::<Vec<_>>();
     let mut processor = command.processor(stores);
+    let mut result = Ok(());
     for spelling in traced.into_iter().rev() {
-        processor
-            .back_input_token(spelling)
-            .map_err(command_error)?;
+        if let Err(err) = processor.back_input_token(spelling) {
+            result = Err(command_error(err));
+            break;
+        }
     }
-    Ok(())
+    processor.publish_context();
+    result
 }
 
 /// Releases the single pending after-assignment token only after the typed
@@ -12503,9 +12666,11 @@ fn schedule_afterassignment(
         token,
         tex_state::token::OriginId::UNKNOWN,
     );
-    command_processor(command, runtime, fuel, capabilities, observations, stores)
-        .back_input_token(tex_state::token::TracedTokenWord::pack(token, origin))
-        .map_err(command_error)
+    let mut processor =
+        command_processor(command, runtime, fuel, capabilities, observations, stores);
+    let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
+    processor.publish_context();
+    result.map_err(command_error)
 }
 
 /// Applies TeX82 §1214's `\globaldefs` override to a prefixed assignment's
@@ -13695,15 +13860,22 @@ fn show_tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> S
 }
 
 /// e-TeX 2.6 `etex.ch` [17.3715--3732]'s exact `show_ifs` traversal.
+/// The `### level N: ...` body only, joined by `\n` -- not etex.ch
+/// [17.3720]'s leading `print_nl(""); print_ln`, which needs live column
+/// state this pure builder does not have. The canonical `ScannedStep::ShowIfs`
+/// site prints those two calls itself, through the open diagnostic, before
+/// printing this body.
 fn render_showifs(conditions: &[tex_command::ActiveCondition]) -> String {
-    let mut text = String::from("\n");
     if conditions.is_empty() {
-        text.push_str("\n### no active conditionals");
-        return text;
+        return "### no active conditionals".to_owned();
     }
+    let mut text = String::new();
     let mut level = conditions.len();
-    for condition in conditions {
-        text.push_str("\n### level ");
+    for (index, condition) in conditions.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        text.push_str("### level ");
         text.push_str(&level.to_string());
         text.push_str(": \\");
         if condition.inverted() {

@@ -6114,9 +6114,16 @@ fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register()
     );
     run_to_end(&mut control, &mut universe);
 
+    // `terminal_text` merges the terminal and log channels, so §362's retry
+    // message -- printed once per channel with different line breaks around
+    // it (`crate::job::print_terminal_exhausted`'s doc comment) -- appears
+    // twice here even though each real channel shows it only once.
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n",
+        "\n! Missing } inserted.\n\
+         \n*\n(Please type a command or say `\\end')\
+         (Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
+         End of file on the terminal!\n\n",
         "off_save should be the only recovery; the replay must retain operand 12"
     );
     let box_zero = universe
@@ -6154,7 +6161,17 @@ fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_b
     );
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(terminal_text(&universe), "\n! Missing } inserted.\n");
+    // `terminal_text` merges the terminal and log channels, so §362's retry
+    // message -- printed once per channel with different line breaks around
+    // it (`crate::job::print_terminal_exhausted`'s doc comment) -- appears
+    // twice here even though each real channel shows it only once.
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Missing } inserted.\n\
+         \n*\n(Please type a command or say `\\end')\
+         (Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
+         End of file on the terminal!\n\n"
+    );
     assert!(
         universe.box_reg(12).is_some(),
         "unvcopy must preserve box 12 after the recovered retry"
@@ -6180,7 +6197,9 @@ fn canonical_unvbox_in_unrestricted_horizontal_ends_paragraph_before_retry() {
     );
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(terminal_text(&universe), "");
+    // `\end` ships the implicit final page: §638's `[0]` progress marker,
+    // not silence.
+    assert_eq!(terminal_text(&universe), "[0]");
     assert!(
         universe.box_reg(12).is_none(),
         "the replayed unvbox must consume box 12 after ending the paragraph"
@@ -6195,12 +6214,12 @@ fn canonical_halign_in_restricted_horizontal_recovers_before_alignment_start() {
     // mode and consumes its untouched preamble.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\setbox0=\hbox{\halign{#\cr\cr}");
+    register_source(&mut control, br"\setbox0=\hbox{\halign{#\cr\cr}\end");
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n",
+        "\n! Missing } inserted.\n[0]",
         "alignment recovery should neither start inside the hbox nor damage its preamble"
     );
     assert_eq!(
@@ -6231,7 +6250,9 @@ fn canonical_halign_in_unrestricted_horizontal_ends_paragraph_before_alignment()
     register_source(&mut control, br"\indent\halign{#\cr\cr}\end");
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(terminal_text(&universe), "");
+    // `\end` ships the implicit final page: §638's `[0]` progress marker,
+    // not silence.
+    assert_eq!(terminal_text(&universe), "[0]");
     assert_eq!(control.active_alignment(), None);
 }
 
@@ -9321,7 +9342,7 @@ fn canonical_valign_in_vertical_mode_starts_a_paragraph() {
     // -- regression test for umber2-johp.87.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\setbox0=\vbox{\valign{#\cr\cr}}");
+    register_source(&mut control, br"\setbox0=\vbox{\valign{#\cr\cr}}\end");
     run_to_end(&mut control, &mut universe);
 
     assert!(
@@ -9360,7 +9381,10 @@ fn canonical_spacefactor_accepts_both_horizontal_modes_and_boundary_values() {
         run_to_end(&mut control, &mut universe);
 
         assert_eq!(control.modes.current_list().space_factor(), value);
-        assert!(!terminal_text(&universe).contains('!'));
+        // The only diagnostic is main control genuinely running out of input
+        // with no `\end` in sight (§362/§93); `\spacefactor` itself raises
+        // nothing.
+        assert!(terminal_text(&universe).contains("End of file on the terminal!"));
     }
 }
 
@@ -9441,7 +9465,10 @@ fn canonical_spacefactor_targets_only_the_current_list_and_is_always_global() {
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(control.modes.current_list().space_factor(), 2000);
-    assert!(!terminal_text(&universe).contains('!'));
+    // The only diagnostic is main control genuinely running out of input
+    // with no `\end` in sight (§362/§93); `\spacefactor` itself raises
+    // nothing.
+    assert!(terminal_text(&universe).contains("End of file on the terminal!"));
 }
 
 #[test]
@@ -9545,7 +9572,7 @@ fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.set_enclosing_vertical_prev_graf(7);
-    register_source(&mut control, br"\prevgraf=-1 ");
+    register_source(&mut control, br"\prevgraf=-1 \end");
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
@@ -10287,7 +10314,7 @@ fn canonical_ignorespaces_expands_macros_while_skipping_and_keeps_relax() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
-        br"\def\spaces{   }\ignorespaces\spaces\relax\global\count0=23 ",
+        br"\def\spaces{   }\ignorespaces\spaces\relax\global\count0=23 \end",
     );
     run_to_end(&mut control, &mut universe);
 
@@ -10329,7 +10356,19 @@ fn canonical_ignorespaces_at_eof_ends_without_recovery() {
     register_source(&mut control, br"\ignorespaces   ");
     run_to_end(&mut control, &mut universe);
 
-    assert!(!terminal_text(&universe).contains('!'));
+    // §406's own skip invents nothing: the only diagnostic present is
+    // §362/§93's ordinary terminal-exhaustion sequence, identical to what a
+    // completely empty job produces once its last file closes with no
+    // `\end` in sight. `terminal_text` merges the terminal and log channels,
+    // so the retry message -- printed once per channel with different line
+    // breaks around it (`crate::job::print_terminal_exhausted`'s doc
+    // comment) -- appears twice here even though each real channel shows it
+    // only once.
+    assert_eq!(
+        terminal_text(&universe),
+        "\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
+         End of file on the terminal!\n\n"
+    );
 }
 
 #[test]

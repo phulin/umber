@@ -19,3 +19,10 @@ I'll just pretend that you didn't ask for it.
 If you're in the wrong mode, you might be able to
 return to the right one by typing `I}' or `I$' or `I\par'.
 )
+*(Please type a command or say `\end')
+*
+! Emergency stop.
+<*> 
+    
+No pages of output.
+Transcript written on head-for-vmode-recovery.log.

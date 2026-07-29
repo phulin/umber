@@ -13,9 +13,16 @@ pub(super) fn install_expandable(
 }
 
 pub(super) fn terminal_effect_text(stores: &Universe) -> String {
-    // Shipout materializes prior terminal effects in the memory backend and
-    // removes them from the rollback-capable live effect suffix. Tests need
-    // the complete terminal transcript across that commit boundary.
+    // Shipout (and job completion) materializes prior terminal *and* log
+    // effects in the memory backend and removes them from the
+    // rollback-capable live effect suffix. This helper already merges
+    // `PrintSink::Log` writes from the live suffix -- §245's
+    // `begin_diagnostic` redirects a `\tracingonline<=0` dump there, e.g.
+    // `\showbox`/`\showlists`/`\showifs`/`\showgroups` -- so it must merge
+    // the committed log transcript across that same boundary, or a dump that
+    // survives to job completion (a `\showifs` before `\end`, for instance)
+    // silently disappears from every test that reads this function instead
+    // of `memory_log_output` directly.
     let mut output = stores
         .world()
         .memory_terminal_output()
@@ -31,6 +38,9 @@ pub(super) fn terminal_effect_text(stores: &Universe) -> String {
         {
             output.push_str(text);
         }
+    }
+    if let Some(bytes) = stores.world().memory_log_output() {
+        output.push_str(&String::from_utf8_lossy(bytes));
     }
     output
 }

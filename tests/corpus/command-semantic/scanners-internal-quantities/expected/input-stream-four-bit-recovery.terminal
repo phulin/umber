@@ -13,8 +13,12 @@ I changed this one to zero.
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
 ! Undefined control sequence.
+l.4 \readline
+             15 to \verbatim
 ! Undefined control sequence.
- )
+l.4 \readline15 to \verbatim
+                            
+[1] )
 (see the transcript file for additional information)
 Output written on input-stream-four-bit-recovery.dvi (1 page, 128 bytes).
 Transcript written on input-stream-four-bit-recovery.log.

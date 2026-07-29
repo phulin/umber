@@ -5,6 +5,8 @@ pub(crate) mod expand;
 mod next;
 mod observe;
 pub(crate) mod status;
+#[cfg(test)]
+mod tests;
 
 use tex_state::CommandContext;
 
@@ -241,5 +243,32 @@ impl<'a> CommandProcessor<'a> {
         } else {
             false
         }
+    }
+
+    /// Publishes a freshly rendered tex.web §310 context for wherever this
+    /// episode's input currently stands, independent of whether an error was
+    /// actually raised.
+    ///
+    /// Every site that constructs a `CommandProcessor` calls this once, right
+    /// before the episode's borrow ends, so that a later error printed
+    /// straight through `World` -- `tex-exec` applies a scanned step's
+    /// execution effects, and prints some of its own errors, only after the
+    /// delivering processor has already gone out of scope -- reads back
+    /// exactly where this episode left the input stack rather than whatever
+    /// an earlier episode last published. An episode that itself raises an
+    /// error already republished fresher still through
+    /// [`Self::print_err`]/[`Self::resume_error_report`]; calling this again
+    /// afterward is harmless, since input does not move between that error
+    /// and the episode's end.
+    ///
+    /// This cannot instead be a `Drop` impl: `CommandProcessor` is
+    /// constructed throughout this crate for scans and expansions with no
+    /// stake in `tex-exec`'s execution-time printing, and forcing every one
+    /// of them to outlive its last use (which is what a destructor requires)
+    /// broke dozens of unrelated call sites that rely on non-lexical
+    /// lifetimes to end a processor's borrow before inspecting what it
+    /// observed.
+    pub fn publish_context(&mut self) {
+        self.publish_error_context();
     }
 }

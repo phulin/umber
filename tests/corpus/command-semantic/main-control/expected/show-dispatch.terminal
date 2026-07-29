@@ -1,9 +1,8 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./show-dispatch.tex
-### vertical mode entered at line 0
-prevdepth ignored
-
-! OK.
+! OK (see the transcript file).
+l.1 \showlists
+              
  )
 (see the transcript file for additional information)
 No pages of output.

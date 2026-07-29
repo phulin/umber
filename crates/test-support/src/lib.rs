@@ -113,6 +113,24 @@ mod imp {
                 {
                     continue;
                 }
+                // umber2-jmq5: this used to be a blanket workaround for
+                // Umber never producing §310 `show_context` output at all.
+                // umber2-alfh.8 fixed that for `CanonicalMainControl`
+                // generally (verified against the pinned oracle through
+                // `tools/tex-command-stream`'s harness), so removing this
+                // was tried here too -- but `crates/umber`'s own CLI driver
+                // (`umber run`, what every caller of `exec_log`/`box_dump`
+                // actually exercises) still shows no context at all for the
+                // same commands that correctly show it through that other
+                // harness (umber2-sob4, filed while chasing this). Until
+                // that gap is closed, un-stripping here would make these
+                // golden fixtures fail for a reason unrelated to whatever
+                // they are actually testing (macro/box/exec semantics, not
+                // `show_context`), against a pinned reference this layer has
+                // no way to reproduce. Once umber2-sob4 is fixed, this
+                // stripping should come out and every affected fixture
+                // reverified against live pdftex, exactly as umber2-jmq5
+                // asks.
                 if line.starts_with("l.") || line.starts_with("<recently read>") {
                     skip_next_context = true;
                     continue;

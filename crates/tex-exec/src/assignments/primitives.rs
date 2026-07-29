@@ -419,7 +419,7 @@ const INT_PARAMS: &[(&str, u16)] = &[
     ("globaldefs", IntParam::GLOBAL_DEFS.raw()),
     ("tracingparagraphs", 33),
     ("tracingpages", IntParam::TRACING_PAGES.raw()),
-    ("tracingoutput", 35),
+    ("tracingoutput", IntParam::TRACING_OUTPUT.raw()),
     ("tracinglostchars", 36),
     ("tracingcommands", 37),
     ("tracingrestores", 38),

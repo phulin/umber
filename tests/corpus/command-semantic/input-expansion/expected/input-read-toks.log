@@ -6,3 +6,12 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
 )
+*
+(Please type a command or say `\end')
+*
+! Emergency stop.
+<*> 
+    
+End of file on the terminal!
+
+No pages of output.

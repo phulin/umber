@@ -1,10 +1,22 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 entering extended mode
 (./etex-showgroups.tex
-! OK.
-! OK.
+! OK (see the transcript file).
+l.2 \showgroups
+               
+! OK (see the transcript file).
+l.4 \showgroups
+               
 ! You can't use a prefix with `\showgroups'.
-! OK.
+<to be read again> 
+                   \showgroups 
+l.6 \global\showgroups
+                      \count0=7
+! OK (see the transcript file).
+<recently read> \showgroups 
+                            
+l.6 \global\showgroups
+                      \count0=7
  )
 (see the transcript file for additional information)
 No pages of output.

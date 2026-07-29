@@ -19,5 +19,5 @@ To recover gracefully from this error, it's best to
 delete the erroneous units; e.g., type `2' to delete
 two letters. (See Chapter 27 of The TeXbook.)
 
- )
+[7] )
 Output written on vacuous-dimension-units.dvi (1 page, 128 bytes).

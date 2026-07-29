@@ -2,8 +2,11 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./show-meaning.tex meaning-skip=\skip3 meaning-count=\count4
 meaning-letter=the letter Q
 > \shown=macro:->\global \count 9=1.
-
+l.8 \show\shown
+               
 > \aliasskip=\skip3.
+l.9 \show\aliasskip
+                   
  )
 (see the transcript file for additional information)
 No pages of output.

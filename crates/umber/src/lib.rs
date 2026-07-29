@@ -2201,6 +2201,11 @@ mod tests {
 
         let result = session.execute().expect("canonical whatsits complete");
 
+        // §638's `[0]` progress marker did print, but `result.terminal_text`
+        // (`uncommitted_terminal_text`) reads only the live, not-yet-
+        // materialized effect suffix, and `shipout_replay_box` commits the
+        // marker immediately after printing it (see its doc comment); it is
+        // visible in `stores.world().memory_terminal_output()` instead.
         assert_eq!(result.terminal_text, "");
         let page = tex_out::PageArtifact::from_bytes(result.committed_artifacts[0].bytes())
             .expect("committed artifact parses");
@@ -2240,6 +2245,9 @@ mod tests {
             session.stores().world().memory_output("ordered.aux"),
             Some(&b"before\nduring\n"[..])
         );
+        // §638's `[0]` progress marker prints right after the `\shipout`
+        // and is immediately committed (`shipout_replay_box`'s doc comment),
+        // so only the later, still-uncommitted `\closeout2` remains live.
         assert!(matches!(
             session.stores().world().effect_records(),
             [tex_state::EffectRecord::StreamClose { slot }]
@@ -2471,13 +2479,15 @@ mod tests {
                 tex_out::PageEffect::PdfRefXImage { object: 1, .. },
             ] if text == "once\n"
         ));
+        // §638's `[0]` progress marker for the one shipped page, committed
+        // immediately after it prints (`shipout_replay_box`'s doc comment).
         assert_eq!(
             retry.stores().world().memory_terminal_output(),
-            Some(&b"once\n"[..])
+            Some(&b"once\n[0]"[..])
         );
         assert_eq!(
             fresh.stores().world().memory_terminal_output(),
-            Some(&b"once\n"[..])
+            Some(&b"once\n[0]"[..])
         );
     }
 

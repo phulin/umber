@@ -1103,13 +1103,19 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 });
                 let pages = control.take_prepared_dvi_pages();
                 let artifacts: Vec<ContentHash> = pages.iter().map(|page| page.hash()).collect();
-                // §1333/§1335 close a job only through `\end`/`\dump`
-                // reaching `MainControlStep::End`; `EndOfInput` is the
-                // engine running out of source with none of those, which
-                // tex.web's own outer loop never reaches either (it
-                // synthesizes a virtual `\end` first), so there is no §642
-                // report or transcript note to print here.
-                let dvi = if matches!(step, MainControlStep::End) && !pages.is_empty() {
+                // §1333's `close_files_and_terminate` is reached from both
+                // outcomes here, not only `\end`/`\dump`'s `End`: §93's
+                // `fatal_error` (raised for `EndOfInput` by
+                // `crate::job::print_terminal_exhausted`, TeX82 §362's `*`
+                // prompt finding no more terminal input) calls `succumb`,
+                // which calls `error` and then `jump_out`s straight past
+                // §1335's `final_cleanup` to §1333 -- skipping the paren
+                // close and history note `final_cleanup` would have printed,
+                // but not the DVI/transcript report itself. A prior
+                // `\shipout` can leave `pages` nonempty even when the job
+                // never saw `\end`, so this serializes them exactly as the
+                // `End` path does.
+                let dvi = if !pages.is_empty() {
                     let plans: Vec<_> = pages
                         .into_iter()
                         .map(tex_exec::PreparedDviPage::into_plan)
@@ -1130,7 +1136,7 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 // out the banner `begin_job` printed), so it is gated on
                 // `job_framed` exactly like `begin_job` above -- an unframed
                 // run gets neither end.
-                if job_framed && matches!(step, MainControlStep::End) {
+                if job_framed {
                     let job_name = control.capabilities_mut().job_name().to_owned();
                     let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
                         file_name: format!("{job_name}.dvi"),

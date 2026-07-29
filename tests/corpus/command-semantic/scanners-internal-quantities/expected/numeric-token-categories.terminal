@@ -1,7 +1,9 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./numeric-token-categories.tex
 ! Undefined control sequence.
- )
+l.5 \count2
+           ="A
+[1.10] )
 (see the transcript file for additional information)
 Output written on numeric-token-categories.dvi (1 page, 128 bytes).
 Transcript written on numeric-token-categories.log.

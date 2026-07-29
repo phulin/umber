@@ -1,9 +1,8 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./show-box.tex
-> \box0=
-\hbox(0.0+0.0)x1.0 []
-
-! OK.
+! OK (see the transcript file).
+l.3 \showbox0
+             
  )
 (see the transcript file for additional information)
 No pages of output.

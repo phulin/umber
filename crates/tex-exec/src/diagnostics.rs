@@ -7,6 +7,7 @@ use tex_expand::{
 use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension};
+use tex_state::print::Selector;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{PrintSink, Universe};
 
@@ -344,30 +345,19 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
-    let mut text = format!("\n> \\box{index}=\n");
+    let mut text = format!("> \\box{index}=\n");
     if let Some(id) = stores.box_reg(index) {
         text.push_str(&dump_node_list(stores, id, DumpConfig::read(stores)));
     } else {
         text.push_str("void\n");
     }
-    write_diagnostic(stores, &text);
-    end_show_diagnostic(stores);
+    let mut diagnostic = stores.begin_diagnostic();
+    // A single smart newline, not an unconditional one: `show_box`'s own
+    // open is `print_nl("> \box")`, unlike `show_activities`/`show_ifs`'s
+    // `print_nl(""); print_ln`.
+    diagnostic.print_nl(&text);
+    diagnostic.end(true);
     complete_show(stores, true);
-}
-
-/// TeX82 §1298's leading `end_diagnostic(true)`, closing the partial line the
-/// dump left and adding §245's blank separator line.
-///
-/// The dump itself is still written straight to the terminal and transcript
-/// rather than through §245's `begin_diagnostic` redirection, so `\showbox`
-/// and `\showlists` output remains visible on the terminal with
-/// `\tracingonline` at zero. Routing them through the redirection is a
-/// separate change to committed diagnostic corpora, not part of §1293's
-/// completion bookkeeping.
-pub(crate) fn end_show_diagnostic(stores: &mut Universe) {
-    let mut printer = stores.printer();
-    printer.print_nl("");
-    printer.print_ln();
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -385,16 +375,22 @@ pub(crate) fn complete_show(stores: &mut Universe, long: bool) {
         stores.world_mut().error_channel_mut().clear_error_count();
     }
     let mut report = if long {
-        // §1298's remaining half, `if selector=term_and_log then if
-        // tracing_online<=0 then ... print(" (see the transcript file)")`,
-        // tells the terminal where to find a dump it did not receive. Umber's
-        // dump is not redirected (see `end_show_diagnostic`), so the terminal
-        // already has it and the note would be false; the note belongs with
-        // that redirection, not with this bookkeeping.
         stores.print_err("OK")
     } else {
         stores.error_report()
     };
+    if long && report.selector() == Selector::TermAndLog && tracing_online <= 0 {
+        // §1298's remaining half: `if selector=term_and_log then if
+        // tracing_online<=0 then begin selector:=term_only;
+        // print(" (see the transcript file)"); selector:=term_and_log; end`.
+        // The dump above went through `begin_diagnostic`'s own redirect to
+        // `log_only` under this exact condition, so the terminal never saw
+        // it; this note, printed to the terminal alone, is what tells the
+        // user where it went.
+        report.set_selector(Selector::TermOnly);
+        report.print(" (see the transcript file)");
+        report.set_selector(Selector::TermAndLog);
+    }
     if !interactive {
         report.help(&[]);
     } else if tracing_online > 0 {
@@ -444,7 +440,6 @@ pub(crate) fn execute_message(
 
 pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
     let mut text = String::new();
-    text.push('\n');
     let summary = nest.summary();
     for (index, level) in summary.levels().iter().enumerate().rev() {
         text.push_str("### ");
@@ -515,8 +510,14 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
             Mode::Math | Mode::DisplayMath => {}
         }
     }
-    write_diagnostic(stores, &text);
-    end_show_diagnostic(stores);
+    // §218's `show_activities` opens with `print_nl(""); print_ln`, not the
+    // single smart `print_nl` `show_box` uses: the forced blank line is why
+    // `\showlists`, unlike `\showbox`, always separates its dump from
+    // whatever the terminal/log column held before it ran.
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic.print_nl("").print_ln();
+    diagnostic.print(&text);
+    diagnostic.end(true);
     complete_show(stores, true);
 }
 

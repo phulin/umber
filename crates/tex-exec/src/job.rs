@@ -30,6 +30,7 @@ use std::sync::Arc;
 use tex_command::{CommandHostCapabilities, FileFramingEvent};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
+use tex_state::error_context::{ContextEntry, ContextHeader, ContextLevel, ErrorContext};
 use tex_state::print::{History, MAX_PRINT_LINE, Printer, Selector};
 use tex_state::world::PrintSink;
 
@@ -282,6 +283,95 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
     }
     Printer::new(stores, Selector::TermOnly)
         .print_nl("(see the transcript file for additional information)");
+}
+
+/// tex.web §311's `<*>` context: `show_context`'s rendering for the
+/// bottom-of-stack terminal source level.
+///
+/// [`print_terminal_exhausted`] is the only caller because it is the only
+/// site with no live level for `tex-command`'s own
+/// `crate::context::render_error_context` to render: input has genuinely run
+/// out, so the input stack it would walk is empty.
+fn terminal_exhausted_context() -> ErrorContext {
+    ErrorContext::new(vec![ContextEntry::Level(ContextLevel {
+        header: ContextHeader::Normal("<*> ".to_owned()),
+        before: String::new(),
+        after: String::new(),
+    })])
+}
+
+/// tex.web §360/§362's `*` prompt -- printed when the last input file has
+/// closed and the job has not yet seen `\end`/`\dump` -- followed by §71's
+/// `term_input` failing and §93's `fatal_error` it raises.
+///
+/// A driver calls this the moment a step reports
+/// [`crate::MainControlStep::EndOfInput`], mirroring how
+/// [`crate::CanonicalMainControl`]'s own `end_of_job_final_cleanup` runs on
+/// [`crate::MainControlStep::End`]. The two are siblings, not the same path:
+/// §93's `succumb` sets `interaction` to `scroll_mode`, calls `error` (which
+/// is what actually prints everything below), sets `history` to
+/// `fatal_error_stop`, and then §81's `jump_out` transfers control straight
+/// to §1333's `close_files_and_terminate` ([`finish_job`]) -- skipping
+/// §1335's `final_cleanup` ([`crate::CanonicalMainControl`]'s
+/// `end_of_job_final_cleanup`) entirely, so this prints no paren-closing,
+/// incomplete-conditions report, or history note of its own; a driver's own
+/// unconditional `finish_job` call is what §642's report and the transcript
+/// note still reach.
+///
+/// tex.web's own `get_next` silently accepts one empty terminal line before
+/// a second attempt actually fails, and the reference engine's redirected
+/// terminal stream needs one such retry before every minifixture's genuine
+/// exhaustion in this corpus except a handful with additional pending
+/// recoveries (each consuming one further retry) -- a host stdin-reading
+/// nuance `tex_state::print`'s module doc already documents as unmodeled
+/// here. This reproduces the dominant one-retry (two-`*`, one-message)
+/// shape; a fixture needing zero or several retries remains a residual
+/// divergence, not a wrong shape for the ordinary case.
+///
+/// The retry's own message line (`"(Please type...)"`) is a second, smaller
+/// case of the same per-channel divergence: every captured oracle log shows
+/// it on its own line (`print_nl`'s smart break, column already open from
+/// the `*` this function just printed), while every captured oracle
+/// *terminal* runs it straight onto the `*`'s line with no break at all.
+/// Nothing in §362 conditions that message on the channel, so this treats it
+/// as another fact about the reference engine's terminal handling this layer
+/// does not model (see `tex_state::print`'s module doc) and reproduces it
+/// directly rather than deriving it from one shared smart `print_nl` call.
+pub(crate) fn print_terminal_exhausted(stores: &mut Universe) {
+    // tex.web §362's `interaction>nonstop_mode`.
+    let interactive = !matches!(
+        stores.interaction_mode(),
+        tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
+    );
+    if interactive {
+        {
+            let mut printer = stores.printer();
+            printer.print_ln();
+            printer.print_char('*');
+        }
+        stores
+            .world_mut()
+            .write_text(PrintSink::Log, "\n(Please type a command or say `\\end')");
+        stores.world_mut().write_text(
+            PrintSink::Terminal,
+            "(Please type a command or say `\\end')",
+        );
+        {
+            let mut printer = stores.printer();
+            printer.print_ln();
+            printer.print_char('*');
+        }
+    }
+    stores
+        .world_mut()
+        .set_error_context(terminal_exhausted_context());
+    let mut report = stores.print_err("Emergency stop");
+    report.help(&[if interactive {
+        "End of file on the terminal!"
+    } else {
+        "*** (job aborted, no legal \\end found)"
+    }]);
+    report.error();
 }
 
 /// tex.web §1333's `close_files_and_terminate`, minus §1378's write-stream

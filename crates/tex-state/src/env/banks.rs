@@ -138,6 +138,9 @@ impl IntParam {
     /// TeX's `\tracingpages` page-cost diagnostic level (tex.web §§987, 1005).
     pub const TRACING_PAGES: Self = Self::new(34);
 
+    /// TeX's `\tracingoutput` shipped-page diagnostic level (tex.web §638).
+    pub const TRACING_OUTPUT: Self = Self::new(35);
+
     /// TeX's missing-character diagnostic level.
     pub const TRACING_LOST_CHARS: Self = Self::new(36);
 

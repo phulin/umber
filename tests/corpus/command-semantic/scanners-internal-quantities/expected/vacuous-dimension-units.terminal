@@ -1,9 +1,21 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 ! Missing number, treated as zero.
+<to be read again> 
+                   p
+l.1 \dimen0=p
+             t
 (./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
+<to be read again> 
+                   x
+l.2 \dimen1=x
+              pt
 ! Illegal unit of measure (pt inserted).
- )
+<to be read again> 
+                   x
+l.2 \dimen1=x
+              pt
+[7] )
 (see the transcript file for additional information)
 Output written on vacuous-dimension-units.dvi (1 page, 128 bytes).
 Transcript written on vacuous-dimension-units.log.
