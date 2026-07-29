@@ -6676,10 +6676,6 @@ fn scan_unclassified_primitive(
         | P::FontDimen
         | P::FutureLet
         | P::Gdef
-        | P::GlueShrink
-        | P::GlueShrinkOrder
-        | P::GlueStretch
-        | P::GlueStretchOrder
         | P::HAlign
         | P::HBox
         | P::HFil
@@ -6912,6 +6908,10 @@ fn scan_unclassified_primitive(
         | P::DimExpr
         | P::GlueExpr
         | P::MuExpr
+        | P::GlueStretch
+        | P::GlueShrink
+        | P::GlueStretchOrder
+        | P::GlueShrinkOrder
         | P::GlueToMu
         | P::MuToGlue => Ok(ScannedStep::IllegalLastItem {
             token: command.spelling().semantic_token(),

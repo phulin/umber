@@ -5076,6 +5076,33 @@ fn run_canonical_etex(source: &str) -> Universe {
     panic!("canonical e-TeX source did not terminate");
 }
 
+#[test]
+fn canonical_etex_glue_component_enquiries_recover_standalone_in_every_mode() {
+    let stores = run_canonical_etex(
+        r"\nonstopmode
+          \count0=0
+          \gluestretchorder \advance\count0 by1
+          \hbox{\glueshrinkorder \global\advance\count0 by2}
+          \vbox{\gluestretch \global\advance\count0 by4}
+          $\glueshrink \global\advance\count0 by8$
+          \end",
+    );
+
+    assert_eq!(stores.count(0), 15);
+    let output = terminal_effect_text(&stores);
+    for name in [
+        "gluestretchorder",
+        "glueshrinkorder",
+        "gluestretch",
+        "glueshrink",
+    ] {
+        assert!(
+            output.contains(&format!("You can't use `\\{name}' in")),
+            "missing standalone last_item recovery for \\{name}: {output:?}"
+        );
+    }
+}
+
 fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<Node>) {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
