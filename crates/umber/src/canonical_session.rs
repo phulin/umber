@@ -704,6 +704,48 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "instrumentation")]
+    fn etex_alphabetic_constants_preserve_control_symbol_spelling() {
+        let source: Arc<[u8]> = Arc::from(&br"\endlinechar=`\^^M \newlinechar=`\^^J \end"[..]);
+        let mut stores = Universe::new_with_plain_catcodes();
+        tex_expand::install_expandable_primitives(&mut stores);
+        tex_exec::install_unexpandable_primitives(&mut stores);
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::ETEX26);
+        session
+            .register_authored_root("alphabetic.tex", source)
+            .expect("root registers");
+        let mut observations = ObservationRecorder::default();
+        session
+            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+            .expect("assignment microfixture completes");
+
+        let spellings = observations
+            .0
+            .iter()
+            .filter_map(|event| match event {
+                CommandObservation::Command(record)
+                    if record.boundary == tex_command::CommandDeliveryBoundary::Raw =>
+                {
+                    Some(&record.spelling)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(spellings.iter().any(|spelling| {
+            matches!(
+                spelling,
+                tex_command::ObservedToken::ControlSequence(name) if name == "\r"
+            )
+        }));
+        assert!(spellings.iter().any(|spelling| {
+            matches!(
+                spelling,
+                tex_command::ObservedToken::ControlSequence(name) if name == "\n"
+            )
+        }));
+    }
+
+    #[test]
     fn retained_session_retries_input_without_duplicate_effect_or_receipt() {
         let (mut stores, root) =
             prepared_session(b"\\message{once}\\input child x\\par\\shipout\\hbox{x}\\end");

@@ -15,9 +15,9 @@ use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
     CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
     EngineIdentity, Event, EventObserver, FixtureArtifact, FixtureManifest, FixtureProfile,
-    GeometryEvent, JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationHeader,
-    ObservationStream, SCHEMA_VERSION, SchemaVersion, ToolIdentity,
-    validate_tex82_geometry_trace_fixture,
+    GeometryEvent, JsonLinesObserver, MacroEvent, Manifest, ManifestInput, Normalizer,
+    ObservationHeader, ObservationStream, OracleToken, RecoveryEvent, RecoveryKind, SCHEMA_VERSION,
+    SchemaVersion, ToolIdentity, validate_tex82_geometry_trace_fixture,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -97,7 +97,12 @@ fn manifest_rejects_host_paths_and_noncanonical_hashes() {
 #[test]
 fn normalization_is_narrow_and_sequence_is_deterministic() {
     let mut normalizer = Normalizer::new();
-    let first = normalizer.normalize(command("outer\r\nmacro"));
+    let mut control_symbol = command("outer\r\nmacro");
+    let Event::Command(event) = &mut control_symbol else {
+        unreachable!("command helper returns a command event");
+    };
+    event.command.control_sequence = Some("\r".into());
+    let first = normalizer.normalize(control_symbol);
     let second = normalizer.normalize(command("next\rcommand"));
     assert_eq!(first.sequence, 0);
     assert_eq!(second.sequence, 1);
@@ -105,6 +110,56 @@ fn normalization_is_narrow_and_sequence_is_deterministic() {
         panic!("command event");
     };
     assert_eq!(event.command.command, "outer\nmacro");
+    assert_eq!(
+        event.command.control_sequence.as_deref(),
+        Some("\r"),
+        "TeX82 §§48 and 356 distinguish the carriage-return control symbol from line feed"
+    );
+}
+
+#[test]
+fn normalization_preserves_control_symbols_in_every_event_shape() {
+    let symbol = || OracleToken {
+        character: 0,
+        catcode: "escape".into(),
+        control_sequence: Some("\r".into()),
+        location: None,
+    };
+    let events = [
+        Event::Recovery(RecoveryEvent {
+            kind: RecoveryKind::Backup,
+            tokens: vec![symbol()],
+        }),
+        Event::Macro(MacroEvent::Argument {
+            parameter: 1,
+            tokens: vec![symbol()],
+        }),
+        Event::Macro(MacroEvent::Activation {
+            control_sequence: "\r".into(),
+            argument_count: 0,
+        }),
+    ];
+    let mut normalizer = Normalizer::new();
+    let normalized = events
+        .into_iter()
+        .map(|event| normalizer.normalize(event).semantic)
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        &normalized[0],
+        Event::Recovery(RecoveryEvent { tokens, .. })
+            if tokens[0].control_sequence.as_deref() == Some("\r")
+    ));
+    assert!(matches!(
+        &normalized[1],
+        Event::Macro(MacroEvent::Argument { tokens, .. })
+            if tokens[0].control_sequence.as_deref() == Some("\r")
+    ));
+    assert!(matches!(
+        &normalized[2],
+        Event::Macro(MacroEvent::Activation { control_sequence, .. })
+            if control_sequence == "\r"
+    ));
 }
 
 #[test]

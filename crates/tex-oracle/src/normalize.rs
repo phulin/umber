@@ -15,9 +15,10 @@ pub struct NormalizedEvent {
 
 /// Stateless-value normalizer plus deterministic event numbering.
 ///
-/// Canonicalization is intentionally narrow: it converts CRLF/CR in semantic
-/// strings to LF. It does not hide semantic values, reorder events, rewrite
-/// source names, or inspect host paths.
+/// Canonicalization is intentionally narrow: it converts CRLF/CR in textual
+/// fields to LF. Semantic atoms such as control-sequence spellings are left
+/// byte-for-byte intact. It does not hide semantic values, reorder events,
+/// rewrite source names, or inspect host paths.
 #[derive(Clone, Debug, Default)]
 pub struct Normalizer {
     next_sequence: u64,
@@ -54,9 +55,7 @@ fn normalize_event(event: &mut Event) {
             crate::MacroEvent::Argument { tokens, .. } => {
                 tokens.iter_mut().for_each(normalize_token);
             }
-            crate::MacroEvent::Activation {
-                control_sequence, ..
-            } => normalize_string(control_sequence),
+            crate::MacroEvent::Activation { .. } => {}
         },
         Event::Condition(event) => {
             normalize_string(&mut event.condition);
@@ -92,9 +91,7 @@ fn normalize_event(event: &mut Event) {
 fn normalize_command(command: &mut CanonicalCommand) {
     normalize_string(&mut command.command);
     normalize_value(&mut command.operand);
-    if let Some(control_sequence) = &mut command.control_sequence {
-        normalize_string(control_sequence);
-    }
+    // TeX82 §§48 and 356: a control-sequence spelling is a semantic atom.
     if let Some(location) = &mut command.location {
         normalize_location(location);
     }
@@ -102,9 +99,7 @@ fn normalize_command(command: &mut CanonicalCommand) {
 
 fn normalize_token(token: &mut OracleToken) {
     normalize_string(&mut token.catcode);
-    if let Some(control_sequence) = &mut token.control_sequence {
-        normalize_string(control_sequence);
-    }
+    // TeX82 §§48 and 356: a control-sequence spelling is a semantic atom.
     if let Some(location) = &mut token.location {
         normalize_location(location);
     }
