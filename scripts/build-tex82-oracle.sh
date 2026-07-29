@@ -27,6 +27,8 @@ smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 geometry_input="${repo_root}/tests/tex82-oracle/geometry.tex"
 geometry_expected="${repo_root}/tests/tex82-oracle/geometry-expected.jsonl"
+clock_change="${repo_root}/tests/tex82-oracle/deterministic-clock.ch"
+clock_input="${repo_root}/tests/tex82-oracle/clock.tex"
 transition_source_dir="${repo_root}/tests/tex82-oracle"
 semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
@@ -180,6 +182,10 @@ upstream_changes=(
   "${web_source_dir}/enctexdir/enctex2.ch"
   "${web_source_dir}/tex-binpool.ch"
 )
+oracle_base_changes=(
+  "${upstream_changes[@]}"
+  "$clock_change"
+)
 
 reset_tex_products() {
   rm -f \
@@ -202,7 +208,7 @@ reset_tex_products() {
 build_variant() {
   local destination="$1"
   shift
-  local change_stack=("${upstream_changes[@]}" "$@")
+  local change_stack=("${oracle_base_changes[@]}" "$@")
   reset_tex_products
   (
     cd "$web_build_dir"
@@ -216,6 +222,30 @@ build_variant() {
   [[ -x "${web_build_dir}/tex" ]] || fail "TeX executable was not built"
   cp "${web_build_dir}/tex" "$destination"
   chmod +x "$destination"
+}
+
+run_clock() {
+  local executable="$1" variant="$2" run_dir
+  run_dir="${out_dir}/clock/${variant}"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$clock_input" "${run_dir}/clock.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
+      "$executable" -ini -interaction=batchmode clock.tex >terminal.txt 2>&1
+  )
+  grep -Fq 'UMBER-TEX82-CLOCK: TIME=816,DAY=9,MONTH=7,YEAR=2026' \
+    "${run_dir}/clock.log" ||
+    fail "$variant did not observe the pinned TeX82 section 1337 clock"
+  if [[ -f "${run_dir}/tex82-events.jsonl" ]]; then
+    grep -Fq '"scanner":"internal","result":{"type":"integer","value":9}' \
+      "${run_dir}/tex82-events.jsonl" ||
+      fail "$variant did not emit the pinned day through the internal scanner"
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+      "${run_dir}/tex82-events.jsonl"
+  fi
 }
 
 run_smoke() {
@@ -356,6 +386,8 @@ write_build_record() {
       printf 'ordered-change-sha256 %s %s\n' \
         "${path#"${source_dir}/"}" "$(sha_digest 256 "$path")"
     done
+    printf 'system-adapter-change %s\n' "${clock_change#"${repo_root}/"}"
+    printf 'system-adapter-change-sha256 %s\n' "$(sha_digest 256 "$clock_change")"
     printf 'instrumentation-change %s\n' "${instrumentation_change#"${repo_root}/"}"
     printf 'instrumentation-change-sha256 %s\n' "$(sha_digest 256 "$instrumentation_change")"
     printf 'trip-profile-change-sha256 %s\n' "$(sha_digest 256 "$trip_profile_change")"
@@ -436,6 +468,21 @@ build_variant "$instrumentable_executable" "$instrumentation_change"
 cp "${web_build_dir}/tex-final.ch" "${out_dir}/instrumentable-final.ch"
 run_smoke "$clean_executable" clean
 run_smoke "$instrumentable_executable" instrumentable
+run_clock "$clean_executable" clean
+run_clock "$instrumentable_executable" instrumentable
+run_clock "$instrumentable_executable" instrumentable-repeat
+cmp "${out_dir}/clock/clean/terminal.txt" \
+  "${out_dir}/clock/instrumentable/terminal.txt" >/dev/null ||
+  fail "instrumentable oracle changed pinned-clock terminal output"
+cmp "${out_dir}/clock/instrumentable/terminal.txt" \
+  "${out_dir}/clock/instrumentable-repeat/terminal.txt" >/dev/null ||
+  fail "repeated instrumentable oracle changed pinned-clock terminal output"
+cmp "${out_dir}/clock/clean/clock.log" \
+  "${out_dir}/clock/instrumentable/clock.log" >/dev/null ||
+  fail "instrumentable oracle changed pinned-clock log output"
+cmp "${out_dir}/clock/instrumentable/clock.log" \
+  "${out_dir}/clock/instrumentable-repeat/clock.log" >/dev/null ||
+  fail "repeated instrumentable oracle changed pinned-clock log output"
 run_transitions "$clean_executable" clean
 run_transitions "$instrumentable_executable" instrumentable
 run_transitions "$instrumentable_executable" instrumentable-repeat

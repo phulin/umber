@@ -15,7 +15,11 @@ changes an input or oracle.
 Web2C portability changes, translator inputs, and repository-owned oracle
 inputs. `tests/tex82-oracle/` contains the font-independent smoke program,
 focused transition inputs, and the repository-owned final TeX82
-instrumentation change file. `semantic-event-matrix.txt` maps every required
+instrumentation change file. Its `deterministic-clock.ch` is the system
+adapter for tex.web §1337: Web2C's `onlyTeX` build ignores
+`SOURCE_DATE_EPOCH`, so it installs the same pinned job clock used by hermetic
+Umber worlds; `clock.tex` is the bounded clean/instrumented/repeat control.
+`semantic-event-matrix.txt` maps every required
 TeX82 command-core observation to its focused input and stable final-change
 seam; the live oracle build consumes it as the coverage gate.
 `fixture-audit-matrix.txt` maps those semantic families to exact manifest
