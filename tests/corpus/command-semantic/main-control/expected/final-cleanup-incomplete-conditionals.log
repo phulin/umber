@@ -1,3 +1,7 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**final-cleanup-incomplete-conditionals.tex
+(./final-cleanup-incomplete-conditionals.tex )
 (\end occurred when \ifnum on line 3 was incomplete)
 (\end occurred when \ifcase on line 2 was incomplete)
 (\end occurred when \iftrue on line 1 was incomplete)
+No pages of output.

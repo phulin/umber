@@ -1,5 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)
+(./macro-parameter-errors.tex
 ! Parameters must be numbered consecutively.
 ! Illegal parameter number in definition of \body.
 ! Illegal parameter number in definition of ~.
 ! Illegal parameter number in definition of \local.
 ! Illegal parameter number in definition of \global.
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on macro-parameter-errors.log.

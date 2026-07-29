@@ -40,7 +40,12 @@ pub enum StreamChannel {
     Terminal,
     /// TeX82's log transcript: `PrintSink::Log` and `TerminalAndLog`.
     Log,
-    /// One line per page the run shipped, by committed content identity.
+    /// The complete serialized `.dvi` file the run produced, byte for byte --
+    /// the same object the oracle's own `.dvi` file is, so this channel can
+    /// finally be compared against it directly. A hash listing (this
+    /// channel's earlier disposition) could never become oracle-authoritative
+    /// for exactly that reason: there is no oracle hash to compare against,
+    /// only oracle bytes.
     Dvi,
     /// Ordinary effects that are not stream writes: specials, deferred
     /// `\write`s, stream opens and closes, and shell escapes.
@@ -69,21 +74,41 @@ pub struct CapturedChannels {
     pub events: usize,
     /// `clean`, or `fatal:<label>` when the job ended through §81 `jump_out`.
     pub status: String,
-    /// Rendered stream channels, in [`STREAM_CHANNELS`] order.
-    pub streams: [String; 4],
+    /// Rendered stream channels, in [`STREAM_CHANNELS`] order. Bytes rather
+    /// than `String`, because the `dvi` channel is a real serialized DVI
+    /// file and lossily reencoding it as UTF-8 would corrupt exactly the
+    /// bytes a byte-exact oracle comparison exists to check.
+    pub streams: [Vec<u8>; 4],
 }
 
 impl CapturedChannels {
     /// Captures every channel from a completed run.
     #[must_use]
     pub fn capture(run: &SemanticRun) -> Self {
+        // Both channels seed from `World`'s durable per-sink archive rather
+        // than starting empty: `commit_effects` (tex-state) drains
+        // `effect_records()` at every commit boundary (every `\shipout`
+        // among others), permanently applying each `StreamWrite` into
+        // `memory_terminal_output`/`memory_log_output` and removing it from
+        // the replay-visible list this function otherwise reads below. A run
+        // with a commit boundary -- any case that ships a page -- would
+        // otherwise lose every terminal/log byte written before that
+        // boundary; job framing's banner and `**` line are exactly such
+        // early bytes, which is what surfaced this for the `log` channel
+        // (the `terminal` channel was already reading its own archive
+        // before this comment existed).
         let mut terminal = run
             .universe
             .world()
             .memory_terminal_output()
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
             .unwrap_or_default();
-        let mut log = String::new();
+        let mut log = run
+            .universe
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
         let mut effects = String::new();
         for effect in run.universe.world().effect_records() {
             match effect {
@@ -122,23 +147,24 @@ impl CapturedChannels {
                 }
             }
         }
-        let mut dvi = String::new();
-        for (index, page) in run.artifacts.iter().enumerate() {
-            let _ = writeln!(dvi, "page:{index}:{}", page.hex());
-        }
         Self {
             events: run.observations.len(),
             status: run.fatal.map_or_else(
                 || "clean".to_owned(),
                 |fatal| format!("fatal:{}", fatal.label()),
             ),
-            streams: [terminal, log, dvi, effects],
+            streams: [
+                terminal.into_bytes(),
+                log.into_bytes(),
+                run.dvi.clone(),
+                effects.into_bytes(),
+            ],
         }
     }
 
     /// The rendered content of one stream channel.
     #[must_use]
-    pub fn stream(&self, channel: StreamChannel) -> &str {
+    pub fn stream(&self, channel: StreamChannel) -> &[u8] {
         let index = STREAM_CHANNELS
             .iter()
             .position(|candidate| *candidate == channel)
@@ -308,7 +334,7 @@ pub enum ChannelFailure {
 pub fn compare(
     captured: &CapturedChannels,
     contract: &ChannelContract,
-    committed: &dyn Fn(StreamChannel) -> Option<String>,
+    committed: &dyn Fn(StreamChannel) -> Option<Vec<u8>>,
 ) -> Vec<ChannelFailure> {
     let mut failures = Vec::new();
     if captured.events != contract.events {
@@ -387,15 +413,44 @@ pub fn compare(
     failures
 }
 
+/// Splits a channel's raw bytes into lines the way `str::lines` splits text:
+/// on `\n`, with a trailing `\r` dropped from each line and no empty final
+/// line for a trailing `\n`.
+///
+/// Operating on bytes rather than `str` is what lets this serve the binary
+/// `dvi` channel and the text channels alike without lossily reencoding
+/// either: a text channel's bytes are valid UTF-8 by construction, and a
+/// binary channel's bytes are compared exactly as recorded, with only the
+/// *rendering* of a divergent line (below) falling back to a lossy decode
+/// for a human-readable report.
+fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    let trimmed = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+    trimmed
+        .split(|&byte| byte == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .collect()
+}
+
 /// Locates the first line at which two channel renderings differ, so a
 /// failure names what moved rather than printing two transcripts. `None`
 /// means the two sides match exactly.
-fn first_line_difference(declared: &str, observed: &str) -> Option<ChannelMismatch> {
+///
+/// Equality is decided on the raw bytes (`declared == observed` below, and
+/// each line compared as `&[u8]`), so a divergence cannot be masked by lossy
+/// UTF-8 replacement; only the *report* -- `ChannelMismatch`'s `expected`/
+/// `actual`, which exist to be read -- renders a differing line with
+/// [`String::from_utf8_lossy`].
+fn first_line_difference(declared: &[u8], observed: &[u8]) -> Option<ChannelMismatch> {
     if declared == observed {
         return None;
     }
-    let mut declared_lines = declared.lines();
-    let mut observed_lines = observed.lines();
+    let declared_lines = split_lines(declared);
+    let observed_lines = split_lines(observed);
+    let mut declared_lines = declared_lines.into_iter();
+    let mut observed_lines = observed_lines.into_iter();
     let mut line = 0;
     loop {
         line += 1;
@@ -403,10 +458,16 @@ fn first_line_difference(declared: &str, observed: &str) -> Option<ChannelMismat
             (None, None) => return None,
             (declared_line, observed_line) => {
                 if declared_line != observed_line {
+                    let render = |line: Option<&[u8]>| {
+                        line.map_or_else(
+                            || "<end of channel>".to_owned(),
+                            |bytes| String::from_utf8_lossy(bytes).into_owned(),
+                        )
+                    };
                     return Some(ChannelMismatch {
                         line,
-                        expected: declared_line.unwrap_or("<end of channel>").to_owned(),
-                        actual: observed_line.unwrap_or("<end of channel>").to_owned(),
+                        expected: render(declared_line),
+                        actual: render(observed_line),
                     });
                 }
             }

@@ -15,11 +15,11 @@ fn captured() -> CapturedChannels {
     CapturedChannels {
         events: 3,
         status: "clean".into(),
-        streams: [String::new(), String::new(), String::new(), String::new()],
+        streams: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
     }
 }
 
-fn no_files(_: StreamChannel) -> Option<String> {
+fn no_files(_: StreamChannel) -> Option<Vec<u8>> {
     None
 }
 
@@ -59,7 +59,7 @@ fn a_fatal_termination_is_reported_against_a_clean_declaration() {
 #[test]
 fn output_on_a_channel_declared_empty_fails() {
     let mut run = captured();
-    run.streams[1] = "! Undefined control sequence.\n".into();
+    run.streams[1] = b"! Undefined control sequence.\n".to_vec();
     assert_eq!(
         compare(&run, &contract(), &no_files),
         vec![ChannelFailure::NotEmpty {
@@ -72,10 +72,10 @@ fn output_on_a_channel_declared_empty_fails() {
 #[test]
 fn every_diverging_channel_is_reported_not_just_the_first() {
     let mut run = captured();
-    run.streams[0] = "terminal".into();
-    run.streams[1] = "log".into();
-    run.streams[2] = "page:0:abc".into();
-    run.streams[3] = "special:dvi:x".into();
+    run.streams[0] = b"terminal".to_vec();
+    run.streams[1] = b"log".to_vec();
+    run.streams[2] = b"page:0:abc".to_vec();
+    run.streams[3] = b"special:dvi:x".to_vec();
     let failures = compare(&run, &contract(), &no_files);
     assert_eq!(failures.len(), 4, "{failures:?}");
     assert!(
@@ -93,7 +93,7 @@ fn a_file_disposition_without_a_committed_file_fails() {
         authority: ChannelAuthority::UmberBaseline,
     };
     let mut run = captured();
-    run.streams[1] = "anything".into();
+    run.streams[1] = b"anything".to_vec();
     assert_eq!(
         compare(&run, &declared, &no_files),
         vec![ChannelFailure::MissingFile {
@@ -110,9 +110,9 @@ fn a_file_disposition_names_the_first_differing_line() {
         authority: ChannelAuthority::Oracle,
     };
     let mut run = captured();
-    run.streams[1] = "same\nmoved\n".into();
+    run.streams[1] = b"same\nmoved\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Log => Some("same\noriginal\n".to_owned()),
+        StreamChannel::Log => Some(b"same\noriginal\n".to_vec()),
         _ => None,
     };
     assert_eq!(
@@ -133,9 +133,9 @@ fn a_truncated_channel_reports_the_end_rather_than_matching() {
         authority: ChannelAuthority::Oracle,
     };
     let mut run = captured();
-    run.streams[0] = "one\n".into();
+    run.streams[0] = b"one\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Terminal => Some("one\ntwo\n".to_owned()),
+        StreamChannel::Terminal => Some(b"one\ntwo\n".to_vec()),
         _ => None,
     };
     assert_eq!(
@@ -171,9 +171,9 @@ fn an_xfail_channel_matching_its_pinned_divergence_passes() {
         actual: "special:dvi:wrong".into(),
     });
     let mut run = captured();
-    run.streams[3] = "special:dvi:wrong\n".into();
+    run.streams[3] = b"special:dvi:wrong\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
+        StreamChannel::Effects => Some(b"special:dvi:reference\n".to_vec()),
         _ => None,
     };
     assert_eq!(compare(&run, &declared, &committed), Vec::new());
@@ -191,9 +191,9 @@ fn an_xfail_channel_that_now_matches_the_reference_is_an_xpass() {
         actual: "special:dvi:wrong".into(),
     });
     let mut run = captured();
-    run.streams[3] = "special:dvi:reference\n".into();
+    run.streams[3] = b"special:dvi:reference\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
+        StreamChannel::Effects => Some(b"special:dvi:reference\n".to_vec()),
         _ => None,
     };
     assert_eq!(
@@ -218,9 +218,9 @@ fn an_xfail_channel_diverging_differently_is_a_changed_failure() {
     };
     declared.effects = xfail_effects(pinned.clone());
     let mut run = captured();
-    run.streams[3] = "special:dvi:different\n".into();
+    run.streams[3] = b"special:dvi:different\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Effects => Some("special:dvi:reference\n".to_owned()),
+        StreamChannel::Effects => Some(b"special:dvi:reference\n".to_vec()),
         _ => None,
     };
     assert_eq!(
@@ -250,9 +250,9 @@ fn an_xfail_channel_diverging_at_a_different_line_is_a_changed_failure() {
     };
     declared.effects = xfail_effects(pinned.clone());
     let mut run = captured();
-    run.streams[3] = "reference-one\nwrong-two\n".into();
+    run.streams[3] = b"reference-one\nwrong-two\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
-        StreamChannel::Effects => Some("reference-one\nreference-two\n".to_owned()),
+        StreamChannel::Effects => Some(b"reference-one\nreference-two\n".to_vec()),
         _ => None,
     };
     assert_eq!(
@@ -281,7 +281,7 @@ fn an_xfail_channel_without_a_committed_file_fails() {
         actual: "b".into(),
     });
     let mut run = captured();
-    run.streams[3] = "anything".into();
+    run.streams[3] = b"anything".to_vec();
     assert_eq!(
         compare(&run, &declared, &no_files),
         vec![ChannelFailure::MissingFile {

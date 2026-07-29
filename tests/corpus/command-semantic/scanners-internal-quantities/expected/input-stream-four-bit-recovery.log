@@ -1,0 +1,30 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**input-stream-four-bit-recovery.tex
+! Bad number (-1).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+(./input-stream-four-bit-recovery.tex
+! Bad number (16).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+
+\ordinary=
+! Bad number (1000000).
+Since I expected to read a number between 0 and 15,
+I changed this one to zero.
+! Undefined control sequence.
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+ )
+Output written on input-stream-four-bit-recovery.dvi (1 page, 128 bytes).

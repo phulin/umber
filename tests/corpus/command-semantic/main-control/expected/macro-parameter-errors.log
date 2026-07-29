@@ -1,3 +1,6 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**macro-parameter-errors.tex
+(./macro-parameter-errors.tex
 ! Parameters must be numbered consecutively.
 I've inserted the digit you should have used after the #.
 Type `1' to delete what you did use.
@@ -22,3 +25,5 @@ You meant to type ## instead of #, right?
 Or maybe a } was forgotten somewhere earlier, and things
 are all screwed up? I'm going to assume that you meant ##.
 
+ )
+No pages of output.

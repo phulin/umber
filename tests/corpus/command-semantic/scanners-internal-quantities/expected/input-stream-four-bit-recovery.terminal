@@ -1,8 +1,8 @@
-
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)
 ! Bad number (-1).
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
-
+(./input-stream-four-bit-recovery.tex
 ! Bad number (16).
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
@@ -11,8 +11,9 @@ I changed this one to zero.
 ! Bad number (1000000).
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
-! Undefined control sequence.? Type <return> to proceed, S to scroll future error messages,
-R to run without stopping, Q to run quietly,
-I to insert something, 
-H for help, X to quit.
 ! Undefined control sequence.
+! Undefined control sequence.
+ )
+(see the transcript file for additional information)
+Output written on input-stream-four-bit-recovery.dvi (1 page, 128 bytes).
+Transcript written on input-stream-four-bit-recovery.log.

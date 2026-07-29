@@ -1,6 +1,11 @@
-
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)
+(./read-missing-to.tex
 \target=
 ! Bad number (-1).
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
 ! Missing `to' inserted.
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on read-missing-to.log.

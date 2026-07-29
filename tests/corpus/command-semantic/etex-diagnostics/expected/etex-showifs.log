@@ -1,7 +1,11 @@
-
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**etex-showifs.tex
+(./etex-showifs.tex
 
 ### level 2: \iffalse\else entered on line 3
 ### level 1: \iftrue entered on line 2
 
 ! OK.
 
+ )
+No pages of output.

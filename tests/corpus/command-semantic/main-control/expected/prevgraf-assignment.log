@@ -1,3 +1,6 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**prevgraf-assignment.tex
+(./prevgraf-assignment.tex
 ! Missing { inserted.
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
@@ -21,3 +24,4 @@ Sorry, but I'm not programmed to handle this case;
 I'll just pretend that you didn't ask for it.
 If you're in the wrong mode, you might be able to
 return to the right one by typing `I}' or `I$' or `I\par'.
+)

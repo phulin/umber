@@ -10,6 +10,7 @@ sha2.workspace = true
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
 tex-oracle = { path = "../../crates/tex-oracle" }
+tex-out = { path = "../../crates/tex-out" }
 tex-state = { path = "../../crates/tex-state" }
 
 [dev-dependencies]

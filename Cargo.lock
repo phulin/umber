@@ -1179,6 +1179,7 @@ dependencies = [
  "tex-command",
  "tex-exec",
  "tex-oracle",
+ "tex-out",
  "tex-state",
 ]
 

@@ -1,4 +1,10 @@
-meaning-skip=\skip3 meaning-count=\count4 meaning-letter=the letter Q
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)
+(./show-meaning.tex meaning-skip=\skip3 meaning-count=\count4
+meaning-letter=the letter Q
 > \shown=macro:->\global \count 9=1.
 
 > \aliasskip=\skip3.
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on show-meaning.log.

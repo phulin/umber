@@ -43,8 +43,8 @@
       "channels": {
         "events": 64,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -134,8 +134,8 @@
       "channels": {
         "events": 115,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -208,8 +208,8 @@
       "channels": {
         "events": 75,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -246,8 +246,8 @@
       "channels": {
         "events": 93,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -304,8 +304,8 @@
       "channels": {
         "events": 39,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -353,8 +353,8 @@
       "channels": {
         "events": 13,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

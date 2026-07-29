@@ -1,3 +1,6 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**hyphenation-errors.tex
+(./hyphenation-errors.tex
 ! Improper \hyphenation will be flushed.
 Hyphenation exceptions must contain only letters
 and hyphens. But continue; I'll forgive and forget.
@@ -18,3 +21,5 @@ Proceed; I'll ignore the character I just read.
 ! Duplicate pattern.
 (See Appendix H.)
 
+ )
+No pages of output.

@@ -1,4 +1,6 @@
-
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**read-missing-to.tex
+(./read-missing-to.tex
 \target=
 ! Bad number (-1).
 Since I expected to read a number between 0 and 15,
@@ -7,3 +9,5 @@ I changed this one to zero.
 You should have said `\read<number> to \cs'.
 I'm going to look for the \cs now.
 
+ )
+No pages of output.

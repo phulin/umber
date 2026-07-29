@@ -62,7 +62,7 @@ fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<
         .as_ref()
         .expect("load_suite requires every case to declare a channel contract");
     let committed = |channel: StreamChannel| {
-        fs::read_to_string(channel_file(
+        fs::read(channel_file(
             &declared.domain_dir,
             &declared.case.id,
             channel,
@@ -203,6 +203,7 @@ fn state_projection_emits_only_requested_final_counts() {
         universe: Universe::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
+        dvi: Vec::new(),
         fatal: None,
     };
     let projection = Projection {
@@ -233,6 +234,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
         universe: Universe::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
+        dvi: Vec::new(),
         fatal: Some(FatalError::confusion("256 spans")),
     };
     let projection = Projection {

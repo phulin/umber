@@ -220,6 +220,12 @@ pub struct SemanticRun {
     pub universe: Universe,
     pub mode_transitions: Vec<Mode>,
     pub artifacts: Vec<ContentHash>,
+    /// The complete serialized `.dvi` file this run produced, or empty if it
+    /// shipped no pages. This is the same bytes §642's `finish_job` reports
+    /// the length of -- built with `tex_out::dvi::DviStreamWriter` over the
+    /// run's own [`tex_exec::PreparedDviPage::into_plan`] output, exactly the
+    /// recipe `umber::dvi_from_page_plans` uses.
+    pub dvi: Vec<u8>,
     /// TeX82 §93 `succumb`'s terminal state, when the job ended through
     /// §81's `jump_out` instead of running to `\end`.
     ///
@@ -936,17 +942,61 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             },
         );
     }
-    let source = control
-        .command_mut()
-        .register_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .map_err(|error| format!("source registration: {error:?}"))?;
+
+    // The oracle this corpus is measured against always runs
+    // `-interaction=scrollmode`. `scripts/run-minifixture-oracle.sh`'s
+    // "Interaction mode" comment works through why: it is the one mode that
+    // both tolerates the `\read`/`\pausing` cases that need `>nonstop_mode`
+    // *and* "omits error stops" (tex.web §1749) the way batch/nonstop do, so
+    // an error this simulation didn't anticipate still just prints and lets
+    // the run finish instead of demanding an unanswerable `?` prompt. This is
+    // set on the constructed `Universe` -- after the profile match above,
+    // because `EtexLoaded`/`Production` replace `universe` with one restored
+    // from a dumped format, and a format dump carries no interaction mode.
+    universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
+
+    // `EtexLoaded` and `Production` construct `control` past INITEX
+    // (`with_profile`/`new` rather than `tex82_initex`/`prepared_initex`), so
+    // `CanonicalMainControl::begin_job`'s `format_ident` -- which only knows
+    // how to print INITEX's `" (INITEX)"` -- refuses outright rather than
+    // guess a `(preloaded format=...)` name for a format this harness never
+    // actually names or dumps to a file (see `job::format_ident`'s doc
+    // comment). `scripts/run-minifixture-oracle.sh` documents the same gap
+    // from the other side: it cannot reproduce either profile at all, so
+    // there is no oracle output these 5 cases could be framed against
+    // anyway. The honest choice is to leave them exactly as unframed as they
+    // were before this module ran every case as a job, rather than fabricate
+    // a banner neither side can check.
+    let job_framed = matches!(
+        case.profile,
+        SessionProfile::Initex | SessionProfile::EtexInitex
+    );
+    if job_framed {
+        // §534/§536/§61: the start-up banner and the `**` line, which must
+        // precede the root file's own `(` (see `crate::job`'s doc comment on
+        // `begin_job`). `first_line` echoes what the oracle is invoked with
+        // on its command line -- the bare source filename, e.g.
+        // `show-box.tex`.
+        control.begin_job(&mut universe, &case.source);
+    }
+    let root = SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source));
+    let root = if job_framed {
+        // kpathsea resolves a same-directory file through `./`, so pdfTeX's
+        // §537 `a_make_name_string` records (and prints) `./show-box.tex`
+        // rather than the bare name `begin_job` was just given. Matching
+        // that leading `./` is what makes Umber's own `(` line comparable to
+        // the oracle's. An unframed run leaves the root unnamed, exactly as
+        // before this module existed: an unnamed registration queues no
+        // §537 `FileFramingEvent::Open` (see `tex_command::CommandState::
+        // push_source_level`), so it prints no orphan `(` without the
+        // banner that would normally precede it.
+        root.with_name(format!("./{}", case.source))
+    } else {
+        root
+    };
     control
-        .command_mut()
-        .open_registered_source(source)
-        .map_err(|error| format!("source opening: {error:?}"))?;
+        .register_root_source(root)
+        .map_err(|error| format!("source registration: {error:?}"))?;
     let mut recorder = Recorder::default();
     let mut mode_transitions = vec![control.current_mode()];
     for _ in 0..MAX_STEPS {
@@ -972,17 +1022,50 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                         u16::try_from(slot).expect("count slot fits in TeX82 register index"),
                     )
                 });
-                let artifacts = control
-                    .take_prepared_dvi_pages()
-                    .into_iter()
-                    .map(|page| page.hash())
-                    .collect();
+                let pages = control.take_prepared_dvi_pages();
+                let artifacts: Vec<ContentHash> = pages.iter().map(|page| page.hash()).collect();
+                // §1333/§1335 close a job only through `\end`/`\dump`
+                // reaching `MainControlStep::End`; `EndOfInput` is the
+                // engine running out of source with none of those, which
+                // tex.web's own outer loop never reaches either (it
+                // synthesizes a virtual `\end` first), so there is no §642
+                // report or transcript note to print here.
+                let dvi = if matches!(step, MainControlStep::End) && !pages.is_empty() {
+                    let plans: Vec<_> = pages
+                        .into_iter()
+                        .map(tex_exec::PreparedDviPage::into_plan)
+                        .collect();
+                    let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+                    for plan in &plans {
+                        writer
+                            .write_page_plan(plan)
+                            .map_err(|error| format!("dvi page serialization: {error:?}"))?;
+                    }
+                    writer
+                        .finish()
+                        .map_err(|error| format!("dvi finish: {error:?}"))?
+                } else {
+                    Vec::new()
+                };
+                // §1333's DVI/transcript report is itself framing (it closes
+                // out the banner `begin_job` printed), so it is gated on
+                // `job_framed` exactly like `begin_job` above -- an unframed
+                // run gets neither end.
+                if job_framed && matches!(step, MainControlStep::End) {
+                    let job_name = control.capabilities_mut().job_name().to_owned();
+                    let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
+                        file_name: format!("{job_name}.dvi"),
+                        byte_len: dvi.len() as u64,
+                    });
+                    control.finish_job(&mut universe, dvi_output);
+                }
                 return Ok(SemanticRun {
                     observations: recorder.0,
                     counts,
                     universe,
                     mode_transitions,
                     artifacts,
+                    dvi,
                     fatal: control.fatal_error(),
                 });
             }

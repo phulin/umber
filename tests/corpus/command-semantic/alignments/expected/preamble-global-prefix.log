@@ -1,0 +1,8 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**preamble-global-prefix.tex
+(./preamble-global-prefix.tex
+! You can't use a prefix with `y'.
+I'll pretend you didn't say \long or \outer or \global.
+
+ )
+Output written on preamble-global-prefix.dvi (1 page, 128 bytes).

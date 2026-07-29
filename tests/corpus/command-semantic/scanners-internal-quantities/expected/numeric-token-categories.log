@@ -1,0 +1,12 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**numeric-token-categories.tex
+(./numeric-token-categories.tex
+! Undefined control sequence.
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+ )
+Output written on numeric-token-categories.dvi (1 page, 128 bytes).

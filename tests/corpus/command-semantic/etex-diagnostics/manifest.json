@@ -57,8 +57,8 @@
       "channels": {
         "events": 154,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -178,8 +178,8 @@
       "channels": {
         "events": 27,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -207,8 +207,8 @@
       "channels": {
         "events": 61,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -249,8 +249,8 @@
       "channels": {
         "events": 152,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -277,8 +277,8 @@
       "channels": {
         "events": 76,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "file", "authority": "umber-baseline" },
         "effects": { "kind": "empty" }
       },
@@ -306,8 +306,8 @@
       "channels": {
         "events": 187,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -338,8 +338,8 @@
       "channels": {
         "events": 90,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -386,8 +386,8 @@
       "channels": {
         "events": 95,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -508,8 +508,8 @@
       "channels": {
         "events": 352,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

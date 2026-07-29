@@ -190,6 +190,27 @@ engine_args_for_profile() {
 # to keep the runner's behavior uniform and easy to reason about.
 interaction_mode=scrollmode
 
+# Job-startup notices this runner's texmf.cnf defaults would otherwise add.
+#
+# The plain `web2c/texmf.cnf` this checkout's kpathsea reads from enables the
+# restricted shell escape and `%&`-line parsing by default, so an unflagged
+# run prints two lines TeX82 has no analogue for:
+#
+#   ␣restricted␣\write18␣enabled.
+#   ␣%&-line␣parsing␣enabled.
+#
+# `docs/job_framing.md`'s "Why the notices are configuration, not output"
+# section states the rule this follows: when the two engines' output differs
+# because they were *configured* differently, fix the configuration rather
+# than normalize the difference away. Umber could print both lines
+# unconditionally and match, but both would be lies -- the minifixture world
+# runs with shell escape disabled and implements no `%&` first-line parsing
+# at all -- so the honest fix is here, on the oracle side that is actually
+# configured to enable them: `-no-shell-escape` and `-no-parse-first-line`
+# turn both off, which is the configuration Umber actually is, and neither
+# engine ends up printing either notice.
+job_flags=(-no-shell-escape -no-parse-first-line)
+
 domains() {
   LC_ALL=C find "$corpus_root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort
 }
@@ -263,6 +284,7 @@ run_one_case() {
         SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
         TEXMFCNF="$texmfcnf_dir" \
         "$executable" "${engine_args[@]}" "-interaction=${interaction_mode}" \
+        "${job_flags[@]}" \
         "$source_name" >terminal.txt 2>&1
   ) || status="$?"
   printf '%s\n' "$status" >"${run_dir}/status.txt"

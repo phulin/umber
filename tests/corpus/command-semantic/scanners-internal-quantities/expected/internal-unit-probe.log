@@ -1,0 +1,19 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**internal-unit-probe.tex
+(./internal-unit-probe.tex
+! Missing $ inserted.
+<inserted text>
+<to be read again>
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+! Incompatible glue units.
+I'm going to assume that 1mu=1pt when they're mixed.
+
+
+! Missing $ inserted.
+<inserted text>
+<to be read again>
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+ )
+Output written on internal-unit-probe.dvi (1 page, 128 bytes).

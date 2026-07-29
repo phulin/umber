@@ -1,6 +1,12 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)
+(./hyphenation-errors.tex
 ! Improper \hyphenation will be flushed.
 ! Not a letter.
 ! Bad \patterns.
 ! Nonletter.
 ! Duplicate pattern.
 ! Duplicate pattern.
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on hyphenation-errors.log.

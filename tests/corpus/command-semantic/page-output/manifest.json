@@ -34,8 +34,8 @@
       "channels": {
         "events": 81,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -72,8 +72,8 @@
       "channels": {
         "events": 146,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "file", "authority": "umber-baseline" },
         "effects": { "kind": "empty" }
       },
@@ -111,8 +111,8 @@
       "channels": {
         "events": 90,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -142,13 +142,13 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:0ec56fdd67b5453aa3c5b5ba5508a909731dffc6f6e531e5976188bf2fc61ed6"
+        "artifact:ccb78ed0669389e813b202a8e2122e0d44d9450fe70e8285b3556f2dec2bf6fd"
       ],
       "channels": {
         "events": 107,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "file", "authority": "umber-baseline" },
         "effects": { "kind": "empty" }
       },
@@ -179,13 +179,13 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:1c2132a96ee7b38d2f28b946dc10b15bbf701c4df5a39daab85e059b36e38e50"
+        "artifact:0af1317817f622978119981b4795c71f9fa0a80278cd71034ec19e78844fecd5"
       ],
       "channels": {
         "events": 141,
         "status": "clean",
-        "terminal": { "kind": "empty" },
-        "log": { "kind": "empty" },
+        "terminal": { "kind": "file", "authority": "umber-baseline" },
+        "log": { "kind": "file", "authority": "umber-baseline" },
         "dvi": { "kind": "file", "authority": "umber-baseline" },
         "effects": { "kind": "empty" }
       },

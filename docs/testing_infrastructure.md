@@ -243,8 +243,22 @@ test binary, so the regeneration path drives exactly the code the gate does.
 The test binary holds only the assertions.
 
 The runner drives each input through instrumented
-`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile. It compares
-the declared concise projection of committed command observations or selected
+`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile. A run is a
+real TeX job, not a bare command loop: it is framed with
+`CanonicalMainControl::begin_job`/`finish_job` exactly the way
+`docs/job_framing.md` describes -- the start-up banner, the `**` line, the
+root source registered by name so §537/§362 bracket it in `(name`/`)`, and
+§642's page report and transcript line once the run ends -- and it runs in
+`InteractionMode::Scroll`, matching the oracle runner's own
+`-interaction=scrollmode` (see that script's "Interaction mode" comment for
+why: scrollmode is the one mode that both tolerates the `\read`/`\pausing`
+cases this corpus feeds terminal answers to and omits the error-stop prompt
+an undeclared divergence would otherwise demand an answer for). The two
+profiles built past INITEX (`etex-loaded`, `production`) cannot take
+`begin_job`'s INITEX-only banner, and the oracle runner cannot reproduce
+either profile at all, so their 5 cases run unframed, exactly as every case
+did before this framing existed. The runner compares the declared concise
+projection of committed command observations or selected
 canonical-main-control boundaries -- mode changes, final box-register node
 outlines, and committed shipout artifact identities -- and, separately, the
 per-channel contract described below. An xfail must link a concrete Beads bug
@@ -314,8 +328,28 @@ run produces, and the gate compares all of them alongside the projection:
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
 - `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
   A committed `expected/<case-id>.<channel>` file is required for the latter
-  two. The corpus commits 118 such files today: 53 terminal, 39 log, and 26
-  dvi.
+  two. The corpus commits 274 such files today: 124 terminal, 124 log, and 26
+  dvi. Terminal and log both grew from a minority of cases to nearly every one
+  once job framing gave every run a banner, a `**` line, and a page report or
+  "No pages of output." to write, where previously only a case with its own
+  diagnostic output produced either channel at all.
+
+The `dvi` channel is the run's complete serialized `.dvi` file, built with
+`tex_out::dvi::DviStreamWriter` over the same `DviPagePlan`s
+`umber::dvi_from_page_plans` assembles, not a description of one. It used to
+be a `page:<index>:<content-hash>` line per shipped page: a hash listing that
+could never be checked against the oracle's own `.dvi` file, since there is
+no oracle hash to compare it to -- only oracle bytes. Byte-exact comparison
+against a pinned reference engine is the whole point of this corpus
+(`umber2-alfh.1`), so the `dvi` channel had to become the same _kind_ of
+object the oracle's `.dvi` file is before that comparison could exist at all.
+Because those bytes are binary rather than line-oriented text,
+`CapturedChannels`' four stream channels are `Vec<u8>` rather than `String`,
+and the channel-content comparison decides byte equality on the raw bytes
+first, falling back to a lossy UTF-8 rendering only to describe a divergent
+line in a failure report -- so a real divergence in binary content can never
+be masked by a lossy decode the way comparing pre-decoded `String`s would
+risk.
 
 A case with no `channels` block fails validation. The one exemption is a case
 whose engine run does not complete and therefore has no channels to record;
@@ -326,11 +360,23 @@ and `main-control/read-to-definition` -- and
 `only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` pins that
 set by name and re-runs each to prove it still cannot run.
 
-Every committed channel records an `authority` for its bytes. All 118 are
+Every committed channel records an `authority` for its bytes. All 274 are
 `umber-baseline` today: they pin the channel against silent drift and are still
 owed an oracle adjudication, which `authority: "oracle"` records once a
 reference engine has produced them. The count is greppable, so the remaining
-work is visible rather than assumed.
+work is visible rather than assumed. Promoting them is `umber2-alfh.1`, which
+job framing unblocks but does not itself perform: comparing the regenerated
+`terminal`/`log` channels against a pinned pdfTeX 1.40.27 oracle capture
+(`scripts/run-minifixture-oracle.sh`, after only the documented clock
+normalization) now finds 29 of 122 comparable log channels and 0 of 122
+comparable terminal channels byte-identical, up from 0 of 39 log channels
+before this framing existed. Of the remainder, 30 log divergences are
+`umber2-alfh.8` (missing `show_context`) and the rest split across several
+gaps this framing did not close: e-TeX's own "entering extended mode" banner
+line, pdfTeX's `[<count0>...]` page-shipment marker, the bare `*` prompt
+before an extra terminal read, and (on every terminal channel) `begin_job`
+writing the terminal banner without INITEX's `(INITEX)` suffix that the log
+banner and the oracle's own terminal both carry.
 
 **A committed `expected/<case-id>.<channel>` file for an `xfail` channel is
 understood to hold the reference engine's bytes, exactly like a `file`

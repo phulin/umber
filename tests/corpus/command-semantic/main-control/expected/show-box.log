@@ -1,11 +1,9 @@
-
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  1 JAN 1970 00:00
+**show-box.tex (./show-box.tex
 > \box0=
 \hbox(0.0+0.0)x1.0 []
 
 ! OK.
-This isn't an error message; I'm just \showing something.
-Type `I\show...' to show more (e.g., \show\cs,
-\showthe\count10, \showbox255, \showlists).
-And type `I\tracingonline=1\show...' to show boxes and
-lists on your terminal as well as in the transcript file.
 
+ )
+No pages of output.
