@@ -2004,6 +2004,9 @@ impl CommandProcessor<'_> {
     fn fetch_internal_integer(&self, integer: InternalInteger) -> i32 {
         match integer {
             InternalInteger::InputLineNumber => self.command.input.current_file_line_number(),
+            // e-TeX 2.6 `etex.ch` [26.424] reads the effective tail of the
+            // current list, not merely the page builder's remembered tail.
+            InternalInteger::LastNodeType => self.host.last_node_type(),
             InternalInteger::CurrentGroupLevel => self.state.current_group_values().0,
             InternalInteger::CurrentGroupType => self.state.current_group_values().1,
             InternalInteger::CurrentIfLevel => self.command.conditions.current_etex_values().0,

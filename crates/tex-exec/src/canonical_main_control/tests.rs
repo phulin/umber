@@ -55,6 +55,54 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
+fn macro_character_text(stores: &Universe, name: &str) -> String {
+    let symbol = stores.symbol(name).expect("macro control sequence");
+    let meaning = stores.macro_meaning(symbol).expect("macro meaning");
+    stores
+        .tokens(meaning.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
+    // e-TeX 2.6 `etex.ch` [26.424]: `find_effective_tail` returns -1 for an
+    // empty list, otherwise the e-TRIP node code of the real current tail.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\xdef\outerempty{\the\lastnodetype}
+          \hbox{\xdef\hempty{\the\lastnodetype}}
+          \hbox{\vrule\xdef\hrule{\the\lastnodetype}}
+          \hbox{\kern1pt\xdef\hkern{\the\lastnodetype}}
+          \vbox{\hbox{}\xdef\vboxnode{\the\lastnodetype}}
+          $\mathord{1}\xdef\mathnode{\the\lastnodetype}$
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    for (name, expected) in [
+        ("outerempty", "-1"),
+        ("hempty", "-1"),
+        ("hrule", "3"),
+        ("hkern", "12"),
+        ("vboxnode", "1"),
+        ("mathnode", "15"),
+    ] {
+        assert_eq!(macro_character_text(&stores, name), expected, "{name}");
+    }
+}
+
 #[test]
 fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     let mut stores = Universe::new();

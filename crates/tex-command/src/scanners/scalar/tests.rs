@@ -3117,6 +3117,26 @@ fn internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels() {
 }
 
 #[test]
+fn etex_last_node_type_uses_the_executor_effective_tail_capability() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("lastnodetype").symbol();
+    universe.set_meaning(
+        symbol,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::LastNodeType),
+    );
+    let token = Token::Cs(symbol);
+
+    for expected in [-1, 0, 1, 10, 13, 15] {
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![token], |host| {
+                host.set_last_node_type(expected);
+            }),
+            InternalValue::Integer(expected)
+        );
+    }
+}
+
+#[test]
 fn internal_font_dimensions_cover_first_last_missing_and_named_font_selection() {
     use tex_state::font::NULL_FONT;
     use tex_state::meaning::UnexpandablePrimitive as P;

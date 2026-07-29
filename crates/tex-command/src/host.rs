@@ -121,6 +121,7 @@ pub struct CommandHostCapabilities {
     prev_depth: Option<Scaled>,
     prev_graf: Option<i32>,
     last_node: Option<LastNodeItem>,
+    last_node_type: i32,
 }
 
 impl Default for CommandHostCapabilities {
@@ -137,6 +138,7 @@ impl Default for CommandHostCapabilities {
             prev_depth: None,
             prev_graf: None,
             last_node: None,
+            last_node_type: -1,
         }
     }
 }
@@ -245,6 +247,11 @@ impl CommandHostCapabilities {
     pub fn set_last_node(&mut self, last_node: Option<LastNodeItem>) {
         self.last_node = last_node;
     }
+
+    /// Supplies e-TeX 2.6 `etex.ch` [26.424]'s effective-tail node code.
+    pub fn set_last_node_type(&mut self, last_node_type: i32) {
+        self.last_node_type = last_node_type;
+    }
 }
 
 /// A non-owning host-capability boundary for one command-processor operation.
@@ -307,6 +314,11 @@ impl<'a> CommandHostContext<'a> {
     #[must_use]
     pub(crate) const fn last_node(&self) -> Option<LastNodeItem> {
         self._capabilities.last_node
+    }
+
+    #[must_use]
+    pub(crate) const fn last_node_type(&self) -> i32 {
+        self._capabilities.last_node_type
     }
 }
 

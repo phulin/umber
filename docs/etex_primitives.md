@@ -45,9 +45,12 @@ enquiry `\ifincsname` is a pdfTeX 1.40.27 primitive and remains undefined in
 the e-TeX 2.6 profile. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`, and
 `\currentifbranch` read exact resumable group/conditional state.
-`\lastnodetype` is implemented from the effective current-list/page tail with
-the manual/e-TRIP node codes. `\iffontchar` reads the same immutable metrics
-as typesetting and the font dimension enquiries. Malformed font selectors use
+`\lastnodetype` is implemented from `etex.ch` [26.424]'s effective tail:
+inner-mode enquiries read the live current list, including an unmaterialized
+horizontal character run, while outer vertical mode follows the contribution
+tail and page-builder memo. Empty lists return -1 and other tails use the
+manual/e-TRIP node codes. `\iffontchar` reads the same immutable metrics as
+typesetting and the font dimension enquiries. Malformed font selectors use
 TeX's `back_error` recovery: they diagnose the missing identifier, substitute
 the null font, and leave the offending token for the following number scanner.
 

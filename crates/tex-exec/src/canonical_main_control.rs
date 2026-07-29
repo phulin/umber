@@ -702,6 +702,8 @@ impl CanonicalMainControl {
             .set_prev_graf(Some(self.modes.enclosing_vertical_prev_graf()));
         self.capabilities
             .set_last_node(self.last_node_value(stores));
+        self.capabilities
+            .set_last_node_type(self.last_node_type_value(stores));
     }
 
     /// TeX82 §424's "Fetch an item in the current node, if appropriate": the
@@ -740,6 +742,26 @@ impl CanonicalMainControl {
             .nodes()
             .last()
             .and_then(|node| Self::classify_last_node(stores, node))
+    }
+
+    /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
+    /// `\lastnodetype`.
+    fn last_node_type_value(&self, stores: &Universe) -> i32 {
+        if is_outer_vertical(&self.modes) {
+            return stores
+                .page_contribution_tail()
+                .map_or_else(|| stores.page_last_node_type(), Node::etex_type);
+        }
+        // Batched horizontal characters are already semantic character nodes
+        // even though Umber has not materialized their shaped run yet.
+        if self.modes.current_list().pending_hchars().is_some() {
+            return 0;
+        }
+        self.modes
+            .current_list()
+            .nodes()
+            .last()
+            .map_or(-1, Node::etex_type)
     }
 
     /// Classifies one real node as a `\lastpenalty`/`\lastkern`/`\lastskip`
