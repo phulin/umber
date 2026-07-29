@@ -931,7 +931,7 @@
       ],
       "stimulus": [
         "Phase 2 unit `fin_align_orders_groups_packing_pop_and_insertion` and semantic case `alignment-finish-orchestration`.",
-        "Committed command-semantic case `finish-orchestration` passes the happy-path group-restoration projection; it does not exercise the missing-group confusion branches tracked by umber2-16zz."
+        "Committed command-semantic case `finish-orchestration` passes the happy-path group-restoration projection; direct typed-delivery coverage exercises both missing-group confusion branches."
       ],
       "expected_observations": [
         "The two align groups are removed before width work; pop_alignment occurs after the prototype is freed and before environment insertion."
@@ -944,11 +944,10 @@
         "Boundary: zero and nonzero display_indent, empty and nonempty completed alignment lists."
       ],
       "recovery_cases": [
-        "Recovery: a missing expected align_group invokes TeX82 confusion(align1) or confusion(align0) at the corresponding check.",
-        "The passing happy-path semantic case does not cover either missing-group confusion branch; umber2-16zz remains open until both are directly exercised and fixed."
+        "Recovery: a missing expected align_group invokes TeX82 confusion(align1) or confusion(align0) at the corresponding check."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "rust-unit+semantic-minifixture+planned-recovery",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/execution/tests.rs",
@@ -967,19 +966,15 @@
           "test": "declared_command_semantic_cases_match",
           "cases": [
             "finish-orchestration passes with count:0=0",
-            "happy-path alignment groups restore before environment insertion",
-            "missing-group confusion recovery remains linked to umber2-16zz"
+            "happy-path alignment groups restore before environment insertion"
           ]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-16zz",
-      "planned_coverage": [
+        },
         {
-          "path": "crates/tex-exec/src/align/widths/tests.rs",
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "fin_align_missing_groups_report_align1_and_align0_confusion"
         }
-      ]
+      ],
+      "status": "covered"
     },
     {
       "id": "tex82.align.resolve-column-span-widths",

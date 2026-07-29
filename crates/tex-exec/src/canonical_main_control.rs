@@ -9123,6 +9123,21 @@ fn leave_alignment_save_level(
         .map_err(|_| ExecError::MissingToken { context })
 }
 
+/// TeX82 §800's internal save-stack checks at the start of `fin_align`.
+///
+/// Unlike an ordinary group-closing command, reaching either check without
+/// the expected `align_group` means the engine's own alignment state is
+/// inconsistent. TeX therefore calls `confusion`, with a distinct site for
+/// the entry level and the whole-alignment level.
+fn leave_fin_align_save_level(
+    stores: &mut Universe,
+    confusion_site: &'static str,
+) -> Result<Vec<Token>, ExecError> {
+    stores
+        .leave_group_with_kind(GroupKind::Align)
+        .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
+}
+
 fn replay_alignment_mode(kind: AlignmentKind) -> Mode {
     match kind {
         AlignmentKind::HAlign => Mode::InternalVertical,
@@ -11820,8 +11835,8 @@ fn apply_scanned_step(
             // |align_group| was for individual entries", then "that
             // |align_group| was for the whole alignment" -- before it
             // determines the column widths and packages the prototype box.
-            let entry_aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
-            let alignment_aftergroup = leave_alignment_save_level(stores, "alignment group")?;
+            let entry_aftergroup = leave_fin_align_save_level(stores, "align1")?;
+            let alignment_aftergroup = leave_fin_align_save_level(stores, "align0")?;
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");

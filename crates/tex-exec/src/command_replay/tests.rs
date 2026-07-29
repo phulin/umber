@@ -6428,6 +6428,67 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
 }
 
 #[test]
+fn fin_align_missing_groups_report_align1_and_align0_confusion() {
+    fn finish_with_live_align_groups(group_count: usize) -> ExecError {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+
+        apply_scanned_step(
+            ScannedStep::BeginAlignment { vertical: false },
+            &mut universe,
+            &mut control.modes,
+            &mut control.next_alignment_identity,
+            &mut control.active_alignment,
+            &mut CommandMachine {
+                state: &mut control.command,
+                runtime: &mut control.runtime,
+                fuel: &mut control.fuel,
+                capabilities: &mut control.capabilities,
+                observations: &mut control.operation_observations,
+                initex: control.initex,
+            },
+            &mut control.boxes,
+            &mut control.prepared_dvi_pages,
+        )
+        .expect("typed alignment begins");
+        let alignment = control.active_alignment().expect("alignment is active");
+        for _ in 0..group_count {
+            universe.enter_group_with_kind(tex_state::GroupKind::Align);
+        }
+
+        apply_scanned_step(
+            // TeX82 §37's align_peek has delivered the alignment-closing
+            // right brace. No raw brace is needed at this typed boundary.
+            ScannedStep::AlignmentFinish { alignment },
+            &mut universe,
+            &mut control.modes,
+            &mut control.next_alignment_identity,
+            &mut control.active_alignment,
+            &mut CommandMachine {
+                state: &mut control.command,
+                runtime: &mut control.runtime,
+                fuel: &mut control.fuel,
+                capabilities: &mut control.capabilities,
+                observations: &mut control.operation_observations,
+                initex: control.initex,
+            },
+            &mut control.boxes,
+            &mut control.prepared_dvi_pages,
+        )
+        .expect_err("missing fin_align save level is an internal invariant failure")
+    }
+
+    assert!(matches!(
+        finish_with_live_align_groups(0),
+        ExecError::Fatal(FatalError::Confusion { site: "align1" })
+    ));
+    assert!(matches!(
+        finish_with_live_align_groups(1),
+        ExecError::Fatal(FatalError::Confusion { site: "align0" })
+    ));
+}
+
+#[test]
 fn canonical_alignment_captures_completed_cell_material_before_fin_align() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
