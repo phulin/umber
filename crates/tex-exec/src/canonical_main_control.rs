@@ -25,7 +25,7 @@ use tex_command::{
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
-    ObservedToken, ParameterClass, canonical_names::glue_order_name,
+    ObservedToken, ParameterClass, TokenListRecord, canonical_names::glue_order_name,
     parameter_mutation_key_for_dialect,
 };
 use tex_state::GeometryObservation;
@@ -2832,6 +2832,9 @@ impl CanonicalMainControl {
                 if let Some(resume) = self.command.alignment_resume_observation() {
                     records.push(CommandObservation::Alignment(resume));
                 }
+            }
+            if let Some(protected) = protected_macro_definition_observation(&scanned, stores) {
+                records.push(CommandObservation::TokenList(protected));
             }
             if let Some(mutation) = mutation {
                 records.push(CommandObservation::Mutation(mutation.resolve(stores)));
@@ -8443,6 +8446,7 @@ fn applied_mutation_observation(
         }
         ScannedStep::MacroDefinition {
             target,
+            flags,
             parameter_text,
             replacement_text,
             global,
@@ -8451,7 +8455,8 @@ fn applied_mutation_observation(
             target: "meaning",
             value: "macro definition".into(),
             key: Some(stores.resolve(*target).to_owned()),
-            tokens: Some(observed_macro_body(
+            tokens: Some(observed_stored_macro_body(
+                *flags,
                 parameter_text.token_list(),
                 replacement_text.token_list(),
                 stores,
@@ -8974,6 +8979,58 @@ fn meaning_mutation_value(
             None,
         ),
     }
+}
+
+/// e-TeX change section [49] inserts `protected_token` at the front of a
+/// protected macro's stored body immediately before `define`. The reference
+/// semantic seam reports the unmarked body at that insertion boundary; the
+/// following meaning mutation reports the actual marked stored body.
+fn protected_macro_definition_observation(
+    scanned: &ScannedStep,
+    stores: &Universe,
+) -> Option<TokenListRecord> {
+    let ScannedStep::MacroDefinition {
+        flags,
+        parameter_text,
+        replacement_text,
+        ..
+    } = scanned
+    else {
+        return None;
+    };
+    flags
+        .contains(MeaningFlags::PROTECTED)
+        .then(|| TokenListRecord {
+            transition: "complete",
+            purpose: "protected_macro",
+            tokens: observed_macro_body(
+                parameter_text.token_list(),
+                replacement_text.token_list(),
+                stores,
+            ),
+        })
+}
+
+/// The macro body as stored by TeX82 §294 and e-TeX change section [49].
+fn observed_stored_macro_body(
+    flags: MeaningFlags,
+    parameter_text: TokenListId,
+    replacement_text: TokenListId,
+    stores: &Universe,
+) -> Vec<ObservedToken> {
+    let mut tokens = observed_macro_body(parameter_text, replacement_text, stores);
+    if flags.contains(MeaningFlags::PROTECTED) {
+        // e-TeX's `protected_token` is `other_token + "1"` where
+        // `other_token` is command/category 14 (`comment`) times 256.
+        tokens.insert(
+            0,
+            ObservedToken::Character {
+                character: '\u{1}',
+                catcode: tex_state::token::Catcode::Comment,
+            },
+        );
+    }
+    tokens
 }
 
 /// §294's stored macro body: parameter text, the separating `end_match`, then

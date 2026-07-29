@@ -4878,6 +4878,156 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
+/// e-TeX change section [49] inserts `protected_token` into the stored macro
+/// body after `scan_toks` completes and before `define`. The semantic trace
+/// therefore contains both the unmarked insertion-boundary body and the
+/// marked meaning mutation, in that order.
+#[test]
+fn protected_definition_observes_insertion_before_marked_meaning_mutation() {
+    for (profile, source, global) in [
+        (
+            CommandProfile::ETEX26,
+            br"\protected\def\p#1{A#1}\end".as_slice(),
+            false,
+        ),
+        (
+            CommandProfile::PDFTEX14027,
+            br"\global\protected\def\p#1{A#1}\end".as_slice(),
+            true,
+        ),
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        tex_command::install_tex82_expandable_primitives(&mut universe);
+        tex_command::install_etex_expandable_primitives(&mut universe);
+        crate::install_unexpandable_primitives(&mut universe);
+        crate::install_etex_unexpandable_primitives(&mut universe);
+        let mut control = CanonicalMainControl::prepared_initex(profile);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("protected definition"),
+            ReplayStep::Continue
+        );
+
+        let tail = observations
+            .0
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    CommandObservation::TokenList(list)
+                        if matches!(list.purpose, "macro_replacement" | "protected_macro")
+                ) || matches!(event, CommandObservation::Mutation(mutation)
+                    if mutation.target == "meaning"
+                        && mutation.key.as_deref() == Some("p"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            matches!(
+                tail.as_slice(),
+                [
+                    CommandObservation::TokenList(replacement),
+                    CommandObservation::TokenList(protected),
+                    CommandObservation::Mutation(mutation),
+                ] if replacement.purpose == "macro_replacement"
+                    && replacement.tokens == [
+                        ObservedToken::Character {
+                            character: 'A',
+                            catcode: tex_state::token::Catcode::Letter,
+                        },
+                        ObservedToken::Parameter(1),
+                    ]
+                    && protected.purpose == "protected_macro"
+                    && protected.tokens == [
+                        ObservedToken::MacroMatch,
+                        ObservedToken::MacroEndMatch,
+                        ObservedToken::Character {
+                            character: 'A',
+                            catcode: tex_state::token::Catcode::Letter,
+                        },
+                        ObservedToken::Parameter(1),
+                    ]
+                    && mutation.tokens.as_deref() == Some(&[
+                        ObservedToken::Character {
+                            character: '\u{1}',
+                            catcode: tex_state::token::Catcode::Comment,
+                        },
+                        ObservedToken::MacroMatch,
+                        ObservedToken::MacroEndMatch,
+                        ObservedToken::Character {
+                            character: 'A',
+                            catcode: tex_state::token::Catcode::Letter,
+                        },
+                        ObservedToken::Parameter(1),
+                    ])
+                    && mutation.global == global
+            ),
+            "unexpected protected-definition observations for {profile:?}: filtered={tail:#?}, all={:#?}",
+            observations.0
+        );
+    }
+}
+
+/// TeX82 definitions and unprotected e-TeX definitions never pass through
+/// change section [49]'s protected-marker insertion seam.
+#[test]
+fn ordinary_definitions_do_not_observe_or_store_protected_marker() {
+    for profile in [
+        CommandProfile::TEX82,
+        CommandProfile::ETEX26,
+        CommandProfile::PDFTEX14027,
+    ] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        tex_command::install_tex82_expandable_primitives(&mut universe);
+        crate::install_unexpandable_primitives(&mut universe);
+        if profile.capabilities().supports_etex() {
+            tex_command::install_etex_expandable_primitives(&mut universe);
+            crate::install_etex_unexpandable_primitives(&mut universe);
+        }
+        let mut control = CanonicalMainControl::prepared_initex(profile);
+        register_source(&mut control, br"\def\p{}\end");
+        let mut observations = ObservationRecorder::default();
+
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("ordinary definition"),
+            ReplayStep::Continue
+        );
+        assert!(
+            !observations
+                .0
+                .iter()
+                .any(|event| matches!(event, CommandObservation::TokenList(list)
+                if list.purpose == "protected_macro"))
+        );
+        let mutation = observations
+            .0
+            .iter()
+            .find_map(|event| match event {
+                CommandObservation::Mutation(mutation)
+                    if mutation.target == "meaning" && mutation.key.as_deref() == Some("p") =>
+                {
+                    Some(mutation)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "definition mutation is observed for {profile:?}: {:#?}",
+                    observations.0
+                )
+            });
+        assert_eq!(
+            mutation.tokens.as_deref(),
+            Some([ObservedToken::MacroEndMatch].as_slice())
+        );
+    }
+}
+
 #[test]
 fn canonical_toksdef_projects_its_committed_named_register_meaning() {
     let mut universe = Universe::new_with_plain_catcodes();
