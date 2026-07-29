@@ -79,7 +79,8 @@ The backend-action row is partial because registration and retired-executor
 coverage do not establish canonical command-core coverage. The canonical
 `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`,
 `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont`,
-`\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, and `\pdfoutline` are
+`\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfoutline`, and
+`\pdfdest` are
 complete.
 pdftex.web §§1527 and 1594–1598 make the first five operand-free any-mode
 commands that append ordered whatsits, with their accessibility or
@@ -104,6 +105,14 @@ before allocating the action, item, and title identities in source order.
 DVI-mode rejection occurs before operand scanning; TeX assignment prefixes
 are rejected, ordinary grouping does not restore an accepted outline, and
 engine checkpoints restore both the input and the document-object ledger.
+
+pdftex.web §§1524 and 1565 make `\pdfdest` an any-mode typed whatsit. DVI-mode
+rejection precedes allocation and every operand scan; assignment prefixes are
+rejected, ordinary grouping does not remove an appended destination, and
+engine checkpoints restore both its current-list node and the unconsumed input.
+The shared scanner and positioned PDF traversal continue to own the complete
+identifier, destination-kind, duplicate, coordinate, and backend contracts
+recorded in `pdftex_navigation.md`.
 
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in

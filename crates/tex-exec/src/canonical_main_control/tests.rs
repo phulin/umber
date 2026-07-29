@@ -392,6 +392,181 @@ fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_destination_control(stores: &mut Universe) -> CanonicalMainControl {
+    let destination = stores.intern("pdfdest");
+    stores.set_meaning(
+        destination,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfDest),
+    );
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_destination_is_any_mode_ordered_typed_material() {
+    // pdftex.web §§1524 and 1565: `\pdfdest` is an any-mode extension that
+    // appends one typed whatsit after scanning its complete destination.
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_destination_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(
+            &mut control,
+            br"\pdfdest struct 9 name{target} fitr width 2pt height 3pt depth 4pt",
+        );
+        assert_eq!(
+            control.step(&mut stores).expect("destination command"),
+            MainControlStep::Continue
+        );
+        let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
+            control.modes.current_list().nodes()
+        else {
+            panic!(
+                "mode {mode:?}: expected one destination, got {:?}",
+                control.modes.current_list().nodes()
+            );
+        };
+        assert_eq!(destination.structure, Some(9));
+        assert!(matches!(
+            destination.kind,
+            tex_state::node::PdfDestinationKind::FitRectangle(dimensions)
+                if dimensions.width == Some(Scaled::from_raw(2 * Scaled::UNITY))
+                    && dimensions.height == Some(Scaled::from_raw(3 * Scaled::UNITY))
+                    && dimensions.depth == Some(Scaled::from_raw(4 * Scaled::UNITY))
+        ));
+        assert!(matches!(
+            destination.identifier,
+            tex_state::PdfActionIdentifier::Name(_)
+        ));
+    }
+}
+
+#[test]
+fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
+    // pdftex.web §1565 calls `check_pdfoutput` before allocating the whatsit
+    // or scanning `struct`, the identifier, the kind, or the rule dimensions.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_destination_control(&mut stores);
+    register_source(&mut control, br"\global\pdfdest name{prefixed} fit");
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert!(control.modes.current_list().nodes().is_empty());
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("replayed destination command"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.modes.current_list().nodes().len(), 1);
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi = pdftex_destination_control(&mut dvi_stores);
+    register_source(
+        &mut dvi,
+        br"\pdfdest struct 7 name{retry} fitr width 5pt height 6pt depth 7pt",
+    );
+    assert!(matches!(
+        dvi.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfdest"))
+    ));
+    assert!(dvi.modes.current_list().nodes().is_empty());
+    dvi_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        dvi.step(&mut dvi_stores)
+            .expect("failed destination retries with every operand intact"),
+        MainControlStep::Continue
+    );
+    let [Node::Whatsit(Whatsit::PdfDestination(destination))] = dvi.modes.current_list().nodes()
+    else {
+        panic!("one retried destination expected");
+    };
+    assert_eq!(destination.structure, Some(7));
+    assert!(matches!(
+        destination.kind,
+        tex_state::node::PdfDestinationKind::FitRectangle(dimensions)
+            if dimensions.width == Some(Scaled::from_raw(5 * Scaled::UNITY))
+                && dimensions.height == Some(Scaled::from_raw(6 * Scaled::UNITY))
+                && dimensions.depth == Some(Scaled::from_raw(7 * Scaled::UNITY))
+    ));
+}
+
+#[test]
+fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
+    // pdftex.web §1565 appends a whatsit, not an eqtb assignment: ordinary
+    // grouping does not undo it, while an engine checkpoint restores both the
+    // current list and the unconsumed source for deterministic retry.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_destination_control(&mut stores);
+    register_source(&mut control, br"{\pdfdest num 23 xyz zoom -40}");
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("destination state checkpoints");
+    for label in ["open group", "destination", "close group"] {
+        assert_eq!(
+            control.step(&mut stores).expect(label),
+            MainControlStep::Continue
+        );
+    }
+    assert_eq!(stores.group_depth(), 0);
+    let first_hash = stores.testing_state_hash();
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfDestination(destination))]
+            if matches!(
+                destination.kind,
+                tex_state::node::PdfDestinationKind::Xyz { zoom: Some(-40) }
+            )
+    ));
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("destination state restores");
+    assert!(control.modes.current_list().nodes().is_empty());
+    for label in [
+        "retried open group",
+        "retried destination",
+        "retried close group",
+    ] {
+        assert_eq!(
+            control.step(&mut stores).expect(label),
+            MainControlStep::Continue
+        );
+    }
+    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfDestination(destination))]
+            if matches!(
+                destination.kind,
+                tex_state::node::PdfDestinationKind::Xyz { zoom: Some(-40) }
+            )
+    ));
+}
+
 #[test]
 fn pdf_outline_is_immediate_any_mode_document_state() {
     const MODES: [Mode; 6] = [

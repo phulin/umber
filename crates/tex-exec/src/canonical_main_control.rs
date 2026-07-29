@@ -5493,10 +5493,17 @@ fn scan_command(
             | UnexpandablePrimitive::PdfStartThread
             | UnexpandablePrimitive::PdfEndThread),
         ) => {
-            if primitive == UnexpandablePrimitive::PdfOutline
-                && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+            if matches!(
+                primitive,
+                UnexpandablePrimitive::PdfOutline | UnexpandablePrimitive::PdfDest
+            ) && processor.int_param(IntParam::PDF_OUTPUT) <= 0
             {
-                return Err(ExecError::PdfExtensionInDviMode("pdfoutline"));
+                let name = match primitive {
+                    UnexpandablePrimitive::PdfOutline => "pdfoutline",
+                    UnexpandablePrimitive::PdfDest => "pdfdest",
+                    _ => unreachable!(),
+                };
+                return Err(ExecError::PdfExtensionInDviMode(name));
             }
             Ok(ScannedStep::PdfNavigation(
                 processor
