@@ -3182,13 +3182,36 @@ fn finish_canonical_math_list(
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
         let denominator = stores.freeze_node_list(&output);
-        output = vec![Node::FractionNoad(MathFraction {
-            numerator: fraction.numerator,
+        // TeX82 §§1185 and 1191–1192: `\left` owns the math-left group, while
+        // an incomplete fraction owns only the material after its opening
+        // delimiter.  Keep that structural delimiter outside the fraction
+        // noad when the fraction is completed before `\right`.
+        let mut numerator_nodes: Vec<_> = stores
+            .nodes(fraction.numerator)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect();
+        let leading_left = matches!(
+            numerator_nodes.first(),
+            Some(Node::MathNoad(MathNoad {
+                kind: NoadKind::LeftDelimiter { .. },
+                ..
+            }))
+        )
+        .then(|| numerator_nodes.remove(0));
+        let numerator = if leading_left.is_some() {
+            stores.freeze_node_list(&numerator_nodes)
+        } else {
+            fraction.numerator
+        };
+        let fraction = Node::FractionNoad(MathFraction {
+            numerator,
             denominator,
             thickness: fraction.thickness,
             left_delimiter: fraction.left_delimiter,
             right_delimiter: fraction.right_delimiter,
-        })];
+        });
+        output = leading_left.into_iter().chain([fraction]).collect();
     }
     Ok(stores.freeze_node_list(&output))
 }

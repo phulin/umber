@@ -1177,6 +1177,80 @@ fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_sou
     assert!(universe.nodes(inner_list).iter().any(|node| matches!(node, tex_state::node_arena::NodeRef::MathNoad(noad) if matches!(noad.kind, tex_state::math::NoadKind::RightDelimiter { .. }))));
 }
 
+#[test]
+fn canonical_fraction_inside_left_group_keeps_delimiter_outside_numerator() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    register_source(
+        &mut control,
+        br"\nulldelimiterspace=100sp\left.A\over A\right.",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.dimen_param(DimenParam::NULL_DELIMITER_SPACE).raw(),
+        100,
+        "the regression's erroneous numerator widening would be exactly 100sp"
+    );
+
+    let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
+        .expect("math material freezes");
+    let nodes = universe.nodes(content);
+    assert_eq!(
+        nodes.len(),
+        1,
+        "balanced delimiters form one inner noad: {nodes:?}"
+    );
+    let tex_state::node_arena::NodeRef::MathNoad(inner) = nodes.first().expect("inner noad") else {
+        panic!("balanced delimiters form one inner noad");
+    };
+    let tex_state::math::MathField::SubMlist(delimited) = inner.nucleus else {
+        panic!("inner noad owns the delimited list");
+    };
+    let delimited = universe.nodes(delimited);
+    assert_eq!(delimited.len(), 3, "left, fraction, and right siblings");
+    let tex_state::node_arena::NodeRef::MathNoad(left) = delimited.first().expect("left delimiter")
+    else {
+        panic!("left, fraction, and right remain structural siblings");
+    };
+    let tex_state::node_arena::NodeRef::FractionNoad(fraction) =
+        delimited.get(1).expect("fraction")
+    else {
+        panic!("left, fraction, and right remain structural siblings");
+    };
+    let tex_state::node_arena::NodeRef::MathNoad(right) =
+        delimited.get(2).expect("right delimiter")
+    else {
+        panic!("left, fraction, and right remain structural siblings");
+    };
+    assert!(matches!(
+        left.kind,
+        NoadKind::LeftDelimiter { delimiter: 0 }
+    ));
+    assert!(matches!(
+        right.kind,
+        NoadKind::RightDelimiter { delimiter: 0 }
+    ));
+    assert!(
+        universe
+            .nodes(fraction.numerator)
+            .iter()
+            .all(|node| !matches!(
+                node,
+                tex_state::node_arena::NodeRef::MathNoad(MathNoad {
+                    kind: NoadKind::LeftDelimiter { .. },
+                    ..
+                })
+            )),
+        "the math-left delimiter must not widen the numerator"
+    );
+    assert_eq!(
+        universe.nodes(fraction.numerator).len(),
+        1,
+        "only A, not the 100sp null delimiter, belongs to the numerator"
+    );
+}
+
 /// TeX82 §1154 lists exactly seven `main_control` cases that reach §1155's
 /// `set_math_char`: `mmode+letter`, `mmode+other_char`, `mmode+char_given`,
 /// `mmode+char_num`, `mmode+math_char_num`, `mmode+math_given`, and
