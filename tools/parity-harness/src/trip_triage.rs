@@ -3,6 +3,7 @@
 //! The report intentionally contains identities and a small semantic context,
 //! never copied transcripts, logs, DVI files, or full event streams.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,8 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_oracle::{
-    CanonicalCommand, CanonicalValue, CommandEvent, Event, NormalizedEvent, ObservationStream,
+    CanonicalCommand, CanonicalValue, CommandEvent, Event, MutationEvent, NormalizedEvent,
+    ObservationStream, StateTarget,
 };
 
 const ARTIFACT_NAME: &str = "trip-triage-v1.txt";
@@ -168,11 +170,12 @@ fn event_divergence(
                     &actual.header.manifest,
                 )));
             }
+            let mut projection = TripProjection::default();
             let index = expected
                 .events
                 .iter()
                 .zip(&actual.events)
-                .position(|(left, right)| !trip_events_match(channel, left, right));
+                .position(|(left, right)| !projection.events_match(channel, left, right));
             let index = index.or_else(|| {
                 (expected.events.len() != actual.events.len())
                     .then_some(expected.events.len().min(actual.events.len()))
@@ -198,21 +201,83 @@ fn event_divergence(
 /// allocator identity. The differential tracer applies this same projection;
 /// the integrated two-phase TRIP comparator must not invent a semantic
 /// mismatch from the reference engine's memory address.
-fn trip_events_match(channel: &str, expected: &NormalizedEvent, actual: &NormalizedEvent) -> bool {
-    expected == actual
-        || (channel == "command_events"
-            && expected.sequence == actual.sequence
-            && macro_call_operand_is_reference(&expected.semantic, &actual.semantic))
+#[derive(Default)]
+struct TripProjection {
+    /// Control sequences whose latest meaning mutation has established the
+    /// same complete macro definition on both sides.
+    matched_macros: BTreeSet<String>,
 }
 
-fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+impl TripProjection {
+    fn events_match(
+        &mut self,
+        channel: &str,
+        expected: &NormalizedEvent,
+        actual: &NormalizedEvent,
+    ) -> bool {
+        let matches = expected == actual
+            || (channel == "command_events"
+                && expected.sequence == actual.sequence
+                && macro_call_operand_is_reference(
+                    &expected.semantic,
+                    &actual.semantic,
+                    &self.matched_macros,
+                ));
+        if channel == "command_events" {
+            self.observe_meaning_mutations(&expected.semantic, &actual.semantic);
+        }
+        matches
+    }
+
+    fn observe_meaning_mutations(&mut self, expected: &Event, actual: &Event) {
+        let expected = meaning_mutation(expected);
+        let actual = meaning_mutation(actual);
+        for name in expected
+            .map(|(name, _)| name)
+            .into_iter()
+            .chain(actual.map(|(name, _)| name))
+        {
+            self.matched_macros.remove(name);
+        }
+        let (Some((expected_name, expected_mutation)), Some((actual_name, actual_mutation))) =
+            (expected, actual)
+        else {
+            return;
+        };
+        if expected_name == actual_name
+            && expected_mutation == actual_mutation
+            && matches!(expected_mutation.value, CanonicalValue::Tokens(_))
+        {
+            self.matched_macros.insert(expected_name.to_owned());
+        }
+    }
+}
+
+fn meaning_mutation(event: &Event) -> Option<(&str, &MutationEvent)> {
+    let Event::Mutation(mutation) = event else {
+        return None;
+    };
+    if mutation.target != StateTarget::Meaning {
+        return None;
+    }
+    let CanonicalValue::Name(name) = &mutation.key else {
+        return None;
+    };
+    Some((name, mutation))
+}
+
+fn macro_call_operand_is_reference(
+    expected: &Event,
+    actual: &Event,
+    matched_macros: &BTreeSet<String>,
+) -> bool {
     let (
         Event::Command(CommandEvent {
             delivery: expected_delivery,
             command:
                 CanonicalCommand {
                     command: expected_command,
-                    operand: CanonicalValue::Integer(expected_operand),
+                    operand: CanonicalValue::Integer(_),
                     control_sequence: expected_control_sequence,
                     location: expected_location,
                 },
@@ -232,20 +297,21 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
         return false;
     };
 
-    let allocator_identity_matches = match actual_operand {
-        CanonicalValue::Integer(actual_operand) => expected_operand.abs_diff(*actual_operand) <= 1,
-        CanonicalValue::None => true,
-        _ => false,
+    let Some(expected_control_sequence) = expected_control_sequence.as_deref() else {
+        return false;
     };
 
-    allocator_identity_matches
+    matches!(
+        actual_operand,
+        CanonicalValue::Integer(_) | CanonicalValue::None
+    ) && matched_macros.contains(expected_control_sequence)
         && matches!(
             expected_command.as_str(),
             "call" | "long_call" | "outer_call" | "long_outer_call"
         )
         && expected_delivery == actual_delivery
         && expected_command == actual_command
-        && expected_control_sequence == actual_control_sequence
+        && Some(expected_control_sequence) == actual_control_sequence.as_deref()
         && expected_location == actual_location
 }
 
@@ -431,19 +497,15 @@ fn event_accounting(
         .expect("event streams were validated before report rendering");
     let actual = ObservationStream::from_canonical_json_lines(actual)
         .expect("event streams were validated before report rendering");
-    let projected_equivalent_count = expected
-        .events
-        .iter()
-        .zip(&actual.events)
-        .filter(|(left, right)| left != right && trip_events_match(channel, left, right))
-        .count();
-    let projected_divergence_count = expected
-        .events
-        .iter()
-        .zip(&actual.events)
-        .filter(|(left, right)| !trip_events_match(channel, left, right))
-        .count()
-        + expected.events.len().abs_diff(actual.events.len());
+    let mut projection = TripProjection::default();
+    let mut projected_equivalent_count = 0;
+    let mut projected_divergence_count = 0;
+    for (left, right) in expected.events.iter().zip(&actual.events) {
+        let matches = projection.events_match(channel, left, right);
+        projected_equivalent_count += usize::from(left != right && matches);
+        projected_divergence_count += usize::from(!matches);
+    }
+    projected_divergence_count += expected.events.len().abs_diff(actual.events.len());
     EventAccounting {
         expected_count: expected.events.len().to_string(),
         actual_count: actual.events.len().to_string(),
@@ -547,7 +609,7 @@ mod tests {
     use super::*;
     use tex_oracle::{
         CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
-        Normalizer, SCHEMA_VERSION,
+        MutationEvent, Normalizer, OracleToken, SCHEMA_VERSION, StateTarget,
     };
 
     fn events(page: i64) -> Vec<u8> {
@@ -604,11 +666,70 @@ mod tests {
     }
 
     fn macro_command_events_named(operand: CanonicalValue, name: &str) -> Vec<u8> {
+        macro_history_events(operand, name, "call", macro_body(b'a'))
+    }
+
+    fn macro_body(character: u8) -> CanonicalValue {
+        CanonicalValue::Tokens(vec![
+            OracleToken {
+                character: 0,
+                catcode: "end_match".into(),
+                control_sequence: None,
+                location: None,
+            },
+            OracleToken {
+                character: u32::from(character),
+                catcode: "letter".into(),
+                control_sequence: None,
+                location: None,
+            },
+        ])
+    }
+
+    fn macro_history_events(
+        operand: CanonicalValue,
+        name: &str,
+        command: &str,
+        body: CanonicalValue,
+    ) -> Vec<u8> {
+        let mut normalizer = Normalizer::new();
+        let events = [
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name(name.into()),
+                value: body,
+                scope: "local".into(),
+            }),
+            Event::Command(CommandEvent {
+                delivery: tex_oracle::CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: command.into(),
+                    operand,
+                    control_sequence: Some(name.into()),
+                    location: None,
+                },
+            }),
+        ];
+        let mut out = format!(
+            "{{\"schema\":{SCHEMA_VERSION},\"manifest\":\"{}\"}}\n",
+            "a".repeat(64)
+        )
+        .into_bytes();
+        for event in events {
+            out.extend_from_slice(
+                &serde_json::to_vec(&normalizer.normalize(event)).expect("event"),
+            );
+            out.push(b'\n');
+        }
+        out
+    }
+
+    fn macro_call_only_events(operand: CanonicalValue, name: &str, command: &str) -> Vec<u8> {
         let mut normalizer = Normalizer::new();
         let event = Event::Command(CommandEvent {
             delivery: tex_oracle::CommandDelivery::Raw,
             command: CanonicalCommand {
-                command: "call".into(),
+                command: command.into(),
                 operand,
                 control_sequence: Some(name.into()),
                 location: None,
@@ -725,13 +846,13 @@ mod tests {
     #[test]
     fn macro_call_def_ref_is_not_a_semantic_trip_divergence() {
         // TeX82 §382 stores the allocator-owned `def_ref` address as the
-        // macro's `equiv`; Umber's immutable macro identity has no integer
-        // operand. Both still describe the same raw `call`.
+        // macro's `equiv`. Once both streams have established the same latest
+        // complete meaning, any address delta is allocation-only.
         let temp = tempfile::tempdir().expect("temp");
         let reference = macro_command_events(CanonicalValue::Integer(249_985));
         for operand in [
             CanonicalValue::Integer(249_984),
-            CanonicalValue::Integer(249_986),
+            CanonicalValue::Integer(17),
             CanonicalValue::None,
         ] {
             let actual = macro_command_events(operand);
@@ -756,10 +877,20 @@ mod tests {
     }
 
     #[test]
-    fn macro_call_projection_preserves_non_adjacent_allocator_differences() {
+    fn macro_call_projection_preserves_definition_body_differences() {
         let temp = tempfile::tempdir().expect("temp");
-        let reference = macro_command_events(CanonicalValue::Integer(249_985));
-        let actual = macro_command_events(CanonicalValue::Integer(249_983));
+        let reference = macro_history_events(
+            CanonicalValue::Integer(249_985),
+            "probe",
+            "call",
+            macro_body(b'a'),
+        );
+        let actual = macro_history_events(
+            CanonicalValue::Integer(249_983),
+            "probe",
+            "call",
+            macro_body(b'b'),
+        );
         let expected = TripTriageChannels {
             command_events: Some(&reference),
             geometry_events: None,
@@ -774,15 +905,15 @@ mod tests {
 
         let artifact = write_trip_triage_artifact(temp.path(), input(expected, actual))
             .expect("comparison")
-            .expect("non-adjacent allocator identity must diverge");
+            .expect("different definition bodies must diverge");
         let report = fs::read_to_string(artifact).expect("report");
         assert!(report.contains("earliest.position: event[0]"), "{report}");
         assert!(
-            report.contains("expected.command_events.count: 1"),
+            report.contains("expected.command_events.count: 2"),
             "{report}"
         );
         assert!(
-            report.contains("actual.command_events.count: 1"),
+            report.contains("actual.command_events.count: 2"),
             "{report}"
         );
         assert!(
@@ -790,7 +921,7 @@ mod tests {
             "{report}"
         );
         assert!(
-            report.contains("command_events.projected_divergence.count: 1"),
+            report.contains("command_events.projected_divergence.count: 2"),
             "{report}"
         );
     }
@@ -818,9 +949,45 @@ mod tests {
         let report = fs::read_to_string(artifact).expect("report");
         assert!(report.contains("earliest.position: event[0]"), "{report}");
         assert!(
-            report.contains("command_events.projected_divergence.count: 1"),
+            report.contains("command_events.projected_divergence.count: 2"),
             "{report}"
         );
+    }
+
+    #[test]
+    fn macro_call_projection_requires_matching_definition_history_and_flags() {
+        let temp = tempfile::tempdir().expect("temp");
+        let reference = macro_history_events(
+            CanonicalValue::Integer(249_985),
+            "probe",
+            "call",
+            macro_body(b'a'),
+        );
+        let unmatched = macro_call_only_events(CanonicalValue::Integer(17), "probe", "call");
+        let changed_flags = macro_history_events(
+            CanonicalValue::Integer(17),
+            "probe",
+            "long_call",
+            macro_body(b'a'),
+        );
+        for actual in [&unmatched, &changed_flags] {
+            let expected = TripTriageChannels {
+                command_events: Some(&reference),
+                geometry_events: None,
+                transcript: b"same",
+                log: b"same",
+                dvi: None,
+            };
+            let actual = TripTriageChannels {
+                command_events: Some(actual),
+                ..expected
+            };
+            assert!(
+                write_trip_triage_artifact(temp.path(), input(expected, actual))
+                    .expect("comparison")
+                    .is_some()
+            );
+        }
     }
 
     #[test]
