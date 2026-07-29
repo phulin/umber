@@ -519,10 +519,12 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     // attempt and must neither erase nor duplicate the earlier report.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    register_source(&mut control, br"\nonstopmode#\input child\end");
+    register_source(&mut control, br"\errorstopmode#\input child\end");
 
     assert!(matches!(
-        control.advance(&mut stores).expect("nonstopmode executes"),
+        control
+            .advance(&mut stores)
+            .expect("errorstopmode executes"),
         CanonicalStepResult::Progress(ReplayStep::Continue)
     ));
     assert!(matches!(

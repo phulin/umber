@@ -621,7 +621,8 @@ impl CanonicalMainControl {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
                 // pack_cur_name`. The packed name is what is opened, so it is
                 // written back into the request rather than recomputed.
-                file_name.name = packed_input_file_name(&file_name.name);
+                file_name.components.apply_default_extension(".tex");
+                let packed_name = file_name.packed();
                 // §1275's `if a_open_in(read_file[n])` leaves the stream
                 // closed when the file does not open, but Umber resolves
                 // inputs through the host first: an unregistered name
@@ -630,10 +631,8 @@ impl CanonicalMainControl {
                 // outcome.
                 Some(
                     self.capabilities
-                        .input_resource(&file_name.name)
-                        .ok_or_else(|| ExecError::MissingCanonicalInput {
-                            name: file_name.name.clone(),
-                        })?,
+                        .input_resource(&packed_name)
+                        .ok_or(ExecError::MissingCanonicalInput { name: packed_name })?,
                 )
             }
             InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
@@ -5806,7 +5805,7 @@ fn scan_command(
             let file_name = processor.scan_file_name().map_err(command_error)?;
             Ok(ScannedStep::DeferredOpenOut {
                 stream,
-                file_name: file_name.name,
+                file_name: file_name.packed(),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
@@ -7878,19 +7877,6 @@ fn apply_pdf_form_request(
         }
     }
     Ok(ReplayStep::Continue)
-}
-
-/// tex.web §1275's `if cur_ext="" then cur_ext:=".tex"` followed by
-/// `pack_cur_name`.
-///
-/// §537's `start_input` applies the same default to `\input`; the rule is the
-/// file-name default, not a per-command one, so it lives in one place.
-fn packed_input_file_name(name: &str) -> String {
-    if std::path::Path::new(name).extension().is_some() {
-        name.to_owned()
-    } else {
-        format!("{name}.tex")
-    }
 }
 
 fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
@@ -10365,6 +10351,7 @@ fn apply_scanned_step(
                     stream, file_name, ..
                 } => {
                     let slot = replay_stream_slot(stream, stores);
+                    let packed_name = file_name.packed();
                     // §1275 closes any stream already open on `n` before it
                     // tries to open the new file, whichever command this is.
                     stores.world_mut().close_in(slot);
@@ -10373,10 +10360,10 @@ fn apply_scanned_step(
                     };
                     stores
                         .world_mut()
-                        .set_memory_file(&file_name.name, resource.bytes().to_vec())?;
+                        .set_memory_file(&packed_name, resource.bytes().to_vec())?;
                     let content = InputReadState::read_input_file(
                         &mut stores.input_open_context(),
-                        std::path::Path::new(&file_name.name),
+                        std::path::Path::new(&packed_name),
                     )?;
                     stores.world_mut().open_in_content(slot, &content)?;
                 }
@@ -10909,7 +10896,7 @@ fn apply_scanned_step(
                     let stream = replay_stream_slot(stream, stores);
                     stores
                         .world_mut()
-                        .open_out(stream, replay_openout_target(file_name.name));
+                        .open_out(stream, replay_openout_target(file_name.packed()));
                 }
                 ImmediateExtension::Write { stream, tokens } => {
                     let sink = replay_write_sink(stream);

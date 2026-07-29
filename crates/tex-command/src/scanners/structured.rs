@@ -790,13 +790,43 @@ pub enum FileNameTermination {
     EndOfInput,
 }
 
+/// TeX82 §§511–520's three-part current filename.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FileNameComponents {
+    pub area: String,
+    pub name: String,
+    pub extension: String,
+}
+
+impl FileNameComponents {
+    #[must_use]
+    pub fn packed(&self) -> String {
+        format!("{}{}{}", self.area, self.name, self.extension)
+    }
+
+    pub fn apply_default_extension(&mut self, extension: &str) {
+        if self.extension.is_empty() {
+            self.extension.push_str(extension);
+        }
+    }
+}
+
 /// A filename scanned from expanded command-owned input.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedFileName {
-    pub name: String,
+    pub components: FileNameComponents,
     pub termination: FileNameTermination,
     pub provenance: StructuredProvenance,
 }
+
+impl ScannedFileName {
+    #[must_use]
+    pub fn packed(&self) -> String {
+        self.components.packed()
+    }
+}
+
+const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 
 /// Completed input-stream operation.  The command core owns every operand;
 /// replay only acquires an already-registered immutable resource and mutates
@@ -1949,7 +1979,7 @@ impl CommandProcessor<'_> {
         };
         Ok(FontLoadRequest {
             target,
-            name: file_name.name,
+            name: file_name.packed(),
             size,
             size_recovery,
         })
@@ -3260,6 +3290,13 @@ impl CommandProcessor<'_> {
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input
     /// cursor or a backed-up raw command.
     pub fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
+        self.command.begin_file_name()?;
+        let result = self.scan_file_name_inner();
+        self.command.end_file_name();
+        result
+    }
+
+    fn scan_file_name_inner(&mut self) -> Result<ScannedFileName, CommandError> {
         let first = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
@@ -3286,7 +3323,8 @@ impl CommandProcessor<'_> {
         // the filename. TeX82 exposes this `back_input` hand-off, and it
         // keeps the group-opening case on the same ordinary delivery path.
         self.back_input(first)?;
-        let mut name = String::new();
+        let mut components = FileNameComponents::default();
+        let mut character_count = 0usize;
         let mut quoted = false;
         let mut next = None;
         let termination = loop {
@@ -3315,7 +3353,27 @@ impl CommandProcessor<'_> {
                 } if !grouped && !quoted => {
                     break FileNameTermination::Space;
                 }
-                Meaning::CharToken { ch, .. } => name.push(ch),
+                Meaning::CharToken { ch, .. } => {
+                    character_count += 1;
+                    if character_count > FILE_NAME_POOL_CAPACITY {
+                        return Err(CommandError::Fatal(crate::FatalError::overflow(
+                            "pool size",
+                            FILE_NAME_POOL_CAPACITY as i32,
+                        )));
+                    }
+                    match ch {
+                        '/' | '\\' | ':' => {
+                            components.area.push_str(&components.name);
+                            components.area.push_str(&components.extension);
+                            components.area.push(ch);
+                            components.name.clear();
+                            components.extension.clear();
+                        }
+                        '.' if components.extension.is_empty() => components.extension.push(ch),
+                        _ if components.extension.is_empty() => components.name.push(ch),
+                        _ => components.extension.push(ch),
+                    }
+                }
                 _ if !grouped => {
                     self.back_input(command)?;
                     break FileNameTermination::NonCharacter;
@@ -3323,11 +3381,8 @@ impl CommandProcessor<'_> {
                 _ => return Err(CommandError::input_invariant()),
             }
         };
-        if name.is_empty() {
-            return Err(CommandError::input_invariant());
-        }
         Ok(ScannedFileName {
-            name,
+            components,
             termination,
             provenance,
         })
@@ -3337,18 +3392,18 @@ impl CommandProcessor<'_> {
     /// capability. No filesystem or host lookup escapes this boundary.
     pub fn open_registered_input(&mut self) -> Result<RegisteredInput, CommandError> {
         let mut file_name = self.scan_file_name()?;
-        let base = file_name.name.rsplit('/').next().unwrap_or(&file_name.name);
-        if !base.contains('.') {
-            file_name.name.push_str(".tex");
-        }
-        let has_area = file_name.name.contains(['/', '\\', ':']);
-        let mut attempts = vec![file_name.name.clone()];
+        file_name.components.apply_default_extension(".tex");
+        let has_area = !file_name.components.area.is_empty();
+        let packed_name = file_name.packed();
+        let mut attempts = vec![packed_name.clone()];
         if !has_area {
-            attempts.push(format!("TeXinputs:{}", file_name.name));
+            attempts.push(format!("TeXinputs:{packed_name}"));
         }
 
+        let mut unresolved = false;
         for attempted_name in attempts {
             let Some(registration) = self.host.input(&attempted_name) else {
+                unresolved |= !self.host.input_is_unavailable(&attempted_name);
                 continue;
             };
             let source = self
@@ -3363,10 +3418,18 @@ impl CommandProcessor<'_> {
                 .prepare_started_input(endlinechar)
                 .ok_or_else(CommandError::input_invariant)?;
             self.host.initialize_job_name(&attempted_name);
-            file_name.name = attempted_name;
+            if attempted_name != packed_name {
+                file_name.components.area = "TeXinputs:".to_owned();
+            }
             return Ok(RegisteredInput { file_name, source });
         }
-        Err(CommandError::MissingInput(file_name.name))
+        if unresolved || self.state.interaction_permits_terminal_input() {
+            Err(CommandError::MissingInput(packed_name))
+        } else {
+            Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                "job aborted, file error in nonstop mode",
+            )))
+        }
     }
 
     fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand>, CommandError> {

@@ -202,6 +202,7 @@ impl CurrentCommand {
                 Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
             ),
             Token::Frozen(_) if token.is_frozen_endv() => (None, Meaning::EndV),
+            Token::Frozen(_) if token.is_frozen_relax() => (None, Meaning::Relax),
             Token::Frozen(_) => (
                 None,
                 state

@@ -470,8 +470,8 @@
           "test": "filename_component_terminators_and_string_overflow_follow_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-p67i"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.io.filename-scan-and-retry",
@@ -515,8 +515,8 @@
           "test": "filename_scan_recursion_guard_and_retry_modes_follow_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-p67i"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.io.job-output-names-and-log",

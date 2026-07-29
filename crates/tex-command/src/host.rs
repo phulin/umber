@@ -1,6 +1,6 @@
 //! Borrow-scoped host capabilities.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{PdfImageRequest, SourceRegistration};
 use std::path::{Path, PathBuf};
@@ -114,6 +114,7 @@ pub enum LastNodeItem {
 #[derive(Debug)]
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
+    unavailable_input: BTreeSet<String>,
     fonts: BTreeMap<PathBuf, FontResource>,
     images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
@@ -129,6 +130,7 @@ impl Default for CommandHostCapabilities {
     fn default() -> Self {
         Self {
             input: BTreeMap::new(),
+            unavailable_input: BTreeSet::new(),
             fonts: BTreeMap::new(),
             images: Vec::new(),
             job_name: String::new(),
@@ -151,7 +153,16 @@ impl CommandHostCapabilities {
     /// command machine can therefore request only retained bytes and never
     /// opens files itself.
     pub fn register_input(&mut self, name: impl Into<String>, source: SourceRegistration) {
-        self.input.insert(name.into(), source);
+        let name = name.into();
+        self.unavailable_input.remove(&name);
+        self.input.insert(name, source);
+    }
+
+    /// Records a completed host lookup which found no input backing.
+    pub fn mark_input_unavailable(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.input.remove(&name);
+        self.unavailable_input.insert(name);
     }
 
     /// Registers a host-acquired immutable font resource for one request path.
@@ -284,6 +295,10 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) fn input(&self, name: &str) -> Option<SourceRegistration> {
         self._capabilities.input.get(name).cloned()
+    }
+
+    pub(crate) fn input_is_unavailable(&self, name: &str) -> bool {
+        self._capabilities.unavailable_input.contains(name)
     }
 
     pub(crate) fn initialize_job_name(&mut self, filename: &str) {

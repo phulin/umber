@@ -2121,7 +2121,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .open_registered_input()
             .expect("registered input opens")
     };
-    assert_eq!(input.file_name.name, "inc.tex");
+    assert_eq!(input.file_name.packed(), "inc.tex");
     assert_eq!(input.file_name.termination, FileNameTermination::Group);
     command
         .rollback(snapshot)
@@ -2161,7 +2161,7 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
             .open_registered_input()
             .expect("default-area retry")
     };
-    assert_eq!(opened.file_name.name, "TeXinputs:nested.tex");
+    assert_eq!(opened.file_name.packed(), "TeXinputs:nested.tex");
 
     command
         .rollback(before)

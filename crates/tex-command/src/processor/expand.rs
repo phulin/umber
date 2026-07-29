@@ -770,12 +770,30 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        if self.command.name_in_progress() {
+            // TeX82 §§378/527: restore the recursively encountered `\input`,
+            // then place inaccessible `frozen_relax` above it. The active
+            // filename scan stops empty at the relax; ordinary expansion
+            // later reaches the restored input.
+            let origin = self
+                .state
+                .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
+            let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
+            self.insert_expansion_list(
+                TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                    frozen_relax,
+                    opener.spelling(),
+                ])),
+                Some(Token::frozen_relax()),
+            );
+            return Ok(());
+        }
         let _input = self.open_registered_input()?;
         observe!(
             self,
             CommandObservation::Effect(EffectRecord {
                 kind: "input",
-                detail: _input.file_name.name,
+                detail: _input.file_name.packed(),
                 tokens: None,
             }),
         );

@@ -94,16 +94,27 @@ fn filename_components_split_area_name_and_extension_canonically() {
         ),
     ] {
         let scanned = scan_text(input);
-        assert_eq!(scanned.name, expected);
+        assert_eq!(scanned.packed(), expected);
         assert_eq!(scanned.termination, termination);
     }
+
+    let scanned = scan_text("area.with.dot/final.part.ext ");
+    assert_eq!(scanned.components.area, "area.with.dot/");
+    assert_eq!(scanned.components.name, "final");
+    assert_eq!(scanned.components.extension, ".part.ext");
+
+    let mut defaulted = scan_text("area/paper ");
+    defaulted.components.apply_default_extension(".tex");
+    assert_eq!(defaulted.packed(), "area/paper.tex");
+    defaulted.components.apply_default_extension(".dvi");
+    assert_eq!(defaulted.packed(), "area/paper.tex");
 }
 
 #[test]
 fn filename_component_terminators_and_string_overflow_follow_tex82() {
     let long_name = "a".repeat(8_192);
     let scanned = scan_text(&format!("{long_name} "));
-    assert_eq!(scanned.name, long_name);
+    assert_eq!(scanned.packed(), long_name);
     assert_eq!(scanned.termination, FileNameTermination::Space);
 
     let mut command = CommandState::default();
@@ -125,12 +136,32 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
             .expect("terminator is present");
         (scanned, replayed)
     };
-    assert_eq!(scanned.name, "plain");
+    assert_eq!(scanned.packed(), "plain");
     assert_eq!(scanned.termination, FileNameTermination::NonCharacter);
     assert_eq!(replayed.meaning(), Meaning::Relax);
 
     let scanned = scan_text("terminal");
     assert_eq!(scanned.termination, FileNameTermination::EndOfInput);
+
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        text_tokens(&format!("{} ", "a".repeat(FILE_NAME_POOL_CAPACITY + 1))),
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_file_name()
+        .expect_err("filename string-pool capacity is bounded");
+    assert_eq!(
+        error,
+        CommandError::Fatal(crate::FatalError::overflow(
+            "pool size",
+            FILE_NAME_POOL_CAPACITY as i32,
+        ))
+    );
+    assert!(!command.name_in_progress());
 }
 
 #[test]
@@ -173,7 +204,7 @@ fn filename_scan_expands_characters_and_backs_up_first_noncharacter() {
             .expect("terminator is present");
         (scanned, next)
     };
-    assert_eq!(scanned.name, "paper.tex");
+    assert_eq!(scanned.packed(), "paper.tex");
     assert_eq!(scanned.termination, FileNameTermination::NonCharacter);
     assert_eq!(next.meaning(), Meaning::Relax);
 }
@@ -205,5 +236,44 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     let opened = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect("registered retry opens");
-    assert_eq!(opened.file_name.name, "chapter.tex");
+    assert_eq!(opened.file_name.packed(), "chapter.tex");
+
+    let input = universe.intern("input").symbol();
+    universe.set_meaning(
+        input,
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Input),
+    );
+    let mut command = CommandState::default();
+    let mut nested = vec![Token::Cs(input), Token::Cs(input)];
+    nested.extend(text_tokens("inc "));
+    push(&mut command, nested);
+    universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+    let error = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect_err("empty outer filename requests interactive recovery")
+    };
+    assert_eq!(error, CommandError::MissingInput(".tex".to_owned()));
+    assert!(!command.name_in_progress());
+    let sentinel = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .get_x_token()
+        .expect("sentinel delivery succeeds")
+        .expect("sentinel remains above the restored input");
+    assert_eq!(sentinel.meaning(), Meaning::Relax);
+
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("missing "));
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    capabilities.mark_input_unavailable("missing.tex");
+    capabilities.mark_input_unavailable("TeXinputs:missing.tex");
+    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .open_registered_input()
+        .expect_err("noninteractive missing input is fatal");
+    assert_eq!(
+        error,
+        CommandError::Fatal(crate::FatalError::emergency_stop(
+            "job aborted, file error in nonstop mode",
+        ))
+    );
 }

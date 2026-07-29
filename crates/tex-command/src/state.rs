@@ -49,6 +49,8 @@ pub struct CommandState {
     /// ordinary command snapshot makes a failed aggregate operation restore
     /// the queue together with the input transition that produced it.
     pub(crate) semantic_diagnostics: Vec<CommandSemanticDiagnostic>,
+    /// TeX82 §527's rollback-coupled `name_in_progress` recursion guard.
+    pub(crate) name_in_progress: bool,
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
@@ -97,6 +99,22 @@ pub enum CommandReplayDelivery {
 }
 
 impl CommandState {
+    pub(crate) const fn name_in_progress(&self) -> bool {
+        self.name_in_progress
+    }
+
+    pub(crate) fn begin_file_name(&mut self) -> Result<(), crate::CommandError> {
+        if self.name_in_progress {
+            return Err(crate::CommandError::input_invariant());
+        }
+        self.name_in_progress = true;
+        Ok(())
+    }
+
+    pub(crate) fn end_file_name(&mut self) {
+        self.name_in_progress = false;
+    }
+
     /// Current TeX82 `line`, or zero for token-list and `\read` input.
     ///
     /// Save-level owners use this only to preserve e-TeX's `saved(-1)`

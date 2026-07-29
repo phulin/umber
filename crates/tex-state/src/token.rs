@@ -9,6 +9,7 @@ pub struct FrozenToken(u16);
 impl FrozenToken {
     pub(crate) const END_TEMPLATE: Self = Self(0);
     pub(crate) const END_V: Self = Self(1);
+    pub(crate) const RELAX: Self = Self(60_000);
     /// TeX82 §222's `undefined_control_sequence`: the single dummy eqtb
     /// location `id_lookup` returns (§259) whenever a multiletter name is
     /// absent from the hash table and `no_new_control_sequence` is set. It is
@@ -20,7 +21,7 @@ impl FrozenToken {
     /// is an engine sentinel rather than a registered primitive, so the
     /// primitive range is closed by one bound instead of by a growing list of
     /// individually excluded values.
-    const SENTINEL_BASE: u16 = Self::UNDEFINED_CONTROL_SEQUENCE.0;
+    const SENTINEL_BASE: u16 = Self::RELAX.0;
 
     pub(crate) const fn primitive(index: u16) -> Self {
         Self(Self::PRIMITIVE_BASE + index)
@@ -110,6 +111,12 @@ impl Token {
         Self::Frozen(FrozenToken::END_V)
     }
 
+    /// Returns TeX82's inaccessible `frozen_relax` token.
+    #[must_use]
+    pub const fn frozen_relax() -> Self {
+        Self::Frozen(FrozenToken::RELAX)
+    }
+
     #[must_use]
     pub(crate) const fn expanded_text_boundary() -> Self {
         Self::Frozen(FrozenToken::EXPANDED_TEXT_BOUNDARY)
@@ -129,6 +136,12 @@ impl Token {
     #[must_use]
     pub const fn is_frozen_endv(self) -> bool {
         matches!(self, Self::Frozen(FrozenToken::END_V))
+    }
+
+    /// Whether this is TeX82's inaccessible `frozen_relax` token.
+    #[must_use]
+    pub const fn is_frozen_relax(self) -> bool {
+        matches!(self, Self::Frozen(FrozenToken::RELAX))
     }
 
     /// Returns TeX82 §222's dummy `undefined_control_sequence` location.
