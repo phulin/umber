@@ -1387,7 +1387,7 @@ fn translate_observation(
                         CanonicalValue::Integer,
                     )
                 }
-            } else if record.kind == "integer" {
+            } else if matches!(record.kind, "integer" | "interaction_mode") {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,

@@ -4,6 +4,30 @@
   "property_domain": "main-control-groups-assignments",
   "cases": [
     {
+      "id": "etex-interaction-mode-read",
+      "property_id": "tex82.assignment.interaction-mode",
+      "profile": "etex-initex",
+      "source": "etex-interaction-mode-read.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [417, 419, 3736]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["scanner"],
+        "count_registers": [20]
+      },
+      "expected": [
+        "scanner:integer:20:-",
+        "scanner:interaction_mode:1:-",
+        "scanner:internal:1:-",
+        "scanner:integer:1:-",
+        "count:20=1"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-macro-call",
       "property_id": "tex82.assignment.macro-definitions",
       "profile": "etex-initex",

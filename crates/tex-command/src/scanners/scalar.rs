@@ -1861,7 +1861,17 @@ impl CommandProcessor<'_> {
             // `interaction` scalar before the same primitive's assignment
             // form scans a replacement.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
-                InternalValue::Integer(self.state.interaction_mode_value())
+                let value = self.state.interaction_mode_value();
+                // The e-TeX observer change records the chr_code=2 fetch at
+                // its own scanner boundary before §413 records the generic
+                // internal result. This is an observation of the same value,
+                // not a second scan or a second owner of interaction state.
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "interaction_mode",
+                    value: value.to_string(),
+                    tokens: None,
+                }));
+                InternalValue::Integer(value)
             }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(

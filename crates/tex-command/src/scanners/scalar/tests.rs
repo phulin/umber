@@ -3006,6 +3006,42 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
 }
 
 #[test]
+fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let interaction_mode = universe.intern("interactionmode").symbol();
+    universe.set_meaning(
+        interaction_mode,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode),
+    );
+    push(&mut command, vec![Token::Cs(interaction_mode)]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("interaction mode scans")
+                .value,
+            1
+        );
+    }
+    assert_eq!(
+        scanner_kinds(&recorder),
+        vec!["interaction_mode", "internal", "integer"]
+    );
+}
+
+#[test]
 fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() {
     use tex_state::meaning::UnexpandablePrimitive as P;
     use tex_state::page::{PageDimension, PageInteger};

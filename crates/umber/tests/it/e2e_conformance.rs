@@ -195,6 +195,11 @@ fn run_file_in_process_captured(
         engine.prepare_initex(&mut stores);
         stores
     };
+    // Every live reference invocation used to build the four DVI and command
+    // oracles passes `-interaction=nonstopmode`. Match that process option
+    // before execution; it is initial session state, not TeX input and not a
+    // value owned by the dumped format.
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let content = stores
         .world_mut()
         .read_file(&path)

@@ -3186,6 +3186,24 @@ fn exact_checkpoint_identity_restores_after_inverse_mutation() {
     assert_eq!(identity_of(&mut universe), baseline);
 }
 
+#[test]
+fn replay_probe_rolls_back_interaction_mode_unless_committed() {
+    let mut universe = Universe::new();
+    universe.set_interaction_mode(super::InteractionMode::Nonstop);
+    {
+        let mut probe = universe.begin_replay_probe();
+        probe.set_interaction_mode(super::InteractionMode::Batch);
+    }
+    assert_eq!(universe.interaction_mode(), super::InteractionMode::Nonstop);
+
+    {
+        let mut probe = universe.begin_replay_probe();
+        probe.set_interaction_mode(super::InteractionMode::Scroll);
+        probe.commit();
+    }
+    assert_eq!(universe.interaction_mode(), super::InteractionMode::Scroll);
+}
+
 fn identity_of(universe: &mut Universe) -> u64 {
     universe
         .snapshot_with_exact_identity()
