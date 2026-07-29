@@ -1,5 +1,5 @@
 use super::checked_len;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use super::measurement::NodeMemoryColumn;
 use super::semantic::{NodeSemanticId, NodeSemanticIdBuilder};
 use super::storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
@@ -126,7 +126,7 @@ impl NodeArena {
         self.semantic_ids.truncate(mark.identities.len());
         self.storage.truncate(mark.storage)
     }
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(crate) fn memory_columns(&self) -> Vec<NodeMemoryColumn> {
         self.measurement_columns("epoch")
     }
@@ -155,7 +155,7 @@ impl NodeArena {
         }
         let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
         self.debug_assert_bottom_up(nodes, start);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         for n in nodes {
             crate::node::record_node_append(n);
         }
@@ -175,7 +175,7 @@ impl NodeArena {
         }
         let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
         self.debug_assert_bottom_up(nodes, start);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         for n in nodes {
             crate::node::record_node_append(n);
         }
@@ -195,7 +195,7 @@ impl NodeArena {
         }
         let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
         self.debug_assert_bottom_up(nodes, start);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         for n in nodes.iter() {
             crate::node::record_node_append(n);
         }
@@ -272,12 +272,12 @@ impl NodeArena {
         self.spans.push(EpochSpan { start, len });
         self.semantic_ids.push(semantic_id);
         let id = NodeListId::new_epoch(identity);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         self.record_peak();
         id
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn measurement_columns(&self, prefix: &str) -> Vec<NodeMemoryColumn> {
         let mut columns = self.storage.memory_columns(prefix);
         let (len, capacity, element_bytes) = self.identities.measurement_shape();
@@ -310,7 +310,7 @@ impl NodeArena {
         columns
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn measurement_payload_bytes(&self) -> (u64, u64) {
         let (mut logical, mut retained) = self.storage.payload_bytes();
         let (len, capacity, element_bytes) = self.identities.measurement_shape();
@@ -342,7 +342,7 @@ impl NodeArena {
             )
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     fn record_peak(&self) {
         super::measurement::record_peak_observation(self.measurement_payload_bytes(), || {
             self.measurement_columns("peak")

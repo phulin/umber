@@ -14,7 +14,7 @@ mod view;
 
 pub use arena::{NodeArena, NodeListBuilder};
 pub(crate) use copy::ChildPatch;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
 pub(crate) use semantic::{NodeSemanticId, NodeSemanticIdBuilder};
 pub(crate) use storage::{NodeArenaMark, NodeStorage, SidecarNeeds};

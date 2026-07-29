@@ -20,16 +20,16 @@ use crate::input::InputLevelId;
 
 use super::CommandProcessor;
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use tex_state::token::{OriginId, TracedTokenWord};
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticRecord, InputReason,
     InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 impl CommandProcessor<'_> {
     /// Records a recovery level that replays one inserted token.
     ///
@@ -138,7 +138,7 @@ impl CommandProcessor<'_> {
 }
 
 /// The shipping definitions: the same signatures, and no observation.
-#[cfg(not(any(test, feature = "instrumentation")))]
+#[cfg(not(any(test, feature = "observe")))]
 impl CommandProcessor<'_> {
     pub(crate) fn observe_inserted_token_recovery(&mut self, _level: InputLevelId, _token: Token) {}
 

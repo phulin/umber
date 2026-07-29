@@ -227,7 +227,7 @@ pub(crate) struct ShowGroupsDiagnostic {
 }
 
 #[cfg_attr(
-    not(any(test, feature = "instrumentation")),
+    not(any(test, feature = "observe")),
     allow(dead_code, reason = "used only by semantic effect observation")
 )]
 pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {

@@ -66,7 +66,7 @@ tier_step clippy-reference-tools tools_clippy \
   --all-targets --features parity-harness/reference-tools -- -D warnings
 tier_step clippy-profiling-runner tools_clippy \
   -p umber --bin gentle-profile \
-  --features profiling-runner,profiling-stats -- -D warnings
+  --features profiling-runner,profiling -- -D warnings
 tier_step clippy-dvi-tools tools_clippy \
   -p tex-out --bin texout-dvitype --features dvi-tools -- -D warnings
 

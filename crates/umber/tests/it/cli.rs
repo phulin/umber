@@ -449,7 +449,7 @@ fn pdf_lowering_omits_dvi_special_and_publishes_all_driver_output() {
     );
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary file and command execution.
 fn profiling_stats_are_reported_only_when_requested() {

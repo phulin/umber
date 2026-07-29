@@ -45,9 +45,9 @@ pub use input::{
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 pub use observation::canonical_names;
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,

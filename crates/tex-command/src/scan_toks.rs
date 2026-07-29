@@ -20,7 +20,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
 use tex_state::CommandLineSource;
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
@@ -124,7 +124,7 @@ impl CommandProcessor<'_> {
         let result = self.scan_toks_inner(mode);
         self.restore_scanner_status_with_observation(status, prior);
         let result = result?;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {
             transition: "complete",
             purpose: match mode {
@@ -168,7 +168,7 @@ impl CommandProcessor<'_> {
                     if !is_begin_group(opening.spelling().semantic_token()) {
                         return Err(CommandError::input_invariant());
                     }
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe_expanded_delivery(&opening);
                     (expanded, Vec::new(), None, None, primary, false)
                 }
@@ -399,7 +399,7 @@ impl CommandProcessor<'_> {
             // for each retained unexpandable token. Emit that boundary before
             // storing the spelling, while expandable commands above remain
             // represented by their own expansion transitions.
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             if expanded {
                 self.observe_expanded_delivery(&command);
             }
@@ -426,7 +426,7 @@ impl CommandProcessor<'_> {
                 {
                     let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
                     output.push(converted);
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(CommandObservation::TokenList(TokenListRecord {
                         transition: "splice",
                         purpose: "parameter_conversion",
@@ -463,7 +463,7 @@ impl CommandProcessor<'_> {
     }
 
     fn report_macro_parameter_diagnostic(&mut self, diagnostic: MacroParameterDiagnostic) {
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
             severity: "error",
             diagnostic: match diagnostic {
@@ -552,7 +552,7 @@ impl CommandProcessor<'_> {
                 })
                 .collect(),
         };
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         let observed: Vec<_> = tokens
             .iter()
             .copied()
@@ -564,7 +564,7 @@ impl CommandProcessor<'_> {
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         // Keep the observation on that same semantic boundary: an empty
         // internal token list contributes no splice transition at all.
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if !observed.is_empty() {
             self.observe(CommandObservation::TokenList(TokenListRecord {
                 transition: "splice",
@@ -697,7 +697,7 @@ impl CommandProcessor<'_> {
         self.restore_scanner_status_with_observation(status, prior);
         let tokens = result?;
         let list = self.state.finish_traced_token_list(&tokens);
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {
             transition: "complete",
             purpose: "read",

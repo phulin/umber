@@ -164,18 +164,18 @@ struct ValidatedParagraphEntry {
     provenance: std::sync::Arc<tex_state::ParagraphOriginResolver>,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 type PhaseStart = tex_state::ProfilingTimer;
-#[cfg(not(feature = "profiling-stats"))]
+#[cfg(not(feature = "profiling"))]
 struct PhaseStart;
 
 #[inline]
 fn start_phase() -> PhaseStart {
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         tex_state::World::start_profiling_timer()
     }
-    #[cfg(not(feature = "profiling-stats"))]
+    #[cfg(not(feature = "profiling"))]
     {
         PhaseStart
     }
@@ -183,21 +183,21 @@ fn start_phase() -> PhaseStart {
 
 #[inline]
 fn finish_phase(stores: &mut Universe, phase: ParagraphRecordingPhase, started: PhaseStart) {
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     stores.record_pure_paragraph_phase(phase, started.elapsed());
-    #[cfg(not(feature = "profiling-stats"))]
+    #[cfg(not(feature = "profiling"))]
     let _ = (stores, phase, started);
 }
 
 #[inline]
 fn finish_memo_phase(stores: &mut Universe, phase: MemoTimingPhase, started: PhaseStart) {
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     stores.record_pure_memo_timing(
         tex_state::PureMemoLayer::Paragraph,
         phase,
         started.elapsed(),
     );
-    #[cfg(not(feature = "profiling-stats"))]
+    #[cfg(not(feature = "profiling"))]
     let _ = (stores, phase, started);
 }
 

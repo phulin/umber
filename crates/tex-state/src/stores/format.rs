@@ -255,7 +255,7 @@ impl AppendOnlyIdentityCache {
 }
 
 impl<M: Copy + Eq> LineageIdentityCache<M> {
-    #[cfg(any(test, feature = "profiling-stats"))]
+    #[cfg(any(test, feature = "profiling"))]
     fn contains(&self, mark: M) -> bool {
         self.branches
             .iter()
@@ -615,7 +615,7 @@ impl Stores {
                 .exact_identity_cache
                 .lock()
                 .expect("exact store identity cache is not poisoned");
-            #[cfg(any(test, feature = "profiling-stats"))]
+            #[cfg(any(test, feature = "profiling"))]
             let root_hits = [
                 cache.names.contains(current_marks.interner),
                 cache.tokens.contains(current_marks.tokens),
@@ -681,7 +681,7 @@ impl Stores {
                 cache.immutable_encodes += usize::from(root_hits != 5);
                 cache.immutable_leaves += leaves;
             }
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             crate::measurement::record_exact_root_cache(
                 root_hits as u64,
                 (5 - root_hits) as u64,

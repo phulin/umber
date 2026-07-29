@@ -81,7 +81,7 @@ impl ConvertSelector {
         }
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) const fn operand(self) -> i64 {
         match self {
             Self::Number => 0,
@@ -121,7 +121,7 @@ impl XRaySelector {
         }
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) const fn operand(self) -> i64 {
         match self {
             Self::Show => 0,
@@ -244,7 +244,7 @@ impl CurrentCommand {
     }
 
     /// Returns the command-owned identity selected by raw input delivery.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) const fn identity(&self) -> CommandIdentity {
         self.identity
     }
@@ -355,7 +355,7 @@ impl CurrentCommand {
         self.meaning
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) const fn macro_observation_operand(&self) -> Option<i64> {
         self.macro_observation_operand
     }
@@ -407,7 +407,7 @@ impl CurrentCommand {
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) const fn direct_source_provenance(&self) -> Option<SourceProvenance> {
         if self.direct_source {
             self.source_provenance

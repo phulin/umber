@@ -10,7 +10,7 @@ use crate::input::SharedTokenBuffer;
 use crate::processor::status::{ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerWarning};
 use crate::{CommandError, CommandProcessor};
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, MacroRecord, TokenListRecord,
 };
@@ -250,7 +250,7 @@ impl CommandProcessor<'_> {
             meaning.replacement_text(),
             provenance.replacement_origins(),
         );
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Macro,
@@ -258,7 +258,7 @@ impl CommandProcessor<'_> {
             level: _level.0,
             position: 0,
         }));
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Macro(MacroRecord {
             activation: true,
             definition: u64::from(definition.raw()),
@@ -300,7 +300,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             self.observe(CommandObservation::TokenList(TokenListRecord {
                 transition: "splice",
                 purpose: "macro_delimiter_match",
@@ -312,7 +312,7 @@ impl CommandProcessor<'_> {
                     })
                     .collect(),
             }));
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             self.observe(CommandObservation::Macro(MacroRecord {
                 activation: false,
                 definition: u64::from(_definition.raw()),
@@ -448,7 +448,7 @@ impl CommandProcessor<'_> {
                     prefix.len() + 1 - retained
                 };
                 for prefix_token in prefix.drain(..committed) {
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(CommandObservation::TokenList(TokenListRecord {
                         transition: "splice",
                         purpose: "macro_delimiter_recovery",

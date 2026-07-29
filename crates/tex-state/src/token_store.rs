@@ -350,12 +350,12 @@ impl TokenStore {
         frozen_hash: u64,
         legacy_key: Option<&[u8]>,
     ) -> TokenListId {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let capacity_before = self.arena.capacity();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let semantic_capacity_before = self.semantic_ids.capacity();
         if tokens.is_empty() {
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
             return Self::empty_id();
         }
@@ -383,7 +383,7 @@ impl TokenStore {
                 // Hash collisions are safe because the candidate span is
                 // compared by content before the id is reused.
                 if self.get(id) == tokens {
-                    #[cfg(feature = "profiling-stats")]
+                    #[cfg(feature = "profiling")]
                     crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
                     return id;
                 }
@@ -398,7 +398,7 @@ impl TokenStore {
         self.spans.push((start, len));
         self.semantic_ids.push(semantic_id);
         self.insert_index_id(semantic_id, id);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_token_intern(
             tokens.len(),
             false,
@@ -430,12 +430,12 @@ impl TokenStore {
         frozen_hash: u64,
         legacy_key: Option<&[u8]>,
     ) -> TokenListId {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let capacity_before = self.arena.capacity();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let semantic_capacity_before = self.semantic_ids.capacity();
         if traced.is_empty() {
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             crate::measurement::record_token_intern(0, true, 0, 0);
             return Self::empty_id();
         }
@@ -473,7 +473,7 @@ impl TokenStore {
                         .zip(traced)
                         .all(|(&token, &word)| word.token() == Some(token))
                 {
-                    #[cfg(feature = "profiling-stats")]
+                    #[cfg(feature = "profiling")]
                     crate::measurement::record_token_intern(traced.len(), true, 0, 0);
                     return id;
                 }
@@ -493,7 +493,7 @@ impl TokenStore {
         self.spans.push((start, len));
         self.semantic_ids.push(semantic_id);
         self.insert_index_id(semantic_id, id);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_token_intern(
             traced.len(),
             false,

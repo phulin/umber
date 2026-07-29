@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_state::World;
 
 use tex_lex::{
@@ -1307,12 +1307,12 @@ impl<'a> ExpansionContext<'a> {
         stores: &impl ExpansionState,
         symbol: Symbol,
     ) -> Meaning {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = input
             .should_sample_expansion_meaning_timer()
             .then(World::start_profiling_timer);
         let meaning = self.resolve_meaning_inner(input, stores, symbol);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if let Some(started) = started {
             input.record_expansion_meaning_resolution_nanos(
                 u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),

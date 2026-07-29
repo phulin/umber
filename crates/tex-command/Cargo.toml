@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# Enables the command-owned semantic observer boundary for dedicated
-# instrumentation builds. This deliberately pulls in no transport or oracle
-# schema dependency.
-instrumentation = []
+# Enables the command-owned semantic observation vocabulary. This
+# deliberately pulls in no transport or oracle schema dependency, and an
+# engine built with it must produce byte-identical artifacts to one without.
+observe = []
 
 [dependencies]
 tex-fonts = { path = "../tex-fonts" }

@@ -136,7 +136,7 @@ impl SidecarNeeds {
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn as_array(self) -> [u32; 14] {
         [
             self.ligatures,
@@ -180,9 +180,9 @@ pub(crate) struct NodeStorage {
     /// Exact totals for heap allocations owned below ligature and whatsit
     /// sidecar rows. Profiling reads these after every append, so keep the
     /// totals incrementally instead of rescanning all accumulated rows.
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) nested_payload_logical: u64,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) nested_payload_retained: u64,
 }
 
@@ -244,7 +244,7 @@ impl NodeStorage {
         assert!(mark.choices as usize <= self.choices.len());
         assert!(mark.math_lists as usize <= self.math_lists.len());
         assert!(mark.adjusts as usize <= self.adjusts.len());
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
         self.words.truncate(mark.words as usize);
         self.origins.truncate(mark.words as usize);
@@ -276,9 +276,9 @@ impl NodeStorage {
     }
 
     pub(crate) fn append_preflighted(&mut self, nodes: &[Node], needs: SidecarNeeds) -> (u32, u32) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let capacity_before = self.capacity_signature();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let retained_before = self.retained_payload_bytes();
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
         let len = checked_len(nodes.len(), "node list exceeds u32 entries");
@@ -302,7 +302,7 @@ impl NodeStorage {
                 _ => OriginId::UNKNOWN,
             });
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let capacity_after = self.capacity_signature();
             let growth_by_column = core::array::from_fn(|index| {
@@ -326,9 +326,9 @@ impl NodeStorage {
         nodes: &mut Vec<Node>,
         needs: SidecarNeeds,
     ) -> (u32, u32) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let capacity_before = self.capacity_signature();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let retained_before = self.retained_payload_bytes();
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
         let len = checked_len(nodes.len(), "node list exceeds u32 entries");
@@ -353,7 +353,7 @@ impl NodeStorage {
             self.words.push(word);
             self.origins.push(origin);
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let capacity_after = self.capacity_signature();
             let growth_by_column = core::array::from_fn(|index| {
@@ -445,7 +445,7 @@ impl NodeStorage {
                     &mut self.ligatures,
                     (font, *ch, orig.clone(), origins.clone()),
                 );
-                #[cfg(feature = "profiling-stats")]
+                #[cfg(feature = "profiling")]
                 self.record_last_ligature_payload();
                 word
             }
@@ -504,7 +504,7 @@ impl NodeStorage {
             ),
             Node::Whatsit(value) => {
                 let word = push_sidecar(17, &mut self.whatsits, value.clone());
-                #[cfg(feature = "profiling-stats")]
+                #[cfg(feature = "profiling")]
                 self.record_last_whatsit_payload();
                 word
             }
@@ -532,7 +532,7 @@ impl NodeStorage {
             } => {
                 let font = crate::ids::FontId::new(font.raw());
                 let word = push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins));
-                #[cfg(feature = "profiling-stats")]
+                #[cfg(feature = "profiling")]
                 self.record_last_ligature_payload();
                 word
             }
@@ -591,7 +591,7 @@ impl NodeStorage {
             ),
             Node::Whatsit(value) => {
                 let word = push_sidecar(17, &mut self.whatsits, value);
-                #[cfg(feature = "profiling-stats")]
+                #[cfg(feature = "profiling")]
                 self.record_last_whatsit_payload();
                 word
             }

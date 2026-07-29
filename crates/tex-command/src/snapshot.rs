@@ -198,7 +198,7 @@ impl CommandState {
             },
             expansion: summary.expansion,
             replay_completions: Vec::new(),
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             named_token_list_pushes: Vec::new(),
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,

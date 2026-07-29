@@ -14,9 +14,9 @@ use ahash::AHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::time::Instant;
 
 const SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
@@ -26,7 +26,7 @@ static NEXT_SURVIVOR_ROOT: AtomicU32 = AtomicU32::new(0);
 /// promotion, recycling release, or shared-payload drop operation; scratch
 /// bytes are allocator payload bytes and exclude allocator metadata and
 /// `HashMap` control bytes.
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SurvivorMeasurement {
     pub fresh_promotions: u64,
@@ -51,7 +51,7 @@ pub struct SurvivorMeasurement {
     pub peak_pending_entries: u64,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 mod measurement {
     use super::{AtomicU64, Instant, Ordering, SurvivorMeasurement};
 
@@ -110,7 +110,7 @@ mod measurement {
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[must_use]
 pub fn survivor_measurement() -> SurvivorMeasurement {
     measurement::snapshot()
@@ -382,7 +382,7 @@ impl SurvivorArena {
 
     /// Promotes an epoch list into one survivor root with refcount 1.
     pub(crate) fn promote(&mut self, id: NodeListId, epoch: &NodeArena) -> NodeListId {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = measurement::start_timer();
         assert!(
             matches!(id.arena(), ArenaRef::Epoch),
@@ -392,12 +392,12 @@ impl SurvivorArena {
             .map(SurvivorRootId::new)
             .expect("survivor root identity space exhausted");
         let (storage, recycled) = self.take_recycled_buffer();
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         let _ = recycled;
         let remapped = core::mem::take(&mut self.promotion_remap);
         let pending = core::mem::take(&mut self.promotion_pending);
         let copied = copy_list_iterative(id, epoch, self, storage, root, remapped, pending);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             measurement::PEAK_SCRATCH_LOGICAL
                 .fetch_max(copied.peak_scratch_logical as u64, Ordering::Relaxed);
@@ -413,7 +413,7 @@ impl SurvivorArena {
             copied.deferred_origins,
         );
         self.debug_assert_no_epoch_ids(copied.promoted);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
             if recycled {
@@ -552,7 +552,7 @@ impl SurvivorArena {
             .checked_sub(1)
             .expect("survivor root refcount underflow");
         if slot.refcount == 0 {
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             let started = measurement::start_timer();
             let index = self
                 .root_slots
@@ -566,7 +566,7 @@ impl SurvivorArena {
             } else {
                 false
             };
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             if recycled {
                 measurement::RELEASE_CALLS.fetch_add(1, Ordering::Relaxed);
                 let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
@@ -576,7 +576,7 @@ impl SurvivorArena {
                 let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
                 measurement::SHARED_DROP_NANOS.fetch_add(nanos, Ordering::Relaxed);
             }
-            #[cfg(not(feature = "profiling-stats"))]
+            #[cfg(not(feature = "profiling"))]
             let _ = recycled;
         }
     }
@@ -819,7 +819,7 @@ impl SurvivorArena {
         (self.recycled.swap_remove(index), true)
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(crate) fn memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
         use std::collections::BTreeMap;
 
@@ -983,9 +983,9 @@ struct PromotionResult {
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     deferred_origins: Vec<DeferredParagraphOrigins>,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     peak_scratch_logical: usize,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     peak_scratch_retained: usize,
 }
 
@@ -1000,13 +1000,13 @@ fn copy_list_iterative(
 ) -> PromotionResult {
     let mut copy = PromotionCopy::new(epoch, survivor, storage, root, remapped, pending);
     let promoted = copy.copy_list(id);
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     copy.measure_scratch();
 
     while let Some(patch) = copy.pending.pop() {
         let patch = patch.remap(|child| copy.copy_list(child));
         copy.storage.apply_child_patch(patch);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         copy.measure_scratch();
     }
 
@@ -1019,9 +1019,9 @@ fn copy_list_iterative(
         remapped: copy.remapped,
         pending: copy.pending,
         deferred_origins: copy.deferred_origins,
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         peak_scratch_logical: copy.peak_scratch_logical,
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         peak_scratch_retained: copy.peak_scratch_retained,
     }
 }
@@ -1038,9 +1038,9 @@ struct PromotionCopy<'a> {
     pending: Vec<ChildPatch>,
     semantic_spans: Vec<SurvivorSemanticSpan>,
     deferred_origins: Vec<DeferredParagraphOrigins>,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     peak_scratch_logical: usize,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     peak_scratch_retained: usize,
 }
 
@@ -1065,14 +1065,14 @@ impl<'a> PromotionCopy<'a> {
             pending,
             semantic_spans: Vec::new(),
             deferred_origins: Vec::new(),
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             peak_scratch_logical: 0,
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             peak_scratch_retained: 0,
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     fn measure_scratch(&mut self) {
         let map_entry = core::mem::size_of::<(NodeListId, NodeListId)>();
         let patch = core::mem::size_of::<ChildPatch>();
@@ -1155,11 +1155,11 @@ impl<'a> PromotionCopy<'a> {
                 semantic_id,
             });
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let pending_before = self.pending.len();
         let appended = self.storage.append_compact(nodes, &mut self.pending);
         assert_eq!(appended, (start, len));
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let child_patches = self.pending.len() - pending_before;
             measurement::SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);

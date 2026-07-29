@@ -86,9 +86,9 @@ impl NodeStorage {
         source: NodeList<'_>,
         pending: &mut Vec<ChildPatch>,
     ) -> (u32, u32) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let capacity_before = self.capacity_signature();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let retained_before = self.retained_payload_bytes();
 
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
@@ -112,7 +112,7 @@ impl NodeStorage {
                 1 => {
                     let word =
                         copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side);
-                    #[cfg(feature = "profiling-stats")]
+                    #[cfg(feature = "profiling")]
                     self.record_last_ligature_payload();
                     word
                 }
@@ -164,7 +164,7 @@ impl NodeStorage {
                 }
                 17 => {
                     let word = copy_vec_row(17, &mut self.whatsits, &source.storage.whatsits, side);
-                    #[cfg(feature = "profiling-stats")]
+                    #[cfg(feature = "profiling")]
                     self.record_last_whatsit_payload();
                     word
                 }
@@ -236,7 +236,7 @@ impl NodeStorage {
                 .push(source.storage.origins[source.start + offset]);
         }
 
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let capacity_after = self.capacity_signature();
             let growth_by_column = core::array::from_fn(|index| {

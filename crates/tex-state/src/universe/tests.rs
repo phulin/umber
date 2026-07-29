@@ -1440,7 +1440,7 @@ fn corrupt_font_format(
     });
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[test]
 fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     let mut universe = Universe::new();

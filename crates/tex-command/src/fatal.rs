@@ -79,7 +79,7 @@ impl FatalError {
     }
 
     /// The committed observation for this fatal error.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn record(self) -> crate::DiagnosticRecord {
         crate::DiagnosticRecord {
@@ -89,7 +89,7 @@ impl FatalError {
         }
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     fn argument(self) -> String {
         match self {
             Self::EmergencyStop { help } => help.into(),

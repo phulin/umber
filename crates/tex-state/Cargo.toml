@@ -11,9 +11,9 @@ shadow = []
 # Test-only escape hatches for replay/fuzz coverage of raw storage words.
 # Engine production builds must not enable this feature.
 testing = []
-# Compile-time instrumentation for dedicated profiling builds. This includes
-# ephemeral process-wide node counters that never participate in engine state.
-profiling-stats = []
+# Compile-time counters for dedicated profiling builds. These are ephemeral
+# process-wide node counters that never participate in engine state.
+profiling = []
 
 [dependencies]
 ahash.workspace = true

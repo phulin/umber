@@ -26,7 +26,7 @@ mod timing;
 mod transaction;
 mod vertical;
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 
 pub use assignments::{

@@ -20,7 +20,7 @@ inputs=(
   dvi.tex
 )
 
-cargo build --profile profiling -p umber --features profiling-stats
+cargo build --profile profiling -p umber --features profiling
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/umber-allocation-owners.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT

@@ -6,7 +6,7 @@
 //! In particular, an observer is non-fallible and never participates in
 //! command state, snapshots, delivery, expansion, or scanner control flow.
 
-#![cfg(any(test, feature = "instrumentation"))]
+#![cfg(any(test, feature = "observe"))]
 
 use tex_state::meaning::Meaning;
 

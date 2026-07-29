@@ -221,13 +221,13 @@ fn finalize_run(
     let virtual_font_resources = finalization.virtual_font_resources;
     let mut stores = finalization.stores;
     let dumped_format = finalization.dumped_format;
-    #[cfg_attr(not(feature = "profiling-stats"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "profiling"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
     let committed_artifacts = stores.world().committed_artifacts().to_vec();
     if opts.format_out.is_some() && !dumped_format {
         return Err(CliError::MissingFormatDump);
     }
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     if opts.profiling_stats {
         let stats = expansion_stats;
         eprintln!(
@@ -263,13 +263,13 @@ fn finalize_run(
             stats.attributed_nanos(),
         );
     }
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     if opts.profiling_stats {
         for (kind, count) in tex_state::node::node_append_histogram() {
             eprintln!("NODE_HISTOGRAM {kind} {count}");
         }
     }
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     if opts.profiling_stats {
         let columns = stores.node_memory_columns();
         for column in &columns {
@@ -472,7 +472,7 @@ struct RunCliOptions {
     distribution_sha256: Option<String>,
     offline: bool,
     expansion_fuel: Option<u64>,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     profiling_stats: bool,
 }
 
@@ -493,7 +493,7 @@ impl RunCliOptions {
         let mut distribution_sha256 = None;
         let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
         let mut expansion_fuel = None;
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let mut profiling_stats = false;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
@@ -558,7 +558,7 @@ impl RunCliOptions {
                     }
                     engine = RunEngine::PdfLatex;
                 }
-                #[cfg(feature = "profiling-stats")]
+                #[cfg(feature = "profiling")]
                 "--profiling-stats" => {
                     profiling_stats = true;
                 }
@@ -709,7 +709,7 @@ impl RunCliOptions {
             distribution_sha256,
             offline,
             expansion_fuel,
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             profiling_stats,
         })
     }

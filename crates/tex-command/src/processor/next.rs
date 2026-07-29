@@ -17,7 +17,7 @@ use crate::input::{
     TokenBehavior, TokenCursor, TokenPayload,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::input::SourceNameClass;
 use crate::input::{RegisteredSourceKind, SourceRegistration};
 use crate::profile::{CharacterCode, CharacterMode};
@@ -32,12 +32,12 @@ use super::expand::ExpandedFetch;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 use super::alignment::AlignmentDeliveryState;
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use super::alignment::CELL_ALIGN_STATE;
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::input::InputRetirementReason;
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandProvenance, DiagnosticArgument, DiagnosticRecord, InputReason, InputRecord,
@@ -61,7 +61,7 @@ impl CommandProcessor<'_> {
         while let Some(retirement) = self.command.pop_input_level_at_end_of_job() {
             let terminal = matches!(retirement.action, InputRetirementAction::TerminalStop);
             terminal_stopped |= terminal;
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             self.observe(CommandObservation::Input(InputRecord {
                 transition: if terminal {
                     InputTransition::Stop
@@ -74,7 +74,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
         }
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if !terminal_stopped {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Stop,
@@ -86,7 +86,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
         }
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = terminal_stopped;
         self.command.conditions.drain_incomplete()
     }
@@ -212,7 +212,7 @@ impl CommandProcessor<'_> {
                     continue;
                 }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                #[cfg(any(test, feature = "instrumentation"))]
+                #[cfg(any(test, feature = "observe"))]
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(AlignmentDelivery::Command(command)));
             }
@@ -223,7 +223,7 @@ impl CommandProcessor<'_> {
                 self.expand(command)?;
                 continue;
             }
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             self.observe_expanded_delivery(&command);
             if self
                 .command
@@ -365,9 +365,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
@@ -419,7 +419,7 @@ impl CommandProcessor<'_> {
         self.command
             .begin_alignment_v_template(alignment, saved_delimiter)
             .map_err(|_| CommandError::input_invariant())?;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if let Some(input) = self
             .command
             .alignment_v_template_push_observation(alignment)
@@ -641,9 +641,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Backup,
             reason: InputReason::Backup,
@@ -690,9 +690,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
@@ -736,9 +736,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             // `head_for_vmode` calls `back_input` after assigning `cur_tok`;
             // the push is therefore observed as backup even though its
@@ -784,9 +784,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             // `insert_dollar_sign` calls `back_input` before assigning
             // `cur_tok`; the push is therefore observed as backup even
@@ -825,9 +825,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::OutputRoutine,
@@ -853,7 +853,7 @@ impl CommandProcessor<'_> {
         command: CurrentCommand,
         closing: &[Token],
     ) -> Result<(), CommandError> {
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Diagnostic(
             crate::observation::DiagnosticRecord {
                 severity: "error",
@@ -875,9 +875,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
@@ -1000,9 +1000,9 @@ impl CommandProcessor<'_> {
         // `align_state` and before it pushes the `backed_up` list, so every
         // depleted level retires ahead of the backup.
         self.conserve_input_stack()?;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         let previous_align_state = self.command.alignment.align_state;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         let adjustment = command.alignment_adjustment();
         self.undo_alignment_delivery(&command);
 
@@ -1015,9 +1015,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
@@ -1114,7 +1114,7 @@ impl CommandProcessor<'_> {
                     .replay_out_parameter(level, slot)
                     .map_err(|_| CommandError::input_invariant())?;
                 if let OutParameterReplay::Pushed(_parameter_level) = replay {
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(CommandObservation::Input(InputRecord {
                         transition: InputTransition::Push,
                         reason: InputReason::Parameter,
@@ -1145,11 +1145,11 @@ impl CommandProcessor<'_> {
             // delivery before substituting its recovery space.
             self.last_delivery = Some(delivery_stamp);
             self.check_outer_validity_entry(&mut command)?;
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             let previous_align_state = self.command.alignment.align_state;
             let adjustment = self.command.alignment.classify_delivery(&mut command);
             command.set_alignment_adjustment(adjustment);
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             if self.command.alignment.active_alignment.is_some()
                 && !matches!(
                     adjustment,
@@ -1190,7 +1190,7 @@ impl CommandProcessor<'_> {
                     .then_some(previous_align_state),
                 }));
             }
-            #[cfg(any(test, feature = "instrumentation"))]
+            #[cfg(any(test, feature = "observe"))]
             if !matches!(
                 adjustment,
                 crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -1207,7 +1207,7 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<DeliveredToken>, CommandError> {
         loop {
             let Some(level) = self.command.input.levels.last().cloned() else {
-                #[cfg(any(test, feature = "instrumentation"))]
+                #[cfg(any(test, feature = "observe"))]
                 self.observe(CommandObservation::Input(InputRecord {
                     transition: InputTransition::Stop,
                     reason: InputReason::Source,
@@ -1321,7 +1321,7 @@ impl CommandProcessor<'_> {
             .retire_exhausted_input(identity)
             .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
             let reason = if self.take_immediate_write_retirement(identity) {
                 InputReason::Write
@@ -1345,7 +1345,7 @@ impl CommandProcessor<'_> {
         // distinguishes `start=omit_template` from a column's ⟨v_j⟩ part.
         // A retained v-template has not left the stack yet, so it is not
         // named here.
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if let Some(transition) = match retirement.reason {
             _ if matches!(action, InputRetirementAction::VTemplateRetained) => None,
             InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
@@ -1384,10 +1384,10 @@ impl CommandProcessor<'_> {
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::ScantokensClosed
             | InputRetirementAction::VTemplatePopped => {
-                #[cfg(any(test, feature = "instrumentation"))]
+                #[cfg(any(test, feature = "observe"))]
                 let previous_align_state = self.command.alignment.align_state;
                 if self.command.alignment.finish_u_template(identity) {
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(CommandObservation::Alignment(AlignmentRecord {
                         transition: "state_change",
                         alignment: self
@@ -1606,7 +1606,7 @@ impl CommandProcessor<'_> {
         // Keep this command-owned: the backup still belongs to raw delivery,
         // but the diagnostic describes the live scanner episode that selected
         // its recovery.
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe_outer_validity_diagnostic(&recovery.status, false);
         if matches!(recovery.status, ScannerStatus::Matching(_)) {
             self.outer_recovered_while_matching = true;
@@ -1634,7 +1634,7 @@ impl CommandProcessor<'_> {
             // the expansion returns.
             self.eof_recovered_while_matching = true;
         }
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe_outer_validity_diagnostic(&recovery.status, true);
         self.install_outer_recovery(recovery)?;
         Ok(true)
@@ -1645,7 +1645,7 @@ impl CommandProcessor<'_> {
     /// reassigned their visible spellings.
     fn install_outer_recovery(&mut self, recovery: RecoveryContext) -> Result<(), CommandError> {
         let RecoveryContext { status, warning } = recovery;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         if matches!(status, ScannerStatus::Aligning(_)) {
             // TeX82 §23's `check_outer_validity` reports the aligning
             // recovery before `ins_error` inserts inaccessible frozen `\cr`.
@@ -1663,7 +1663,7 @@ impl CommandProcessor<'_> {
                 previous_align_state: None,
             }));
         }
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         let (frozen_recovery_name, recovery_kind) = match &status {
             ScannerStatus::Skipping(_) => (Some("fi"), RecoveryKind::InsertedToken),
             ScannerStatus::Matching(_) => (Some("par"), RecoveryKind::InsertedControlSequence),
@@ -1698,7 +1698,7 @@ impl CommandProcessor<'_> {
         if let Some(warning) = warning {
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         let observed_tokens = tokens
             .iter()
             .copied()
@@ -1720,9 +1720,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Recovery,
             reason: InputReason::Recovery,
@@ -1730,7 +1730,7 @@ impl CommandProcessor<'_> {
             level: level.0,
             position: 0,
         }));
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Recovery(RecoveryRecord {
             kind: recovery_kind,
             tokens: observed_tokens,
@@ -1738,7 +1738,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     fn observe_outer_validity_diagnostic(&mut self, status: &ScannerStatus, at_eof: bool) {
         let status_name = match status {
             ScannerStatus::Normal => "normal",
@@ -1773,7 +1773,7 @@ impl CommandProcessor<'_> {
         ))
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn observed_token(
         &self,
         token: TracedTokenWord,
@@ -1790,7 +1790,7 @@ impl CommandProcessor<'_> {
         )
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn observed_command_spelling(
         &self,
         command: &CurrentCommand,
@@ -1834,7 +1834,7 @@ impl CommandProcessor<'_> {
         }
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_current_command_identity_for_profile(
@@ -1869,7 +1869,7 @@ impl CommandProcessor<'_> {
     }
 }
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 fn observed_retirement_reason(
     action: InputRetirementAction,
     reason: InputRetirementReason,
@@ -1897,7 +1897,7 @@ fn observed_retirement_reason(
 }
 
 /// Names the tex.web §307 `token_type` one stored replay level reports.
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> InputReason {
     use crate::input::StoredReplayReason as Stored;
     use crate::observation::UmberReplayKind;

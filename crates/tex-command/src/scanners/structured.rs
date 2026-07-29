@@ -903,7 +903,7 @@ impl CommandProcessor<'_> {
         };
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
             target: "meaning",
             value: "relax".into(),
@@ -937,7 +937,7 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
             target: "meaning",
             value: "relax".into(),
@@ -1844,7 +1844,7 @@ impl CommandProcessor<'_> {
             Meaning::Font(tex_state::font::NULL_FONT),
             provisional_global,
         );
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
             target: "meaning",
             value: "set_font".into(),
@@ -2704,7 +2704,7 @@ impl CommandProcessor<'_> {
             _prior.status().clone(),
             self.command.scanner.status().clone(),
         );
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(crate::CommandObservation::Alignment(
             crate::AlignmentRecord {
                 transition: "preamble_start",
@@ -2777,7 +2777,7 @@ impl CommandProcessor<'_> {
                         repeat_start = Some(columns.len());
                         continue;
                     }
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(crate::CommandObservation::Alignment(
                         crate::AlignmentRecord {
                             transition: "missing_parameter",
@@ -2847,7 +2847,7 @@ impl CommandProcessor<'_> {
                         ..
                     }
                 ) {
-                    #[cfg(any(test, feature = "instrumentation"))]
+                    #[cfg(any(test, feature = "observe"))]
                     self.observe(crate::CommandObservation::Alignment(
                         crate::AlignmentRecord {
                             transition: "extra_parameter",
@@ -2888,7 +2888,7 @@ impl CommandProcessor<'_> {
                 },
             )
             .map_err(|_| CommandError::input_invariant())?;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(crate::CommandObservation::Alignment(
             crate::AlignmentRecord {
                 transition: "preamble_finish",
@@ -2981,9 +2981,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         // `back_list` is a plain `begin_token_list`, not §325's `back_input`:
         // it pushes a backed-up level without the accompanying recovery
         // record that a backed-up raw delivery reports.

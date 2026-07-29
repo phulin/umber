@@ -1814,7 +1814,7 @@ where
 {
     let mut macro_text = Vec::new();
     loop {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let mut paragraph_probe_anchor = None;
         abandon_stale_vertical_paragraph_probe(nest, stores, execution);
         report_recoverable_expansion_diagnostics(execution, stores);
@@ -1843,7 +1843,7 @@ where
                 Some(span) => Some(span),
                 None => input.root_source_cursor_anchor(stores),
             };
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             {
                 paragraph_probe_anchor = Some(starting_span.is_some());
             }
@@ -2185,7 +2185,7 @@ where
                 return Ok(MainControlExit::NotConsumed { token });
             }
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if before_mode == crate::Mode::Vertical
             && before_depth == 1
             && nest.current_mode() == crate::Mode::Horizontal

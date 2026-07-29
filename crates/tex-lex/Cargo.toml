@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# Compile-time instrumentation for dedicated profiling builds.
-profiling-stats = ["tex-state/profiling-stats"]
+# Compile-time counters for dedicated profiling builds.
+profiling = ["tex-state/profiling"]
 
 [dependencies]
 ahash.workspace = true

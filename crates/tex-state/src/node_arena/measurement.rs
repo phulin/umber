@@ -1,14 +1,14 @@
 use super::storage::NodeStorage;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::sync::{Mutex, OnceLock};
 
 /// One allocator-backed compact-node column in a diagnostic memory report.
 ///
 /// This is process-local measurement data. It is computed on demand and is
 /// never stored in `Universe`, snapshots, hashes, or replay state.
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeMemoryColumn {
     pub name: String,
@@ -19,7 +19,7 @@ pub struct NodeMemoryColumn {
     pub retained_payload_bytes: usize,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 impl NodeMemoryColumn {
     fn from_vec<T>(name: String, values: &Vec<T>) -> Self {
         let element_bytes = core::mem::size_of::<T>();
@@ -49,7 +49,7 @@ impl NodeMemoryColumn {
 ///
 /// The totals are sums of this record's columns, so consumers never receive
 /// totals and column details from different storages.
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeStorageObservation {
     pub logical_bytes: u64,
@@ -57,7 +57,7 @@ pub struct NodeStorageObservation {
     pub columns: Vec<NodeMemoryColumn>,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 impl NodeStorageObservation {
     fn from_columns(columns: Vec<NodeMemoryColumn>) -> Self {
         Self {
@@ -78,14 +78,14 @@ impl NodeStorageObservation {
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[derive(Debug, Default)]
 struct PeakNodeStorageRecorder {
     logical_hint: AtomicU64,
     observation: Mutex<Option<NodeStorageObservation>>,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 impl PeakNodeStorageRecorder {
     fn observe(
         &self,
@@ -123,10 +123,10 @@ impl PeakNodeStorageRecorder {
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 static PEAK_STORAGE: OnceLock<PeakNodeStorageRecorder> = OnceLock::new();
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub(super) fn record_peak_observation(
     totals: (u64, u64),
     columns: impl FnOnce() -> Vec<NodeMemoryColumn>,
@@ -139,7 +139,7 @@ pub(super) fn record_peak_observation(
 /// Largest individual canonical storage observed during this process.
 /// Survivor scratch is reported separately; aggregate end-state storage is
 /// available through `Universe::node_memory_columns`.
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[must_use]
 pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
     PEAK_STORAGE
@@ -176,7 +176,7 @@ impl RetainedBytes {
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     fn add_assign(&mut self, other: Self) {
         self.logical += other.logical;
         self.retained += other.retained;
@@ -257,7 +257,7 @@ fn whatsit_owned_payloads(whatsit: &crate::node::Whatsit) -> WhatsitOwnedPayload
 }
 
 impl NodeStorage {
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn record_last_ligature_payload(&mut self) {
         let (_, _, source, origins) = self
             .ligatures
@@ -269,7 +269,7 @@ impl NodeStorage {
             + (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn record_last_whatsit_payload(&mut self) {
         let owned = whatsit_owned_payloads(
             self.whatsits
@@ -282,7 +282,7 @@ impl NodeStorage {
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn remove_nested_payloads_from(
         &mut self,
         ligature_start: usize,
@@ -314,7 +314,7 @@ impl NodeStorage {
             .expect("nested retained payload accounting underflow");
     }
 
-    #[cfg(all(test, feature = "profiling-stats"))]
+    #[cfg(all(test, feature = "profiling"))]
     pub(super) fn rebuild_nested_payload_measurement(&mut self) {
         self.nested_payload_logical = 0;
         self.nested_payload_retained = 0;
@@ -335,7 +335,7 @@ impl NodeStorage {
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn capacity_signature(&self) -> [usize; 33] {
         [
             self.words.capacity(),
@@ -427,7 +427,7 @@ impl NodeStorage {
         add!(self.choices);
         add!(self.math_lists);
         add!(self.adjusts);
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         for (_, _, source, origins) in &self.ligatures {
             logical += (source.len() * core::mem::size_of::<char>()) as u64;
             retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
@@ -435,7 +435,7 @@ impl NodeStorage {
             retained +=
                 (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
         }
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         for whatsit in &self.whatsits {
             let owned = whatsit_owned_payloads(whatsit);
             for allocation in [owned.strings, owned.bytes, owned.boxes] {
@@ -443,7 +443,7 @@ impl NodeStorage {
                 retained += allocation.retained as u64;
             }
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             logical += self.nested_payload_logical;
             retained += self.nested_payload_retained;
@@ -451,7 +451,7 @@ impl NodeStorage {
         (logical, retained)
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(crate) fn memory_columns(&self, prefix: &str) -> Vec<NodeMemoryColumn> {
         let mut out = Vec::new();
         macro_rules! column {
@@ -555,11 +555,11 @@ impl NodeStorage {
         out
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(super) fn record_peak(&self) {
         record_peak_observation(self.payload_bytes(), || self.memory_columns("peak"));
     }
 }
 
-#[cfg(all(test, feature = "profiling-stats"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests;

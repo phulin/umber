@@ -3,7 +3,7 @@
 use tex_state::input::TracedTokenList;
 use tex_state::token::TracedTokenWord;
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
@@ -49,7 +49,7 @@ pub struct CommandState {
     /// after the borrowed command-processor episode has ended, so the record
     /// waits here until the same operation publishes its other committed
     /// observations.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) named_token_list_pushes: Vec<(InputLevelId, StoredReplayReason)>,
 }
 
@@ -203,9 +203,9 @@ impl CommandState {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.named_token_list_pushes.push((level, reason));
     }
 
@@ -214,7 +214,7 @@ impl CommandState {
     /// The executor publishes them with the rest of the operation's committed
     /// records, which is where tex.web's own trace has them: inside the
     /// `new_graf`/`box_end`/`init_math` transition that installed the level.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn take_named_token_list_push_observations(&mut self) -> Vec<crate::InputRecord> {
         self.named_token_list_pushes
@@ -235,7 +235,7 @@ impl CommandState {
     /// remains the owner of its align-state and stable alignment identity.
     /// Keeping that projection here prevents replay instrumentation from
     /// reconstructing either value from raw input.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_begin_observation(&self) -> Option<AlignmentRecord> {
         self.alignment
@@ -258,7 +258,7 @@ impl CommandState {
     /// entry.  The live `align_state` is already the nested alignment's
     /// `-1000000` by the time this observation is committed, because §774's
     /// `init_align` overwrites it immediately after the save.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_suspend_observation(&self) -> Option<AlignmentRecord> {
         let saved = self.alignment.align_stack.last().copied();
@@ -276,7 +276,7 @@ impl CommandState {
 
     /// Returns the committed observation after a saved outer alignment has
     /// resumed its command-owned delivery state.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_resume_observation(&self) -> Option<AlignmentRecord> {
         self.alignment
@@ -294,7 +294,7 @@ impl CommandState {
     /// before it removes the active delivery context.  `align_peek` has
     /// already delivered the closing brace at this point; the executor only
     /// requests the structural finish and never classifies that token.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_finish_observation(
         &self,
@@ -457,7 +457,7 @@ impl CommandState {
     }
 
     /// Returns the state transition committed by TeX82's omit-cell branch.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_omit_cell_observation(
         &self,
@@ -478,7 +478,7 @@ impl CommandState {
     /// The level identity is allocated by the state transition itself, so
     /// instrumentation can report the canonical input lifecycle without
     /// reconstructing a template push from executor state or token contents.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_u_template_push_observation(
         &self,
@@ -497,7 +497,7 @@ impl CommandState {
 
     /// Returns the command-owned alignment transition paired with the
     /// u-template input push.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_u_template_push_alignment_observation(
         &self,
@@ -528,7 +528,7 @@ impl CommandState {
     /// The executor requests the transition, while command state remains the
     /// source of the resulting `align_state`; this avoids deriving an event
     /// from either template contents or raw input.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_cell_begin_observation(&self) -> Option<AlignmentRecord> {
         self.alignment
@@ -573,7 +573,7 @@ impl CommandState {
 
     /// Returns the committed v-template push made after a command-owned
     /// delimiter interception.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_v_template_push_observation(
         &self,
@@ -592,7 +592,7 @@ impl CommandState {
 
     /// Returns the template lifecycle transition paired with the v-template
     /// input push, without exposing template tokens to the executor.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_v_template_push_alignment_observation(
         &self,
@@ -689,7 +689,7 @@ impl CommandState {
     /// The retirement of the exhausted v-template is _not_ published here.
     /// §1131's `do_endv` pops nothing; §357's `end_token_list` retires the
     /// frame whenever `get_next` next reaches it, and observes it there.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     #[must_use]
     pub fn alignment_cell_finish_observation(
         &self,
@@ -713,7 +713,7 @@ impl CommandState {
 
     /// Takes the command-owned observation published when `fin_col` changes
     /// an exhausted saved tab or span into a row ending.
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub fn take_alignment_extra_tab_recovery_observation(
         &mut self,
     ) -> Option<crate::AlignmentRecord> {

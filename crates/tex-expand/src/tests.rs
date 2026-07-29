@@ -222,7 +222,7 @@ fn pdftex_absolute_conditionals_handle_signed_minimum_without_overflow() {
     assert_eq!(crate::conditionals::absolute_magnitude(-1), 1);
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[test]
 fn macro_site_meaning_cache_is_expansion_owned_and_guarded() {
     let mut stores = Universe::new_with_plain_catcodes();

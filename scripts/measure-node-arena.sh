@@ -15,7 +15,7 @@ inputs=(paragraph-wide.tex pages.tex math.tex math-nested.tex)
 if [[ "${MEASURE_CLEAN:-0}" == 1 ]]; then
   cargo clean -p umber
 fi
-cargo build --profile profiling -p umber --features profiling-stats
+cargo build --profile profiling -p umber --features profiling
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/umber-node-arena.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT

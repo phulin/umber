@@ -349,7 +349,7 @@ impl Stores {
             "state hash cursor journal position is after snapshot"
         );
 
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_hash_call(
             end.env_snapshot
                 .journal_pos()
@@ -577,7 +577,7 @@ impl Stores {
         changed_cells
             .dedup_by(|(_, right), (_, left)| cache.cells[left].key == cache.cells[right].key);
 
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_hash_changed_cells(
             changed_cells.len(),
             first_old.capacity() * core::mem::size_of::<(CellId, usize, u64)>()
@@ -1480,7 +1480,7 @@ impl Stores {
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_owned_font_key();
         self.assert_live_font(font);
         let identifier = self.fonts.identifier(font).map(|symbol| {

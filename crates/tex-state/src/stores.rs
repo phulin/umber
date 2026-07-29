@@ -45,7 +45,7 @@ use crate::macro_store::{
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
 use crate::provenance::{
@@ -565,7 +565,7 @@ impl Stores {
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, false);
         self.bump_meaning_generation();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_meaning_cache_invalidation(
             crate::measurement::MeaningCacheInvalidation::LocalWrite,
         );
@@ -588,7 +588,7 @@ impl Stores {
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, true);
         self.bump_meaning_generation();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_meaning_cache_invalidation(
             crate::measurement::MeaningCacheInvalidation::GlobalWrite,
         );
@@ -860,7 +860,7 @@ impl Stores {
             }))
         });
 
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let token_list = self.tokens.intern_traced_with_semantic_id(
             traced,
@@ -2166,7 +2166,7 @@ impl Stores {
         let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             crate::measurement::record_meaning_cache_invalidation(
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
@@ -2201,7 +2201,7 @@ impl Stores {
         let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             crate::measurement::record_meaning_cache_invalidation(
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
@@ -2557,7 +2557,7 @@ impl Stores {
         self.last_loaded_font = snapshot.last_loaded_font;
         self.exact_env_identity = snapshot.exact_env_identity.clone();
         self.bump_meaning_generation();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_meaning_cache_invalidation(
             crate::measurement::MeaningCacheInvalidation::Rollback,
         );
@@ -2930,7 +2930,7 @@ impl Stores {
         self.survivors.testing_root_slot_count()
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     pub(crate) fn node_memory_columns(&self) -> Vec<NodeMemoryColumn> {
         let mut columns = self.nodes.memory_columns();
         columns.extend(self.survivors.memory_columns());

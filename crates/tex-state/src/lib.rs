@@ -60,7 +60,7 @@ pub(crate) mod journal;
 pub mod macro_store;
 pub mod math;
 pub mod meaning;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub mod measurement;
 pub mod memo;
 pub mod node;
@@ -145,7 +145,7 @@ pub use universe::{
     PenaltyArrayKind, ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult,
     UnboxKind, Universe,
 };
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
 pub use world::{
     ArtifactOrigin, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos,

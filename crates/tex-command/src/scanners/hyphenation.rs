@@ -18,7 +18,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
 use crate::{CommandError, CommandProcessor};
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::{CommandObservation, DiagnosticRecord};
 
 #[cfg(test)]
@@ -128,7 +128,7 @@ impl CommandProcessor<'_> {
             ),
             HyphenationDataKind::Patterns => ("Bad \\patterns", &["(See Appendix H.)"]),
         };
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
             severity: "error",
             diagnostic: match kind {

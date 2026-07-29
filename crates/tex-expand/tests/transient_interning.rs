@@ -1,4 +1,4 @@
-#![cfg(feature = "profiling-stats")]
+#![cfg(feature = "profiling")]
 
 use tex_expand::{ExpansionContext, get_x_token_with_context};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};

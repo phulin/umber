@@ -4,7 +4,7 @@
 `cargo clippy` lints one feature resolution per invocation, and Cargo unifies
 features across everything a single invocation selects.  The whole-workspace
 `--all-targets` pass therefore lints `tex-command` and `tex-exec` with
-`instrumentation` enabled, because `tools/tex-command-stream` depends on that
+`observe` enabled, because `tools/tex-command-stream` depends on that
 feature and `tex-exec`'s dev-dependencies enable it.  No invocation of that
 shape can ever lint the resolution the shipped binary is built in, so warnings
 that exist only there -- `cargo build -p umber`, `cargo run-dev -p umber`,
@@ -51,21 +51,21 @@ PASSES = (
         # repository compiles, and one selected by no pass is one the lint
         # policy does not actually apply to (umber2-johp.201).
         "summary": "every workspace member, all targets, dev-dependency feature union",
-        "args": ("--workspace", "--all-targets", "--features", "umber/instrumentation"),
+        "args": ("--workspace", "--all-targets", "--features", "umber/observe"),
         "select": "workspace",
         "features": {
-            "parity-harness": ["trip-instrumentation"],
-            "tex-command": ["instrumentation"],
-            "tex-exec": ["instrumentation"],
+            "parity-harness": ["observe"],
+            "tex-command": ["observe"],
+            "tex-exec": ["observe"],
             "tex-state": ["default", "testing"],
-            "umber": ["default", "instrumentation"],
+            "umber": ["default", "observe"],
         },
         "quarantine": {},
     },
     {
         "name": "shipping",
         "summary": "every workspace member's lib and bin targets, no dev-dependencies",
-        # `tex-command-stream` is the one member that forces `instrumentation`
+        # `tex-command-stream` is the one member that forces `observe`
         # on a dependency, so excluding it is what makes this pass resolve the
         # features a released `umber` is built with.  It is linted by the union
         # pass instead.
@@ -85,15 +85,15 @@ PASSES = (
 # every declared feature that no pass enables must appear here.
 UNCOVERED_ENABLED_FEATURES = {
     "tex-expand/shadow": "verification-only mirror; linted by scripts/check-tools.sh only through `umber`",
-    "tex-expand/profiling-stats": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
-    "tex-exec/profiling-stats": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
-    "tex-lex/profiling-stats": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
+    "tex-expand/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
+    "tex-exec/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
+    "tex-lex/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/shadow": "verification-only mirror; enabled by scripts/check-tools.sh through `umber`",
-    "tex-state/profiling-stats": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
+    "tex-state/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-out/dvi-tools": "opt-in tool binary; linted by scripts/check-tools.sh",
     "umber/shadow": "verification-only mirror; no routine build enables it",
     "umber/profiling-runner": "opt-in profiling binary; linted by scripts/check-tools.sh",
-    "umber/profiling-stats": "opt-in profiling binary; linted by scripts/check-tools.sh",
+    "umber/profiling": "opt-in profiling binary; linted by scripts/check-tools.sh",
     "parity-harness/reference-tools": "opt-in reference tooling; linted by scripts/check-tools.sh",
 }
 

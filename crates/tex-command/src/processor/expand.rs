@@ -22,7 +22,7 @@ use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::CommandProcessor;
 
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
     EffectRecord, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
@@ -352,12 +352,12 @@ impl CommandProcessor<'_> {
                     continue;
                 }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                #[cfg(any(test, feature = "instrumentation"))]
+                #[cfg(any(test, feature = "observe"))]
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
             if !is_expandable(command.meaning()) {
-                #[cfg(any(test, feature = "instrumentation"))]
+                #[cfg(any(test, feature = "observe"))]
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
@@ -378,7 +378,7 @@ impl CommandProcessor<'_> {
         }
     }
 
-    #[cfg(any(test, feature = "instrumentation"))]
+    #[cfg(any(test, feature = "observe"))]
     pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_current_command_identity_for_profile(
@@ -674,7 +674,7 @@ impl CommandProcessor<'_> {
 
     fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let _input = self.open_registered_input()?;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail: _input.file_name.name,
@@ -718,9 +718,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Mark,
@@ -783,11 +783,11 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         {
             let _ = (level, first);
         }
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Recovery,
@@ -818,9 +818,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        #[cfg(not(any(test, feature = "instrumentation")))]
+        #[cfg(not(any(test, feature = "observe")))]
         let _ = level;
-        #[cfg(any(test, feature = "instrumentation"))]
+        #[cfg(any(test, feature = "observe"))]
         {
             // TeX82 §25's `back_input` is part of the expandafter lifecycle:
             // after expanding its second token, the saved first token must be
@@ -893,7 +893,7 @@ pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
 /// other. Deriving the classification from the observed token keeps every
 /// caller of `ins_list` -- rendered conversion text, a copied token register, a
 /// font identifier -- on the same rule instead of asserting one per call site.
-#[cfg(any(test, feature = "instrumentation"))]
+#[cfg(any(test, feature = "observe"))]
 fn inserted_recovery_kind(token: &crate::observation::ObservedToken) -> RecoveryKind {
     use crate::observation::ObservedToken;
     match token {

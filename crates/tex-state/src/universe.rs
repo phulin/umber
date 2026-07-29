@@ -2161,11 +2161,11 @@ impl Universe {
             hasher: StateHasher::new_exact(domain),
             visits: 0,
         };
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = World::start_profiling_timer();
         build(&mut projection);
         let fingerprint = projection.hasher.finish();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_state_hash_component(
             StateHashComponent::Mode,
             projection.visits,
@@ -2187,11 +2187,11 @@ impl Universe {
             hasher: StateHasher::new_quad(domains),
             visits: 0,
         };
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = World::start_profiling_timer();
         build(&mut projection);
         let fingerprints = projection.hasher.finish_quad();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         crate::measurement::record_state_hash_component(
             StateHashComponent::Mode,
             projection.visits,
@@ -2798,9 +2798,9 @@ impl Universe {
     }
 
     fn exact_checkpoint_identity(&mut self) -> Result<u64, StoreFormatError> {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = World::start_profiling_timer();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let projections_before = crate::measurement::state_hash_measurement();
         let store = self.stores.semantic_identity()?;
         let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
@@ -2822,7 +2822,7 @@ impl Universe {
         }
         let identity =
             crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v3", &framed);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             let projections_after = crate::measurement::state_hash_measurement();
             let mut calls = 0;
@@ -6414,7 +6414,7 @@ impl Universe {
 
     /// Computes allocator-payload accounting for all compact node storage.
     /// The returned diagnostic value is not semantic engine state.
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     #[must_use]
     pub fn node_memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
         self.stores.node_memory_columns()

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
@@ -16,16 +16,16 @@ use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
     SameHistoryStop, Session,
 };
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_lex::ExpansionStats;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_state::measurement::{
     ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
     StateHashMeasurement, exact_identity_measurement, node_append_measurement,
     state_hash_measurement,
 };
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
@@ -148,7 +148,7 @@ struct RunOutput {
     pages: usize,
     checkpoints: usize,
     checkpoint_hash: u64,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     expansion_stats: ExpansionStats,
 }
 
@@ -203,9 +203,9 @@ fn run() -> Result<(), String> {
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let node_append_before = node_append_measurement();
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let alignment_template_before = alignment_template_measurement();
     let started = Instant::now();
     let mut last = execute_once(&template, options.checkpoints)?;
@@ -224,7 +224,7 @@ fn run() -> Result<(), String> {
     }
 
     print_summary(&options, &last, elapsed);
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         let node_append = node_append_delta(node_append_measurement(), node_append_before);
         println!(
@@ -272,7 +272,7 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn alignment_template_delta(
     after: AlignmentTemplateMeasurement,
     before: AlignmentTemplateMeasurement,
@@ -300,7 +300,7 @@ fn alignment_template_delta(
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn node_append_delta(
     after: NodeAppendMeasurement,
     before: NodeAppendMeasurement,
@@ -389,7 +389,7 @@ impl IncrementalPath {
 struct IncrementalSample {
     priming_elapsed: Duration,
     priming_memo: PureMemoStats,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     priming_state_hash: StateHashMeasurement,
     steps: Vec<IncrementalStep>,
 }
@@ -403,11 +403,11 @@ struct IncrementalStep {
     history: Vec<(BoundaryKey, usize, usize)>,
     memo: PureMemoStats,
     previous_memo: PureMemoStats,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     exact_identity: ExactIdentityMeasurement,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     state_hash: StateHashMeasurement,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     survivor: SurvivorMeasurement,
 }
 
@@ -484,9 +484,9 @@ fn run_cold_memo_policy(
         .map_err(|error| error.to_string())?;
     let mut last_pages = 0;
     let mut last_memo = PureMemoStats::default();
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let mut last_state_hash = StateHashMeasurement::default();
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let mut last_survivor = SurvivorMeasurement::default();
 
     for run in 0..total_runs {
@@ -498,9 +498,9 @@ fn run_cold_memo_policy(
             recording,
         )?;
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let state_hash_before = state_hash_measurement();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let survivor_before = survivor_measurement();
         let started = Instant::now();
         let (input, font) = resolvers.resolvers();
@@ -520,7 +520,7 @@ fn run_cold_memo_policy(
         }
         last_pages = accepted.artifacts.len();
         last_memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             last_state_hash = state_hash_delta(state_hash_measurement(), state_hash_before);
             last_survivor = survivor_delta(survivor_measurement(), survivor_before);
@@ -554,7 +554,7 @@ fn run_cold_memo_policy(
         phases.line_provenance_nanos,
         phases.line_retention_nanos,
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         println!(
             "gentle-profile isolated cold state hash: calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
@@ -1242,7 +1242,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         fixture.edits.len(),
         options.iterations,
         options.warmups,
-        cfg!(feature = "profiling-stats"),
+        cfg!(feature = "profiling"),
     );
     print_duration_stats(
         &format!("{baseline_name} priming"),
@@ -1306,7 +1306,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         "priming",
         enabled_sample.priming_memo.paragraph_opportunities,
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     for (name, sample) in [
         (baseline_name, &disabled_sample),
         (candidate_name, &enabled_sample),
@@ -1627,7 +1627,7 @@ fn print_incremental_work(
             .paragraph_opportunities
             .saturating_since(sample.previous_memo.paragraph_opportunities),
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     println!(
         "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={} projection_calls={} projection_visits={} projection_nanos={} root_cache_hits={} root_cache_misses={} dirty_leaves={}",
         sample.exact_identity.calls,
@@ -1639,7 +1639,7 @@ fn print_incremental_work(
         sample.exact_identity.root_cache_misses,
         sample.exact_identity.dirty_leaves,
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     println!(
         "gentle-profile state hash journal: {name}: edit={edit} calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
         sample.state_hash.calls,
@@ -1647,7 +1647,7 @@ fn print_incremental_work(
         sample.state_hash.changed_cells,
         sample.state_hash.peak_changed_cell_scratch_bytes,
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     println!(
         "gentle-profile survivor work: {name}: edit={edit} fresh_promotions={} recycled_promotions={} releases={} shared_payload_drops={} promotion_nanos={} release_nanos={} shared_payload_drop_nanos={} source_words={} child_bearing_nodes={}",
         sample.survivor.fresh_promotions,
@@ -1698,7 +1698,7 @@ fn print_incremental_work(
         "gentle-profile memo retention: {name}: edit={edit} detached_cache_bytes={} paragraph_history_metadata_bytes={}",
         sample.memo.retained_bytes, sample.memo.paragraph_history_metadata_bytes,
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         let phases = sample
             .memo
@@ -1936,7 +1936,7 @@ fn execute_incremental_sample(
         recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let priming_state_hash_before = state_hash_measurement();
     let priming_started = Instant::now();
     let (input, font) = resolvers.resolvers();
@@ -1944,17 +1944,17 @@ fn execute_incremental_sample(
         .cold_with_resolvers(input, font)
         .map_err(|error| format!("prepare incremental baseline: {error}"))?;
     let priming_elapsed = priming_started.elapsed();
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let priming_state_hash = state_hash_delta(state_hash_measurement(), priming_state_hash_before);
     let priming_memo = session.pure_memo_stats();
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let exact_before = exact_identity_measurement();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let state_hash_before = state_hash_measurement();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let survivor_before = survivor_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
         let started = Instant::now();
@@ -1964,11 +1964,11 @@ fn execute_incremental_sample(
             .map_err(|error| format!("advance incremental edit {}: {error}", index + 1))?;
         let elapsed = started.elapsed();
         let memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let exact_after = exact_identity_measurement();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let state_hash_after = state_hash_measurement();
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let survivor_after = survivor_measurement();
         let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
@@ -1993,7 +1993,7 @@ fn execute_incremental_sample(
                 .collect(),
             memo,
             previous_memo,
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             exact_identity: ExactIdentityMeasurement {
                 calls: exact_after.calls.saturating_sub(exact_before.calls),
                 nanos: exact_after.nanos.saturating_sub(exact_before.nanos),
@@ -2016,22 +2016,22 @@ fn execute_incremental_sample(
                     .dirty_leaves
                     .saturating_sub(exact_before.dirty_leaves),
             },
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             state_hash: state_hash_delta(state_hash_after, state_hash_before),
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             survivor: survivor_delta(survivor_after, survivor_before),
         });
     }
     Ok(IncrementalSample {
         priming_elapsed,
         priming_memo,
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         priming_state_hash,
         steps,
     })
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn state_hash_delta(
     after: StateHashMeasurement,
     before: StateHashMeasurement,
@@ -2063,7 +2063,7 @@ fn state_hash_delta(
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn survivor_delta(after: SurvivorMeasurement, before: SurvivorMeasurement) -> SurvivorMeasurement {
     SurvivorMeasurement {
         fresh_promotions: after
@@ -2239,7 +2239,7 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
         pages: run.artifacts.len(),
         checkpoints: checkpoints.count,
         checkpoint_hash: checkpoints.hash,
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         expansion_stats: input.expansion_stats(),
     })
 }
@@ -2256,7 +2256,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.dvi.len(),
         output.checkpoints
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     println!(
         "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={} source_text_span_attempts={} source_text_spans={} source_text_tokens={} mean_source_text_run={:.6}",
         output.expansion_stats.token_frame_steps,
@@ -2277,7 +2277,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.source_text_tokens,
         output.expansion_stats.mean_source_text_run(),
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     println!(
         "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
         output.expansion_stats.frame_step_nanos,
@@ -2290,7 +2290,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.builder_append_timer_samples,
         output.expansion_stats.attributed_nanos(),
     );
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         let invalidations = tex_state::measurement::meaning_cache_invalidation_measurement();
         println!(

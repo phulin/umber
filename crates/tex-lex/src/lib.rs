@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::time::Duration;
 
 use tex_state::env::banks::TokParam;
@@ -25,7 +25,7 @@ use tex_state::{
     ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId,
     RootSpanId, WorldError,
 };
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_state::{ProfilingTimer, World};
 
 use tex_state::MacroArguments as MacroArgumentsSummary;
@@ -1398,21 +1398,21 @@ pub struct ExpansionStats {
     builder_append_timer_events: u64,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 const EXPANSION_TIMER_SAMPLE_MASK: u64 = 1023;
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn duration_nanos_saturating(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn add_elapsed(total: &mut u64, started: ProfilingTimer) {
     let sampled = duration_nanos_saturating(started.elapsed());
     *total = total.saturating_add(sampled.saturating_mul(EXPANSION_TIMER_SAMPLE_MASK + 1));
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn should_sample_timer(events: &mut u64) -> bool {
     let sample = *events & EXPANSION_TIMER_SAMPLE_MASK == 0;
     *events = events.wrapping_add(1);
@@ -1623,7 +1623,7 @@ pub struct InputStack {
     /// Derived, discardable segmentation of immutable macro token lists.
     literal_span_cache: LiteralSpanCache,
     transient_buffer_pool: Vec<Vec<TracedTokenWord>>,
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
@@ -1880,7 +1880,7 @@ impl InputStack {
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
             transient_buffer_pool: Vec::new(),
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
@@ -2131,7 +2131,7 @@ impl InputStack {
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
             transient_buffer_pool: Vec::new(),
-            #[cfg(feature = "profiling-stats")]
+            #[cfg(feature = "profiling")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
             recently_popped_invocation: None,
@@ -2346,11 +2346,11 @@ impl InputStack {
     /// Returns a point-in-time copy of feature-gated expansion counters.
     #[must_use]
     pub fn expansion_stats(&self) -> ExpansionStats {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats
         }
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         {
             ExpansionStats::default()
         }
@@ -2359,7 +2359,7 @@ impl InputStack {
     /// Records a semantic meaning lookup performed by the expansion layer.
     #[inline(always)]
     pub fn record_expansion_meaning_lookup(&mut self) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.meaning_lookups += 1;
         }
@@ -2367,7 +2367,7 @@ impl InputStack {
 
     #[inline(always)]
     pub fn record_expansion_meaning_cache_hit(&mut self) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.meaning_cache_hits += 1;
         }
@@ -2375,13 +2375,13 @@ impl InputStack {
 
     #[inline(always)]
     pub fn record_expansion_meaning_cache_miss(&mut self) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.meaning_cache_misses += 1;
         }
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     #[inline(always)]
     pub fn should_sample_expansion_meaning_timer(&mut self) -> bool {
         should_sample_timer(&mut self.expansion_stats.classification_meaning_timer_events)
@@ -2389,7 +2389,7 @@ impl InputStack {
 
     #[inline(always)]
     pub fn record_expansion_meaning_resolution_nanos(&mut self, elapsed: u64) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.classification_meaning_nanos = self
                 .expansion_stats
@@ -2397,7 +2397,7 @@ impl InputStack {
                 .saturating_add(elapsed.saturating_mul(EXPANSION_TIMER_SAMPLE_MASK + 1));
             self.expansion_stats.classification_meaning_timer_samples += 1;
         }
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         let _ = elapsed;
     }
 
@@ -2775,7 +2775,7 @@ impl InputStack {
         let Some(span) = self.take_macro_literal_span(stores, policy) else {
             return 0;
         };
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = should_sample_timer(&mut self.expansion_stats.builder_append_timer_events)
             .then(World::start_profiling_timer);
         let stored = stores.tokens(span.token_list);
@@ -2789,7 +2789,7 @@ impl InputStack {
         } else {
             origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if let Some(started) = started {
             add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
             self.expansion_stats.builder_append_timer_samples += 1;
@@ -2836,7 +2836,7 @@ impl InputStack {
             frame.index = bounded_end;
             span.end = bounded_end;
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         let started = should_sample_timer(&mut self.expansion_stats.builder_append_timer_events)
             .then(World::start_profiling_timer);
         let stored = stores.tokens(span.token_list);
@@ -2849,7 +2849,7 @@ impl InputStack {
                 .unwrap_or(OriginId::UNKNOWN);
             tokens_out.push(TracedTokenWord::pack(token, origin));
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if let Some(started) = started {
             add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
             self.expansion_stats.builder_append_timer_samples += 1;
@@ -2893,7 +2893,7 @@ impl InputStack {
         let InputFrame::Source(source) = &mut self.frames[frame_index] else {
             return 0;
         };
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.source_text_span_attempts += 1;
         }
@@ -2966,7 +2966,7 @@ impl InputStack {
         if appended == 0 {
             return 0;
         }
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.source_text_spans += 1;
             self.expansion_stats.source_text_tokens += u64::try_from(appended).unwrap_or(u64::MAX);
@@ -3083,7 +3083,7 @@ impl InputStack {
     ) -> usize {
         let key = (token_list, policy);
         let cache_hit = self.literal_span_cache.contains_key(&key);
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if cache_hit {
             self.expansion_stats.segmentation_cache_hits += 1;
         } else {
@@ -3124,7 +3124,7 @@ impl InputStack {
 
     #[inline(always)]
     fn record_literal_span(&mut self, len: usize, builder_append: bool) {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         {
             self.expansion_stats.literal_spans += 1;
             self.expansion_stats.literal_tokens += len as u64;
@@ -3132,7 +3132,7 @@ impl InputStack {
                 self.expansion_stats.builder_appends += len as u64;
             }
         }
-        #[cfg(not(feature = "profiling-stats"))]
+        #[cfg(not(feature = "profiling"))]
         let _ = (len, builder_append);
     }
 
@@ -4451,7 +4451,7 @@ impl InputStack {
                     match next_traced_token_from_token_list_frame(
                         token_list,
                         stores,
-                        #[cfg(feature = "profiling-stats")]
+                        #[cfg(feature = "profiling")]
                         None,
                     ) {
                         Some(TracedTokenReplay::PushArgument(slot)) => {
@@ -4621,7 +4621,7 @@ impl InputStack {
                         token_list: stored_token_list,
                         token_index: token_list.index,
                     });
-                    #[cfg(feature = "profiling-stats")]
+                    #[cfg(feature = "profiling")]
                     if let Some(token) = token_list.semantic_token_at(stores, token_list.index) {
                         self.expansion_stats.token_frame_steps += 1;
                         if matches!(token, Token::Char { .. }) {
@@ -4639,7 +4639,7 @@ impl InputStack {
                     match next_traced_token_from_token_list_frame(
                         token_list,
                         stores,
-                        #[cfg(feature = "profiling-stats")]
+                        #[cfg(feature = "profiling")]
                         Some(&mut self.expansion_stats),
                     ) {
                         Some(TracedTokenReplay::PushArgument(slot)) => {
@@ -5221,14 +5221,14 @@ fn next_token_from_token_list_frame(
 fn next_traced_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
     stores: &mut impl ExpansionState,
-    #[cfg(feature = "profiling-stats")] mut stats: Option<&mut ExpansionStats>,
+    #[cfg(feature = "profiling")] mut stats: Option<&mut ExpansionStats>,
 ) -> Option<TracedTokenReplay> {
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let frame_started = stats.as_deref_mut().and_then(|stats| {
         should_sample_timer(&mut stats.frame_step_timer_events).then(World::start_profiling_timer)
     });
     let Some(token) = frame.semantic_token_at(stores, frame.index) else {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if let (Some(stats), Some(frame_started)) = (stats, frame_started) {
             add_elapsed(&mut stats.frame_step_nanos, frame_started);
             stats.frame_step_timer_samples += 1;
@@ -5241,7 +5241,7 @@ fn next_traced_token_from_token_list_frame(
         && let Token::Param(slot) = token
         && frame.macro_arguments.get(slot).is_some()
     {
-        #[cfg(feature = "profiling-stats")]
+        #[cfg(feature = "profiling")]
         if let (Some(stats), Some(frame_started)) = (stats, frame_started) {
             add_elapsed(&mut stats.frame_step_nanos, frame_started);
             stats.frame_step_timer_samples += 1;
@@ -5249,12 +5249,12 @@ fn next_traced_token_from_token_list_frame(
         return Some(TracedTokenReplay::PushArgument(slot));
     }
 
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     if let (Some(stats), Some(frame_started)) = (stats.as_deref_mut(), frame_started) {
         add_elapsed(&mut stats.frame_step_nanos, frame_started);
         stats.frame_step_timer_samples += 1;
     }
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     let provenance_started = stats.as_deref_mut().and_then(|stats| {
         should_sample_timer(&mut stats.provenance_timer_events).then(World::start_profiling_timer)
     });
@@ -5265,7 +5265,7 @@ fn next_traced_token_from_token_list_frame(
             tokens[range.start() + frame.index - 1].origin()
         }
     };
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     if let (Some(stats), Some(provenance_started)) = (stats, provenance_started) {
         add_elapsed(&mut stats.provenance_nanos, provenance_started);
         stats.provenance_timer_samples += 1;

@@ -16,7 +16,7 @@ pub(crate) mod widths;
 use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::meaning::UnexpandablePrimitive;
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use tex_state::token::Token;
 use tex_state::token::TracedTokenWord;
 
@@ -49,7 +49,7 @@ pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AlignmentTemplateMeasurement {
     pub invocations: u64,
@@ -63,7 +63,7 @@ pub struct AlignmentTemplateMeasurement {
     pub other_commands: u64,
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 mod template_measurement {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -136,17 +136,17 @@ mod template_measurement {
     }
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub fn alignment_template_measurement() -> AlignmentTemplateMeasurement {
     template_measurement::snapshot()
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn record_template_invocation() {
     template_measurement::record_invocation();
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 fn record_template_token(token: Token, stores: &Universe) {
     template_measurement::record_token(token, stores);
 }

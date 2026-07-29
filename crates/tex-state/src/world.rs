@@ -18,7 +18,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
@@ -33,10 +33,10 @@ pub const MAX_INPUT_DEPENDENCIES: usize = 8_192;
 ///
 /// Profiling data is deliberately separate from the snapshot-owned pdfTeX
 /// clock: it is neither semantic state nor replayable engine input.
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 pub struct ProfilingTimer(Instant);
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 impl ProfilingTimer {
     #[must_use]
     pub fn elapsed(&self) -> Duration {
@@ -1570,7 +1570,7 @@ impl Eq for World {}
 
 impl World {
     /// Starts a process-local profiling timer through the `World` clock boundary.
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     #[must_use]
     pub fn start_profiling_timer() -> ProfilingTimer {
         ProfilingTimer(Instant::now())

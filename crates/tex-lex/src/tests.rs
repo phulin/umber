@@ -100,7 +100,7 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     input.unicode_superscript_notation = false;
     input.utf8_input_as_bytes = true;
     input.recently_popped_invocation = Some(macro_origin);
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         input.expansion_stats.meaning_lookups = 17;
         input.expansion_stats.frame_step_timer_events = 23;
@@ -127,7 +127,7 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     input.transient_buffer_pool.clear();
     input.active_macro_invocation = OriginId::UNKNOWN;
     input.recently_popped_invocation = None;
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         input.expansion_stats = super::ExpansionStats::default();
     }
@@ -142,7 +142,7 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     assert_eq!(input.active_macro_invocation(), macro_origin);
     assert_eq!(input.transient_buffer_pool.len(), 1);
     assert_eq!(input.literal_span_cache.len(), 1);
-    #[cfg(feature = "profiling-stats")]
+    #[cfg(feature = "profiling")]
     {
         assert_eq!(input.expansion_stats().meaning_lookups, 17);
         assert_eq!(input.expansion_stats.frame_step_timer_events, 23);
@@ -2702,7 +2702,7 @@ fn macro_literal_span_deopts_for_any_active_alignment_scanner() {
     );
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[test]
 fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     let mut stores = Universe::new_with_plain_catcodes();
@@ -2746,7 +2746,7 @@ fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     assert_eq!(stats.builder_append_timer_samples, 1);
 }
 
-#[cfg(feature = "profiling-stats")]
+#[cfg(feature = "profiling")]
 #[test]
 fn expansion_timers_sample_one_event_per_1024() {
     let mut events = 0;

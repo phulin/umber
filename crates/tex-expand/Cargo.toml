@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 shadow = ["tex-state/shadow"]
-profiling-stats = ["tex-lex/profiling-stats", "tex-state/profiling-stats"]
+profiling = ["tex-lex/profiling", "tex-state/profiling"]
 
 [dependencies]
 md-5.workspace = true
