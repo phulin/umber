@@ -1354,7 +1354,16 @@ impl MutableStoreIdentity {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let mut env_words = Vec::new();
         stores.env.for_each_semantic_non_default_word(|cell, word| {
-            env_words.push(capture_env_word(stores, cell, word));
+            // e-TeX change [50.1307] resets every optional e-TeX state
+            // variable immediately before tex.web §1307 dumps `eqtb`.
+            // `TeXXeTstate` is currently the sole member of that class; it
+            // must therefore restore at its zero default even when INITEX
+            // enabled it before requesting the format dump.
+            if cell.bank() != crate::cell::BankTag::IntParam
+                || cell.index() != u32::from(crate::env::banks::IntParam::TEX_XET_STATE.raw())
+            {
+                env_words.push(capture_env_word(stores, cell, word));
+            }
         });
         let roots: Vec<_> = env_words
             .iter()

@@ -2,6 +2,7 @@ use super::{
     FormatEnvEntry, FormatEnvValue, FormatListKey, FormatNode, StoreFormat, StoreFormatError,
 };
 use crate::cell::{BankTag, CellId};
+use crate::env::banks::IntParam;
 use crate::node::Node;
 use crate::stores::Stores;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -97,6 +98,22 @@ fn isolated_transitional_restore_instrumentation_observes_prohibited_load_work()
     let restore_work = super::testing_take_transitional_format_work();
     assert!(restore_work.semantic_reseals > 0);
     assert!(restore_work.assignment_replays > 0);
+}
+
+#[test]
+fn format_dump_resets_only_the_optional_etex_state_cell() {
+    // e-TeX change [50.1307] clears every optional e-TeX state variable
+    // before tex.web §1307 serializes `eqtb`. Ordinary neighboring e-TeX
+    // integer parameters remain part of the format.
+    let mut stores = Stores::new();
+    stores.set_int_param(IntParam::TEX_XET_STATE, 1);
+    stores.set_int_param(IntParam::SAVING_V_DISCARDS, 2);
+
+    let format = StoreFormat::capture(&stores).expect("capture e-TeX format state");
+    let restored = format.restore().expect("restore e-TeX format state");
+
+    assert_eq!(restored.int_param(IntParam::TEX_XET_STATE), 0);
+    assert_eq!(restored.int_param(IntParam::SAVING_V_DISCARDS), 2);
 }
 
 #[test]

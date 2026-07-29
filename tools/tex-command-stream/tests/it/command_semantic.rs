@@ -638,6 +638,9 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         SessionProfile::EtexLoaded => {
             let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
+            // Exercise e-TeX change [50.1307], which resets optional e-TeX
+            // state cells immediately before tex.web §1307 dumps `eqtb`.
+            universe.set_int_param(tex_state::env::banks::IntParam::TEX_XET_STATE, 1);
             let format = universe
                 .dump_format()
                 .map_err(|error| format!("e-TeX format creation: {error}"))?;
