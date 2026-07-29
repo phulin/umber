@@ -29,7 +29,7 @@ use crate::observation::{
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
-const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
+pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
 
 /// TeX82's decimal rendering for a scaled quantity, including its `pt` unit.
 fn format_scaled(value: Scaled) -> String {
@@ -570,6 +570,20 @@ impl CommandProcessor<'_> {
     /// until the inaccessible `\\endcsname` boundary, then inject the one
     /// named control-sequence token through normal input delivery.
     fn expand_csname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let name = self.scan_csname_characters()?;
+        let symbol = self.state.intern_relaxed_control_sequence(&name);
+        let origin = self
+            .state
+            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
+        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
+    }
+
+    /// Collects TeX82 §372's expanded character list through `\\endcsname`.
+    ///
+    /// e-TeX 2.6 etex.ch [17.4765--4779] deliberately reuses this exact
+    /// name-building scan for `\\ifcsname`; only the subsequent hash-table
+    /// operation differs.
+    pub(crate) fn scan_csname_characters(&mut self) -> Result<String, CommandError> {
         let mut name = String::new();
         loop {
             let Some(command) = self.get_x_token()? else {
@@ -585,11 +599,7 @@ impl CommandProcessor<'_> {
             }
         }
 
-        let symbol = self.state.intern_relaxed_control_sequence(&name);
-        let origin = self
-            .state
-            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
-        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
+        Ok(name)
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.

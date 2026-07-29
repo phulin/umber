@@ -601,12 +601,19 @@ impl CommandProcessor<'_> {
                     .read_stream_at_eof(tex_state::world::StreamSlot::new(stream)))
             }
             ConditionalKind::IfDefined => self.evaluate_ifdefined(),
-            ConditionalKind::IfCsName
-            | ConditionalKind::IfFontChar
-            | ConditionalKind::IfInCsName
-            | ConditionalKind::IfCase => {
+            // e-TeX 2.6 etex.ch [17.4765--4779] expands the same character-name
+            // stream as TeX82 §372's `\csname`, but performs §259's lookup
+            // with `no_new_control_sequence` set. An absent spelling
+            // therefore answers false without entering the hash table.
+            ConditionalKind::IfCsName => {
+                let name = self.scan_csname_characters()?;
+                Ok(self
+                    .state
+                    .known_control_sequence(&name)
+                    .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined))
+            }
+            ConditionalKind::IfFontChar | ConditionalKind::IfInCsName | ConditionalKind::IfCase => {
                 Err(CommandError::UnsupportedExpandablePrimitive(match kind {
-                    ConditionalKind::IfCsName => ExpandablePrimitive::IfCsName,
                     ConditionalKind::IfFontChar => ExpandablePrimitive::IfFontChar,
                     ConditionalKind::IfInCsName => ExpandablePrimitive::IfInCsName,
                     _ => unreachable!(),

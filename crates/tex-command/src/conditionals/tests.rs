@@ -2064,3 +2064,127 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     assert!(processor.command.conditions.current().is_none());
     processor.command.restore_scanner_status(defining);
 }
+
+#[test]
+fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let endcsname = install(
+        &mut universe,
+        "ifcsname-end",
+        ExpandablePrimitive::EndCsName,
+    );
+    let nested = macro_token(
+        &mut universe,
+        "ifcsname-name-fragment",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('é'), other('x')],
+    );
+    let defined = universe.intern("éx").symbol();
+    universe.set_meaning(defined, Meaning::Relax);
+
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifcsname-defined",
+        ExpandablePrimitive::IfCsName,
+        [nested, endcsname],
+    );
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifcsname-undefined",
+        ExpandablePrimitive::IfCsName,
+        [other('m'), other('i'), other('s'), other('s'), endcsname],
+    );
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifcsname-empty",
+        ExpandablePrimitive::IfCsName,
+        [endcsname],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['t', 'f', 'f'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(
+        processor
+            .get_x_token()
+            .expect("conditional input is exhausted")
+            .is_none()
+    );
+    assert!(processor.command.conditions.current().is_none());
+    assert_eq!(
+        processor.state.known_control_sequence("miss"),
+        None,
+        "etex.ch [17.4765--4779] forbids ifcsname from entering an absent name"
+    );
+}
+
+#[test]
+fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let relax = universe.intern("ifcsname-recovery-relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let endcsname = install(
+        &mut universe,
+        "ifcsname-recovery-end",
+        ExpandablePrimitive::EndCsName,
+    );
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifcsname-recovery",
+        ExpandablePrimitive::IfCsName,
+        [other('q'), Token::Cs(relax), endcsname],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 'f');
+        assert!(
+            processor
+                .get_x_token()
+                .expect("conditional input is exhausted")
+                .is_none()
+        );
+        assert_eq!(
+            processor.command.expansion.pending_diagnostics,
+            vec![crate::processor::expand::MISSING_ENDCSNAME_DIAGNOSTIC]
+        );
+        assert!(processor.command.conditions.current().is_none());
+    }
+    let transitions = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Condition(record) if record.condition == "ifcsname" => {
+                Some((record.transition, record.branch.as_deref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transitions,
+        [
+            ("push", None),
+            ("branch", Some("false")),
+            ("branch", Some("else")),
+            ("limit", None),
+            ("pop", None),
+        ]
+    );
+}
