@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tex_state::macro_store::MacroMeaning;
+use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::{EffectRecord, PrintSink, Universe};
 
 use super::*;
@@ -1463,6 +1464,69 @@ fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
         CommandObservation::ScannerStatus(status)
             if status.from == "absorbing" && status.to == "normal"
     )));
+}
+
+#[test]
+fn expanded_scan_toks_resumes_after_outer_token_aborts_macro_argument() {
+    // TeX82 §394 returns from a macro call when §23 changes `long_state` to
+    // `outer_call` and inserts frozen `\par`. The enclosing §380
+    // get_x_token loop must resume; an expanded scan_toks collector is one
+    // such loop and must not surface the internal matcher abort.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    universe.install_primitive_meaning(
+        "par",
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+    );
+    let caller = universe.intern("caller").symbol();
+    let parameter = universe.intern_token_list(&[Token::Param(1)]);
+    let empty = universe.intern_token_list(&[]);
+    universe.set_macro_meaning(
+        caller,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameter, empty),
+    );
+    let outer = universe.intern("outer").symbol();
+    universe.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(caller),
+            Token::Cs(outer),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let recovered = processor
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("§394 outer recovery resumes expanded token collection");
+
+    assert_eq!(
+        processor
+            .state
+            .tokens(recovered.replacement_text.token_list()),
+        &[Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        }]
+    );
+    assert_eq!(
+        processor
+            .get_token()
+            .expect("backed outer token delivers")
+            .expect("outer token remains")
+            .control_sequence(),
+        Some(outer)
+    );
 }
 
 #[test]
