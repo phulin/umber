@@ -237,22 +237,84 @@ unowned cases and sources. A manifest whose short directory name differs from
 its catalogue shard declares `property_domain`; ownership validation remains
 exact.
 
+The corpus contract -- manifest parsing and validation, the bounded canonical
+run, and the projections -- lives in `tex_command_stream::semantic`, not in the
+test binary, so the regeneration path drives exactly the code the gate does.
+The test binary holds only the assertions.
+
 The runner drives each input through instrumented
-`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile and compares
-only the declared concise projection of committed command observations or selected
-canonical-main-control boundaries: mode changes, final box-register node outlines,
-and committed shipout artifact identities. An xfail must link a concrete Beads
-bug and pin the first mismatch's index, kind, expected value, and actual value;
+`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile. It compares
+the declared concise projection of committed command observations or selected
+canonical-main-control boundaries -- mode changes, final box-register node
+outlines, and committed shipout artifact identities -- and, separately, the
+per-channel contract described below. An xfail must link a concrete Beads bug
+and pin the first mismatch's index, kind, expected value, and actual value;
 XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
 long-document trace registry.
 
-The conditionals manifest preserves its eight passing cases and carries the
-bounded §505 selector-recovery gap as a strict xfail for `umber2-johp.246`.
-The input-expansion manifest adds four exact passing properties and eight strict
-xfails for `umber2-johp.240`, `.242`-`.245`, and `.252`-`.254`; bounded
-in-memory terminal lines and named inputs keep its pausing, read, and input-open
-evidence hermetic.
+The corpus holds 130 cases across 8 domains, with 8 strict xfails: 3 in
+`alignments`, 3 in `input-expansion`, and 2 in `main-control`. The other five
+domains carry none. Bounded in-memory terminal lines and named inputs keep the
+pausing, read, and input-open evidence hermetic.
+
+#### The Per-Channel Contract
+
+A projection is a focused property claim about one observable. It is not
+coverage of the run, and for a long time it was standing in for one. Measured
+across the corpus, the 130 cases produce 33,112 events, 23,013 bytes of
+terminal and log text, and 26 shipped DVI pages, against 698 declared
+assertion strings -- a mean of 5.5 per case. 26 cases ship a page that nothing
+compared; 39 write a log, and the log was read by no projection that exists,
+because `terminal-checks` is a `contains()` boolean over the merged terminal
+text. **A projection is an omission with a schema**, which is the same defect
+as `default-members` naming 21 of 34 crates: an absence that reads as
+coverage.
+
+So each case declares a `channels` block accounting for every observable its
+run produces, and the gate compares all of them alongside the projection:
+
+- `events`, the exact committed-observation count. Counted rather than
+  committed, because the canonical event stream's oracle-backed home is the
+  `tests/corpus/command/tex82` fixture tree and duplicating it here would
+  commit an Umber self-golden;
+- `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
+- `terminal`, `log`, `dvi`, and `effects`, each either `empty` or byte-identical
+  to `expected/<case-id>.<channel>`. The corpus commits 118 such files today:
+  53 terminal, 39 log, and 26 dvi.
+
+A case with no `channels` block fails validation. The one exemption is a case
+whose engine run does not complete and therefore has no channels to record;
+it is granted only to a case already pinned as `xfail`, so it expires with the
+bug instead of becoming the escape hatch. Three cases hold it --
+`input-expansion/expansion-conversions`, `input-expansion/input-start-file`,
+and `main-control/read-to-definition` -- and
+`only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` pins that
+set by name and re-runs each to prove it still cannot run.
+
+Every committed channel records an `authority` for its bytes. All 118 are
+`umber-baseline` today: they pin the channel against silent drift and are still
+owed an oracle adjudication, which `authority: "oracle"` records once a
+reference engine has produced them. The count is greppable, so the remaining
+work is visible rather than assumed.
+
+A stream channel may also be `xfail` with a Beads id. It compares exactly like
+`file` -- the committed bytes are the observed, known-wrong ones, so
+byte-identity is what pins the divergence. It is deliberately not an xpass
+detector: without an oracle for that channel a change cannot be told apart from
+a fix, and that adjudication belongs to the bug's own gate.
+
+Regenerate the contract with:
+
+```bash
+scripts/regen-fixtures.sh --area command-semantic
+```
+
+It drives the same `tex_command_stream::semantic` module the gate does, so a
+regenerated contract cannot describe a run the gate would not reproduce, and it
+needs no reference engine. The emitted block matches `dprint`'s own shape and
+the block replacement counts braces rather than matching a line, so the tool is
+idempotent on its own formatted output.
 
 ### What The Clippy Gate Covers
 
