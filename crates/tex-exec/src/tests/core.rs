@@ -592,11 +592,24 @@ fn detached_page_episode_replays_before_output_fire_up() {
             class: 0,
             tokens: mark,
         });
-        stores.append_page_contribution(Node::Char {
+        let children = stores.freeze_node_list(&[Node::Char {
             font: tex_state::font::NULL_FONT,
             ch: 'A',
             origin,
-        });
+        }]);
+        stores.append_page_contribution(Node::HList(tex_state::node::BoxNode::new(
+            tex_state::node::BoxNodeFields {
+                width: Scaled::from_raw(10),
+                height: Scaled::from_raw(20),
+                depth: Scaled::from_raw(3),
+                shift: Scaled::from_raw(0),
+                display: false,
+                glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+                glue_sign: tex_state::node::Sign::Normal,
+                glue_order: tex_state::glue::Order::Normal,
+                children,
+            },
+        )));
         stores.append_page_contribution(Node::Rule {
             width: Some(Scaled::from_raw(10)),
             height: Some(Scaled::from_raw(20)),
@@ -620,9 +633,18 @@ fn detached_page_episode_replays_before_output_fire_up() {
 
     let memo = second.pure_memo_stats();
     assert_eq!(second.page_memo_fingerprint(), expected);
+    let replayed_box = second
+        .current_page_nodes()
+        .into_iter()
+        .find_map(|node| match node {
+            Node::HList(box_node) => Some(box_node),
+            _ => None,
+        })
+        .expect("replayed page contains the valid box contribution");
     assert!(
         second
-            .current_page_nodes()
+            .nodes(replayed_box.children)
+            .testing_decoded()
             .iter()
             .any(|node| matches!(node, Node::Char { origin, .. } if *origin == current_origin))
     );

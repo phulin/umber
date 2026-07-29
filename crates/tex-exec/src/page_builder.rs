@@ -1,5 +1,6 @@
 //! TeX.web page-builder accounting for outer vertical contributions.
 
+use tex_command::FatalError;
 use tex_state::diagnostic::Diagnostic;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -158,6 +159,20 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
     }
 
     while let Some(node) = stores.page_contribution_front().cloned() {
+        if !matches!(
+            node,
+            Node::HList(_)
+                | Node::VList(_)
+                | Node::Rule { .. }
+                | Node::Glue { .. }
+                | Node::Kern { .. }
+                | Node::Penalty(_)
+                | Node::Ins { .. }
+                | Node::Whatsit(_)
+                | Node::Mark { .. }
+        ) {
+            return Err(ExecError::Fatal(FatalError::confusion("page")));
+        }
         stores.update_page_last_from_node(&node);
         match node {
             Node::HList(_) | Node::VList(_) | Node::Rule { .. } => {
@@ -222,22 +237,7 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
             Node::Whatsit(_) | Node::Mark { .. } => {
                 contribute_front(stores)?;
             }
-            Node::Char { .. }
-            | Node::Lig { .. }
-            | Node::Unset(_)
-            | Node::Disc { .. }
-            | Node::MathOn(_)
-            | Node::MathOff(_)
-            | Node::Direction(_)
-            | Node::MathNoad(_)
-            | Node::FractionNoad(_)
-            | Node::MathStyle(_)
-            | Node::MathChoice(_)
-            | Node::MathList(_)
-            | Node::Nonscript
-            | Node::Adjust(_) => {
-                contribute_front(stores)?;
-            }
+            _ => return Err(ExecError::Fatal(FatalError::confusion("page"))),
         }
     }
     Ok(())

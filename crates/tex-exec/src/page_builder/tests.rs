@@ -1,11 +1,20 @@
 use super::*;
 
+use tex_command::FatalError;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
-use tex_state::ids::GlueId;
-use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Sign};
+use tex_state::ids::{FontId, GlueId};
+use tex_state::math::{
+    FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
+    NoadClass, NoadKind,
+};
+use tex_state::node::{
+    BoxNode, BoxNodeFields, Direction, DiscKind, KernKind, Sign, UnsetKind, UnsetNode,
+    UnsetNodeFields,
+};
 use tex_state::page::{PageBreak, PageInteger};
 use tex_state::scaled::GlueSetRatio;
+use tex_state::token::OriginId;
 
 fn s(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -251,6 +260,95 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
     assert!(matches!(stores.current_page_nodes()[2], Node::Rule { .. }));
     assert_eq!(stores.current_page_nodes()[3], Node::Penalty(INF_PENALTY));
     assert!(stores.page_contributions().is_empty());
+}
+
+#[test]
+fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
+    let mut handles = Universe::new();
+    let empty = handles.freeze_node_list(&[]);
+    let impossible = [
+        Node::Char {
+            font: FontId::testing_new(0),
+            ch: 'x',
+            origin: OriginId::UNKNOWN,
+        },
+        Node::Lig {
+            font: FontId::testing_new(0),
+            ch: 'x',
+            orig: vec!['x'],
+            origins: vec![OriginId::UNKNOWN],
+        },
+        Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::VBox,
+            width: s(1),
+            height: s(2),
+            depth: s(3),
+            span_count: 0,
+            stretch: s(0),
+            stretch_order: Order::Normal,
+            shrink: s(0),
+            shrink_order: Order::Normal,
+            children: empty,
+        })),
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
+        },
+        Node::MathOn(s(1)),
+        Node::MathOff(s(1)),
+        Node::Direction(Direction::BeginR),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::FractionNoad(MathFraction {
+            numerator: empty,
+            denominator: empty,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        }),
+        Node::MathStyle(MathStyle::Text),
+        Node::MathChoice(MathChoice {
+            display: empty,
+            text: empty,
+            script: empty,
+            script_script: empty,
+        }),
+        Node::MathList(MathListNode {
+            display: false,
+            content: empty,
+        }),
+        Node::Nonscript,
+        Node::Adjust(empty),
+    ];
+
+    for node in impossible {
+        let mut stores = Universe::new();
+        params(&mut stores, 1_000, 17, 0);
+        stores.set_page_contents(PageContents::BoxThere);
+        stores.set_page_dimension(PageDimension::Total, s(23));
+        stores.set_page_dimension(PageDimension::Depth, s(5));
+        stores.push_current_page_node(Node::Penalty(41));
+        stores.update_page_last_from_node(&Node::Kern {
+            amount: s(33),
+            kind: KernKind::Explicit,
+        });
+        stores.append_page_contribution(node.clone());
+
+        let error = build_page(&mut stores).expect_err("impossible page node must be fatal");
+
+        assert_eq!(error.as_fatal(), Some(FatalError::confusion("page")));
+        assert_eq!(stores.page_contributions().len(), 1);
+        assert_eq!(stores.page_contribution_front(), Some(&node));
+        assert_eq!(stores.current_page_nodes(), [Node::Penalty(41)]);
+        assert_eq!(stores.page_contents(), PageContents::BoxThere);
+        assert_eq!(stores.page_dimension(PageDimension::Total), s(23));
+        assert_eq!(stores.page_dimension(PageDimension::Depth), s(5));
+        assert_eq!(stores.page_last_kern(), s(33));
+    }
 }
 
 #[test]
