@@ -819,6 +819,20 @@ impl CommandState {
         self.open_registered_source_as(source, SourceNameClass::File)
     }
 
+    pub(crate) fn prepare_started_input(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
+        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+            return None;
+        };
+        // TeX82 §§537--538 acquire line 1 immediately after the successful
+        // file-open attempt. `input_ln` represents even an empty file as one
+        // empty opening line.
+        level.cursor.pending_acquired_line = true;
+        level
+            .cursor
+            .load_next_line(endlinechar)
+            .map(|line| line.physical)
+    }
+
     /// Opens an already registered source under an explicit tex.web §303
     /// `name` classification.
     pub fn open_registered_source_as(

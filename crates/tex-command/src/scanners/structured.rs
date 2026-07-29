@@ -3266,19 +3266,37 @@ impl CommandProcessor<'_> {
     /// Scans and opens one input through the borrow-scoped registered-input
     /// capability. No filesystem or host lookup escapes this boundary.
     pub fn open_registered_input(&mut self) -> Result<RegisteredInput, CommandError> {
-        let file_name = self.scan_file_name()?;
-        let source = self
-            .host
-            .input(&file_name.name)
-            .ok_or_else(|| CommandError::MissingInput(file_name.name.clone()))?;
-        let source = self
-            .command
-            .register_source(source)
-            .map_err(|_| CommandError::input_invariant())?;
-        self.command
-            .open_registered_source(source)
-            .map_err(|_| CommandError::input_invariant())?;
-        Ok(RegisteredInput { file_name, source })
+        let mut file_name = self.scan_file_name()?;
+        let base = file_name.name.rsplit('/').next().unwrap_or(&file_name.name);
+        if !base.contains('.') {
+            file_name.name.push_str(".tex");
+        }
+        let has_area = file_name.name.contains(['/', '\\', ':']);
+        let mut attempts = vec![file_name.name.clone()];
+        if !has_area {
+            attempts.push(format!("TeXinputs:{}", file_name.name));
+        }
+
+        for attempted_name in attempts {
+            let Some(registration) = self.host.input(&attempted_name) else {
+                continue;
+            };
+            let source = self
+                .command
+                .register_source(registration)
+                .map_err(|_| CommandError::input_invariant())?;
+            self.command
+                .open_registered_source(source)
+                .map_err(|_| CommandError::input_invariant())?;
+            let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
+            self.command
+                .prepare_started_input(endlinechar)
+                .ok_or_else(CommandError::input_invariant)?;
+            self.host.initialize_job_name(&attempted_name);
+            file_name.name = attempted_name;
+            return Ok(RegisteredInput { file_name, source });
+        }
+        Err(CommandError::MissingInput(file_name.name))
     }
 
     fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand>, CommandError> {

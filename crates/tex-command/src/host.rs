@@ -218,6 +218,11 @@ impl CommandHostCapabilities {
         self.set_job_name(name);
     }
 
+    #[must_use]
+    pub fn job_name(&self) -> &str {
+        &self.job_name
+    }
+
     /// Installs the current executor-owned mode query result for this command
     /// operation. It is deliberately capability state rather than a field of
     /// `CommandState`, so snapshots never duplicate the mode nest.
@@ -279,6 +284,12 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) fn input(&self, name: &str) -> Option<SourceRegistration> {
         self._capabilities.input.get(name).cloned()
+    }
+
+    pub(crate) fn initialize_job_name(&mut self, filename: &str) {
+        if self._capabilities.job_name.is_empty() {
+            self._capabilities.set_startup_job_name(filename);
+        }
     }
 
     /// Resolves a previously registered font only while the host capability

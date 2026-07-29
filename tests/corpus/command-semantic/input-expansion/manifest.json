@@ -522,6 +522,20 @@
         ]
       },
       "expected": [
+        "command:raw:char:letter:110:letter:110",
+        "command:expanded:char:letter:110:letter:110",
+        "command:raw:char:letter:110:letter:110",
+        "command:expanded:char:letter:110:letter:110",
+        "command:raw:char:letter:101:letter:101",
+        "command:expanded:char:letter:101:letter:101",
+        "command:raw:char:letter:115:letter:115",
+        "command:expanded:char:letter:115:letter:115",
+        "command:raw:char:letter:116:letter:116",
+        "command:expanded:char:letter:116:letter:116",
+        "command:raw:char:letter:101:letter:101",
+        "command:expanded:char:letter:101:letter:101",
+        "command:raw:char:letter:100:letter:100",
+        "command:expanded:char:letter:100:letter:100",
         "effect:input:nested.tex",
         "command:raw:char:letter:78:letter:78",
         "command:expanded:char:letter:78:letter:78",
@@ -529,14 +543,7 @@
         "command:expanded:char:letter:78:letter:78"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.244",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "effect:input:nested.tex",
-          "actual": "main-control step: MissingToken { context: \"\\\\input\" }"
-        }
+        "kind": "pass"
       },
       "inputs": {
         "nested.tex": "N"

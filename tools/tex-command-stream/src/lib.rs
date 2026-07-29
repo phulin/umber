@@ -964,18 +964,16 @@ impl CanonicalStartup {
 }
 
 /// The fixture's virtual `\\input` namespace is deliberately narrower than
-/// host path resolution: each declared `.tex` source contributes exactly its
-/// extensionless logical input name.
+/// host path resolution: each declared source contributes exactly its own
+/// `.tex` file name. TeX82 §537 supplies that extension before asking the
+/// host to open the file.
 fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
-    source_name
-        .strip_suffix(".tex")
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            RunnerError::Replay(format!(
-                "registered fixture source {source_name:?} has no canonical .tex input name"
-            ))
-        })
+    if source_name.strip_suffix(".tex").is_none_or(str::is_empty) {
+        return Err(RunnerError::Replay(format!(
+            "registered fixture source {source_name:?} has no canonical .tex input name"
+        )));
+    }
+    Ok(source_name.to_owned())
 }
 
 /// Immutable source material needed to translate command provenance.
@@ -1193,7 +1191,7 @@ impl LiveSessionTranslator {
         let source = SourceId::new(self.next_registered_source);
         self.next_registered_source += 1;
         self.record_source_open(CANONICAL_ROOT_PUSH_NAME, name, source);
-        self.activate_source(canonical_trace_source_name(name), source, bytes);
+        self.activate_source(name.to_owned(), source, bytes);
     }
 
     fn current_source(&self) -> &ActiveSource {
@@ -1225,23 +1223,6 @@ fn encode_observed_stream<'a>(
     }
     ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
     Ok(bytes)
-}
-
-/// Recovers TeX82's `.tex`-defaulted display name for an `\input` target
-/// scanned without an explicit extension.
-///
-/// tex.web §537's `start_input` applies `if cur_ext="" then cur_ext:=".tex"`
-/// before packing the name it opens and later prints (`slow_print(name)`).
-/// The fixture registry keys registered inputs by the bare stem actually
-/// typed in source (`\input case-shift`), so the trace must independently
-/// reapply that same default rather than special-casing individual fixture
-/// file stems.
-fn canonical_trace_source_name(name: &str) -> String {
-    if name.contains('.') {
-        name.into()
-    } else {
-        format!("{name}.tex")
-    }
 }
 
 impl CommandObserver for Recorder {
@@ -2391,7 +2372,7 @@ mod tests {
             terminal_filename: Arc::from(&b"transitions.tex "[..]),
             root_name: CANONICAL_ROOT_SOURCE.into(),
             root_bytes: Arc::from(&b"a\\input child b"[..]),
-            input_capabilities: BTreeMap::from([("child".into(), Arc::from(&b"c"[..]))]),
+            input_capabilities: BTreeMap::from([("child.tex".into(), Arc::from(&b"c"[..]))]),
             fonts: BTreeMap::new(),
             expected_events: 0,
             schema: SchemaVersion::V1,
@@ -2640,7 +2621,7 @@ mod tests {
         );
         let mut capabilities = CommandHostCapabilities::default();
         capabilities.register_input(
-            "child",
+            "child.tex",
             SourceRegistration::new(RegisteredSourceKind::World, &b"c"[..]),
         );
 

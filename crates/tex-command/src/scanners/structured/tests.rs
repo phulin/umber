@@ -1905,7 +1905,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
-        "inc",
+        "inc.tex",
         SourceRegistration::new(
             RegisteredSourceKind::World,
             Arc::<[u8]>::from(b"z".as_slice()),
@@ -1917,7 +1917,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .open_registered_input()
             .expect("registered input opens")
     };
-    assert_eq!(input.file_name.name, "inc");
+    assert_eq!(input.file_name.name, "inc.tex");
     assert_eq!(input.file_name.termination, FileNameTermination::Group);
     command
         .rollback(snapshot)
@@ -1936,7 +1936,152 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .open_registered_input()
             .expect_err("unregistered input is structured recovery")
     };
-    assert_eq!(error, CommandError::MissingInput("x".to_owned()));
+    assert_eq!(error, CommandError::MissingInput("x.tex".to_owned()));
+}
+
+#[test]
+fn start_input_retries_the_default_area_and_retires_failed_attempt() {
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("nested "));
+    let before = command.snapshot();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "TeXinputs:nested.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"x"[..])),
+    );
+    let opened = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .open_registered_input()
+            .expect("default-area retry")
+    };
+    assert_eq!(opened.file_name.name, "TeXinputs:nested.tex");
+
+    command
+        .rollback(before)
+        .expect("successful retry rolls back");
+    push(&mut command, text_tokens("missing "));
+    let failed = command.snapshot();
+    let error = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .open_registered_input()
+            .expect_err("both attempts fail")
+    };
+    assert_eq!(error, CommandError::MissingInput("missing.tex".into()));
+    command
+        .rollback(failed)
+        .expect("failed attempts leave no source level");
+}
+
+#[test]
+fn start_input_normalizes_empty_and_nonempty_first_lines() {
+    for (bytes, expected) in [
+        (
+            &b""[..],
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+        ),
+        (
+            &b"z"[..],
+            Meaning::CharToken {
+                ch: 'z',
+                cat: Catcode::Letter,
+            },
+        ),
+    ] {
+        let mut command = CommandState::default();
+        push(&mut command, text_tokens("case "));
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.set_int_param(IntParam::END_LINE_CHAR, 13);
+        let par = universe.intern("par").symbol();
+        universe.set_meaning(
+            par,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.register_input(
+            "case.tex",
+            SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(bytes)),
+        );
+        let actual = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor.open_registered_input().expect("input opens");
+            processor
+                .get_x_token()
+                .expect("first-line delivery")
+                .expect("opening line has a token")
+                .meaning()
+        };
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("case "));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "case.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"z"[..])),
+    );
+    let (first, end) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.open_registered_input().expect("input opens");
+        (
+            processor
+                .get_x_token()
+                .expect("character")
+                .unwrap()
+                .meaning(),
+            processor.get_x_token().expect("source retirement"),
+        )
+    };
+    assert!(matches!(first, Meaning::CharToken { ch: 'z', .. }));
+    assert!(end.is_none());
+}
+
+#[test]
+fn start_input_nests_and_initializes_the_job_name_only_once() {
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("outer "));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "outer.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"inner p"[..]),
+        ),
+    );
+    capabilities.register_input(
+        "inner.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"c"[..])),
+    );
+    let (child, parent) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.open_registered_input().expect("outer opens");
+        processor.open_registered_input().expect("inner opens");
+        let child = processor.get_x_token().expect("child").unwrap().meaning();
+        let _child_end = processor.get_x_token().expect("child endline");
+        let parent = processor
+            .get_x_token()
+            .expect("parent resumes")
+            .unwrap()
+            .meaning();
+        (child, parent)
+    };
+    assert!(matches!(child, Meaning::CharToken { ch: 'c', .. }));
+    assert!(matches!(parent, Meaning::CharToken { ch: 'p', .. }));
+    assert_eq!(capabilities.job_name(), "outer");
 }
 
 #[test]

@@ -166,7 +166,7 @@ fn input_uses_only_capability_registered_backing_and_returns_to_parent() {
     install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
-        "inc",
+        "inc.tex",
         SourceRegistration::new(
             RegisteredSourceKind::World,
             Arc::<[u8]>::from(b"ab".as_slice()),
@@ -195,7 +195,7 @@ fn endinput_keeps_its_line_but_retires_nested_source_before_the_next_line() {
     install_expandable(&mut universe, "endinput", ExpandablePrimitive::EndInput);
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
-        "inc",
+        "inc.tex",
         SourceRegistration::new(
             RegisteredSourceKind::World,
             Arc::<[u8]>::from(b"a\\endinput b\nc".as_slice()),
