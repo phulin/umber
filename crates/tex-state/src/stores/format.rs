@@ -1090,7 +1090,13 @@ impl StoreFormat {
 
         let macro_map = dense_reachable_map(&live_macros)?;
         let token_map = dense_reachable_map(&live_tokens)?;
-        let mut live_names = vec![false; self.names.len()];
+        // TeX82 §256 never removes a control sequence after `id_lookup` has
+        // entered it, even when its meaning remains `undefined_cs`; §1309
+        // therefore dumps the complete occupied hash table, not merely names
+        // reachable from non-default `eqtb` cells. Preserve that namespace
+        // across a format round trip so `no_new_control_sequence` can
+        // distinguish a known undefined name from §222's shared dummy slot.
+        let mut live_names = vec![true; self.names.len()];
         for entry in &self.env {
             let cell = crate::cell::CellId::from_raw(entry.cell)
                 .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;

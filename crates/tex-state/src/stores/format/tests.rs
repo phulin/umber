@@ -117,6 +117,26 @@ fn format_dump_resets_only_the_optional_etex_state_cell() {
 }
 
 #[test]
+fn format_preserves_known_undefined_control_sequence_names() {
+    // TeX82 §256 keeps every name entered by `id_lookup`, independently of
+    // its current meaning, and §1309 dumps the complete occupied hash table.
+    let mut stores = Stores::new();
+    let known = stores.intern("known-but-undefined");
+    assert_eq!(stores.meaning(known), crate::meaning::Meaning::Undefined);
+
+    let format = StoreFormat::capture(&stores).expect("capture format namespace");
+    let restored = format.restore().expect("restore format namespace");
+    let restored_name = restored
+        .symbol("known-but-undefined")
+        .expect("undefined name remains known after format load");
+
+    assert_eq!(
+        restored.meaning(restored_name),
+        crate::meaning::Meaning::Undefined
+    );
+}
+
+#[test]
 fn reserved_environment_cell_key_fails_before_store_publication() {
     let stores = Stores::new();
     let mut format = StoreFormat::capture(&stores).expect("capture valid format");
