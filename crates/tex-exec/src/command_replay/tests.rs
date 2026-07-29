@@ -4711,6 +4711,142 @@ fn canonical_vskip_in_restricted_horizontal_closes_a_semisimple_group_first() {
 }
 
 #[test]
+fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register() {
+    // TeX82 §§1091/1095 route `hmode+un_vbox` through `head_for_vmode`.
+    // Restricted horizontal mode therefore runs §§1064--1066 `off_save`
+    // before §1079's `make_box` is allowed to scan the register number. The
+    // two-digit operand is a deliberate atomicity check: if the first
+    // delivery consumes it, the replay cannot select box 12.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox12=\vbox{\kern1pt}\setbox0=\hbox{\unvbox12",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Missing } inserted.\n",
+        "off_save should be the only recovery; the replay must retain operand 12"
+    );
+    let box_zero = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("interrupted hbox is still assigned");
+    let Node::HList(box_zero) = box_zero else {
+        panic!("box 0 contains an hbox");
+    };
+    assert!(
+        universe.nodes(box_zero.children).is_empty(),
+        "vertical material must not enter the restricted hlist"
+    );
+    assert!(
+        universe.box_reg(12).is_none(),
+        "the recovered unvbox executes in vertical mode and consumes box 12"
+    );
+    assert!(matches!(
+        universe.page_contributions().back(),
+        Some(Node::Kern { amount, kind: KernKind::Explicit })
+            if *amount == Scaled::from_raw(Scaled::UNITY)
+    ));
+}
+
+#[test]
+fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_box() {
+    // Negative control for the destructive `\unvbox` case above: the same
+    // §§1091/1095 recovery applies to `\unvcopy`, while §1079 leaves the
+    // selected register intact after the vertical-mode retry.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox12=\vbox{\kern1pt}\setbox0=\hbox{\unvcopy12",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(terminal_text(&universe), "\n! Missing } inserted.\n");
+    assert!(
+        universe.box_reg(12).is_some(),
+        "unvcopy must preserve box 12 after the recovered retry"
+    );
+    assert!(matches!(
+        universe.page_contributions().back(),
+        Some(Node::Kern { amount, kind: KernKind::Explicit })
+            if *amount == Scaled::from_raw(Scaled::UNITY)
+    ));
+}
+
+#[test]
+fn canonical_unvbox_in_unrestricted_horizontal_ends_paragraph_before_retry() {
+    // TeX82 §1095's positive-mode half of `head_for_vmode`: unlike the
+    // restricted recovery cases, an ordinary paragraph is ended with an
+    // inserted `\par`, then the untouched `\unvbox12` is retried in outer
+    // vertical mode without an error.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox12=\vbox{\kern1pt}\indent\unvbox12\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(terminal_text(&universe), "");
+    assert!(
+        universe.box_reg(12).is_none(),
+        "the replayed unvbox must consume box 12 after ending the paragraph"
+    );
+}
+
+#[test]
+fn canonical_halign_in_restricted_horizontal_recovers_before_alignment_start() {
+    // TeX82 §§1091/1095 route `hmode+halign` through `head_for_vmode`.
+    // `off_save` must close the hbox before `init_align` opens any alignment
+    // state; the same backed-up `\halign` then starts normally in vertical
+    // mode and consumes its untouched preamble.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\halign{#\cr\cr}");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        terminal_text(&universe),
+        "\n! Missing } inserted.\n",
+        "alignment recovery should neither start inside the hbox nor damage its preamble"
+    );
+    assert_eq!(
+        control.active_alignment(),
+        None,
+        "the recovered vertical alignment completes normally"
+    );
+    let box_zero = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("interrupted hbox is still assigned");
+    let Node::HList(box_zero) = box_zero else {
+        panic!("box 0 contains an hbox");
+    };
+    assert!(
+        universe.nodes(box_zero.children).is_empty(),
+        "alignment material must not be built in the restricted hlist"
+    );
+}
+
+#[test]
+fn canonical_halign_in_unrestricted_horizontal_ends_paragraph_before_alignment() {
+    // Positive-mode counterpart to the restricted recovery above. §1095
+    // inserts `\par` ahead of the backed-up alignment, so `init_align` begins
+    // only after the paragraph has returned to vertical mode.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\indent\halign{#\cr\cr}\end");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(terminal_text(&universe), "");
+    assert_eq!(control.active_alignment(), None);
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

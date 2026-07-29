@@ -5809,6 +5809,27 @@ fn scan_command(
                 ships_out: boxes.pending_shipout,
             })
         }
+        // TeX82 §1095's `hmode+un_vbox: head_for_vmode` ends an unrestricted
+        // paragraph and retries the command in vertical mode. As with every
+        // `head_for_vmode` command, this happens before `make_box` (§1079)
+        // scans the register operand.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
+        ) if mode == Mode::Horizontal => {
+            processor
+                .recover_stop_for_vertical_mode(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
+        // The restricted-horizontal branch of §1095 cannot end a paragraph,
+        // so it runs §§1064--1066 `off_save`. The recovered command is
+        // retried only after the enclosing group has been closed; its
+        // register operand must remain unread until that retry.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
+        ) if mode == Mode::RestrictedHorizontal => {
+            scan_off_save(processor, command, innermost_group)
+        }
         // `\unhbox`/`\unhcopy` in (internal) vertical mode never reach here:
         // `starts_paragraph_in_vertical_mode` routes `vmode+un_hbox` through
         // §1090's shared backup above, before this register operand is ever
@@ -5950,9 +5971,25 @@ fn scan_command(
                 .map_err(command_error)?
                 .tokens,
         )),
+        // TeX82 §1095's `hmode+halign: head_for_vmode` ends an unrestricted
+        // paragraph and retries the alignment in vertical mode.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
+            if mode == Mode::Horizontal =>
+        {
+            processor
+                .recover_stop_for_vertical_mode(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
+        // Restricted horizontal mode cannot end a paragraph, so §§1064--1066
+        // close the enclosing group before retrying the same `\halign`.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
+            if mode == Mode::RestrictedHorizontal =>
+        {
+            scan_off_save(processor, command, innermost_group)
+        }
         // `\halign` is legal directly in vertical mode (TeX82's
-        // `vmode+halign,hmode+valign:init_align`) and is not part of §1090's
-        // vmode-paragraph-starting list, so it is never mode-gated here.
+        // `vmode+halign:init_align`).
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             if matches!(mode, Mode::Math | Mode::DisplayMath)
                 && innermost_group != Some(GroupKind::MathShift)
