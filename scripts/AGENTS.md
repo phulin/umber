@@ -92,6 +92,12 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   INITEX profiles are separately named, smoke- and schema-v1 base-command
   matrix-gated, audited against the complete canonical extension primitive
   inventory, transparency/effect/repeatability-checked, and recorded.
+- `audit-etex26-extension-primitives.sh`: exact, actionable comparison of the
+  canonical `etex.ch` primitive surface against repository ownership and
+  extension-matrix coverage.
+- `test-etex26-extension-primitive-audit.sh`: hermetic microfixtures for
+  accepted exact coverage and actionable missing, extra, and unowned
+  command-core boundaries.
 - `build-pdftex14027-oracle.sh`: hash-pinned canonical pdfTeX 1.40.27 source,
   ordered Web2C/SyncTeX changes, translator, and archive-owned library build;
   publishes separate clean and instrumented eight-bit executables, gates exact

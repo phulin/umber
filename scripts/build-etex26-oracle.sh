@@ -545,28 +545,10 @@ for build_profile in clean instrumented; do
 done
 
 audit_extension_primitives() {
-  local source_inventory audit_inventory primitive owner gate seam extra
-  source_inventory="$(mktemp)"
-  audit_inventory="$(mktemp)"
-  awk 'match($0,/primitive\("[^"]+"/) {
-    print substr($0,RSTART+11,RLENGTH-12)
-  }' "${web_source_dir}/etexdir/etex.ch" | LC_ALL=C sort -u >"$source_inventory"
-  while IFS='|' read -r primitive owner gate seam extra; do
-    [[ -z "$primitive" || "$primitive" == \#* ]] && continue
-    [[ -n "$owner" && -n "$gate" && -n "$seam" && -z "${extra:-}" ]] ||
-      fail "malformed extension primitive audit row for ${primitive:-unknown}"
-    [[ "$owner" == command-core || "$owner" == executor ]] ||
-      fail "unknown extension primitive owner for $primitive: $owner"
-    if [[ "$owner" == command-core ]]; then
-      awk -F'|' -v gate="$gate" '$2 == gate { found=1 } END { exit !found }' \
-        "$extension_event_matrix" ||
-        fail "command-core primitive $primitive has no extension matrix boundary: $gate"
-    fi
-    printf '%s\n' "$primitive"
-  done <"$extension_primitive_audit" | LC_ALL=C sort -u >"$audit_inventory"
-  cmp "$source_inventory" "$audit_inventory" >/dev/null ||
-    fail "extension primitive audit does not exactly cover canonical etex.ch primitives"
-  rm -f "$source_inventory" "$audit_inventory"
+  scripts/audit-etex26-extension-primitives.sh \
+    "${web_source_dir}/etexdir/etex.ch" \
+    "$extension_primitive_audit" \
+    "$extension_event_matrix"
 }
 
 compare_channels() {

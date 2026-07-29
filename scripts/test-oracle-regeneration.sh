@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+scripts/test-etex26-extension-primitive-audit.sh
+
 scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit --validate-only
 scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
   --fixture tex82/command-transitions-v1 --validate-only

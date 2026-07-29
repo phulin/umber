@@ -79,7 +79,11 @@ pub const GATES: &[ConformanceGate] = &[
     },
     ConformanceGate {
         name: "trip",
-        inputs: &["third_party/trip/trip.tex", "third_party/trip/trip.tfm"],
+        inputs: &[
+            "third_party/trip/trip.tex",
+            "third_party/trip/trip.tfm",
+            "third_party/trip/tripos.tex",
+        ],
         materialize: &[
             "scripts/fetch-conformance-inputs.sh",
             "scripts/regen-fixtures.sh --case e2e/trip",
@@ -87,7 +91,11 @@ pub const GATES: &[ConformanceGate] = &[
     },
     ConformanceGate {
         name: "etrip",
-        inputs: &["third_party/trip/etrip.tex", "third_party/trip/trip.tfm"],
+        inputs: &[
+            "third_party/trip/etrip.tex",
+            "third_party/trip/trip.tfm",
+            "third_party/trip/tripos.tex",
+        ],
         materialize: &[
             "scripts/fetch-conformance-inputs.sh",
             "scripts/regen-fixtures.sh --case e2e/etrip",
@@ -266,6 +274,10 @@ pub fn with_gate(name: &str, body: impl FnOnce(&GateAssets)) {
 /// the call-site source rebuilds and reruns these tests instead of leaving a
 /// stale binary asserting against text that no longer exists.
 const GITIGNORE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore"));
+const NATIVE_ASSET_LOCK: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/native-test-assets.lock"
+));
 
 /// Repository-relative path of [`GATE_CALL_SITES`], for failure messages.
 const GATE_CALL_SITES_PATH: &str = "crates/umber/tests/it/e2e_conformance.rs";
@@ -321,5 +333,32 @@ fn conformance_gate_registry_is_reachable() {
             gate.name,
             GATE_CALL_SITES_PATH
         );
+    }
+}
+
+#[test]
+fn conformance_gate_assets_are_provisionable() {
+    let provisioned: BTreeSet<&str> = NATIVE_ASSET_LOCK
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .collect();
+    for gate in GATES {
+        let oracle = format!("{ORACLE_DIR}/{}.expected.dvi", gate.name);
+        assert!(
+            provisioned.contains(oracle.as_str()),
+            "conformance gate `{}` oracle `{oracle}` is absent from \
+             tests/native-test-assets.lock",
+            gate.name
+        );
+        for input in gate.inputs {
+            assert!(
+                provisioned.contains(input),
+                "conformance gate `{}` input `{input}` is absent from \
+                 tests/native-test-assets.lock",
+                gate.name
+            );
+        }
     }
 }
