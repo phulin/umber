@@ -3754,6 +3754,13 @@ enum ScannedStep {
         operand: ArithmeticOperand,
         global: bool,
     },
+    /// TeX82 §1236's recoverable invalid-target return from
+    /// `do_register_command`. The target command has been consumed, but no
+    /// operand is scanned and no value is changed.
+    InvalidArithmeticTarget {
+        primitive: UnexpandablePrimitive,
+        target: tex_command::PrintCommand,
+    },
     MacroDefinition {
         target: Symbol,
         flags: MeaningFlags,
@@ -4042,6 +4049,7 @@ impl ScannedStep {
                 | Self::FontDefinition { .. }
                 | Self::InputStream { .. }
                 | Self::Arithmetic { .. }
+                | Self::InvalidArithmeticTarget { .. }
                 | Self::MacroDefinition { .. }
                 | Self::CharacterDefinition { .. }
                 | Self::RegisterDefinition { .. }
@@ -4518,7 +4526,7 @@ fn dispatch_main_control_command(
             // hand-listed set of assignment families.
             if !tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
                 diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
-                    command.meaning(),
+                    tex_command::PrintCommand::from_current(&command),
                 ));
                 // §1212's `back_error`: the substantive command is retained
                 // and re-delivered without the discarded prefixes.
@@ -4542,7 +4550,7 @@ fn dispatch_main_control_command(
             )
         {
             diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
-                command.meaning(),
+                tex_command::PrintCommand::from_current(&command),
             ));
         }
         // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --
@@ -7408,7 +7416,12 @@ fn scan_arithmetic_assignment(
         Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
         Meaning::GlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: false },
         Meaning::MuGlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: true },
-        _ => return Err(ExecError::UnsupportedAssignmentTarget),
+        _ => {
+            return Ok(ScannedStep::InvalidArithmeticTarget {
+                primitive,
+                target: tex_command::PrintCommand::from_current(&target_command),
+            });
+        }
     };
     let _ = processor.scan_keyword("by").map_err(command_error)?;
     let operand = match target {
@@ -8639,6 +8652,7 @@ fn applied_mutation_observation(
         | ScannedStep::IllegalInsertOrAdjust { .. }
         | ScannedStep::IllegalEqNo { .. }
         | ScannedStep::IllegalLastItem { .. }
+        | ScannedStep::InvalidArithmeticTarget { .. }
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark { .. }
         | ScannedStep::TextDirection { .. }
@@ -10751,6 +10765,18 @@ fn apply_scanned_step(
                 }
                 other => other?,
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::InvalidArithmeticTarget { primitive, target } => {
+            // TeX82 §1236 prints this error and returns from
+            // `do_register_command`; §1269's common `done` path still gets
+            // to replay a pending `\afterassignment` token.
+            let target = tex_command::print_cmd_chr_text(&stores.command_context(), target);
+            let primitive = printed_command(stores, Meaning::UnexpandablePrimitive(primitive));
+            let mut report = stores.print_err("You can't use `");
+            report.print(&target).print("' after ").print(&primitive);
+            report.help(&["I'm forgetting what you said and not changing anything."]);
+            report.error();
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MacroDefinition {
@@ -13137,10 +13163,10 @@ enum PendingDiagnostic {
     /// TeX82 §§433-§437's shared `print_err`/`help2`/`int_error`.
     RestrictedInteger(tex_command::RestrictedIntegerRecovery),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
-    PrefixOnNonPrefixedCommand(Meaning),
+    PrefixOnNonPrefixedCommand(tex_command::PrintCommand),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
     /// irrelevant>`.
-    IrrelevantLongOuterPrefix(Meaning),
+    IrrelevantLongOuterPrefix(tex_command::PrintCommand),
 }
 
 /// tex.web §298's `print_cmd_chr` for the meanings the reports above name.
@@ -13195,15 +13221,15 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
             PendingDiagnostic::RestrictedInteger(recovery) => {
                 report_restricted_integer_recovery(stores, recovery.class, recovery.scanned);
             }
-            PendingDiagnostic::PrefixOnNonPrefixedCommand(meaning) => {
-                let command = printed_command(stores, meaning);
+            PendingDiagnostic::PrefixOnNonPrefixedCommand(command) => {
+                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use a prefix with `");
                 report.print(&command).print_char('\'');
                 report.help(&["I'll pretend you didn't say \\long or \\outer or \\global."]);
                 report.error();
             }
-            PendingDiagnostic::IrrelevantLongOuterPrefix(meaning) => {
-                let command = printed_command(stores, meaning);
+            PendingDiagnostic::IrrelevantLongOuterPrefix(command) => {
+                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use `");
                 report
                     .print_esc("long")

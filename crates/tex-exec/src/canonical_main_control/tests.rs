@@ -4393,6 +4393,141 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
 }
 
 #[test]
+fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
+    // TeX82 §1236 consumes an invalid target, reports the error, and returns
+    // through §1269's common path, which still replays `\afterassignment`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\prevdepth=2pt \def\mark{\global\count0=7}\afterassignment\mark\advance\prevdepth \count1=9\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 7, "afterassignment token was replayed");
+    assert_eq!(stores.count(1), 9, "execution continued after the error");
+    assert_eq!(
+        control.modes.current_list().prev_depth(),
+        Some(Scaled::from_raw(2 * 65_536))
+    );
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! You can't use `\\prevdepth' after \\advance."),
+        "{output}"
+    );
+}
+
+#[test]
+fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
+    // TeX82 §§298 and 1236 print the rejected command class, scan no operand,
+    // and return through §1269 once. Prefix scope is therefore immaterial,
+    // including both \globaldefs overrides.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\mark{\global\advance\count0 by1}
+           \afterassignment\mark\global\advance x
+           \globaldefs=1
+           \afterassignment\mark\multiply 7
+           \globaldefs=-1
+           \afterassignment\mark\global\divide\relax
+           \globaldefs=0
+           \count1=19\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(
+        stores.count(0),
+        3,
+        "each afterassignment fires exactly once"
+    );
+    assert_eq!(
+        stores.take_afterassignment(),
+        None,
+        "pending slot is drained"
+    );
+    assert_eq!(stores.count(1), 19, "no rejected command scans an operand");
+    assert!(
+        observations
+            .0
+            .iter()
+            .any(|event| matches!(event, CommandObservation::Mutation(_))),
+        "observer exercised the surrounding valid assignments"
+    );
+
+    let output = terminal_text(&stores);
+    let expected = [
+        "! You can't use `the letter x' after \\advance.",
+        "! You can't use `the character 7' after \\multiply.",
+        "! You can't use `\\relax' after \\divide.",
+    ];
+    let positions = expected.map(|text| {
+        assert_eq!(output.matches(text).count(), 1, "{text:?} in {output:?}");
+        output.find(text).expect("diagnostic text")
+    });
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "diagnostic order changed: {output:?}"
+    );
+
+    let mut isolated_stores = Universe::new_with_plain_catcodes();
+    let mut isolated = CanonicalMainControl::tex82_initex(&mut isolated_stores);
+    register_source(&mut isolated, br"\advance x");
+    let mut isolated_observations = ObservationRecorder::default();
+    isolated
+        .step_with_observer(&mut isolated_stores, &mut isolated_observations)
+        .expect("observed invalid target recovers");
+    assert!(
+        !isolated_observations
+            .0
+            .iter()
+            .any(|event| matches!(event, CommandObservation::Mutation(_))),
+        "invalid target must not publish a mutation: {:?}",
+        isolated_observations.0
+    );
+}
+
+#[test]
+fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
+    // The §1236 recovery and §1269 afterassignment replay are a committed
+    // operation. A later missing-resource rollback cannot duplicate either.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\mark{\global\advance\count0 by1}
+           \afterassignment\mark\advance x
+           \input child\end",
+    );
+
+    for _ in 0..8 {
+        if stores.count(0) == 1 {
+            break;
+        }
+        assert!(matches!(
+            control.advance(&mut stores).expect("setup executes"),
+            CanonicalStepResult::Progress(ReplayStep::Continue)
+        ));
+    }
+    assert_eq!(stores.count(0), 1);
+    let committed = terminal_text(&stores);
+    assert_eq!(committed.matches("the letter x").count(), 1);
+
+    for _ in 0..3 {
+        assert!(matches!(
+            control.advance(&mut stores).expect("missing input suspends"),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+                if name == "child.tex"
+        ));
+        assert_eq!(stores.count(0), 1);
+        assert_eq!(stores.take_afterassignment(), None);
+        assert_eq!(terminal_text(&stores), committed);
+    }
+}
+
+#[test]
 fn message_spacing_follows_the_texweb_1280_offset_rule() {
     // TeX82 §1280 separates consecutive `\message` texts with one space when
     // a line is already open.

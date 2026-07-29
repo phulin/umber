@@ -1263,6 +1263,102 @@ pub(crate) fn meaning_text(
     }
 }
 
+/// The copyable portion of a delivered command needed by TeX82 §298.
+///
+/// This is captured from `CurrentCommand`, not reconstructed from `Meaning`,
+/// so the delivered control-sequence identity remains available across the
+/// executor's transactional scan/apply seam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrintCommand {
+    meaning: Meaning,
+    control_sequence: Option<tex_state::interner::Symbol>,
+}
+
+impl PrintCommand {
+    #[must_use]
+    pub const fn from_current(command: &CurrentCommand) -> Self {
+        Self {
+            meaning: command.meaning(),
+            control_sequence: command.control_sequence(),
+        }
+    }
+}
+
+/// TeX82 §298's `print_cmd_chr` representation of one delivered command.
+///
+/// The input is the full ephemeral equivalent of `cur_cmd`, `cur_chr`, and
+/// `cur_cs`, rather than a decoded `Meaning`. This keeps command-class
+/// vocabulary independent of the token spelling: a control-sequence alias of
+/// a primitive prints the primitive, while aliases of character commands keep
+/// their character command class.
+#[must_use]
+pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintCommand) -> String {
+    match command.meaning {
+        Meaning::Undefined => "undefined".to_owned(),
+        Meaning::Relax => "\\relax".to_owned(),
+        Meaning::Macro { flags, .. } => {
+            let mut text = String::new();
+            if flags.contains(MeaningFlags::PROTECTED) {
+                text.push_str("\\protected");
+            }
+            if flags.contains(MeaningFlags::LONG) {
+                text.push_str("\\long");
+            }
+            if flags.contains(MeaningFlags::OUTER) {
+                text.push_str("\\outer");
+            }
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str("macro");
+            text
+        }
+        Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
+        Meaning::CharGiven(ch) => format!("\\char\"{:X}", ch as u32),
+        Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
+        Meaning::CountRegister(index) => format!("\\count{index}"),
+        Meaning::DimenRegister(index) => format!("\\dimen{index}"),
+        Meaning::SkipRegister(index) => format!("\\skip{index}"),
+        Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
+        Meaning::ToksRegister(index) => format!("\\toks{index}"),
+        meaning @ (Meaning::IntParam(_)
+        | Meaning::InternalInteger(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
+        | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_)
+        | Meaning::ExpandablePrimitive(_)
+        | Meaning::UnexpandablePrimitive(_)) => {
+            print_command_control_sequence_text(state, command, meaning)
+        }
+        Meaning::Font(font) => {
+            let mut text = format!("select font {}", state.font_external_name(font));
+            let size = state.font_size(font);
+            if size != state.font_design_size(font) {
+                text.push_str(" at ");
+                text.push_str(&tex_state::scaled::print_scaled(size));
+                text.push_str("pt");
+            }
+            text
+        }
+        Meaning::EndV => "end of alignment template".to_owned(),
+        Meaning::Unknown(_) => "[unknown command code!]".to_owned(),
+    }
+}
+
+fn print_command_control_sequence_text(
+    state: &tex_state::CommandContext<'_>,
+    command: PrintCommand,
+    meaning: Meaning,
+) -> String {
+    let name = state
+        .primitive_name(meaning)
+        .or_else(|| command.control_sequence.map(|symbol| state.resolve(symbol)));
+    name.map_or_else(|| "undefined".to_owned(), |name| format!("\\{name}"))
+}
+
 fn meaning_control_sequence_text(
     state: &tex_state::CommandContext<'_>,
     command: &CurrentCommand,
@@ -1289,12 +1385,15 @@ pub fn character_command_text(ch: char, cat: Catcode) -> String {
         Catcode::Space => "blank space  ".to_owned(),
         Catcode::Letter => format!("the letter {ch}"),
         Catcode::Other => format!("the character {ch}"),
-        Catcode::EndLine => format!("end of line character {ch}"),
+        // `get_next` maps a category-5 character to `car_ret` with its
+        // character code as operand. It is therefore §298's non-`cr_code`
+        // branch, whose vocabulary is `\crcr`.
+        Catcode::EndLine => "\\crcr".to_owned(),
         Catcode::Escape
         | Catcode::Ignored
         | Catcode::Active
         | Catcode::Comment
-        | Catcode::Invalid => format!("the character {ch}"),
+        | Catcode::Invalid => format!("[uncommandable character {ch}]"),
     }
 }
 

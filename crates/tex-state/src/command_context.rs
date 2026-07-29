@@ -478,6 +478,25 @@ impl CommandContext<'_> {
         self.universe.font_name(font)
     }
 
+    /// Reads a font's immutable external name without `\fontname`'s size
+    /// suffix.
+    #[must_use]
+    pub fn font_external_name(&self, font: FontId) -> &str {
+        self.universe.font(font).name()
+    }
+
+    /// Reads a font's selected size for TeX82 §298's `print_cmd_chr`.
+    #[must_use]
+    pub fn font_size(&self, font: FontId) -> crate::scaled::Scaled {
+        self.universe.font(font).size()
+    }
+
+    /// Reads a font's design size for TeX82 §298's `print_cmd_chr`.
+    #[must_use]
+    pub fn font_design_size(&self, font: FontId) -> crate::scaled::Scaled {
+        self.universe.font(font).design_size()
+    }
+
     /// Reads one immutable TFM character metric for e-TeX font enquiries.
     #[must_use]
     pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {

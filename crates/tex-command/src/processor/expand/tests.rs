@@ -1872,20 +1872,89 @@ fn character_command_renderer_covers_tex82_print_cmd_chr_table() {
         (Catcode::EndGroup, '}', "end-group character }"),
         (Catcode::MathShift, '$', "math shift character $"),
         (Catcode::AlignmentTab, '&', "alignment tab character &"),
-        (Catcode::EndLine, '\r', "end of line character \r"),
+        (Catcode::EndLine, '\r', "\\crcr"),
         (Catcode::Parameter, '#', "macro parameter character #"),
         (Catcode::Superscript, '^', "superscript character ^"),
         (Catcode::Subscript, '_', "subscript character _"),
         (Catcode::Space, ' ', "blank space  "),
         (Catcode::Letter, 'a', "the letter a"),
         (Catcode::Other, '7', "the character 7"),
-        (Catcode::Escape, '\\', "the character \\"),
-        (Catcode::Ignored, '\0', "the character \0"),
-        (Catcode::Active, '~', "the character ~"),
-        (Catcode::Comment, '%', "the character %"),
-        (Catcode::Invalid, '\u{7f}', "the character \u{7f}"),
+        (Catcode::Escape, '\\', "[uncommandable character \\]"),
+        (Catcode::Ignored, '\0', "[uncommandable character \0]"),
+        (Catcode::Active, '~', "[uncommandable character ~]"),
+        (Catcode::Comment, '%', "[uncommandable character %]"),
+        (
+            Catcode::Invalid,
+            '\u{7f}',
+            "[uncommandable character \u{7f}]",
+        ),
     ] {
         assert_eq!(character_command_text(ch, cat), expected);
+    }
+}
+
+#[test]
+fn print_cmd_chr_preserves_delivered_command_operands_and_aliases() {
+    use tex_state::font::{FontMetrics, LoadedFont};
+    use tex_state::scaled::Scaled;
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.register_primitive_meaning(
+        "advance",
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Advance),
+    );
+    let scaled_font = universe.intern_font(LoadedFont::new(
+        "cmr10",
+        "cmr10.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(12 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::default(),
+    ));
+    let design_font = universe.intern_font(LoadedFont::new(
+        "cmtt10",
+        "cmtt10.tfm",
+        [1; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::default(),
+    ));
+
+    for (index, meaning, expected) in [
+        (0, Meaning::CharGiven('A'), "\\char\"41"),
+        (1, Meaning::MathCharGiven(0x1234), "\\mathchar\"1234"),
+        (2, Meaning::Font(scaled_font), "select font cmr10 at 12.0pt"),
+        (3, Meaning::Font(design_font), "select font cmtt10"),
+        (4, Meaning::EndV, "end of alignment template"),
+        (
+            5,
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Advance),
+            "\\advance",
+        ),
+    ] {
+        let alias = universe.intern(&format!("alias{index}")).symbol();
+        universe.set_meaning(alias, meaning);
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(alias)),
+                crate::command::DeliveryStamp::new(0, index, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        assert_eq!(
+            print_cmd_chr_text(
+                &universe.command_context(),
+                PrintCommand::from_current(&command),
+            ),
+            expected
+        );
     }
 }
 
