@@ -302,16 +302,7 @@
       },
       "projection": { "kind": "observations", "kinds": ["mutation"] },
       "expected": ["mutation:meaning:count:macro definition:local"],
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-vq14",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "mutation:meaning:count:macro definition:local",
-          "actual": "main-control step: Command(InputInvariant)"
-        }
-      },
+      "expectation": { "kind": "pass" },
       "terminal_lines": ["alpha"]
     },
     {
