@@ -446,6 +446,7 @@ fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
 fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
     for (name, primitive) in [
         ("pdfobj", UnexpandablePrimitive::PdfObject),
+        ("pdfrefobj", UnexpandablePrimitive::PdfReferenceObject),
         ("immediate", UnexpandablePrimitive::Immediate),
     ] {
         let symbol = stores.intern(name);
@@ -611,6 +612,69 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         token_character_text(&define_stores, data.data()),
         "retry.dat"
     );
+}
+
+#[test]
+fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
+    // pdftex.web §1544 orders `check_pdfoutput`, `scan_int`,
+    // `pdf_check_obj`, `new_whatsit`, and object-number assignment. A DVI
+    // failure must therefore preserve the integer and every aggregate owner
+    // for transactional retry under the pdfTeX profile.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let object = stores
+        .reserve_pdf_raw_object()
+        .expect("reserve reference target");
+    assert_eq!(object.raw(), 1);
+    let mut control = pdftex_object_control(&mut stores);
+    register_source(&mut control, br"\pdfrefobj 1");
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.pdf_raw_objects().len(), 1);
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("PDF retry preserves the integer operand"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfReferenceObject { object: 1 })]
+    ));
+}
+
+#[test]
+fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
+    // pdftex.web §1544 checks DVI mode before scanning or calling
+    // `pdf_check_obj`; the missing-object error is reached only on a PDF-mode
+    // retry of the same intact operand.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_object_control(&mut stores);
+    register_source(&mut control, br"\pdfrefobj 99");
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(stores.pdf_raw_objects().is_empty());
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfReferencedObjectNotFound)
+    ));
+    assert!(stores.pdf_raw_objects().is_empty());
+    assert!(control.modes.current_list().nodes().is_empty());
 }
 
 fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {

@@ -5430,6 +5430,11 @@ fn scan_command(
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfReferenceObject) => {
+            // pdftex.web §1544 calls `check_pdfoutput` before `scan_int`,
+            // object validation, whatsit allocation, or list mutation.
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
+            }
             Ok(ScannedStep::PdfReferenceObject(
                 processor
                     .scan_pdf_reference_object_request()

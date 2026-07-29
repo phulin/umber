@@ -80,8 +80,8 @@ coverage do not establish canonical command-core coverage. The canonical
 `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`,
 `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont`,
 `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfannot`,
-`\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, and `\pdfobj` are
-complete.
+`\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfobj`, and
+`\pdfrefobj` are complete.
 pdftex.web §§1527 and 1594–1598 make the first five operand-free any-mode
 commands that append ordered whatsits, with their accessibility or
 continuation-link effect interpreted during shipout. The running-link policy
@@ -127,6 +127,12 @@ stream/attribute/file/body scan, and object allocation. Section 1621's
 lookahead and before its separate reserved-object rejection. A DVI failure
 therefore preserves the complete command and object ledger for transactional
 retry, and wins diagnostic precedence over the immediate-reservation error.
+
+pdftex.web §1544 orders `\pdfrefobj`'s PDF-output check before its integer
+scan, object-existence validation, whatsit allocation, list mutation, and
+object-number assignment. A DVI failure therefore preserves the integer
+operand and aggregate state for transactional retry, and takes precedence
+over the missing-reference error that a PDF-mode retry can then report.
 
 pdftex.web §§1524, 1556, 1558, 1560, and 1561 make `\pdfannot`,
 `\pdfstartlink`, and `\pdfendlink` PDF-only extensions. Each checks
