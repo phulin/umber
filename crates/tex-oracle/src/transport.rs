@@ -55,7 +55,11 @@ impl ObservationStream {
             SchemaVersion::try_from(header.schema).map_err(ObservationError::InvalidStream)?;
         validate_identity("manifest", &header.manifest)?;
 
-        let mut events = Vec::new();
+        // Large document traces contain millions of events. Count their
+        // already-required line delimiters once so decoding does not
+        // repeatedly grow and copy the event vector.
+        let event_count = memchr::memchr_iter(b'\n', bytes).count() - 1;
+        let mut events = Vec::with_capacity(event_count);
         for (expected, line) in lines.enumerate() {
             let event: NormalizedEvent = decode_canonical_line(line)?;
             if event.sequence != expected as u64 {

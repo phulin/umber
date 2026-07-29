@@ -182,6 +182,29 @@ fn json_lines_transport_is_stable_and_separate_from_ordinary_output() {
 }
 
 #[test]
+fn stream_decoder_preallocates_its_complete_event_vector() {
+    const EVENT_COUNT: usize = 257;
+    let identity = manifest().identity().expect("valid manifest");
+    let mut observer = JsonLinesObserver::new(Vec::new(), identity).expect("header");
+    for _ in 0..EVENT_COUNT {
+        observer.committed(command("assign")).expect("event");
+    }
+    let (bytes, _) = observer.finish().expect("finish");
+
+    let decoded = ObservationStream::from_canonical_json_lines(&bytes).expect("decode");
+    assert_eq!(decoded.events.len(), EVENT_COUNT);
+    assert_eq!(decoded.events.capacity(), EVENT_COUNT);
+    assert_eq!(
+        decoded
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        (0..EVENT_COUNT as u64).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn stream_decoder_rejects_noncanonical_or_discontinuous_records() {
     let identity = manifest().identity().expect("valid manifest");
     let mut observer = JsonLinesObserver::new(Vec::new(), identity).expect("header");

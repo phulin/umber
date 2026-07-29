@@ -605,6 +605,34 @@ and retire the alignment marker. The feature-gated counters remain available
 to detect a different workload with longer or simpler templates; no production
 fast path was added.
 
+## Preallocated oracle event decoding
+
+Issue `umber2-q02h.121` profiled the complete optimized command-stream
+repository comparison, including the generated Plain, Story, and Gentle
+traces. A 1,661-sample `perf -F 199 --call-graph fp` capture lost no samples.
+Mandatory SHA-256 fixture validation was the largest self-time owner at
+15.82%; `memmove` was next at 12.89%, driven in part by repeated growth of the
+multi-million-entry decoded event vector.
+
+The decoder now counts line delimiters in its already-resident JSONL input and
+allocates the exact event capacity before canonical decoding. Hash validation,
+canonical re-encoding checks, sequence validation, checkpoint and observation
+values, and fixture identity remain unchanged. A matched candidate capture
+reduced `memmove` to 10.09% of whole-run samples, a 21.7% relative reduction,
+while SHA-256 remained dominant at 14.83%; it also lost no samples. The
+exhaustive report remained exactly `CLEAN` with zero divergences in all five
+fixtures.
+
+Twelve order-balanced CPU-pinned timing pairs ran during severe host
+contention (load average 22--30, with concurrent multi-core Rust builds).
+Median wall time improved from 8.695 s to 8.500 s (2.24%), while four
+contention outliers made the means 9.800 s and 10.203 s respectively; six
+pairs favored each binary. Process-scoped counters across six further balanced
+pairs reduced mean retired instructions from 37.595B to 37.542B (0.14%).
+Treat the symbolized reduction and focused capacity invariant as the stable
+mechanism evidence; do not use these contended wall means as a latency
+baseline.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
