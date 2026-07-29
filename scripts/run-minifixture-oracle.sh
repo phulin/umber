@@ -10,6 +10,11 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 oracle_dir="${target_dir}/pdftex14027-oracle"
 executable="${oracle_dir}/bin/umber-pdftex14027-oracle-instrumented"
 out_root="${target_dir}/minifixture-oracle"
+# Dumped formats for the two profiles built past INITEX (see
+# `ensure_format` below). One format per profile, shared by every case that
+# declares it, staged into each case's run directory the same way a
+# declared `font_inputs` TFM is.
+format_source_dir="${out_root}/_formats"
 
 # The instrumented pdfTeX 1.40.27 executable is a Web2C program: it needs a
 # kpathsea configuration (texmf.cnf) to find *any* file, including one in its
@@ -100,8 +105,8 @@ command -v jq >/dev/null || fail "jq is required"
 [[ -f "${texmfcnf_dir}/texmf.cnf" ]] ||
   fail "missing kpathsea config at ${texmfcnf_dir}/texmf.cnf; set UMBER_REF_TEXLIVE_SOURCE to a checkout with an extracted texlive-source/src tree"
 
-# Every profile the corpus declares, and how (or whether) this runner can
-# reproduce it with the executable above:
+# Every profile the corpus declares, and how this runner reproduces it with
+# the executable above:
 #
 #   initex        (default) -> `-ini`             plain INITEX, no e-TeX.
 #   etex-initex              -> `-ini -etex`       INITEX with e-TeX extensions
@@ -109,34 +114,116 @@ command -v jq >/dev/null || fail "jq is required"
 #                                                   invocation the rest of
 #                                                   scripts/build-pdftex14027-oracle.sh
 #                                                   already uses.
-#   etex-loaded               -> unsupported. Umber builds this profile by
-#                                                   dumping and reloading an
-#                                                   in-memory e-TeX format
-#                                                   (tools/tex-command-stream's
-#                                                   `SessionProfile::EtexLoaded`
-#                                                   calls `dump_format` /
-#                                                   `from_format`). Reproducing
-#                                                   it here needs a real `\dump`
-#                                                   format file plus a `-fmt`
-#                                                   invocation; this runner does
-#                                                   not build one yet.
-#   production                -> unsupported. Same gap: Umber's `Production`
-#                                                   profile runs
+#   etex-loaded              -> `-fmt=etex-loaded` A real e-TeX INITEX job
+#                                                   dumps `etex-loaded.fmt`
+#                                                   once (see `ensure_format`),
+#                                                   then every case in this
+#                                                   profile loads it. Mirrors
+#                                                   `tools/tex-command-stream`'s
+#                                                   `SessionProfile::EtexLoaded`,
+#                                                   which builds the same state
+#                                                   in memory via
+#                                                   `dump_format`/`from_format`.
+#   production                -> `-fmt=production`  Same idea with a bare
+#                                                   TeX82 INITEX dump: mirrors
+#                                                   `SessionProfile::Production`,
+#                                                   which runs
 #                                                   `CanonicalMainControl::new()`
-#                                                   after INITEX, i.e. a
-#                                                   post-format engine state,
-#                                                   which likewise needs a real
-#                                                   loaded format this runner
-#                                                   does not build.
+#                                                   (a non-INITEX session) atop
+#                                                   TeX82-initialized state.
 #
-# 5 of 130 cases (3 etex-loaded, 2 production) are therefore skipped with a
-# clear message rather than silently misrun under the wrong profile.
+# Real pdfTeX only tells INITEX and a loaded-format session apart by whether
+# `\dump` actually ran -- there is no flag that says "install these
+# primitives but behave as if a format had been loaded" -- so reproducing
+# `EtexLoaded`/`Production` needs a genuine two-phase job: `-ini` (optionally
+# `-etex`) dumps a format, and a second, non-INITEX invocation loads it with
+# `-fmt=` and runs the case source. `scripts/regen-fixtures.sh`'s
+# `regen_etrip_pdftex_fixture` already runs exactly this shape for e-TRIP;
+# `ensure_format` below reuses its `-ini [-etex] -jobname=… \dump` /
+# `-fmt=… -jobname=…` idiom rather than inventing a second one.
 engine_args_for_profile() {
   case "$1" in
     initex) printf -- '-ini' ;;
     etex-initex) printf -- '-ini\n-etex' ;;
+    etex-loaded)
+      ensure_format etex-loaded 1>&2 || return 1
+      printf -- '-fmt=etex-loaded'
+      ;;
+    production)
+      ensure_format production 1>&2 || return 1
+      printf -- '-fmt=production'
+      ;;
     *) return 1 ;;
   esac
+}
+
+# INITEX flags and priming source for the one-time job that dumps each
+# fmt-based profile's format.
+#
+# `production` dumps bare TeX82 INITEX state (`Universe`'s primitives with no
+# e-TeX extensions), matching `SessionProfile::Production`'s
+# `CanonicalMainControl::tex82_initex`. `etex-loaded` additionally sets
+# `\TeXXeTstate=1` immediately before `\dump`, matching
+# `SessionProfile::EtexLoaded`'s own comment: it exercises etex.ch change
+# [50.1307], which resets that and other optional e-TeX state cells to their
+# defaults *during* the dump, so the reloaded format must show the reset
+# value regardless of what was set beforehand (`etex-diagnostics/etex-loaded-
+# state-reset` is the case that checks exactly this).
+dump_engine_args_for_profile() {
+  case "$1" in
+    etex-loaded) printf -- '-ini\n-etex' ;;
+    production) printf -- '-ini' ;;
+    *) return 1 ;;
+  esac
+}
+
+dump_source_for_profile() {
+  case "$1" in
+    etex-loaded) printf '\\TeXXeTstate=1 \\dump\n' ;;
+    production) printf '\\dump\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Builds `${format_source_dir}/<profile>.fmt` once and reuses it for every
+# case that declares `<profile>`. `web2c/texmf.cnf`'s `TEXFORMATS` already
+# begins with `$TEXMFDOTDIR` (`.`), so a case's own run directory finds a
+# format staged beside it with no extra `-fmt` search-path configuration --
+# the same reason a staged `font_inputs` TFM needs no `TEXFONTS` override.
+ensure_format() {
+  local profile="$1"
+  local fmt_path="${format_source_dir}/${profile}.fmt"
+  [[ -s "$fmt_path" ]] && return 0
+
+  local dump_args
+  dump_args="$(dump_engine_args_for_profile "$profile")" || return 1
+  readarray -t dump_args <<<"$dump_args"
+  local dump_source
+  dump_source="$(dump_source_for_profile "$profile")" || return 1
+
+  mkdir -p "$format_source_dir"
+  local build_dir="${format_source_dir}/.build-${profile}"
+  rm -rf "$build_dir"
+  mkdir -p "$build_dir"
+  printf '%s' "$dump_source" >"${build_dir}/dump.tex"
+
+  local status=0
+  (
+    cd "$build_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="$texmfcnf_dir" \
+      "$executable" "${dump_args[@]}" -jobname="$profile" \
+      -interaction=batchmode "${job_flags[@]}" dump.tex >dump.fot 2>&1
+  ) || status="$?"
+
+  if [[ ! -s "${build_dir}/${profile}.fmt" ]]; then
+    warn "priming job for profile '$profile' did not produce ${profile}.fmt" \
+      "(exit $status; see ${build_dir}/dump.fot)"
+    return 1
+  fi
+  cp "${build_dir}/${profile}.fmt" "$fmt_path"
+  rm -rf "$build_dir"
 }
 
 # Interaction mode.
@@ -269,9 +356,8 @@ run_one_case() {
 
   local engine_args
   if ! engine_args="$(engine_args_for_profile "$profile")"; then
-    warn "skipping $domain/$case_id: profile '$profile' needs a loaded/dumped" \
-      "format, which this runner does not build yet (see" \
-      "engine_args_for_profile in this script)"
+    warn "skipping $domain/$case_id: profile '$profile' has no reproduction" \
+      "(see engine_args_for_profile in this script)"
     return 1
   fi
   readarray -t engine_args <<<"$engine_args"
@@ -280,6 +366,13 @@ run_one_case() {
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
   stage_case_files "$case_json" "$domain" "$run_dir" "$source_name"
+  # A fmt-based profile's format was just built (or already cached) by
+  # `engine_args_for_profile`'s `ensure_format` call above; stage it beside
+  # the source the same way a declared `font_inputs` TFM is staged, so
+  # `TEXMFDOTDIR` (`.`) finds it.
+  if [[ -f "${format_source_dir}/${profile}.fmt" ]]; then
+    cp "${format_source_dir}/${profile}.fmt" "${run_dir}/${profile}.fmt"
+  fi
 
   local -a terminal_lines
   readarray -t terminal_lines < <(jq -r '(.terminal_lines // [])[]' <<<"$case_json")
@@ -312,7 +405,7 @@ run_one_case() {
   # a name of its own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \
-    status.txt terminal.txt pdftex14027-events.jsonl)
+    status.txt terminal.txt pdftex14027-events.jsonl "${profile}.fmt")
   local key
   while IFS= read -r key; do staged+=("$key"); done \
     < <(jq -r '(.inputs // {}) | keys[]' <<<"$case_json")
