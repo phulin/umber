@@ -1234,6 +1234,15 @@ impl CommandObserver for Recorder {
         if matches!(observation, CommandObservation::Geometry(_)) && !self.geometry {
             return;
         }
+        if matches!(
+            observation,
+            CommandObservation::Effect(EffectRecord {
+                kind: "showgroups" | "showifs" | "showtokens",
+                ..
+            })
+        ) {
+            return;
+        }
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
@@ -2128,6 +2137,111 @@ mod tests {
                 channel: "terminal".into(),
                 value: CanonicalValue::Bytes(b"READY".to_vec()),
             })
+        );
+    }
+
+    #[test]
+    fn live_transport_suppresses_only_uninstrumented_print_effects() {
+        // e-TeX [49.1292] routes these commands through TeX82 §1293's
+        // diagnostic ending. The canonical reference observer has no events
+        // at those print-only seams, so the host translation must not invent
+        // any that displace the following command transitions.
+        let mut translator =
+            LiveSessionTranslator::new("terminal", BTreeMap::new(), SchemaVersion::V1);
+        for record in [
+            EffectRecord {
+                kind: "showgroups",
+                detail: "\n\n### bottom level".into(),
+                tokens: None,
+            },
+            EffectRecord {
+                kind: "showifs",
+                detail: "\n### no active conditionals".into(),
+                tokens: None,
+            },
+            EffectRecord {
+                kind: "showtokens",
+                detail: "A".into(),
+                tokens: Some(vec![ObservedToken::Character {
+                    character: 'A',
+                    catcode: Catcode::Letter,
+                }]),
+            },
+        ] {
+            translator.committed(CommandObservation::Effect(record));
+        }
+        assert!(translator.events.is_empty());
+
+        for record in [
+            EffectRecord {
+                kind: "message",
+                detail: "READY".into(),
+                tokens: None,
+            },
+            EffectRecord {
+                kind: "open",
+                detail: "stream:1\0result.log".into(),
+                tokens: None,
+            },
+            EffectRecord {
+                kind: "write",
+                detail: "stream:1\0".into(),
+                tokens: Some(vec![ObservedToken::Character {
+                    character: 'W',
+                    catcode: Catcode::Letter,
+                }]),
+            },
+            EffectRecord {
+                kind: "shipout",
+                detail: "dvi\0".to_owned() + "1",
+                tokens: None,
+            },
+            EffectRecord {
+                kind: "terminate",
+                detail: "engine\0".into(),
+                tokens: None,
+            },
+        ] {
+            translator.committed(CommandObservation::Effect(record));
+        }
+        assert_eq!(
+            translator
+                .events
+                .iter()
+                .map(|observed| observed.event.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Message,
+                    channel: "terminal".into(),
+                    value: CanonicalValue::Bytes(b"READY".to_vec()),
+                }),
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Open,
+                    channel: "stream:1".into(),
+                    value: CanonicalValue::Name("result.log".into()),
+                }),
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Write,
+                    channel: "stream:1".into(),
+                    value: CanonicalValue::Tokens(vec![OracleToken {
+                        character: u32::from('W'),
+                        catcode: "letter".into(),
+                        control_sequence: None,
+                        location: None,
+                    }]),
+                }),
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Shipout,
+                    channel: "dvi".into(),
+                    value: CanonicalValue::Integer(1),
+                }),
+                Event::Effect(EffectEvent {
+                    kind: EffectKind::Terminate,
+                    channel: "engine".into(),
+                    value: CanonicalValue::None,
+                }),
+            ]
         );
     }
 
