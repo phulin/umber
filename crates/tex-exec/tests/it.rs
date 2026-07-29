@@ -148,6 +148,11 @@ fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_
         "whether an episode is observed must be decided in that one constructor"
     );
     assert_eq!(
+        driver.matches(".with_fuel(fuel)").count(),
+        1,
+        "the one constructor must lend the shared run ledger to every processor episode"
+    );
+    assert_eq!(
         driver.matches("fn command_processor<").count(),
         1,
         "that constructor must be `command_processor`"

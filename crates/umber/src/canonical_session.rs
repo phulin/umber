@@ -245,8 +245,8 @@ impl<'a> CanonicalEngineSession<'a> {
     }
 
     /// Configures a positive finite canonical command-work limit.
-    pub fn set_fuel_limit(&mut self, limit: u64) {
-        self.control.set_fuel_limit(limit);
+    pub fn set_fuel_limit(&mut self, limit: u64) -> Result<(), tex_command::CommandFuelLimitError> {
+        self.control.set_fuel_limit(limit)
     }
 
     #[must_use]
@@ -980,8 +980,55 @@ mod tests {
             tex_command::DEFAULT_COMMAND_FUEL_LIMIT
         );
         assert_ne!(session.fuel_limit(), u64::MAX);
-        session.set_fuel_limit(17);
+        session.set_fuel_limit(17).expect("valid finite limit");
         assert_eq!(session.fuel_limit(), 17);
         assert_eq!(session.fuel_burned(), 0);
+        for invalid in [0, tex_command::MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
+            assert!(session.set_fuel_limit(invalid).is_err());
+            assert_eq!(session.fuel_limit(), 17);
+        }
+    }
+
+    #[test]
+    fn tiny_limit_stops_a_cyclic_canonical_run_with_typed_error() {
+        fn run(observed: bool) -> (CanonicalSessionError, u64) {
+            let (mut stores, root) = prepared_session(b"\\def\\cycle{\\cycle}\\cycle");
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session
+                .register_authored_root("cycle.tex", root)
+                .expect("root registers");
+            session.set_fuel_limit(19).expect("valid tiny limit");
+            let error = if observed {
+                session
+                    .run_with_observer(
+                        &mut WorldHost,
+                        &mut Vec::new(),
+                        &mut ObservationRecorder::default(),
+                    )
+                    .expect_err("observed cyclic run exhausts fuel")
+            } else {
+                session
+                    .run(&mut WorldHost, &mut Vec::new())
+                    .expect_err("cyclic run exhausts fuel")
+            };
+            let burned = session.fuel_burned();
+            (error, burned)
+        }
+
+        let (unobserved_error, unobserved_burned) = run(false);
+        let (observed_error, observed_burned) = run(true);
+        for error in [&unobserved_error, &observed_error] {
+            assert!(matches!(
+                error,
+                CanonicalSessionError::Execution(tex_exec::ExecError::Command(
+                    tex_command::CommandError::FuelExhausted {
+                        limit: 19,
+                        burned: 19
+                    }
+                ))
+            ));
+        }
+        assert_eq!(unobserved_burned, 19);
+        assert_eq!(observed_burned, unobserved_burned);
     }
 }

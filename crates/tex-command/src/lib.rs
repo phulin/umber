@@ -60,7 +60,9 @@ mod fixture_replay;
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
 pub use fatal::{FATAL_SEVERITY, FatalError};
-pub use fuel::{CommandFuel, DEFAULT_COMMAND_FUEL_LIMIT};
+pub use fuel::{
+    CommandFuel, CommandFuelLimitError, DEFAULT_COMMAND_FUEL_LIMIT, MAX_COMMAND_FUEL_LIMIT,
+};
 pub use host::{
     CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
     LastNodeItem, PdfImageResource,

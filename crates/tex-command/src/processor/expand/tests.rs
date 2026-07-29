@@ -88,7 +88,7 @@ fn cyclic_macro_exhausts_shared_command_fuel() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut fuel = crate::CommandFuel::new(7);
+    let mut fuel = crate::CommandFuel::new(7).expect("valid test limit");
     let error = CommandProcessor::new(
         &mut command,
         &mut runtime,

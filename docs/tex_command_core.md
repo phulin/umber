@@ -2705,7 +2705,10 @@ before each central raw-delivery attempt, including attempts nested beneath
 expanded delivery, macro matching, and scanners. A failed semantic step may
 restore `CommandState` and discard `CommandRuntime`, but neither operation
 restores the ledger. Its finite limit and burned count are host telemetry and
-never enter snapshot, checkpoint, format, or semantic identity.
+never enter snapshot, checkpoint, format, or semantic identity. Canonical
+sessions default to 100,000,000 actions and accept only
+`1..=1,000,000,000`; zero, larger values, and `u64::MAX` are typed
+configuration errors rather than unlimited sentinels.
 
 Summary restoration likewise validates the summary's profile fingerprint
 before mutation. The same typed mismatch reports format and checkpoint

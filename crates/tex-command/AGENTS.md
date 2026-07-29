@@ -37,6 +37,8 @@ print channel of its own.
 - `src/state.rs`: persistent command state and discardable runtime ownership.
 - `src/command.rs`: public opaque, ephemeral current-command representation.
 - `src/error.rs`: private command error and resource-need representation.
+- `src/fuel.rs`: checked finite command-work limits and the monotonic,
+  rollback-independent ledger shared by every canonical processor episode.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every

@@ -521,8 +521,9 @@ impl CanonicalMainControl {
     ///
     /// Installing a new limit intentionally starts a new accounting episode;
     /// ordinary rollback and runtime reset never call this.
-    pub fn set_fuel_limit(&mut self, limit: u64) {
-        self.fuel = tex_command::CommandFuel::new(limit);
+    pub fn set_fuel_limit(&mut self, limit: u64) -> Result<(), tex_command::CommandFuelLimitError> {
+        self.fuel = tex_command::CommandFuel::new(limit)?;
+        Ok(())
     }
 
     #[must_use]

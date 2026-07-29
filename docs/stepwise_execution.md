@@ -65,10 +65,12 @@ expose live state, and packet lowering remains after the acceptance barrier.
 The engine name and `\pdfoutput` state do not activate this discovery; HTML-
 and DVI-only pdfTeX-compatible sessions skip it.
 
-Expansion fuel also has a monotonic per-revision counter outside the step
-savepoint. A resource rollback restores semantic expansion state without
-refunding work, and `SessionLimits::engine_fuel` terminally rejects a candidate
-that crosses its finite ceiling. `ExecutionTelemetry` reports one cold start
+Canonical command fuel has a monotonic per-run ledger outside the step
+savepoint. A resource rollback restores semantic command state without
+refunding work. The retired expansion path retains its separate
+`SessionLimits::engine_fuel` compatibility guard, but that guard is not
+authoritative for canonical delivery or scanner termination.
+`ExecutionTelemetry` reports one cold start
 per owned run, advance calls, suspensions, local step retries, replayed
 delivered tokens and dispatches, cumulative expansion fuel, and engine time.
 The virtual compile layer adds host resource-wait time without changing the
@@ -384,9 +386,10 @@ Fuel is charged before each expansion loop action, delivered-token dispatch,
 text-span token, memo validation unit, builder unit, shipped node/event, and
 finalization unit. Work performed by a candidate that later rolls back remains
 charged. This prevents a document from resetting its budget by causing
-resource misses. The existing per-expansion fuel scope remains a local
-recursive-expansion limit; the owned run adds a checked cumulative `u64` hard
-limit for the logical candidate revision. Crossing either hard limit detaches
+resource misses. The retired path's per-expansion fuel scope remains its local
+recursive-expansion compatibility limit; canonical execution instead charges
+the shared `tex_command::CommandFuel` ledger before raw delivery. Crossing
+either hard limit detaches
 a typed error, rolls back the current step, and terminally fails that candidate.
 It is not `AwaitingResources` and cannot be retried by increasing a limit.
 
@@ -422,8 +425,11 @@ revision and immutable resource bindings.
 
 Production sessions default to 10,000,000 committed steps, 100,000 live input
 frames, 256 MiB of environment journal, 1,000,000 pending effects, and
-100,000,000 cumulative expansion-fuel units. `SessionLimits` configures these
-ceilings uniformly for native and WASM sessions; native CLI runs additionally
+100,000,000 cumulative legacy expansion-fuel units. Canonical sessions
+separately default to 100,000,000 command-fuel units and accept only
+`1..=1,000,000,000`; zero and larger values are typed configuration errors.
+`SessionLimits` configures the legacy ceilings uniformly for native and WASM
+sessions; native CLI runs additionally
 accept `UMBER_ENGINE_STEPS`, `UMBER_INPUT_FRAMES`, `UMBER_JOURNAL_BYTES`, and
 `UMBER_EFFECTS`.
 
