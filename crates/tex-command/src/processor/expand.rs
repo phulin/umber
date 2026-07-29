@@ -354,7 +354,7 @@ impl CommandProcessor<'_> {
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
-            if !is_expandable(command.meaning()) {
+            if !is_expandable_command(&command) {
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
@@ -497,6 +497,15 @@ impl CommandProcessor<'_> {
             ) => self.expand_mark_class(primitive),
             Meaning::ExpandablePrimitive(primitive) => {
                 Err(CommandError::UnsupportedExpandablePrimitive(primitive))
+            }
+            // TeX82 §207 puts `undefined_cs` immediately above
+            // `max_command`, so it reaches §366's `expand` and §367's
+            // `othercases`. §370 reports the error and returns without
+            // inserting a replacement token; §380 then restarts its one
+            // expanded-fetch loop at the following input token.
+            Meaning::Undefined => {
+                self.observe_command_diagnostic("undefined_control_sequence", &command);
+                Ok(())
             }
             _ => Err(CommandError::input_invariant()),
         }
@@ -925,6 +934,19 @@ fn is_expandable(meaning: Meaning) -> bool {
             Meaning::ExpandablePrimitive(primitive)
                 if primitive != ExpandablePrimitive::EndCsName
         )
+}
+
+/// TeX82 §366's `cur_cmd>max_command` test for Umber's resolved command.
+///
+/// `Meaning::Undefined` normally represents §207's `undefined_cs` command,
+/// which is expanded solely to perform §370's diagnostic recovery. A compact
+/// out-parameter token also carries that meaning as its invalid-slot recovery,
+/// but its command remains `out_param<max_command`; its token spelling keeps
+/// the two command identities distinct here.
+pub(crate) fn is_expandable_command(command: &CurrentCommand) -> bool {
+    is_expandable(command.meaning())
+        || (matches!(command.meaning(), Meaning::Undefined)
+            && !matches!(command.spelling().semantic_token(), Token::Param(_)))
 }
 
 fn page_mark(primitive: ExpandablePrimitive) -> PageMark {

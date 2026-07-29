@@ -2927,6 +2927,8 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
 
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
     universe.enter_group_with_kind(tex_state::GroupKind::HBox);
     let input_line = universe.intern("inputlineno").symbol();
     let group_level = universe.intern("currentgrouplevel").symbol();
@@ -4898,8 +4900,11 @@ fn integer_character_constant_raw_token_and_optional_space_matrix() {
             let scanned = processor
                 .scan_integer()
                 .expect("improper control word recovers");
+            // §442's `back_error` leaves the rejected control word for its
+            // normal raw reread. An expanded reread would route its
+            // `undefined_cs` meaning through §§370/380 and consume it.
             let following = processor
-                .get_x_token()
+                .get_token()
                 .expect("control word delivers")
                 .expect("control word remains")
                 .control_sequence();

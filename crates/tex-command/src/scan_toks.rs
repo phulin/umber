@@ -14,6 +14,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
+use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
@@ -366,7 +367,7 @@ impl CommandProcessor<'_> {
             }
             .ok_or(CommandError::input_invariant())?;
 
-            if expanded && is_expandable(command.meaning()) {
+            if expanded && is_expandable_command(&command) {
                 if matches!(
                     command.meaning(),
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::The)
@@ -637,16 +638,6 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
-}
-
-fn is_expandable(meaning: Meaning) -> bool {
-    matches!(
-        meaning,
-        Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
-    ) && !matches!(
-        meaning,
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)
-    )
 }
 
 fn is_parameter(token: Token) -> bool {

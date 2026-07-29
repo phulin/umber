@@ -429,14 +429,7 @@
         "command:expanded:char:letter:65:letter:65"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.252",
-        "mismatch": {
-          "index": 1,
-          "kind": "observation",
-          "expected": "diagnostic:error:undefined_control_sequence:cs:^^@",
-          "actual": "command:expanded:cs:^^@:undefined_cs:-268435455"
-        }
+        "kind": "pass"
       }
     },
     {

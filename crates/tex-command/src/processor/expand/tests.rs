@@ -9,7 +9,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use super::*;
 use crate::input::{ReplayTrace, RetirementBehavior};
 use crate::observation::{
-    CommandDeliveryBoundary, CommandObservation, CommandObserver, InputTransition,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument,
+    InputTransition, ObservedToken,
 };
 use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
 use crate::{
@@ -815,6 +816,180 @@ fn completed_expansion_rolls_back_to_the_exact_scalar_input_state() {
             .semantic_token()
     };
     assert_eq!(replayed, first);
+}
+
+fn command_and_diagnostic_observations(records: &[CommandObservation]) -> Vec<CommandObservation> {
+    records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record,
+                CommandObservation::Command(command)
+                    if matches!(command.command.as_str(), "undefined_cs" | "letter")
+            ) || matches!(record, CommandObservation::Diagnostic(_))
+        })
+        .cloned()
+        .collect()
+}
+
+/// TeX82 §§365/370: a raw fetch with `no_new_control_sequence` frozen maps an
+/// unknown multiletter name to §222's dummy `undefined_control_sequence`.
+/// Since §207 puts `undefined_cs` above `max_command`, §380 reports it through
+/// §370, substitutes nothing, and resumes the same loop at the following
+/// source token exactly once.
+#[test]
+fn frozen_undefined_control_sequence_reports_then_resumes_source_once() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\never A".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        let resumed = processor
+            .get_x_token()
+            .expect("undefined recovery is finite")
+            .expect("following source token resumes");
+        assert_eq!(
+            resumed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+        while let Some(command) = processor.get_x_token().expect("source retires") {
+            assert_ne!(
+                command.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter
+                },
+                "the following source token is delivered only once"
+            );
+        }
+    }
+    assert!(universe.symbol("never").is_none());
+
+    let records = command_and_diagnostic_observations(&recorder.0);
+    assert!(matches!(
+        records.as_slice(),
+        [
+            CommandObservation::Command(raw_undefined),
+            CommandObservation::Diagnostic(diagnostic),
+            CommandObservation::Command(raw_a),
+            CommandObservation::Command(expanded_a),
+        ] if raw_undefined.boundary == CommandDeliveryBoundary::Raw
+            && raw_undefined.command == "undefined_cs"
+            && raw_undefined.spelling == ObservedToken::ControlSequence("^^@".into())
+            && diagnostic.diagnostic == "undefined_control_sequence"
+            && diagnostic.arguments
+                == [DiagnosticArgument::Token(ObservedToken::ControlSequence("^^@".into()))]
+            && raw_a.boundary == CommandDeliveryBoundary::Raw
+            && raw_a.command == "letter"
+            && expanded_a.boundary == CommandDeliveryBoundary::Expanded
+            && expanded_a.command == "letter"
+    ));
+}
+
+/// TeX82 §§370/380 are independent of whether `undefined_cs` came from the
+/// frozen dummy or an already interned hash entry. The command snapshot owns
+/// the entire recovery episode: retry must reproduce the diagnostic ordering,
+/// enclosing-input retirement, and following delivery byte-for-byte.
+#[test]
+fn interned_undefined_recovery_and_enclosing_resume_replay_after_rollback() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"A".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let undefined = universe.intern("undefined").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(undefined))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let expected = command.clone();
+    let snapshot = command.snapshot();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let run = |command: &mut CommandState,
+               runtime: &mut CommandRuntime,
+               universe: &mut Universe,
+               capabilities: &mut CommandHostCapabilities| {
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(command, runtime, universe, capabilities).with_observer(&mut recorder);
+            let resumed = processor
+                .get_x_token()
+                .expect("undefined recovery is finite")
+                .expect("enclosing source resumes");
+            assert_eq!(
+                resumed.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter
+                }
+            );
+            while let Some(command) = processor.get_x_token().expect("source retires") {
+                assert_ne!(
+                    command.spelling().semantic_token(),
+                    Token::Char {
+                        ch: 'A',
+                        cat: Catcode::Letter
+                    },
+                    "the enclosing source token is delivered only once"
+                );
+            }
+        }
+        recorder.0
+    };
+
+    let first = run(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    command.rollback(snapshot).expect("rollback succeeds");
+    assert_eq!(command, expected);
+    let replayed = run(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert_eq!(replayed, first);
+
+    let records = command_and_diagnostic_observations(&first);
+    assert!(matches!(
+        records.as_slice(),
+        [
+            CommandObservation::Command(raw_undefined),
+            CommandObservation::Diagnostic(diagnostic),
+            CommandObservation::Command(raw_a),
+            CommandObservation::Command(expanded_a),
+        ] if raw_undefined.boundary == CommandDeliveryBoundary::Raw
+            && raw_undefined.command == "undefined_cs"
+            && raw_undefined.spelling
+                == ObservedToken::ControlSequence("undefined".into())
+            && diagnostic.diagnostic == "undefined_control_sequence"
+            && diagnostic.arguments == [
+                DiagnosticArgument::Token(ObservedToken::ControlSequence("undefined".into()))
+            ]
+            && raw_a.boundary == CommandDeliveryBoundary::Raw
+            && raw_a.command == "letter"
+            && expanded_a.boundary == CommandDeliveryBoundary::Expanded
+            && expanded_a.command == "letter"
+    ));
 }
 
 #[test]
