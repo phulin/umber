@@ -3783,6 +3783,11 @@ enum ScannedStep {
         primitive: UnexpandablePrimitive,
         index: u16,
     },
+    /// e-TeX 2.6 `etex.ch` [45.999]'s operand-free extensions of TeX82's
+    /// `un_vbox` command. The selected saved list is detached and spliced
+    /// into the current list atomically; unlike `\unvbox`, no register
+    /// number is scanned.
+    SavedVerticalDiscards(UnexpandablePrimitive),
     LastBox,
     Leaders {
         kind: GlueKind,
@@ -6097,7 +6102,10 @@ fn scan_command(
         // `head_for_vmode` command, this happens before `make_box` (§1079)
         // scans the register operand.
         Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
+            UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy
+            | UnexpandablePrimitive::PageDiscards
+            | UnexpandablePrimitive::SplitDiscards,
         ) if mode == Mode::Horizontal => {
             processor
                 .recover_stop_for_vertical_mode(command)
@@ -6109,10 +6117,30 @@ fn scan_command(
         // retried only after the enclosing group has been closed; its
         // register operand must remain unread until that retry.
         Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
+            UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy
+            | UnexpandablePrimitive::PageDiscards
+            | UnexpandablePrimitive::SplitDiscards,
         ) if mode == Mode::RestrictedHorizontal => {
             scan_off_save(processor, command, innermost_group)
         }
+        // e-TeX 2.6 `etex.ch` [15.208, 45.999] assigns both saved-discard
+        // enquiries the `un_vbox` command code with modifiers above
+        // `copy_code`. TeX82 §1046 consequently routes their math-mode
+        // occurrence through `insert_dollar_sign` before `unpackage` can
+        // splice the saved list.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards,
+        ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive
+            @ (UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards),
+        ) => Ok(ScannedStep::SavedVerticalDiscards(primitive)),
         // `\unhbox`/`\unhcopy` in (internal) vertical mode never reach here:
         // `starts_paragraph_in_vertical_mode` routes `vmode+un_hbox` through
         // §1090's shared backup above, before this register operand is ever
@@ -6709,6 +6737,7 @@ fn scan_unclassified_primitive(
         | P::Par
         | P::ParShape
         | P::Patterns
+        | P::PageDiscards
         | P::PdfAnnot
         | P::PdfCatalog
         | P::PdfColorStack
@@ -6781,6 +6810,7 @@ fn scan_unclassified_primitive(
         | P::UnSkip
         | P::UnVBox
         | P::UnVCopy
+        | P::SplitDiscards
         | P::Uppercase
         | P::VAlign
         | P::VBox
@@ -6948,7 +6978,6 @@ fn scan_unclassified_primitive(
         P::DiscretionaryHyphen
         | P::GlobalDefs
         | P::LetterspaceFont
-        | P::PageDiscards
         | P::PdfCopyFont
         | P::PdfEfCode
         | P::PdfFontAttr
@@ -6970,7 +6999,6 @@ fn scan_unclassified_primitive(
         | P::PdfTeXUnimplemented
         | P::QuitVMode
         | P::SpaceFactor
-        | P::SplitDiscards
         | P::VFil
         | P::VFilNeg
         | P::VFill
@@ -8499,6 +8527,7 @@ fn applied_mutation_observation(
         | ScannedStep::ImmediateExtension(..)
         | ScannedStep::BoxRegister { .. }
         | ScannedStep::Unbox { .. }
+        | ScannedStep::SavedVerticalDiscards(..)
         | ScannedStep::LastBox
         | ScannedStep::Leaders { .. }
         | ScannedStep::LeaderRegister { .. }
@@ -10916,6 +10945,10 @@ fn apply_scanned_step(
         }
         ScannedStep::Unbox { primitive, index } => {
             crate::assignments::execute_scanned_unbox(primitive, index, modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::SavedVerticalDiscards(primitive) => {
+            crate::assignments::execute_scanned_saved_vertical_discards(primitive, modes, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LastBox => {

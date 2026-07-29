@@ -343,6 +343,33 @@ pub(crate) fn execute_scanned_unbox(
     append_unboxed(nest, stores, source)
 }
 
+/// Splices one of e-TeX 2.6 `etex.ch` [45.999]'s saved vertical-discard
+/// lists into the current list.
+///
+/// The primitive shares TeX82's `un_vbox` command code, but its modifier is
+/// above `copy_code`, so `unpackage` takes this operand-free branch before
+/// scanning a register and clears the saved-list pointer as it detaches it.
+pub(crate) fn execute_scanned_saved_vertical_discards(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let nodes = match primitive {
+        UnexpandablePrimitive::PageDiscards => stores.take_page_discards(),
+        UnexpandablePrimitive::SplitDiscards => stores.take_split_discards(),
+        _ => unreachable!("caller restricts saved vertical-discard primitives"),
+    };
+    flush_pending_hchars(nest, stores)?;
+    for node in nodes {
+        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+            append_vertical_contribution(nest, stores, node);
+        } else {
+            nest.current_list_mutation().push(node);
+        }
+    }
+    Ok(())
+}
+
 fn account_external_box_access(
     execution: &mut crate::ExecutionContext<'_>,
     index: u16,

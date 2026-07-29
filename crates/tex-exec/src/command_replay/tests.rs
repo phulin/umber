@@ -9589,6 +9589,98 @@ fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
         .expect("saved vertical discards are not format state");
 }
 
+fn run_canonical_etex_saved_discards(source: &[u8], page: Vec<Node>, split: Vec<Node>) -> Universe {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut universe);
+    tex_expand::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    for node in page {
+        universe.push_page_discard(node);
+    }
+    universe.set_split_discards(split);
+    let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
+    register_source(&mut control, source);
+    run_to_end(&mut control, &mut universe);
+    universe
+}
+
+#[test]
+fn canonical_etex_saved_discards_are_operand_free_destructive_splices() {
+    // e-TeX 2.6 `etex.ch` [45.999] enters `unpackage` with a modifier above
+    // `copy_code`, detaches the selected list, and jumps directly to `done`.
+    // The following digits are therefore ordinary input, not a box register.
+    let universe = run_canonical_etex_saved_discards(
+        br"\splitdiscards 7\pagediscards 8\end",
+        vec![Node::Penalty(108)],
+        vec![Node::Penalty(107)],
+    );
+    assert!(universe.page_discards().is_empty());
+    assert!(universe.split_discards().is_empty());
+    assert!(
+        !terminal_text(&universe).contains("canonical execution does not dispatch"),
+        "{}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_etex_saved_discards_follow_un_vbox_mode_recovery() {
+    // `etex.ch` [15.208, 45.999] gives these primitives the `un_vbox`
+    // command code. TeX82 §§1046--1047 insert `$` in math mode, while §1095
+    // ends an unrestricted paragraph or runs `off_save` in an hbox before
+    // retrying that same operand-free command.
+    let cases: &[(&[u8], &str)] = &[
+        (br"\noindent\splitdiscards\end", ""),
+        (
+            br"\setbox0=\hbox{\splitdiscards\pagediscards\end",
+            "Missing } inserted",
+        ),
+        (
+            br"\setbox0=\vbox{\noindent$\splitdiscards\noindent$\pagediscards}\end",
+            "Missing $ inserted",
+        ),
+        (
+            br"$$\splitdiscards\noindent$$\pagediscards\end",
+            "Missing $ inserted",
+        ),
+    ];
+    for &(source, diagnostic) in cases {
+        let universe = run_canonical_etex_saved_discards(
+            source,
+            vec![Node::Penalty(208)],
+            vec![Node::Penalty(207)],
+        );
+        assert!(
+            universe.page_discards().is_empty(),
+            "page discards survived source {source:?}"
+        );
+        assert!(
+            universe.split_discards().is_empty(),
+            "split discards survived source {source:?}"
+        );
+        if !diagnostic.is_empty() {
+            assert!(
+                terminal_text(&universe).contains(diagnostic),
+                "missing {diagnostic:?} for source {source:?}: {}",
+                terminal_text(&universe)
+            );
+        }
+    }
+}
+
+#[test]
+fn canonical_etex_empty_saved_discards_are_noops_in_internal_vertical_mode() {
+    let universe = run_canonical_etex_saved_discards(
+        br"\setbox0=\vbox{\splitdiscards\pagediscards}\end",
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(universe.box_reg(0).is_some());
+    assert!(universe.page_discards().is_empty());
+    assert!(universe.split_discards().is_empty());
+}
+
 #[test]
 fn canonical_the_and_showthe_recover_invalid_trip_operand_as_zero() {
     let mut universe = Universe::new_with_plain_catcodes();
