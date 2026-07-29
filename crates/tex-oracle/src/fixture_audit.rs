@@ -151,6 +151,15 @@ fn parse_semantic_matrix(bytes: &[u8]) -> Result<Vec<SemanticRequirement<'_>>, F
     })
 }
 
+pub(crate) fn semantic_matrix_sources(bytes: &[u8]) -> Result<BTreeSet<&str>, FixtureError> {
+    let requirements = parse_semantic_matrix(bytes)?;
+    let mut sources = BTreeSet::new();
+    for requirement in requirements {
+        sources.extend(requirement.sources.split(" and "));
+    }
+    Ok(sources)
+}
+
 fn parse_audit_matrix(bytes: &[u8]) -> Result<Vec<AuditOwner<'_>>, FixtureError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| FixtureError::Invalid("fixture audit matrix is not UTF-8".into()))?;

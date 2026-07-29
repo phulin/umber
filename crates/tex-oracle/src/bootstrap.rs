@@ -20,6 +20,7 @@ use crate::{CommittedFixture, FixtureArtifact, FixtureManifest, ManifestInput, O
 pub fn bootstrap_tex82_fixture(
     template: &Path,
     live_directory: &Path,
+    semantic_matrix: &Path,
     event_stream: &Path,
     build_record: &Path,
     output: &Path,
@@ -29,7 +30,15 @@ pub fn bootstrap_tex82_fixture(
     let record = BuildRecord::read(build_record)?;
     derive_oracle_identity(&mut manifest, &record)?;
 
-    let sources = stage_sources(live_directory, output)?;
+    let matrix_bytes = fs::read(semantic_matrix).map_err(|error| {
+        format!(
+            "failed to read semantic matrix {}: {error}",
+            semantic_matrix.display()
+        )
+    })?;
+    let source_names = crate::fixture_audit::semantic_matrix_sources(&matrix_bytes)
+        .map_err(|error| format!("semantic matrix is invalid: {error}"))?;
+    let sources = stage_sources(live_directory, output, &source_names)?;
     manifest.oracle.inputs = sources
         .iter()
         .map(|(name, artifact)| {
@@ -146,17 +155,24 @@ fn derive_oracle_identity(
 fn stage_sources(
     live_directory: &Path,
     output: &Path,
+    source_names: &std::collections::BTreeSet<&str>,
 ) -> Result<BTreeMap<String, FixtureArtifact>, String> {
     let mut sources = BTreeMap::new();
-    for entry in read_directory(live_directory)? {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.ends_with(".tex") || !entry.file_type().map_err(io_error)?.is_file() {
-            continue;
+    for name in source_names {
+        let source = Path::new(name);
+        if source.components().count() != 1 || source.file_name().is_none() {
+            return Err(format!("semantic matrix cites unsafe source name {name}"));
         }
-        let bytes = fs::read(entry.path()).map_err(io_error)?;
+        let live_path = live_directory.join(source);
+        let bytes = fs::read(&live_path).map_err(|error| {
+            format!(
+                "failed to read semantic-matrix source {}: {error}",
+                live_path.display()
+            )
+        })?;
         let path = format!("sources/{name}");
         write_artifact(output, &path, &bytes)?;
-        sources.insert(name, artifact(&path, &bytes));
+        sources.insert((*name).to_owned(), artifact(&path, &bytes));
     }
     if sources.is_empty() {
         return Err(format!(
@@ -230,20 +246,6 @@ fn artifact(path: &str, bytes: &[u8]) -> FixtureArtifact {
         bytes: bytes.len() as u64,
         sha256: hex_hash(bytes),
     }
-}
-
-fn read_directory(directory: &Path) -> Result<Vec<fs::DirEntry>, String> {
-    let mut entries = fs::read_dir(directory)
-        .map_err(|error| {
-            format!(
-                "failed to read oracle directory {}: {error}",
-                directory.display()
-            )
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(io_error)?;
-    entries.sort_by_key(|entry| entry.file_name());
-    Ok(entries)
 }
 
 fn hex_hash(bytes: &[u8]) -> String {
@@ -342,7 +344,16 @@ mod tests {
         fs::create_dir_all(&template).expect("template directory");
         fs::create_dir_all(&live).expect("live directory");
         fs::write(live.join("transitions.tex"), b"\\bye\n").expect("source");
+        fs::write(live.join("clock.tex"), b"\\message{clock}\\end\n").expect("clock control");
+        fs::write(live.join("geometry.tex"), b"\\shipout\\hbox{}\\end\n")
+            .expect("geometry control");
         fs::write(live.join("status.txt"), b"0\n").expect("status");
+        let semantic_matrix = temporary.join("semantic-event-matrix.txt");
+        fs::write(
+            &semantic_matrix,
+            "command|raw delivery|transitions.tex|get_next return|fragment\n",
+        )
+        .expect("semantic matrix");
 
         let mut oracle = Manifest::new(EngineIdentity {
             dialect: EngineDialect::Tex82,
@@ -411,10 +422,20 @@ mod tests {
         )
         .expect("record");
 
-        bootstrap_tex82_fixture(&template, &live, &events_path, &record, &output)
-            .expect("candidate");
+        bootstrap_tex82_fixture(
+            &template,
+            &live,
+            &semantic_matrix,
+            &events_path,
+            &record,
+            &output,
+        )
+        .expect("candidate");
         let candidate = crate::CommittedFixture::load(&output).expect("validated candidate");
         assert_eq!(candidate.manifest.sources.len(), 1);
+        assert!(candidate.manifest.sources.contains_key("transitions.tex"));
+        assert!(!candidate.manifest.sources.contains_key("clock.tex"));
+        assert!(!candidate.manifest.sources.contains_key("geometry.tex"));
         assert_eq!(candidate.manifest.outputs["status"].bytes, 2);
         assert_ne!(candidate.stream.header.manifest, "0".repeat(64));
         fs::remove_dir_all(temporary).expect("remove temporary directory");

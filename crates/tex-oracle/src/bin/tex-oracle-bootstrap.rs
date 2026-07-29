@@ -15,6 +15,10 @@ fn main() -> ExitCode {
         usage();
         return ExitCode::from(2);
     };
+    let Some(semantic_matrix) = required(&mut arguments, "--semantic-matrix") else {
+        usage();
+        return ExitCode::from(2);
+    };
     let Some(event_stream) = required(&mut arguments, "--event-stream") else {
         usage();
         return ExitCode::from(2);
@@ -34,6 +38,7 @@ fn main() -> ExitCode {
     match bootstrap_tex82_fixture(
         &template,
         &live_directory,
+        &semantic_matrix,
         &event_stream,
         &build_record,
         &output,
@@ -59,6 +64,6 @@ fn required(
 
 fn usage() {
     eprintln!(
-        "usage: tex-oracle-bootstrap --template FIXTURE --live-directory DIRECTORY --event-stream TRACE --build-record RECORD --output EMPTY-DIRECTORY"
+        "usage: tex-oracle-bootstrap --template FIXTURE --live-directory DIRECTORY --semantic-matrix MATRIX --event-stream TRACE --build-record RECORD --output EMPTY-DIRECTORY"
     );
 }
