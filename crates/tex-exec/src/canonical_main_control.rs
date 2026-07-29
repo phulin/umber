@@ -349,6 +349,10 @@ impl CanonicalStepSnapshot {
         control.completed_boundaries = self.completed_boundaries;
     }
 
+    fn can_rollback(&self, stores: &Universe) -> bool {
+        stores.can_rollback_to(&self.universe)
+    }
+
     fn commit(self, control: &mut CanonicalMainControl) {
         control
             .modes
@@ -2389,6 +2393,14 @@ impl CanonicalMainControl {
                     let step = self.succumb(fatal);
                     observer.committed(CommandObservation::Diagnostic(fatal.record()));
                     return Ok(CanonicalStepResult::Progress(step));
+                }
+                if !snapshot.can_rollback(stores) {
+                    // tex.web §283's `unsave` consumes the enclosing save
+                    // level. An error reached after that exit cannot restore
+                    // the pre-operation group timeline; preserve the state
+                    // TeX has already committed and report the real error.
+                    self.commit_step(snapshot);
+                    return Err(error);
                 }
                 self.rollback_step(snapshot, stores);
                 match error {

@@ -2382,6 +2382,19 @@ impl Universe {
         self.checkpoint_from_hash_base(self.state_hash_base.clone(), true)
     }
 
+    /// Returns whether `snapshot` still names a rollback point on this
+    /// Universe's live timeline.
+    ///
+    /// Leaving the group that enclosed a checkpoint irreversibly consumes
+    /// that save-stack level (tex.web §283), so aggregate operation drivers
+    /// must commit rather than attempt to roll back after such an exit.
+    #[must_use]
+    pub fn can_rollback_to(&self, snapshot: &Snapshot) -> bool {
+        snapshot.owner == self.owner.snapshot_owner()
+            && self.stores.can_restore_snapshot(&snapshot.store)
+            && self.world.snapshot_is_retained(&snapshot.world)
+    }
+
     #[must_use]
     pub fn freeze_generation(self) -> GenerationSubstrate {
         GenerationSubstrate::new(self)

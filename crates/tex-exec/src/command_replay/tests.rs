@@ -47,6 +47,25 @@ fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
     }
 }
 
+#[test]
+fn failed_operation_commits_after_consuming_its_enclosing_group() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::TEX82);
+    universe.enter_group();
+    let snapshot = control.snapshot_step(&mut universe);
+
+    assert!(universe.leave_group().is_empty());
+    assert!(
+        !snapshot.can_rollback(&universe),
+        "tex.web §283 consumes the exited save level"
+    );
+
+    // This is the non-fatal error path in advance_with_observer: once the
+    // group timeline was consumed, committing the operation savepoint must
+    // preserve the real error instead of panicking during aggregate rollback.
+    control.commit_step(snapshot);
+}
+
 /// Runs TeX82 §1054's two-delivery `\end` when the run typeset material.
 ///
 /// `its_all_over` is true only when the current page and the contribution
