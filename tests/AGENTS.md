@@ -108,7 +108,7 @@ the exact same files.
 
 The `etex-diagnostics/` domain owns bounded e-TeX-only diagnostic command
 microfixtures. Its sessions explicitly install the e-TeX INITEX profile and
-project detached effects plus selected unchanged state.
+project detached effects, selected unchanged state, and pinned e-TeX/SyncTeX eqtb register selectors.
 
 The `input-expansion` domain owns the twelve audited input and expansion semantic tiers: nine exact passes plus three strict xfails linked to their existing canonical defect beads.
 

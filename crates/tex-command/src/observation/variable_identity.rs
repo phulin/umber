@@ -43,10 +43,13 @@
 //! - `int_base` is `char_sub_code_base+256`, not tex.web's
 //!   `math_code_base+256`, because web2c's `tex.ch` inserts MLTeX's
 //!   256-entry `char_sub_code` region ahead of region 5.
-//! - `int_pars` is 62, not tex.web's 55: `tex.ch` adds MLTeX's three
+//! - TeX82's `int_pars` is 62, not tex.web's 55: `tex.ch` adds MLTeX's three
 //!   (`\charsubdefmin`, `\charsubdefmax`, `\tracingcharsubdef`) and
 //!   `enctexdir/enctex2.ch` adds encTeX's four (`\mubytein`, `\mubyteout`,
 //!   `\mubytelog`, `\specialout`).
+//! - e-TeX's `int_pars` is 73 in the pinned build: e-TeX [17.236] appends
+//!   its ten cells to those 62, then `synctex-e-mem.ch1` appends
+//!   `\synctex` before `count_base`.
 //!
 //! Every constant below is cross-checked against the committed document
 //! traces (`tests/corpus/command/tex82-documents`), which record the pinned
@@ -249,7 +252,10 @@ pub(crate) const fn count_base(dialect: CommandDialect) -> i64 {
     int_base(dialect)
         + match dialect {
             CommandDialect::Tex82 => 62,
-            CommandDialect::Etex26 => 72,
+            // e-TeX [17.236] supplies 72 cells after the pinned Web2C and
+            // encTeX changes; synctex-e-mem.ch1 appends `\synctex` as the
+            // seventy-third before tex.web §236 derives `count_base`.
+            CommandDialect::Etex26 => 73,
             CommandDialect::Pdftex14027 => 110,
         }
 }
@@ -282,21 +288,12 @@ pub(crate) fn dimen_parameter_code(slot: u16) -> Option<i64> {
 
 /// Returns the observed eqtb selector for a named dimension parameter.
 ///
-/// e-TeX 2.6 [17.236] defines these selectors from `dimen_base`, while the
-/// pinned Web2C build places that named-parameter block one cell beyond the
-/// register-layout base used by its surrounding storage. Keep the translation
-/// profile-specific instead of shifting `scaled_base` and every `\dimen`
-/// register along with it.
+/// e-TeX 2.6 [17.236] defines these selectors from `dimen_base`. The pinned
+/// SyncTeX change shifts that base, its named parameters, and every following
+/// dimension register together, so the region-chain functions above remain
+/// the one owner of the insertion.
 pub(crate) fn dimen_parameter_address(dialect: CommandDialect, slot: u16) -> Option<i64> {
-    dimen_parameter_code(slot).map(|code| {
-        dimen_base(dialect)
-            + code
-            + if matches!(dialect, CommandDialect::Etex26) {
-                1
-            } else {
-                0
-            }
-    })
+    dimen_parameter_code(slot).map(|code| dimen_base(dialect) + code)
 }
 
 /// Translates an Umber `GlueParam`/`MuGlueParam` bank slot to tex.web's
@@ -660,7 +657,7 @@ mod tests {
             ),
             (
                 CommandDialect::Etex26,
-                (25_068, 27_172, 27_244, 27_756, 27_777),
+                (25_068, 27_172, 27_245, 27_757, 27_778),
             ),
             (
                 CommandDialect::Pdftex14027,
@@ -679,6 +676,20 @@ mod tests {
                 "{dialect:?}"
             );
         }
+    }
+
+    #[test]
+    fn etex_synctex_cell_shifts_register_regions_after_named_integers() {
+        // e-TeX [17.236] ends its integer block at 72 in the pinned
+        // MLTeX/encTeX build. `synctex-e-mem.ch1` then defines
+        // `synctex_code=etex_int_pars; int_pars=synctex_code+1`, so tex.web
+        // §236 derives every later register base from 73 cells. The translated
+        // oracle independently records these exact selectors.
+        assert_eq!(int_base(CommandDialect::Etex26), 27_172);
+        assert_eq!(count_base(CommandDialect::Etex26), 27_245);
+        assert_eq!(count_base(CommandDialect::Etex26) + 255, 27_500);
+        assert_eq!(dimen_base(CommandDialect::Etex26), 27_757);
+        assert_eq!(scaled_base(CommandDialect::Etex26) + 255, 28_033);
     }
 
     #[test]
