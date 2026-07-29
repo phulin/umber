@@ -599,6 +599,8 @@ pub enum PdfImageColorSpace {
     DeviceGray,
     DeviceRgb,
     DeviceCmyk,
+    /// pdftex.web §1550's unchecked `colorspace` object operand.
+    IndirectObject(i32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1314,11 +1316,15 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hasher.u32(image.width);
             hasher.u32(image.height);
             hasher.byte(image.bits_per_component);
-            hasher.byte(match image.color_space {
-                PdfImageColorSpace::DeviceGray => 0,
-                PdfImageColorSpace::DeviceRgb => 1,
-                PdfImageColorSpace::DeviceCmyk => 2,
-            });
+            match image.color_space {
+                PdfImageColorSpace::DeviceGray => hasher.byte(0),
+                PdfImageColorSpace::DeviceRgb => hasher.byte(1),
+                PdfImageColorSpace::DeviceCmyk => hasher.byte(2),
+                PdfImageColorSpace::IndirectObject(object) => {
+                    hasher.byte(3);
+                    hasher.i64(i64::from(object));
+                }
+            }
             match image.filter {
                 PdfImageFilter::Dct => hasher.byte(0),
                 PdfImageFilter::Flate => hasher.byte(1),

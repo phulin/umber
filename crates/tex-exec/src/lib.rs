@@ -47,7 +47,7 @@ pub use executor::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
     ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
-    PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
+    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,

@@ -10128,11 +10128,20 @@ fn apply_scanned_step(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
             }
-            let PdfImageResource::Available(source) = resource else {
-                return Err(ExecError::PdfImageOpen {
-                    name: request.name,
-                    message: "image is unavailable".to_owned(),
-                });
+            let source = match resource {
+                PdfImageResource::Available(source) => source,
+                PdfImageResource::Unavailable => {
+                    return Err(ExecError::PdfImageOpen {
+                        name: request.name,
+                        message: "image is unavailable".to_owned(),
+                    });
+                }
+                PdfImageResource::Invalid(message) => {
+                    return Err(ExecError::PdfImageOpen {
+                        name: request.name,
+                        message,
+                    });
+                }
             };
             let dimensions = canonical_pdf_image_dimensions(
                 &source,
@@ -10141,7 +10150,7 @@ fn apply_scanned_step(
                 request.depth,
             );
             stores
-                .allocate_pdf_external_image(source, dimensions)
+                .allocate_pdf_external_image(source, dimensions, request.color_space_object)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             Ok(ReplayStep::Continue)
         }

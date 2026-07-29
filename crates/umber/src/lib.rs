@@ -596,10 +596,15 @@ impl CanonicalResourceHost for FileSessionResolvers {
                     name: request.name.clone(),
                     page: match &request.page {
                         tex_command::PdfImagePageSelection::Number(page) => {
-                            u32::try_from(*page).unwrap_or_default()
+                            tex_exec::PdfImagePageSelection::Number(
+                                u32::try_from(*page).unwrap_or_default(),
+                            )
                         }
-                        tex_command::PdfImagePageSelection::Named(_) => 0,
+                        tex_command::PdfImagePageSelection::Named(name) => {
+                            tex_exec::PdfImagePageSelection::Named(name.clone())
+                        }
                     },
+                    color_space_object: request.color_space_object,
                     page_box: match request.page_box {
                         tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
                         tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,
@@ -611,7 +616,7 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 };
                 let resource = virtual_compile::parse_image(&content, &legacy)
                     .map(PdfImageResource::Available)
-                    .unwrap_or(PdfImageResource::Unavailable);
+                    .unwrap_or_else(PdfImageResource::Invalid);
                 Some(CanonicalResourceFulfillment::PdfImage {
                     request: request.clone(),
                     resource: Box::new(resource),
@@ -2541,7 +2546,7 @@ mod tests {
             .register_canonical_root(
                 "job.tex",
                 RegisteredSourceKind::Generated,
-                Arc::from(&b"\\pdfximage width 10pt height 20pt depth 3pt page 2 mediabox image.pdf\\pdfrefximage1\\end"[..]),
+                Arc::from(&b"\\pdfximage width 10pt height 20pt depth 3pt named {chapter} colorspace -7 mediabox {image.pdf}\\pdfrefximage1\\end"[..]),
             )
             .expect("root registers");
 
@@ -2550,7 +2555,11 @@ mod tests {
             other => panic!("expected image suspension, got {other:?}"),
         };
         assert_eq!(request.name, "image.pdf");
-        assert_eq!(request.page, 2);
+        assert_eq!(
+            request.page,
+            tex_command::PdfImagePageSelection::Named(b"chapter".to_vec())
+        );
+        assert_eq!(request.color_space_object, -7);
         assert_eq!(
             request.width.expect("width scanned").raw(),
             10 * tex_state::scaled::Scaled::UNITY
@@ -2606,6 +2615,7 @@ mod tests {
             image.dimensions().depth.raw(),
             3 * tex_state::scaled::Scaled::UNITY
         );
+        assert_eq!(image.color_space_object(), -7);
         assert!(matches!(
             session.advance_canonical().expect("reference image"),
             CanonicalStepResult::Progress(MainControlStep::Continue)

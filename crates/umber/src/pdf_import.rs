@@ -2,7 +2,10 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hayro_syntax::object::{Dict, MaybeRef, Number, Object, ObjectIdentifier, Rect, Stream};
+use hayro_syntax::object::{
+    Array, Dict, MaybeRef, Name, Number, Object, ObjectIdentifier, Rect, Stream,
+    String as PdfString,
+};
 use hayro_syntax::page::{Page, Resources};
 use hayro_syntax::{Pdf, PdfVersion};
 use tex_exec::PdfImagePageBox;
@@ -20,6 +23,7 @@ pub(crate) struct InspectedPdfPage {
     pub(crate) total_pages: u32,
     pub(crate) has_page_group: bool,
     pub(crate) pdf_version: (u8, u8),
+    pub(crate) page_number: u32,
 }
 
 pub(crate) struct ImportedPdfPage {
@@ -36,10 +40,11 @@ const MAX_IMPORTED_STREAM_BYTES: usize = 1 << 30;
 
 pub(crate) fn inspect_pdf_page(
     bytes: Arc<[u8]>,
-    page_number: u32,
+    selection: &tex_exec::PdfImagePageSelection,
     page_box: PdfImagePageBox,
 ) -> Result<InspectedPdfPage, String> {
     let pdf = load_pdf(bytes)?;
+    let page_number = selected_page_number(&pdf, selection)?;
     let page = selected_page(&pdf, page_number)?;
     let keys: &[&[u8]] = match page_box {
         PdfImagePageBox::Media => &[b"MediaBox"],
@@ -59,7 +64,85 @@ pub(crate) fn inspect_pdf_page(
             .map_err(|_| "external PDF page count exceeds u32".to_owned())?,
         has_page_group: page.raw().contains_key(b"Group"),
         pdf_version: version_pair(pdf.version()),
+        page_number,
     })
+}
+
+fn selected_page_number(
+    pdf: &Pdf,
+    selection: &tex_exec::PdfImagePageSelection,
+) -> Result<u32, String> {
+    match selection {
+        tex_exec::PdfImagePageSelection::Number(page) => Ok(*page),
+        tex_exec::PdfImagePageSelection::Named(name) => named_destination_page(pdf, name),
+    }
+}
+
+fn named_destination_page(pdf: &Pdf, wanted: &[u8]) -> Result<u32, String> {
+    let display = String::from_utf8_lossy(wanted);
+    let catalog = pdf.objects().into_iter().find_map(|object| {
+        let dict = object.into_dict()?;
+        (dict.get::<Name<'_>>(b"Type")?.as_ref() == b"Catalog").then_some(dict)
+    });
+    let Some(catalog) = catalog else {
+        return Err(format!("PDF inclusion: invalid destination <{display}>"));
+    };
+    let destination = catalog
+        .get::<Dict<'_>>(b"Dests")
+        .and_then(|dests| dests.get::<Object<'_>>(wanted))
+        .or_else(|| {
+            let names = catalog.get::<Dict<'_>>(b"Names")?;
+            let root = names.get::<Dict<'_>>(b"Dests")?;
+            name_tree_destination(&root, wanted, 0)
+        });
+    let Some(destination) = destination else {
+        return Err(format!("PDF inclusion: invalid destination <{display}>"));
+    };
+    let destination = match destination {
+        Object::Dict(dict) => dict.get::<Array<'_>>(b"D"),
+        Object::Array(array) => Some(array),
+        _ => None,
+    };
+    let Some(destination) = destination else {
+        return Err(format!(
+            "PDF inclusion: destination is not a page <{display}>"
+        ));
+    };
+    let mut items = destination.flex_iter();
+    let Some(page) = items.next::<Dict<'_>>() else {
+        return Err(format!(
+            "PDF inclusion: destination is not a page <{display}>"
+        ));
+    };
+    pdf.pages()
+        .iter()
+        .position(|candidate| candidate.raw() == &page)
+        .and_then(|index| u32::try_from(index + 1).ok())
+        .ok_or_else(|| format!("PDF inclusion: destination is not a page <{display}>"))
+}
+
+const MAX_NAME_TREE_DEPTH: usize = 256;
+
+fn name_tree_destination<'a>(
+    node: &Dict<'a>,
+    wanted: &[u8],
+    depth: usize,
+) -> Option<Object<'a>> {
+    if depth >= MAX_NAME_TREE_DEPTH {
+        return None;
+    }
+    if let Some(names) = node.get::<Array<'a>>(b"Names") {
+        let mut entries = names.flex_iter();
+        while let Some(name) = entries.next::<PdfString<'a>>() {
+            let value = entries.next::<Object<'a>>()?;
+            if name.as_bytes() == wanted {
+                return Some(value);
+            }
+        }
+    }
+    let kids = node.get::<Array<'a>>(b"Kids")?;
+    kids.iter::<Dict<'a>>()
+        .find_map(|kid| name_tree_destination(&kid, wanted, depth + 1))
 }
 
 pub(crate) fn import_pdf_page(

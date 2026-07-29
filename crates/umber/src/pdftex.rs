@@ -1163,6 +1163,7 @@ mod tests {
                     height: Scaled::from_raw(Scaled::UNITY),
                     depth: Scaled::from_raw(0),
                 },
+                0,
             )
             .expect("allocate raster image");
         let raster_snapshot = stores.snapshot();
@@ -1208,6 +1209,7 @@ mod tests {
                     height: page_box.top,
                     depth: Scaled::from_raw(0),
                 },
+                0,
             )
             .expect("allocate PDF image");
         let pdf_output = crate::run_memory_with_stores(

@@ -343,6 +343,7 @@ pub struct PdfExternalImageRecord {
     identity: ContentHash,
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
+    color_space_object: i32,
     bytes: Arc<[u8]>,
     mask_object: Option<u32>,
 }
@@ -363,6 +364,10 @@ impl PdfExternalImageRecord {
     #[must_use]
     pub const fn dimensions(&self) -> PdfExternalImageDimensions {
         self.dimensions
+    }
+    #[must_use]
+    pub const fn color_space_object(&self) -> i32 {
+        self.color_space_object
     }
 
     #[must_use]
@@ -1940,6 +1945,7 @@ impl PdfState {
                         height: Scaled::from_raw(0),
                         depth: Scaled::from_raw(0),
                     },
+                    color_space_object: 0,
                     bytes: Arc::from([]),
                     mask_object: None,
                 },
@@ -1975,6 +1981,7 @@ impl PdfState {
         &mut self,
         source: PdfExternalImageSource,
         dimensions: PdfExternalImageDimensions,
+        color_space_object: i32,
     ) -> Result<PdfExternalImageRecord, PdfObjectCapacityError> {
         let needs_mask = matches!(
             source.metadata,
@@ -1993,6 +2000,7 @@ impl PdfState {
             identity: source.identity,
             metadata: source.metadata,
             dimensions,
+            color_space_object,
             bytes: source.bytes,
             mask_object,
         };
@@ -2833,6 +2841,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> StateHashFra
         hasher.i32(record.dimensions.width.raw());
         hasher.i32(record.dimensions.height.raw());
         hasher.i32(record.dimensions.depth.raw());
+        hasher.i32(record.color_space_object);
         hasher.bytes(&record.bytes);
         hasher.bool(record.mask_object.is_some());
         if let Some(mask) = record.mask_object {
@@ -3542,7 +3551,7 @@ mod tests {
         };
 
         let allocated = state
-            .allocate_external_image(source.clone(), dimensions)
+            .allocate_external_image(source.clone(), dimensions, -7)
             .expect("allocate image");
         let record = state.last_external_image().expect("last image");
         assert_eq!(allocated.id().raw(), 1);
@@ -3550,6 +3559,7 @@ mod tests {
         assert_eq!(record.identity(), source.identity);
         assert_eq!(record.metadata(), source.metadata);
         assert_eq!(record.dimensions(), dimensions);
+        assert_eq!(record.color_space_object(), -7);
         assert_eq!(state.cursor().next_object, 2);
         let allocated_hash = state.hash_fragment();
 
@@ -3557,7 +3567,7 @@ mod tests {
         assert_eq!(state.last_external_image(), None);
         assert_eq!(
             state
-                .allocate_external_image(source, dimensions)
+                .allocate_external_image(source, dimensions, -7)
                 .expect("replay allocation"),
             allocated
         );

@@ -372,12 +372,22 @@ fn write_image_xobject(
     writer
         .width(width)
         .height(height)
-        .bits_per_component(i32::from(image.bits_per_component))
-        .color_space_name(Name(match image.color_space {
-            PdfImageColorSpace::DeviceGray => b"DeviceGray",
-            PdfImageColorSpace::DeviceRgb => b"DeviceRGB",
-            PdfImageColorSpace::DeviceCmyk => b"DeviceCMYK",
-        }));
+        .bits_per_component(i32::from(image.bits_per_component));
+    match image.color_space {
+        PdfImageColorSpace::DeviceGray => {
+            writer.color_space_name(Name(b"DeviceGray"));
+        }
+        PdfImageColorSpace::DeviceRgb => {
+            writer.color_space_name(Name(b"DeviceRGB"));
+        }
+        PdfImageColorSpace::DeviceCmyk => {
+            writer.color_space_name(Name(b"DeviceCMYK"));
+        }
+        PdfImageColorSpace::IndirectObject(object) => {
+            let syntax = format!("{object} 0 R");
+            writer.pair(Name(b"ColorSpace"), Raw(syntax.as_bytes()));
+        }
+    }
     match image.filter {
         PdfImageFilter::Dct => {
             writer.filter(Filter::DctDecode);

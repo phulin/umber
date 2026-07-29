@@ -3411,8 +3411,10 @@ impl Universe {
         &mut self,
         source: crate::PdfExternalImageSource,
         dimensions: crate::PdfExternalImageDimensions,
+        color_space_object: i32,
     ) -> Result<crate::PdfExternalImageRecord, PdfObjectCapacityError> {
-        self.pdf.allocate_external_image(source, dimensions)
+        self.pdf
+            .allocate_external_image(source, dimensions, color_space_object)
     }
 
     #[must_use]

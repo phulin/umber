@@ -93,9 +93,16 @@ pub enum PdfImagePageBox {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PdfImagePageSelection {
+    Number(u32),
+    Named(Vec<u8>),
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfImageRequest {
     pub name: String,
-    pub page: u32,
+    pub page: PdfImagePageSelection,
+    pub color_space_object: i32,
     pub page_box: PdfImagePageBox,
     pub resolution: u32,
 }

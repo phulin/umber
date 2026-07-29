@@ -207,7 +207,7 @@ pub(crate) fn parse_image(
     } else {
         return Err("image type is not PDF, PNG, or JPEG".to_owned());
     };
-    if request.page != 1 {
+    if request.page != tex_exec::PdfImagePageSelection::Number(1) {
         return Err("raster images have only page 1".to_owned());
     }
     Ok(PdfExternalImageSource {
@@ -225,7 +225,7 @@ fn parse_pdf_image(
 ) -> Result<PdfExternalImageSource, String> {
     let inspected = crate::pdf_import::inspect_pdf_page(
         content.shared_bytes(),
-        request.page,
+        &request.page,
         request.page_box,
     )?;
     let coordinates = inspected.page_box;
@@ -248,7 +248,7 @@ fn parse_pdf_image(
         metadata: PdfExternalImageMetadata::PdfPage {
             page_box,
             rotation,
-            page: request.page,
+            page: inspected.page_number,
             total_pages: inspected.total_pages,
             has_page_group: inspected.has_page_group,
             pdf_version: inspected.pdf_version,
@@ -942,7 +942,8 @@ mod tests {
             &content,
             &PdfImageRequest {
                 name: "rotated.pdf".to_owned(),
-                page: 1,
+                page: tex_exec::PdfImagePageSelection::Number(1),
+                color_space_object: 0,
                 page_box: PdfImagePageBox::Media,
                 resolution: 0,
             },

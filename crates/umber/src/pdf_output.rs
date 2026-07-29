@@ -343,7 +343,8 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
 
     let mut pdf_image_groups = BTreeMap::<u32, Option<PdfObjectId>>::new();
     let mut pdf_image_objects = BTreeMap::<u32, PdfObjectId>::new();
-    let mut lowered_images = HashMap::<(ContentHash, PdfExternalImageMetadata), PdfObjectId>::new();
+    let mut lowered_images =
+        HashMap::<(ContentHash, PdfExternalImageMetadata, i32), PdfObjectId>::new();
     let image_import_started = std::time::Instant::now();
     let mut image_telemetry = ImageImportTelemetry::default();
     let mut image_count = 0usize;
@@ -355,7 +356,11 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         image_count += 1;
         image_input_bytes = image_input_bytes.saturating_add(image.bytes().len());
         unique_image_identities.insert(image.identity());
-        let cache_key = (image.identity(), image.metadata());
+        let cache_key = (
+            image.identity(),
+            image.metadata(),
+            image.color_space_object(),
+        );
         if matches!(image.metadata(), PdfExternalImageMetadata::Raster(_))
             && let Some(&object) = lowered_images.get(&cache_key)
         {
@@ -372,6 +377,11 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                     parameters,
                     &mut image_telemetry,
                 )?;
+                let color_space = if image.color_space_object() == 0 {
+                    color_space
+                } else {
+                    PdfImageColorSpace::IndirectObject(image.color_space_object())
+                };
                 let image_object = object_id(image.id().raw())?;
                 objects.push(PdfIndirectObject {
                     id: image_object,
@@ -5178,6 +5188,7 @@ mod tests {
                     height: page_box.right,
                     depth: Scaled::from_raw(0),
                 },
+                0,
             )
             .expect("allocate rotated PDF page");
         let image = stores
@@ -5252,6 +5263,7 @@ mod tests {
                     height: page_box.top,
                     depth: Scaled::from_raw(0),
                 },
+                0,
             )
             .expect("allocate included page");
         let image = stores
@@ -5439,6 +5451,70 @@ mod tests {
                 .filter(|window| *window == resource_use.as_bytes())
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    fn raster_ximage_preserves_signed_colorspace_object_in_state_and_output() {
+        for object in [17, -7] {
+            let image = tex_state::PdfExternalImageSource {
+                identity: ContentHash::from_bytes(b"colorspace-raster"),
+                metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                    format: PdfRasterFormat::Png,
+                    width: 1,
+                    height: 1,
+                    bits_per_component: 8,
+                    color_space: PdfRasterColorSpace::Gray,
+                    alpha: false,
+                    png_color_type: Some(0),
+                }),
+                natural_width: Scaled::from_raw(Scaled::UNITY),
+                natural_height: Scaled::from_raw(Scaled::UNITY),
+                bytes: test_png(0, &[0, 0]).into(),
+            };
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let result = run_with_image(
+                &mut stores,
+                &format!(
+                    "\\pdfoutput=1 \\pdfcompresslevel=0 \
+                     \\pdfximage colorspace {object} \"pixel.png\"\
+                     \\shipout\\hbox{{\\pdfrefximage\\pdflastximage}}\\end"
+                ),
+                image,
+            );
+            assert_eq!(stores.pdf_external_images()[0].color_space_object(), object);
+            let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+                .expect("lower signed colorspace object");
+            let expected = format!("/ColorSpace {object} 0 R");
+            assert!(
+                pdf.windows(expected.len())
+                    .any(|window| window == expected.as_bytes()),
+                "{expected:?} missing from PDF"
+            );
+        }
+    }
+
+    #[test]
+    fn pdf_page_ximage_ignores_colorspace_object_during_form_lowering() {
+        let image = test_pdf_page_source(false);
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 \\pdfcompresslevel=0 ",
+                "\\pdfximage colorspace -7 \"page.pdf\"",
+                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            image,
+        );
+        assert_eq!(stores.pdf_external_images()[0].color_space_object(), -7);
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower PDF-page image");
+        assert!(
+            !pdf.windows(b"/ColorSpace -7 0 R".len())
+                .any(|window| window == b"/ColorSpace -7 0 R")
         );
     }
 

@@ -482,7 +482,8 @@ fn execute_pdf_ximage(
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
     }
-    let mut page = 1_u32;
+    let mut page = crate::PdfImagePageSelection::Number(1);
+    let mut color_space_object = 0;
     let mut page_box = crate::PdfImagePageBox::Crop;
     let mut page_box_explicit = false;
     let mut width = None;
@@ -496,11 +497,27 @@ fn execute_pdf_ximage(
                 execution,
                 context,
             )?;
+        } else if scan_optional_keyword_x(input, stores, execution, "named")? {
+            let tokens = scan_general_text_expanded_with_driver(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+                context,
+            )?;
+            let mut name = String::new();
+            for &token in stores.tokens(tokens) {
+                append_token_string_text(stores, token, &mut name);
+            }
+            page = crate::PdfImagePageSelection::Named(name.into_bytes());
         } else if scan_optional_keyword_x(input, stores, execution, "page")? {
-            page = u32::try_from(scan_i32(input, stores, execution, context)?)
-                .ok()
-                .filter(|page| *page > 0)
-                .unwrap_or(1);
+            page = crate::PdfImagePageSelection::Number(
+                u32::try_from(scan_i32(input, stores, execution, context)?)
+                    .ok()
+                    .filter(|page| *page > 0)
+                    .unwrap_or(1),
+            );
+        } else if scan_optional_keyword_x(input, stores, execution, "colorspace")? {
+            color_space_object = scan_i32(input, stores, execution, context)?;
         } else if scan_optional_keyword_x(input, stores, execution, "mediabox")? {
             page_box = crate::PdfImagePageBox::Media;
             page_box_explicit = true;
@@ -575,6 +592,7 @@ fn execute_pdf_ximage(
     let request = crate::PdfImageRequest {
         name: name.clone(),
         page,
+        color_space_object,
         page_box,
         resolution: u32::try_from(
             stores
@@ -626,7 +644,7 @@ fn execute_pdf_ximage(
     }
     let dimensions = scaled_image_dimensions(&source, width, height, depth);
     stores
-        .allocate_pdf_external_image(source, dimensions)
+        .allocate_pdf_external_image(source, dimensions, request.color_space_object)
         .map_err(|_| ExecError::PdfObjectCapacity)?;
     Ok(())
 }

@@ -41,6 +41,7 @@ pub enum FontResource {
 #[derive(Clone, Debug)]
 pub enum PdfImageResource {
     Unavailable,
+    Invalid(String),
     Available(tex_state::PdfExternalImageSource),
 }
 
