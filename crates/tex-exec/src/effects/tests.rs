@@ -548,6 +548,80 @@ fn out_what_noninteractive_failure_is_fatal_without_reading_terminal() {
 }
 
 #[test]
+fn commit_time_open_retry_uses_captured_interaction_and_terminal_context() {
+    let mut stores = Universe::new();
+    stores.begin_retained_session().expect("retained session");
+    stores.world_mut().open_out(StreamSlot::new(2), ".");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("\"replacement name\" ignored")
+        .expect("terminal replacement");
+    stores
+        .world_mut()
+        .retarget_output_backend(&tex_state::World::real())
+        .expect("real output backend");
+    let error = stores
+        .export_retained_effects()
+        .expect_err("open is unavailable");
+    let failed = error
+        .stream_open_unavailable()
+        .expect("typed failed target")
+        .to_owned();
+
+    crate::retry_unavailable_stream_open(&mut stores, &failed)
+        .expect("captured §530 context supplies replacement");
+
+    assert!(matches!(
+        stores.world().effect_records().first(),
+        Some(EffectRecord::StreamOpen { target, .. })
+            if target.path() == std::path::Path::new("replacement name.tex")
+    ));
+}
+
+#[test]
+fn commit_time_open_retry_is_fatal_without_consuming_input_in_nonstop_modes() {
+    for interaction in [
+        tex_state::InteractionMode::Batch,
+        tex_state::InteractionMode::Nonstop,
+    ] {
+        let mut stores = Universe::new();
+        stores.set_interaction_mode(interaction);
+        stores.begin_retained_session().expect("retained session");
+        stores.world_mut().open_out(StreamSlot::new(2), ".");
+        stores
+            .world_mut()
+            .push_memory_terminal_line("must-remain")
+            .expect("terminal line");
+        stores
+            .world_mut()
+            .retarget_output_backend(&tex_state::World::real())
+            .expect("real output backend");
+        let error = stores
+            .export_retained_effects()
+            .expect_err("open is unavailable");
+        let failed = error
+            .stream_open_unavailable()
+            .expect("typed failed target")
+            .to_owned();
+
+        assert!(matches!(
+            crate::retry_unavailable_stream_open(&mut stores, &failed),
+            Err(ExecError::Fatal(tex_command::FatalError::EmergencyStop {
+                help: "job aborted, file error in nonstop mode"
+            }))
+        ));
+        assert_eq!(
+            stores
+                .world_mut()
+                .read_terminal_line()
+                .expect("terminal remains readable")
+                .as_deref(),
+            Some("must-remain")
+        );
+    }
+}
+
+#[test]
 fn out_what_closes_existing_slot_before_failed_replacement() {
     let mut stores = Universe::new();
     let slot = StreamSlot::new(2);

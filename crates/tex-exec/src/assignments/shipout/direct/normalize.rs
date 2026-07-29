@@ -660,7 +660,7 @@ fn retry_openout_target(stores: &mut Universe, name: String) -> Result<String, E
 
 /// TeX82 §§530 and 1374 scan a replacement from the terminal buffer, not
 /// through `scan_file_name`'s expanded-token path.
-fn scan_terminal_output_name(line: &str) -> String {
+pub(super) fn scan_terminal_output_name(line: &str) -> String {
     let mut name = String::new();
     let mut quoted = false;
     for character in line.trim_start_matches(' ').chars() {

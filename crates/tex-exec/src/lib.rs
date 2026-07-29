@@ -32,7 +32,7 @@ pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 pub use assignments::{
     cached_pretolerance_plan, install_etex_unexpandable_primitives,
     install_unexpandable_primitives, register_etex_unexpandable_primitives,
-    register_unexpandable_primitives, try_execute_assignment,
+    register_unexpandable_primitives, retry_unavailable_stream_open, try_execute_assignment,
 };
 pub use canonical_main_control::{
     CanonicalMainControl, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,

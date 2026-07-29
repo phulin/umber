@@ -436,15 +436,26 @@ fn finalize_run(
     }
     let effect_pos = stores.world().effect_pos();
     let materialize_started = std::time::Instant::now();
-    let finalization = PlannedFinalization::new(effect_pos, driver_files)?;
+    let mut finalization = PlannedFinalization::new(effect_pos, driver_files)?;
     if opts.show_fixtures {
         print!("{}", String::from_utf8_lossy(&output.terminal));
         finalization.discard_uncommitted();
         return Ok(());
     }
-    finalization
-        .commit_effects(&mut stores)?
-        .materialize(&mut stores)?;
+    let committed = loop {
+        match finalization.commit_effects_retryable(&mut stores)? {
+            umber::FinalizationCommit::Committed(committed) => break committed,
+            umber::FinalizationCommit::Retry { plan, error } => {
+                let failed = error
+                    .stream_open_unavailable()
+                    .expect("retryable finalization identifies the failed open")
+                    .to_owned();
+                tex_exec::retry_unavailable_stream_open(&mut stores, &failed)?;
+                finalization = plan;
+            }
+        }
+    };
+    committed.materialize(&mut stores)?;
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
             "PDF_DRIVER_TELEMETRY font_resources_ns={} materialize_ns={} run_wall_ns={}",

@@ -53,6 +53,15 @@ pub(crate) use shipout::test_stage_shipout_artifact;
 mod tokens;
 mod variables;
 
+/// Resumes TeX82 §§530 and 1373--1375 after an authoritative output-open
+/// failure retained the failed effect and its following suffix.
+pub fn retry_unavailable_stream_open(
+    stores: &mut Universe,
+    failed_path: &std::path::Path,
+) -> Result<(), ExecError> {
+    shipout::retry_unavailable_stream_open(stores, failed_path)
+}
+
 #[cfg(test)]
 mod tests;
 

@@ -388,6 +388,10 @@ use lower::*;
 use materialize::{emitted_list_is_empty, materialize_node_list};
 use normalize::{PageOverlay, normalize_page};
 
+pub(super) fn terminal_output_name(line: &str) -> String {
+    normalize::scan_terminal_output_name(line)
+}
+
 struct EmissionState {
     fonts: Vec<FontResource>,
     live_fonts: Vec<FontId>,

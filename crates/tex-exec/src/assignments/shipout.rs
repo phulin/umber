@@ -21,6 +21,38 @@ const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
 const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
 const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 
+pub(super) fn retry_unavailable_stream_open(
+    stores: &mut Universe,
+    failed_path: &std::path::Path,
+) -> Result<(), ExecError> {
+    let interaction = stores.interaction_mode();
+    let failed_name = failed_path.to_string_lossy();
+    let mut report = stores.print_err("I can't write on file `");
+    report
+        .print(&failed_name)
+        .print("'.\nPlease type another output file name");
+    drop(report);
+    if matches!(
+        interaction,
+        tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
+    ) {
+        return Err(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+            "job aborted, file error in nonstop mode",
+        )));
+    }
+    let replacement = stores
+        .command_context()
+        .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
+        .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+            "End of file on the terminal!",
+        )))?;
+    stores.world_mut().retarget_pending_stream_open(
+        failed_path,
+        direct::terminal_output_name(&replacement),
+    )?;
+    Ok(())
+}
+
 // TeX82 map: `ship_out` consumes a box whose child list is visited by
 // `hlist_out`/`vlist_out`. Fresh pages use the direct two-phase emitter in
 // `direct`: mutation and rare-node normalization finish first, then one live
