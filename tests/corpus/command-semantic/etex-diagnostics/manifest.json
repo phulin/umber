@@ -43,6 +43,16 @@
       "expected": [
         "command:raw:cs:catcode:def_code:25636",
         "command:expanded:cs:catcode:def_code:25636",
+        "command:raw:cs:lccode:def_code:25892",
+        "command:expanded:cs:lccode:def_code:25892",
+        "command:raw:cs:uccode:def_code:26148",
+        "command:expanded:cs:uccode:def_code:26148",
+        "command:raw:cs:sfcode:def_code:26404",
+        "command:expanded:cs:sfcode:def_code:26404",
+        "command:raw:cs:mathcode:def_code:26660",
+        "command:expanded:cs:mathcode:def_code:26660",
+        "command:raw:cs:delcode:def_code:27501",
+        "command:expanded:cs:delcode:def_code:27501",
         "command:raw:cs:textfont:def_family:25588",
         "command:expanded:cs:textfont:def_family:25588"
       ],

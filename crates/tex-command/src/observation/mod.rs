@@ -932,7 +932,7 @@ mod tests {
             (UnexpandablePrimitive::UcCode, 26_143, 26_148),
             (UnexpandablePrimitive::SfCode, 26_399, 26_404),
             (UnexpandablePrimitive::MathCode, 26_655, 26_660),
-            (UnexpandablePrimitive::DelCode, 27_485, 27_490),
+            (UnexpandablePrimitive::DelCode, 27_485, 27_501),
         ] {
             let meaning = Meaning::UnexpandablePrimitive(primitive);
             assert_eq!(

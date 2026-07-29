@@ -76,6 +76,20 @@ const fn def_code_base(dialect: CommandDialect) -> i64 {
     }
 }
 
+/// Build-specific `del_code_base` selected by the observed engine layout.
+///
+/// Unlike the five halfword code-table selectors, `del_code_base` follows
+/// region 5's integer-parameter and count-register banks. e-TeX 2.6
+/// etex.ch [17.236] adds eleven integer parameters to the pinned Web2C
+/// TeX82 layout, so [17.230]'s five-cell region-4 shift is not the complete
+/// translation for this final `def_code` selector.
+const fn del_code_base(dialect: CommandDialect) -> i64 {
+    match dialect {
+        CommandDialect::Etex26 => 27_501,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 27_485,
+    }
+}
+
 /// Build-specific `math_font_base` selected by the observed engine layout.
 ///
 /// TeX82 §230 places this after the token and box banks. e-TeX 2.6
@@ -141,13 +155,15 @@ pub(crate) fn unexpandable_primitive_identity(
         // live probe of the pinned TeX82 oracle (`\sfcode`/`\mathcode`/
         // `\delcode` on a fresh INITEX, 2026-07-26). e-TeX 2.6 etex.ch
         // [17.230] inserts `\everyeof` plus four penalty-array cells before
-        // `cat_code_base`, shifting the complete code-table chain by five.
+        // `cat_code_base`, shifting the halfword code-table chain by five.
+        // `del_code_base` is separated from that chain by region 5; [17.236]
+        // adds eleven e-TeX integer parameters there.
         P::CatCode => ("def_code".into(), Some(def_code_base(dialect))),
         P::LcCode => ("def_code".into(), Some(def_code_base(dialect) + 256)),
         P::UcCode => ("def_code".into(), Some(def_code_base(dialect) + 512)),
         P::SfCode => ("def_code".into(), Some(def_code_base(dialect) + 768)),
         P::MathCode => ("def_code".into(), Some(def_code_base(dialect) + 1_024)),
-        P::DelCode => ("def_code".into(), Some(def_code_base(dialect) + 1_854)),
+        P::DelCode => ("def_code".into(), Some(del_code_base(dialect))),
         P::Font => ("def_font".into(), Some(0)),
         P::FontDimen => ("assign_font_dimen".into(), Some(0)),
         P::HyphenChar => ("assign_font_int".into(), Some(0)),
