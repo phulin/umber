@@ -63,7 +63,7 @@ mod tests {
         {
             let mut transaction = ExecutionTransaction::begin(&mut nest, &mut stores);
             let (nest, stores) = transaction.parts();
-            nest.push(Mode::Horizontal);
+            nest.push(Mode::Horizontal).expect("test mode push");
             stores.enter_group();
             stores.set_count(4, 91);
         }
@@ -78,7 +78,7 @@ mod tests {
         let mut transaction = ExecutionTransaction::begin(&mut nest, &mut stores);
         {
             let (nest, stores) = transaction.parts();
-            nest.push(Mode::Horizontal);
+            nest.push(Mode::Horizontal).expect("test mode push");
             stores.enter_group();
             stores.set_count(4, 91);
         }

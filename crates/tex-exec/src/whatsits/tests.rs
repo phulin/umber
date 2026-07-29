@@ -99,7 +99,10 @@ fn base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82() {
 fn write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
-    control.modes.push(Mode::RestrictedHorizontal);
+    control
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(&mut control, br"\write-99{x}\write99{y}");
     run_to_end(&mut control, &mut stores);
     let whatsits = control
@@ -179,7 +182,7 @@ fn fix_language_and_setlanguage_append_with_captured_hyphen_minima() {
     stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 0);
     stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 90);
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
 
     crate::assignments::test_fix_hyphen_language(&mut nest, &mut stores, Mode::Horizontal);
     crate::assignments::test_fix_hyphen_language(&mut nest, &mut stores, Mode::Horizontal);

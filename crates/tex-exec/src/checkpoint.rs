@@ -673,7 +673,10 @@ mod tests {
         let expected_command = checkpoint.command_summary().cloned().expect("summary");
 
         universe.set_count(3, 99);
-        executor.nest_mut().push(Mode::Horizontal);
+        executor
+            .nest_mut()
+            .push(Mode::Horizontal)
+            .expect("test mode push");
         command
             .register_source(SourceRegistration::new(
                 RegisteredSourceKind::Generated,

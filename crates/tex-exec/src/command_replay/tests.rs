@@ -975,7 +975,10 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
         universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(
         &mut control,
         br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink\pdfthread depth 3pt width 10pt height 4pt attr { /I << /Title (custom) >> } name {chapter}\pdfstartthread height 7pt name {running}\pdfendthread\pdfstartlink thread name {reserved}\pdfendlink",
@@ -1097,7 +1100,10 @@ fn canonical_pdf_graphics_objects_and_forms_cross_only_typed_requests() {
         universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(
         &mut control,
         br"\pdfliteral direct{q}\pdfliteral shipout page{Q}\pdfsetmatrix{1 0 0 1}\pdfsave\pdfrestore\pdfcolorstack0 current\pdfsavepos\setbox0=\hbox{}\pdfobj{raw}\pdfrefobj1\pdfxform0\pdfrefxform2\pdfinfo{/Producer(test)}\pdfcatalog{/PageMode/UseNone}openaction thread name{catalog-thread}",
@@ -1168,7 +1174,7 @@ fn canonical_pdf_graphics_objects_and_forms_cross_only_typed_requests() {
 fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, br"\mathop{a}^b\left( c d \right)\over e");
     run_to_end(&mut control, &mut universe);
 
@@ -1218,7 +1224,7 @@ fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_sou
 fn canonical_fraction_inside_left_group_keeps_delimiter_outside_numerator() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(
         &mut control,
         br"\nulldelimiterspace=100sp\left.A\over A\right.",
@@ -1306,7 +1312,7 @@ fn canonical_fraction_inside_left_group_keeps_delimiter_outside_numerator() {
 fn canonical_math_given_builds_the_same_noads_as_math_char_num() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(
         &mut control,
         br#"\mathchardef\ldotp="613A \mathchardef\vari="7141 \fam=3
@@ -1419,7 +1425,7 @@ fn canonical_non_ord_mathchar_fields_discard_the_class_nibble() {
     ] {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-        control.modes.push(Mode::Math);
+        control.modes.push(Mode::Math).expect("test mode push");
         let mut source = br"\fam=3 ".to_vec();
         source.extend_from_slice(outer);
         source.extend_from_slice(format!("\\mathchar\"{field_class:X}13A").as_bytes());
@@ -1457,7 +1463,10 @@ fn canonical_non_ord_mathchar_fields_discard_the_class_nibble() {
 fn canonical_math_given_outside_math_mode_inserts_a_dollar_sign() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(&mut control, br#"\mathchardef\ldotp="613A \ldotp$"#);
     run_to_end(&mut control, &mut universe);
 
@@ -1487,7 +1496,7 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
     // state rather than from an event the lookahead never produces.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, br"\mathord{\kern1pt}Z");
     run_to_end(&mut control, &mut universe);
 
@@ -1540,7 +1549,10 @@ fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
 fn canonical_init_math_probe_leaves_the_following_conditional_unexpanded() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::RestrictedHorizontal);
+    control
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(
         &mut control,
         br"$\ifmmode\global\count0=1 \else\global\count0=2 \fi$",
@@ -1563,7 +1575,10 @@ fn canonical_init_math_probe_leaves_the_following_conditional_unexpanded() {
 fn canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::RestrictedHorizontal);
+    control
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     let depth = control.modes.depth();
     register_source(&mut control, br"$$");
     run_to_end(&mut control, &mut universe);
@@ -1596,13 +1611,19 @@ fn canonical_math_shift_replays_identically_with_and_without_an_observer() {
     let source = br"$a+b$";
     let mut plain_universe = Universe::new_with_plain_catcodes();
     let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
-    plain.modes.push(Mode::RestrictedHorizontal);
+    plain
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(&mut plain, source);
     run_to_end(&mut plain, &mut plain_universe);
 
     let mut observed_universe = Universe::new_with_plain_catcodes();
     let mut observed = CanonicalMainControl::tex82_initex(&mut observed_universe);
-    observed.modes.push(Mode::RestrictedHorizontal);
+    observed
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(&mut observed, source);
     let mut observations = ObservationRecorder::default();
     loop {
@@ -1638,7 +1659,7 @@ fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
     let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d";
     let mut plain_universe = Universe::new_with_plain_catcodes();
     let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
-    plain.modes.push(Mode::Math);
+    plain.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut plain, source);
     run_to_end(&mut plain, &mut plain_universe);
     let plain_list = take_finished_canonical_math_list(&mut plain.modes, &mut plain_universe)
@@ -1646,7 +1667,7 @@ fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
 
     let mut observed_universe = Universe::new_with_plain_catcodes();
     let mut observed = CanonicalMainControl::tex82_initex(&mut observed_universe);
-    observed.modes.push(Mode::Math);
+    observed.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut observed, source);
     let mut observations = ObservationRecorder::default();
     loop {
@@ -1690,7 +1711,7 @@ fn canonical_math_script_field_is_observed_like_every_other_episode() {
     let source = br"a^{bc}";
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, source);
     let mut observations = ObservationRecorder::default();
     loop {
@@ -1728,7 +1749,7 @@ fn canonical_math_family_assignment_and_fam_select_variable_mathcode_family() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(
         &mut control,
         br#"\font\f=cmr10 \textfont2\f \mathcode`a="7161 \fam2 a"#,
@@ -3345,7 +3366,10 @@ fn replay_closeout_stream_selector_committed_microfixture() {
 fn replay_appends_an_unexpanded_deferred_write_whatsit() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::RestrictedHorizontal);
+    control
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(&mut control, br"\write2{during}");
 
     assert_eq!(
@@ -8074,7 +8098,7 @@ fn canonical_spacefactor_accepts_both_horizontal_modes_and_boundary_values() {
     ] {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-        control.modes.push(mode);
+        control.modes.push(mode).expect("test mode push");
         register_source(&mut control, format!("\\spacefactor = {value} ").as_bytes());
         run_to_end(&mut control, &mut universe);
 
@@ -8091,7 +8115,10 @@ fn canonical_spacefactor_out_of_range_values_are_diagnosed_and_leave_state_uncha
     for value in [-1, 0, 32_768] {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-        control.modes.push(Mode::Horizontal);
+        control
+            .modes
+            .push(Mode::Horizontal)
+            .expect("test mode push");
         control.modes.current_list_mutation().set_space_factor(1234);
         register_source(&mut control, format!("\\spacefactor={value} ").as_bytes());
         run_to_end(&mut control, &mut universe);
@@ -8117,7 +8144,7 @@ fn canonical_spacefactor_illegal_modes_report_before_scanning_and_preserve_next_
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\spacefactor\global\count0=17 ");
         run_to_end(&mut control, &mut universe);
@@ -8146,7 +8173,10 @@ fn canonical_spacefactor_targets_only_the_current_list_and_is_always_global() {
     // independent value.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(
         &mut control,
         br"{\spacefactor 2000}\setbox0=\hbox{\global\spacefactor=3000}\relax",
@@ -8164,7 +8194,10 @@ fn canonical_prevgraf_assignment_sets_the_enclosing_vertical_level() {
     // horizontal mode -- regression test for umber2-johp.86.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(&mut control, br"\prevgraf=3 ");
     run_to_end(&mut control, &mut universe);
 
@@ -8188,7 +8221,7 @@ fn canonical_prevgraf_assignment_is_legal_in_every_mode() {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, format!("\\prevgraf={value} ").as_bytes());
         run_to_end(&mut control, &mut universe);
@@ -8214,9 +8247,15 @@ fn canonical_prevgraf_updates_nearest_internal_vertical_level() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.set_enclosing_vertical_prev_graf(11);
-    control.modes.push(Mode::InternalVertical);
+    control
+        .modes
+        .push(Mode::InternalVertical)
+        .expect("test mode push");
     control.modes.set_enclosing_vertical_prev_graf(12);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(&mut control, br"\prevgraf = 6 ");
     run_to_end(&mut control, &mut universe);
 
@@ -8505,7 +8544,10 @@ fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise()
     // own level's zero, exactly like an empty list would.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::InternalVertical);
+    control
+        .modes
+        .push(Mode::InternalVertical)
+        .expect("test mode push");
     control.modes.current_list_mutation().push(Node::Kern {
         amount: Scaled::from_raw(65536 * 3),
         kind: tex_state::node::KernKind::Explicit,
@@ -8573,7 +8615,7 @@ fn canonical_last_skip_reads_an_explicit_mskip_at_mu_val_level() {
     // mu units through `\the`, unlike ordinary glue.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     let glue_spec = universe.intern_glue(GlueSpec {
         width: Scaled::from_raw(65536 * 2),
         ..GlueSpec::ZERO
@@ -8965,7 +9007,7 @@ fn canonical_ignorespaces_is_mode_complete_and_preserves_the_next_command() {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\ignorespaces   \global\count0=17 ");
         run_to_end(&mut control, &mut universe);

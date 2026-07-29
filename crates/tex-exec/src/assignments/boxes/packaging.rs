@@ -226,7 +226,7 @@ pub(super) fn scan_box_node(
         // display started in this internal vertical list.
         normal_paragraph(&mut inner, stores);
     }
-    inner.push(mode);
+    inner.push(mode)?;
     let (hook, replay_kind) = match kind {
         BoxKind::HBox => (TokParam::EVERY_HBOX, TokenListReplayKind::EveryHBox),
         BoxKind::VBox | BoxKind::VTop => (TokParam::EVERY_VBOX, TokenListReplayKind::EveryVBox),

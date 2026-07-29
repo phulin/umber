@@ -180,7 +180,8 @@ fn list_commit_flushes_pending_characters_and_raw_pop_rejects_them() {
     let font = opentype_test_font(&mut stores, 10);
     stores.set_current_font(font);
     let mut nest = ModeNest::new();
-    nest.push(Mode::RestrictedHorizontal);
+    nest.push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     append_hchar(&mut nest, &mut stores, 'A', OriginId::UNKNOWN);
 
     assert!(matches!(

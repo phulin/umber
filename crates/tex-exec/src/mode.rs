@@ -1101,13 +1101,16 @@ impl Default for ModeNest {
 }
 
 impl ModeNest {
+    /// TeX82 §11's maximum number of simultaneously saved semantic levels.
+    const TEX82_NEST_SIZE: usize = 40;
+    const MAX_LIVE_LEVELS: usize = Self::TEX82_NEST_SIZE + 1;
+
     /// Creates the outer main vertical nest level.
     #[must_use]
     pub fn new() -> Self {
-        // Every usable nested mode starts above the mandatory outer vertical
-        // level. Allocate that first nested slot together with the base so the
-        // common first push does not replace and copy a one-element buffer.
-        let mut levels = Vec::with_capacity(2);
+        // The semantic stack is permanently bounded, so allocate its complete
+        // pointer array once just as TeX82 does.
+        let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
             levels: Arc::new(levels),
@@ -1119,6 +1122,11 @@ impl ModeNest {
     pub fn from_summary(summary: ModeNestSummary) -> Result<Self, ExecError> {
         if summary.levels.is_empty() {
             return Err(ExecError::EmptyModeNestSummary);
+        }
+        if summary.levels.len() > Self::MAX_LIVE_LEVELS {
+            return Err(ExecError::SemanticNestCapacity {
+                limit: Self::TEX82_NEST_SIZE,
+            });
         }
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
@@ -1146,13 +1154,24 @@ impl ModeNest {
             .mode()
     }
 
-    pub fn push(&mut self, mode: Mode) {
+    /// Saves the current level and enters a new empty semantic level.
+    ///
+    /// TeX82 §216 checks `nest_size` before copying `cur_list` into the
+    /// semantic stack. Accordingly, a rejected push leaves every live level
+    /// and the journal unchanged.
+    pub fn push(&mut self, mode: Mode) -> Result<(), ExecError> {
+        if self.levels.len() > Self::TEX82_NEST_SIZE {
+            return Err(ExecError::SemanticNestCapacity {
+                limit: Self::TEX82_NEST_SIZE,
+            });
+        }
         let mut level = ModeLevelSummary::new(mode);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.mutate_list(|list| list.set_space_factor(1000));
         }
         self.levels_mut_for_push().push(level);
         self.journal.record_level_push();
+        Ok(())
     }
 
     fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
@@ -1161,12 +1180,7 @@ impl ModeNest {
             // subsequent push would therefore allocate and copy that freshly
             // detached buffer a second time. Detach directly with the slot
             // that this operation is about to consume.
-            let mut levels = Vec::with_capacity(
-                self.levels
-                    .len()
-                    .checked_add(1)
-                    .expect("mode nest depth overflow"),
-            );
+            let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
             levels.extend(self.levels.iter().cloned());
             self.levels = Arc::new(levels);
         }

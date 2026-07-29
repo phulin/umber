@@ -68,7 +68,7 @@ pub(super) fn start_eq_no(
     // as a real mode level is important: the first `$` closes the equation
     // number and the following `$` closes the enclosing display, and both the
     // mode nest and save stack must remain snapshot-coverable between them.
-    nest.push(Mode::Math);
+    nest.push(Mode::Math)?;
     nest.current_list_mutation()
         .set_display_eq_no(DisplayEqNo { side, display });
     Ok(())
@@ -343,7 +343,7 @@ pub(super) fn resume_after_display_alignment(
             crate::insert_traced_tokens(input, stores, [traced]);
         }
         Some(traced) => {
-            nest.push(Mode::Horizontal);
+            nest.push(Mode::Horizontal)?;
             nest.current_list_mutation().set_space_factor(1000);
             nest.current_list_mutation()
                 .append(active_directions.iter().copied().map(Node::Direction));
@@ -409,7 +409,7 @@ pub(super) fn resume_after_display(
         .checked_add(3)
         .expect("display-math prev_graf overflow");
     nest.set_enclosing_vertical_prev_graf(prev_graf);
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal)?;
     nest.current_list_mutation().set_space_factor(1000);
     nest.current_list_mutation()
         .append(active_directions.iter().copied().map(Node::Direction));

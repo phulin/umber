@@ -487,7 +487,7 @@ fn run_output_routine_inner(
     replay: &mut Option<tex_lex::TokenListReplayMarker>,
 ) -> Result<(), ExecError> {
     stores.enter_group_with_kind(GroupKind::Output);
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical)?;
     nest.current_list_mutation()
         .set_prev_depth(ignored_depth(stores));
     let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);

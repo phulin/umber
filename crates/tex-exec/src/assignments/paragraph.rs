@@ -110,7 +110,7 @@ pub(crate) fn start_canonical_paragraph(
                 );
                 build_page_if_outer_vertical(nest, stores)?;
             }
-            nest.push(Mode::Horizontal);
+            nest.push(Mode::Horizontal)?;
             if indent {
                 append_indent_box(nest, stores)?;
             }
@@ -187,7 +187,7 @@ fn start_paragraph(
                 );
                 build_page_if_outer_vertical(nest, stores)?;
             }
-            nest.push(Mode::Horizontal);
+            nest.push(Mode::Horizontal)?;
             if indent {
                 append_indent_box(nest, stores)?;
             }

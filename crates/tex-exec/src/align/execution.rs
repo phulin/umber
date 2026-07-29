@@ -33,7 +33,7 @@ pub(crate) fn execute_alignment(
     {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
-        nest.push(alignment_mode(alignment_kind));
+        nest.push(alignment_mode(alignment_kind))?;
         if let Some(prev_depth) = enclosing_prev_depth {
             // TeX.web push_nest preserves aux, so an ordinary vertical-mode
             // alignment starts with the enclosing list's prev_depth too.
@@ -109,7 +109,7 @@ pub(super) fn execute_alignment_to_nodes(
     {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
-        nest.push(alignment_mode(alignment_kind));
+        nest.push(alignment_mode(alignment_kind))?;
         if let Some(prev_depth) = enclosing_prev_depth {
             // TeX.web init_align reaches through display math to recover the
             // enclosing vlist's prev_depth after push_nest preserves aux.
@@ -236,7 +236,7 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     let kind = align_kind(nest, align_level)?;
     let first_tabskip = align_state(nest, align_level)?.tabskip_for_boundary(0);
     mutate_align_state(nest, align_level, AlignState::start_row)?;
-    nest.push(row_mode(kind));
+    nest.push(row_mode(kind))?;
     if kind == AlignmentKind::HAlign {
         nest.current_list_mutation().set_space_factor(0);
     }
@@ -340,7 +340,7 @@ fn execute_cell(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<CellResult, ExecError> {
     let kind = align_kind(nest, align_level)?;
-    nest.push(cell_mode(kind));
+    nest.push(cell_mode(kind))?;
     super::init_span_aux(nest, stores);
     let mut column = start.column;
     let mut span_count = 1u16;

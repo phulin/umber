@@ -1297,7 +1297,7 @@ impl CanonicalMainControl {
             GroupKind::Disc,
             self.command.current_file_line_number(),
         );
-        self.modes.push(Mode::RestrictedHorizontal);
+        self.modes.push(Mode::RestrictedHorizontal)?;
         let episode = self.command.push_discretionary_episode(tokens);
         self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
@@ -1684,7 +1684,7 @@ impl CanonicalMainControl {
                         GroupKind::Output,
                         self.command.current_file_line_number(),
                     );
-                    self.modes.push(Mode::InternalVertical);
+                    self.modes.push(Mode::InternalVertical)?;
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
                 }
@@ -1717,7 +1717,7 @@ impl CanonicalMainControl {
         // the body opens a `simple_group`.
         let enclosing_depth = stores.group_depth();
         stores.enter_group_with_kind_at_line(kind, self.command.current_file_line_number());
-        self.modes.push(Mode::Math);
+        self.modes.push(Mode::Math)?;
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
             match self.nested_step_once(stores, None)? {
@@ -1980,7 +1980,7 @@ impl CanonicalMainControl {
                         self.command.current_file_line_number(),
                     );
                     stores.set_int_param(IntParam::FAM, -1);
-                    self.modes.push(Mode::Math);
+                    self.modes.push(Mode::Math)?;
                     self.modes.current_list_mutation().set_display_eq_no(
                         crate::mode::DisplayEqNo {
                             side: match number.side {
@@ -2016,7 +2016,7 @@ impl CanonicalMainControl {
                 if paired {
                     self.enter_canonical_display(stores)?;
                 } else {
-                    self.enter_canonical_math(false, stores);
+                    self.enter_canonical_math(false, stores)?;
                 }
             }
             Mode::Math => {
@@ -2048,7 +2048,11 @@ impl CanonicalMainControl {
         Ok(ReplayStep::Continue)
     }
 
-    fn enter_canonical_math(&mut self, display: bool, stores: &mut Universe) {
+    fn enter_canonical_math(
+        &mut self,
+        display: bool,
+        stores: &mut Universe,
+    ) -> Result<(), ExecError> {
         stores.enter_group_with_kind_at_line(
             GroupKind::MathShift,
             self.command.current_file_line_number(),
@@ -2058,8 +2062,9 @@ impl CanonicalMainControl {
             Mode::DisplayMath
         } else {
             Mode::Math
-        });
+        })?;
         schedule_everymath(&mut self.command, stores, display);
+        Ok(())
     }
 
     fn enter_canonical_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
@@ -2083,7 +2088,7 @@ impl CanonicalMainControl {
                 _ => 0,
             },
         );
-        self.enter_canonical_math(true, stores);
+        self.enter_canonical_math(true, stores)?;
         self.modes
             .current_list_mutation()
             .set_display_interrupt(crate::mode::DisplayInterrupt {
@@ -2230,7 +2235,7 @@ impl CanonicalMainControl {
             .checked_add(3)
             .expect("display prev_graf overflow");
         self.modes.set_enclosing_vertical_prev_graf(prev);
-        self.modes.push(Mode::Horizontal);
+        self.modes.push(Mode::Horizontal)?;
         self.modes.current_list_mutation().set_space_factor(1000);
         self.modes
             .current_list_mutation()
@@ -2283,7 +2288,7 @@ impl CanonicalMainControl {
                     GroupKind::MathLeft,
                     self.command.current_file_line_number(),
                 );
-                self.modes.push(Mode::Math);
+                self.modes.push(Mode::Math)?;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -9172,7 +9177,7 @@ fn begin_replay_alignment_cell(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     if !active.row_open {
-        modes.push(replay_alignment_row_mode(active.kind));
+        modes.push(replay_alignment_row_mode(active.kind))?;
         modes.current_list_mutation().push(Node::Glue {
             spec: active
                 .tabskips
@@ -9190,7 +9195,7 @@ fn begin_replay_alignment_cell(
             context: "active replay alignment cell",
         });
     }
-    modes.push(replay_alignment_cell_mode(active.kind));
+    modes.push(replay_alignment_cell_mode(active.kind))?;
     crate::align::init_span_aux(modes, stores);
     active.cell_span = 1;
     active.cell_open = true;
@@ -11084,7 +11089,7 @@ fn apply_scanned_step(
                 Mode::RestrictedHorizontal
             } else {
                 Mode::InternalVertical
-            });
+            })?;
             // TeX82 §§1051--1052 and §1167 run `normal_paragraph` after
             // opening every internal-vertical box body. In particular, a
             // `\vbox`/`\vtop` must not inherit the enclosing `\parshape`.
@@ -11128,7 +11133,7 @@ fn apply_scanned_step(
             }
             let class = class as u16;
             enter_canonical_group(stores, command.state, GroupKind::Insert);
-            modes.push(Mode::InternalVertical);
+            modes.push(Mode::InternalVertical)?;
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
@@ -11196,7 +11201,7 @@ fn apply_scanned_step(
                 Mode::RestrictedHorizontal
             } else {
                 Mode::InternalVertical
-            });
+            })?;
             if !kind.horizontal() {
                 crate::assignments::normal_paragraph(modes, stores);
             }
@@ -11605,7 +11610,7 @@ fn apply_scanned_step(
                 AlignmentKind::VAlign
             } else {
                 AlignmentKind::HAlign
-            }));
+            }))?;
             if let Some(prev_depth) = enclosing_prev_depth {
                 modes.current_list_mutation().set_prev_depth(prev_depth);
             }
@@ -12460,7 +12465,7 @@ fn apply_box_shift(
                 Mode::RestrictedHorizontal
             } else {
                 Mode::InternalVertical
-            });
+            })?;
             if !kind.horizontal() {
                 crate::assignments::normal_paragraph(modes, stores);
             }

@@ -1,6 +1,6 @@
 use super::{
     AlignState, AlignmentKind, AlignmentPackSpec, DisplayEqNo, DisplayInterrupt, EqNoSide,
-    IncompleteFraction, Mode, ModeNest,
+    ExecError, IncompleteFraction, Mode, ModeLevelSummary, ModeNest,
 };
 use std::sync::Arc;
 use tex_state::Universe;
@@ -20,7 +20,7 @@ fn kern(value: i32) -> Node {
 #[test]
 fn mode_summary_shares_roots_and_restored_mutation_detaches() {
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     nest.current_list_mutation().push(kern(1));
     let summary = nest.summary();
 
@@ -79,7 +79,7 @@ fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
     let mut nest = ModeNest::new();
     let summary = nest.summary();
 
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
 
     assert!(!Arc::ptr_eq(&nest.levels, &summary.levels));
     assert_eq!(summary.levels.len(), 1);
@@ -90,13 +90,13 @@ fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
 #[test]
 fn mode_projection_is_canonical_and_content_sensitive() {
     let mut first = ModeNest::new();
-    first.push(Mode::Horizontal);
+    first.push(Mode::Horizontal).expect("test mode push");
     first.current_list_mutation().push(kern(11));
     let mut equal = ModeNest::new();
-    equal.push(Mode::Horizontal);
+    equal.push(Mode::Horizontal).expect("test mode push");
     equal.current_list_mutation().push(kern(11));
     let mut changed = ModeNest::new();
-    changed.push(Mode::Horizontal);
+    changed.push(Mode::Horizontal).expect("test mode push");
     changed.current_list_mutation().push(kern(12));
 
     let first_hash = first.summary().semantic_fingerprint(&Universe::new());
@@ -146,7 +146,7 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
         ),
     ] {
         let mut nest = ModeNest::new();
-        nest.push(mode);
+        nest.push(mode).expect("test mode push");
         let list = nest.current_list();
 
         assert_eq!(nest.current_mode(), mode);
@@ -175,7 +175,7 @@ fn semantic_nest_push_and_pop_preserve_fields_and_start_empty_list() {
     nest.current_list_mutation().push(kern(11));
 
     for mode in [Mode::Horizontal, Mode::Math, Mode::InternalVertical] {
-        nest.push(mode);
+        nest.push(mode).expect("test mode push");
         assert_eq!(nest.current_mode(), mode);
         assert!(nest.current_list().is_empty());
     }
@@ -196,6 +196,82 @@ fn semantic_nest_push_and_pop_preserve_fields_and_start_empty_list() {
     assert_eq!(nest.current_list().prev_graf(), 7);
     assert_eq!(nest.current_list().nodes(), &[kern(11)]);
     assert!(nest.pop().is_err());
+}
+
+#[test]
+fn semantic_nest_capacity_and_bottom_pop_recovery_match_tex82() {
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation().set_prev_graf(7);
+    nest.current_list_mutation().push(kern(11));
+
+    for _ in 0..ModeNest::TEX82_NEST_SIZE {
+        nest.push(Mode::Horizontal)
+            .expect("TeX82 permits nest_size saved semantic levels");
+    }
+    nest.current_list_mutation().push(kern(29));
+    let full = nest.summary();
+
+    assert!(matches!(
+        nest.push(Mode::Math),
+        Err(ExecError::SemanticNestCapacity {
+            limit: ModeNest::TEX82_NEST_SIZE
+        })
+    ));
+    assert_eq!(nest.summary(), full);
+
+    while nest.depth() > 1 {
+        nest.pop().expect("saved semantic level pops");
+    }
+    assert_eq!(nest.current_mode(), Mode::Vertical);
+    assert_eq!(nest.current_list().prev_graf(), 7);
+    assert_eq!(nest.current_list().nodes(), &[kern(11)]);
+    assert!(matches!(nest.pop(), Err(ExecError::CannotPopBaseMode)));
+
+    nest.push(Mode::Math)
+        .expect("bottom-pop rejection leaves the nest reusable");
+    assert_eq!(nest.current_mode(), Mode::Math);
+}
+
+#[test]
+fn semantic_nest_capacity_rejection_does_not_record_a_journal_push() {
+    let mut nest = ModeNest::new();
+    for _ in 0..ModeNest::TEX82_NEST_SIZE {
+        nest.push(Mode::Math).expect("push within TeX82 limit");
+    }
+    let full = nest.summary();
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
+
+    assert!(matches!(
+        nest.push(Mode::Horizontal),
+        Err(ExecError::SemanticNestCapacity { .. })
+    ));
+    nest.rollback_journal(cursor).expect("empty rollback");
+    assert_eq!(nest.summary(), full);
+}
+
+#[test]
+fn semantic_nest_summary_cannot_bypass_tex82_capacity() {
+    let mut nest = ModeNest::new();
+    for _ in 0..ModeNest::TEX82_NEST_SIZE {
+        nest.push(Mode::Math).expect("push within TeX82 limit");
+    }
+    let full = nest.summary();
+    assert_eq!(
+        ModeNest::from_summary(full.clone())
+            .expect("maximum TeX82 nest summary restores")
+            .summary(),
+        full
+    );
+
+    let mut oversized = full;
+    Arc::make_mut(&mut oversized.levels).push(ModeLevelSummary::new(Mode::Math));
+    assert!(matches!(
+        ModeNest::from_summary(oversized),
+        Err(ExecError::SemanticNestCapacity {
+            limit: ModeNest::TEX82_NEST_SIZE
+        })
+    ));
 }
 
 fn align_state() -> AlignState {
@@ -363,17 +439,17 @@ fn journal_nested_commit_and_rollback_compose() {
 #[test]
 fn journal_level_identity_handles_push_pop_replacement_and_nested_edits() {
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     nest.current_list_mutation().push(kern(1));
     let before = nest.summary();
     nest.reset_journal_for_test();
     let outer = nest.begin_journal();
 
     let removed = nest.pop().expect("pop horizontal");
-    nest.push(Mode::Math);
+    nest.push(Mode::Math).expect("test mode push");
     nest.current_list_mutation().push(kern(2));
     let inner = nest.begin_journal();
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical).expect("test mode push");
     nest.current_list_mutation().push(kern(3));
     nest.rollback_journal(inner).expect("inner rollback");
     assert_eq!(nest.current_mode(), Mode::Math);

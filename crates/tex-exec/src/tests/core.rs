@@ -14,20 +14,20 @@ fn mode_nest_projects_conditional_predicates_across_transitions() {
         tex_command::ConditionalMode::Vertical
     );
     assert!(!nest.conditional_state().is_inner());
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     assert_eq!(
         nest.conditional_state().mode(),
         tex_command::ConditionalMode::Horizontal
     );
     assert!(!nest.conditional_state().is_inner());
-    nest.push(Mode::Math);
+    nest.push(Mode::Math).expect("test mode push");
     assert_eq!(
         nest.conditional_state().mode(),
         tex_command::ConditionalMode::Math
     );
     assert!(nest.conditional_state().is_inner());
     nest.pop().expect("leave math");
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical).expect("test mode push");
     assert_eq!(
         nest.conditional_state().mode(),
         tex_command::ConditionalMode::Vertical
@@ -843,7 +843,7 @@ fn nest_push_pop_and_summary_cover_all_modes() {
         Mode::Math,
         Mode::DisplayMath,
     ] {
-        nest.push(mode);
+        nest.push(mode).expect("test mode push");
     }
 
     assert_eq!(nest.depth(), 6);
@@ -891,7 +891,10 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
         ENGINE_CHECKPOINT_SCHEMA_VERSION
     );
 
-    executor.nest_mut().push(Mode::Horizontal);
+    executor
+        .nest_mut()
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     stores.set_count(3, 99);
     executor
         .restore_checkpoint(&mut input, &mut stores, checkpoint, |_, _, _| {
@@ -1052,12 +1055,18 @@ fn engine_snapshot_queries_are_backed_by_current_nest_level() {
     assert_eq!(context.engine.mode, tex_expand::EngineMode::Vertical);
     assert!(!context.engine.is_inner_mode);
 
-    executor.nest_mut().push(Mode::RestrictedHorizontal);
+    executor
+        .nest_mut()
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
     assert_eq!(context.engine.mode, tex_expand::EngineMode::Horizontal);
     assert!(context.engine.is_inner_mode);
 
-    executor.nest_mut().push(Mode::DisplayMath);
+    executor
+        .nest_mut()
+        .push(Mode::DisplayMath)
+        .expect("test mode push");
     crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
     assert_eq!(context.engine.mode, tex_expand::EngineMode::Math);
     assert!(!context.engine.is_inner_mode);
@@ -1421,7 +1430,7 @@ fn dispatch_character_hits_loud_typesetting_stub() {
     let mut context = crate::ExecutionContext::new("texput");
     let mut nest = ModeNest::new();
 
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     assert_eq!(
         dispatch_delivered_token(
             &mut nest,

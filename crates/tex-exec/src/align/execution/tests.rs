@@ -24,7 +24,7 @@ fn state(kind: AlignmentKind) -> AlignState {
 
 fn alignment_nest(kind: AlignmentKind) -> (ModeNest, usize) {
     let mut nest = ModeNest::new();
-    nest.push(alignment_mode(kind));
+    nest.push(alignment_mode(kind)).expect("test mode push");
     let level = nest.depth() - 1;
     nest.current_list_mutation().set_align_state(state(kind));
     (nest, level)
@@ -204,7 +204,7 @@ fn execute_test_row(
     input.begin_alignment();
     input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
     let mut nest = ModeNest::new();
-    nest.push(alignment_mode(kind));
+    nest.push(alignment_mode(kind)).expect("test mode push");
     let align_level = nest.depth() - 1;
     let state = row_state(&mut stores, kind, column_count, loop_start);
     nest.current_list_mutation().set_align_state(state);
@@ -311,7 +311,7 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
     for enclosing in [Mode::InternalVertical, Mode::RestrictedHorizontal] {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut nest = ModeNest::new();
-        nest.push(enclosing);
+        nest.push(enclosing).expect("test mode push");
         nest.current_list_mutation()
             .set_prev_depth(Scaled::from_raw(7));
         append_finished_alignment(

@@ -130,7 +130,7 @@ pub(super) fn scan_math_field(
                 }
                 _ => {
                     let mut temp = ModeNest::new();
-                    temp.push(nest.current_mode());
+                    temp.push(nest.current_mode())?;
                     dispatch_math_token_with_context(&mut temp, traced, input, stores, execution)?;
                     let id = finish_current_math_list(&mut temp, stores);
                     Ok(MathField::SubMlist(id))
@@ -167,7 +167,7 @@ fn scan_math_group_after_open_inner(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
     stores.enter_group_with_kind(GroupKind::Math);
-    nest.push(Mode::Math);
+    nest.push(Mode::Math)?;
     loop {
         sync_engine_state(execution, nest, stores);
         let token = get_x_token_with_context(
@@ -261,7 +261,7 @@ pub(super) fn start_left_group(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
-    nest.push(Mode::Math);
+    nest.push(Mode::Math)?;
     nest.current_list_mutation()
         .push(Node::MathNoad(MathNoad::new(
             NoadKind::LeftDelimiter { delimiter },
@@ -554,7 +554,7 @@ pub(super) fn scan_vcenter_field(
     let (inner, stores) = transaction.parts();
     stores.enter_group_with_kind(GroupKind::VCenter);
     let box_group_depth = stores.execution_group_depth();
-    inner.push(Mode::InternalVertical);
+    inner.push(Mode::InternalVertical)?;
     let everyvbox = stores.tok_param(TokParam::EVERY_VBOX);
     if !stores.tokens(everyvbox).is_empty() {
         input.push_token_list(everyvbox, TokenListReplayKind::EveryVBox);

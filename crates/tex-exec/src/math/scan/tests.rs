@@ -47,7 +47,7 @@ fn delimiter_command_scans_all_twenty_seven_bits() {
 
 fn math_nest() -> ModeNest {
     let mut nest = ModeNest::new();
-    nest.push(Mode::Math);
+    nest.push(Mode::Math).expect("test mode push");
     nest
 }
 

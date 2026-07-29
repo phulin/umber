@@ -570,7 +570,7 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
             let mut control = CanonicalMainControl::tex82_initex(&mut stores);
             control.set_fuel_limit(128).expect("bounded command fuel");
             if mode != Mode::Vertical {
-                control.modes.push(mode);
+                control.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\endcsname\count0=17");
             if observed {
@@ -622,7 +622,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         let mut control = CanonicalMainControl::tex82_initex(&mut stores);
         control.set_fuel_limit(128).expect("bounded command fuel");
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\forcedendv\count0=23");
 
@@ -836,7 +836,9 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     let mut modes = ModeNest::new();
     let mut boxes = ReplayBoxes::default();
     stores.enter_group_with_kind_at_line(GroupKind::AdjustedHBox, 6);
-    modes.push(Mode::RestrictedHorizontal);
+    modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     boxes.active_boxes.push(ActiveReplayBox {
         target: None,
         ships_out: false,
@@ -850,9 +852,9 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
 
     stores.enter_group_with_kind_at_line(GroupKind::MathShift, 7);
-    modes.push(Mode::Math);
+    modes.push(Mode::Math).expect("test mode push");
     stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
-    modes.push(Mode::Math);
+    modes.push(Mode::Math).expect("test mode push");
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
 
@@ -1337,7 +1339,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
     let mut reference_stores = Universe::new_with_plain_catcodes();
     install_test_form(&mut reference_stores);
     let mut reference = pdftex_form_control(&mut reference_stores);
-    reference.modes.push(Mode::Math);
+    reference.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut reference, br"\pdfrefxform 1");
     let state_before = reference_stores.testing_state_hash();
 
@@ -1436,7 +1438,10 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
 
     let mut missing_stores = Universe::new_with_plain_catcodes();
     let mut missing = pdftex_form_control(&mut missing_stores);
-    missing.modes.push(Mode::RestrictedHorizontal);
+    missing
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     register_source(&mut missing, br"\pdfrefxform 99");
     assert!(matches!(
         missing.step(&mut missing_stores),
@@ -1592,7 +1597,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = pdftex_image_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\pdfrefximage 99");
         let state_before = stores.testing_state_hash();
@@ -1624,7 +1629,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         .expect("reference target image");
     assert_eq!(image.id().raw(), 1);
     let mut control = pdftex_image_control(&mut stores);
-    control.modes.push(Mode::Math);
+    control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, br"\pdfrefximage 1");
     let state_before = stores.testing_state_hash();
 
@@ -1699,7 +1704,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = pdftex_annotation_control(&mut stores);
-        control.modes.push(Mode::Horizontal);
+        control.modes.push(Mode::Horizontal).expect("test mode push");
         register_source(&mut control, source);
         assert!(
             matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
@@ -1736,7 +1741,10 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let mut control = pdftex_annotation_control(&mut stores);
-    control.modes.push(Mode::Horizontal);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
     register_source(
         &mut control,
         br"\pdfstartlink height 4pt user{/Subtype /Link}\pdfendlink",
@@ -1826,7 +1834,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_destination_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(
             &mut control,
@@ -1990,7 +1998,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_outline_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(
             &mut control,
@@ -2146,7 +2154,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_snapping_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(
             &mut control,
@@ -2451,7 +2459,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(
             &mut control,
@@ -2597,7 +2605,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
         run_to_end(&mut control, &mut stores);
@@ -2743,7 +2751,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
         );
         let mut control = pdftex_interword_control(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"{\pdfspacefont{\n-space}}X");
         run_to_end(&mut control, &mut stores);
@@ -3142,7 +3150,7 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
             let mut stores = Universe::new_with_plain_catcodes();
             let mut control = canonical_etex_initex(&mut stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode);
+                control.modes.push(mode).expect("test mode push");
             }
             let source = format!(r"\{name}  =  2  101  -202 \count0=17");
             register_source(&mut control, source.as_bytes());
@@ -3289,7 +3297,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut stores);
         if mode != Mode::Vertical {
-            control.modes.push(mode);
+            control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\count0=17\count1=29");
 
@@ -3342,7 +3350,10 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
 fn main_control_error_privilege_and_stop_paths_are_finite() {
     let mut internal_stores = Universe::new_with_plain_catcodes();
     let mut internal = CanonicalMainControl::tex82_initex(&mut internal_stores);
-    internal.modes.push(Mode::InternalVertical);
+    internal
+        .modes
+        .push(Mode::InternalVertical)
+        .expect("test mode push");
     register_source(&mut internal, br"\end\count0=9");
     run_to_end(&mut internal, &mut internal_stores);
     assert_eq!(internal_stores.count(0), 9);

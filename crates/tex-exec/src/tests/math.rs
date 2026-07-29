@@ -609,7 +609,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
     let mut nest = ModeNest::new();
-    nest.push(Mode::Math);
+    nest.push(Mode::Math).expect("test mode push");
     let mut input = InputStack::new(MemoryInput::new("}"));
     let token = tex_expand::get_x_token(
         &mut input,
@@ -637,7 +637,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     let mut nest = ModeNest::new();
-    nest.push(Mode::Math);
+    nest.push(Mode::Math).expect("test mode push");
     let mut input = InputStack::new(MemoryInput::new(r"\endgroup"));
     let token = tex_expand::get_x_token(
         &mut input,
@@ -724,7 +724,7 @@ fn equation_number_uses_a_checkpointable_nested_math_level() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     let mut nest = ModeNest::new();
-    nest.push(Mode::DisplayMath);
+    nest.push(Mode::DisplayMath).expect("test mode push");
 
     crate::math::testing_start_eq_no(&mut nest, &mut stores, UnexpandablePrimitive::EqNo)
         .expect("equation number should enter ordinary math");

@@ -109,7 +109,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
     }));
     let second_alignment = alignment.clone();
     let mut nest = ModeNest::new();
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical).expect("test mode push");
     nest.current_list_mutation().set_prev_depth(sp(10));
 
     finish_display_alignment(
@@ -164,7 +164,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
 
 fn horizontal_nest(mode: Mode) -> ModeNest {
     let mut nest = ModeNest::new();
-    nest.push(mode);
+    nest.push(mode).expect("test mode push");
     nest
 }
 

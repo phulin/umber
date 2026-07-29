@@ -174,7 +174,7 @@ fn enter_math_after_paragraph(
         Mode::DisplayMath
     } else {
         Mode::Math
-    });
+    })?;
     if let Some((_, _, _, active_directions)) = interrupt {
         nest.current_list_mutation()
             .set_display_interrupt(DisplayInterrupt { active_directions });

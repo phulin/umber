@@ -16,7 +16,7 @@ fn noalign_close_resumes_row_lookahead_in_both_modes() {
         stores.set_count(0, 3);
         stores.enter_group_with_kind(GroupKind::Align);
         let mut nest = ModeNest::new();
-        nest.push(alignment_mode(kind));
+        nest.push(alignment_mode(kind)).expect("test mode push");
         let alignment_mode = nest.current_mode();
         let mut input = InputStack::new(MemoryInput::new(source));
         input.begin_alignment();

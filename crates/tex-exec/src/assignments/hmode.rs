@@ -445,7 +445,7 @@ fn execute_insert(
     stores.enter_group_with_kind(tex_state::GroupKind::Insert);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
-    inner.push(Mode::InternalVertical);
+    inner.push(Mode::InternalVertical)?;
     normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
@@ -525,7 +525,7 @@ fn execute_vadjust(
     stores.enter_group_with_kind(tex_state::GroupKind::AdjustedHBox);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
-    inner.push(Mode::InternalVertical);
+    inner.push(Mode::InternalVertical)?;
     normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
@@ -1659,7 +1659,7 @@ fn scan_hlist_group(
     }
     stores.enter_group_with_kind(tex_state::GroupKind::Disc);
     let mut inner = ModeNest::new();
-    inner.push(Mode::RestrictedHorizontal);
+    inner.push(Mode::RestrictedHorizontal)?;
     let box_group_depth = stores.execution_group_depth();
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     let level = crate::assignments::commit_current_list(&mut inner, stores)?;

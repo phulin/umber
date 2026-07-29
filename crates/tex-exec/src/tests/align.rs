@@ -373,7 +373,7 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
     let command = TracedTokenWord::pack(halign, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     let mut context = crate::ExecutionContext::new("texput");
 
     assert_eq!(
@@ -422,7 +422,7 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     let command = TracedTokenWord::pack(hrule, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal).expect("test mode push");
     let mut context = crate::ExecutionContext::new("texput");
 
     assert_eq!(
@@ -464,7 +464,8 @@ fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recover
     let command = TracedTokenWord::pack(halign, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
-    nest.push(Mode::RestrictedHorizontal);
+    nest.push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     stores.enter_group_with_kind(tex_state::GroupKind::HBox);
     let mut context = crate::ExecutionContext::new("texput");
 
@@ -512,7 +513,8 @@ fn bottom_level_halign_recovery_drops_command_without_growing_input_frames() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\halign"));
     let mut nest = ModeNest::new();
-    nest.push(Mode::RestrictedHorizontal);
+    nest.push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
     let mut context = crate::ExecutionContext::new("texput");
     let mut delivered = 0;
     let mut maximum_depth = input.depth();
@@ -1137,7 +1139,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     input.push_source(MemoryInput::new("b&c\\cr}"));
     let input_summary = input.publication_summary(&mut stores);
     let mut nest = ModeNest::new();
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical).expect("test mode push");
     nest.current_list_mutation().set_align_state(state);
 
     let cell = unset_for_test(
@@ -1807,7 +1809,7 @@ fn valign_column_extent_includes_cell_depth() {
 fn fin_align_restores_saved_aux_instead_of_recomputing_it_from_set_nodes() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut nest = ModeNest::new();
-    nest.push(Mode::InternalVertical);
+    nest.push(Mode::InternalVertical).expect("test mode push");
     nest.current_list_mutation().set_prev_depth(sp(1));
 
     crate::align::append_finished_alignment(
