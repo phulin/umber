@@ -189,8 +189,10 @@ impl CommandProcessor<'_> {
             if matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
-            ) && !command.spelling().semantic_token().is_frozen_end_template()
-            {
+            ) && matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            ) {
                 return Ok(Some(AlignmentDelivery::Event(
                     AlignmentDeliveryEvent::EndTemplate(command),
                 )));
@@ -3169,6 +3171,46 @@ mod tests {
                 .expect("backup is live"),
             crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::EndTemplate(_))
         ));
+    }
+
+    #[test]
+    fn end_template_alias_expands_without_starting_a_v_template() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(18);
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(alignment, templates())
+            .expect("cell begins");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let alias = universe.intern("endt").symbol();
+        universe.set_meaning(
+            alias,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate),
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Cs(alias),
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let crate::AlignmentDelivery::Command(endv) = processor
+            .get_x_alignment_delivery(false)
+            .expect("alias expands")
+            .expect("input is live")
+        else {
+            panic!("an end-template alias is not an intercepted delimiter");
+        };
+        assert!(matches!(endv.meaning(), Meaning::EndV));
+        assert!(endv.spelling().semantic_token().is_frozen_endv());
+        assert_eq!(processor.command.alignment.align_state, CELL_ALIGN_STATE);
+        assert!(processor.command.alignment.active_cell.is_some());
     }
 
     /// TeX82 §342's `@<If an alignment entry has just ended, take appropriate
