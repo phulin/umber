@@ -947,6 +947,27 @@ mod tests {
     }
 
     #[test]
+    fn def_family_addresses_dispatch_by_profile() {
+        for (primitive, tex82, etex) in [
+            (UnexpandablePrimitive::TextFont, 25_583, 25_588),
+            (UnexpandablePrimitive::ScriptFont, 25_599, 25_604),
+            (UnexpandablePrimitive::ScriptScriptFont, 25_615, 25_620),
+        ] {
+            let meaning = Meaning::UnexpandablePrimitive(primitive);
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::TEX82, meaning),
+                ("def_family".into(), Some(tex82)),
+                "TeX82 §230 must retain its unshifted math-font base"
+            );
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::ETEX26, meaning),
+                ("def_family".into(), Some(etex)),
+                "e-TeX [17.230] shifts the preceding eqtb layout by five"
+            );
+        }
+    }
+
+    #[test]
     fn tex82_diagnostics_use_shared_xray_selectors() {
         let mut universe = tex_state::Universe::new();
 

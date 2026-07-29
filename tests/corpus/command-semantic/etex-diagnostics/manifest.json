@@ -37,12 +37,14 @@
       "projection": {
         "kind": "observations",
         "kinds": ["command"],
-        "commands": ["def_code"],
+        "commands": ["def_code", "def_family"],
         "count_registers": []
       },
       "expected": [
         "command:raw:cs:catcode:def_code:25636",
-        "command:expanded:cs:catcode:def_code:25636"
+        "command:expanded:cs:catcode:def_code:25636",
+        "command:raw:cs:textfont:def_family:25588",
+        "command:expanded:cs:textfont:def_family:25588"
       ],
       "expectation": { "kind": "pass" }
     },

@@ -76,6 +76,19 @@ const fn def_code_base(dialect: CommandDialect) -> i64 {
     }
 }
 
+/// Build-specific `math_font_base` selected by the observed engine layout.
+///
+/// TeX82 §230 places this after the token and box banks. e-TeX 2.6
+/// etex.ch [17.230] inserts `\everyeof` plus four variable-length penalty
+/// cells before the box bank, shifting all three `def_family` selectors by
+/// five without changing their engine meaning.
+const fn math_font_base(dialect: CommandDialect) -> i64 {
+    match dialect {
+        CommandDialect::Etex26 => 25_588,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 25_583,
+    }
+}
+
 /// Canonical TeX82/e-TeX/pdfTeX command identity for a delivered
 /// `UnexpandablePrimitive`. See the module documentation for the ground
 /// truth each arm is based on.
@@ -313,11 +326,11 @@ pub(crate) fn unexpandable_primitive_identity(
         P::MathChar => ("math_char_num".into(), Some(0)),
         P::Delimiter => ("delim_num".into(), Some(0)),
         // `def_family`'s selector is `math_font_base` (+`script_size`=16,
-        // +`script_script_size`=32), confirmed by the same live probe as the
-        // `def_code` family above.
-        P::TextFont => ("def_family".into(), Some(25_583)),
-        P::ScriptFont => ("def_family".into(), Some(25_599)),
-        P::ScriptScriptFont => ("def_family".into(), Some(25_615)),
+        // +`script_script_size`=32). The base is dialect-specific because
+        // e-TeX etex.ch [17.230] extends the preceding eqtb regions.
+        P::TextFont => ("def_family".into(), Some(math_font_base(dialect))),
+        P::ScriptFont => ("def_family".into(), Some(math_font_base(dialect) + 16)),
+        P::ScriptScriptFont => ("def_family".into(), Some(math_font_base(dialect) + 32)),
         // `math_comp`'s selector is the noad type: unset_node=13, so
         // ord_noad=16 through inner_noad=23, then radical_noad=24,
         // fraction_noad=25, under_noad=26, over_noad=27.
