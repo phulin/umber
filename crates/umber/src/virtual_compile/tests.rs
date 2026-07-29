@@ -1,6 +1,7 @@
 use crate::FontContainer;
 use std::path::Path;
 use tex_incr::RevisionId;
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::{Universe, World};
 
 use super::*;
@@ -2463,6 +2464,83 @@ fn every_engine_mode_has_source_and_schema_10_format_artifact_equivalence() {
         assert!(
             !formatted.dvi.is_empty(),
             "{} emitted no DVI",
+            engine.name()
+        );
+    }
+}
+
+#[test]
+fn virtual_initex_installs_the_canonical_profile_registry() {
+    for engine in [
+        EngineMode::Tex82,
+        EngineMode::ETex,
+        EngineMode::PdfTex,
+        EngineMode::Latex,
+        EngineMode::PdfLatex,
+    ] {
+        let mut stores = Universe::with_world(World::memory());
+        engine.prepare_initex(&mut stores);
+
+        let iftrue = stores.intern("iftrue");
+        assert_eq!(
+            stores.meaning(iftrue),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
+            "{} TeX82 registry",
+            engine.name()
+        );
+        assert_eq!(
+            stores.primitive_meaning("ifdefined").is_some(),
+            !matches!(engine, EngineMode::Tex82),
+            "{} e-TeX registry",
+            engine.name()
+        );
+        assert_eq!(
+            stores.primitive_meaning("pdfprimitive").is_some(),
+            matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+            "{} pdfTeX registry",
+            engine.name()
+        );
+    }
+}
+
+#[test]
+fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
+    for engine in [
+        EngineMode::Tex82,
+        EngineMode::ETex,
+        EngineMode::PdfTex,
+        EngineMode::Latex,
+        EngineMode::PdfLatex,
+    ] {
+        let mut stores = Universe::with_world(World::memory());
+        let names = ["iftrue", "ifdefined", "pdfprimitive"];
+        for name in names {
+            let symbol = stores.intern(name);
+            stores.set_meaning(symbol, Meaning::Relax);
+        }
+
+        engine.install_after_format(&mut stores);
+
+        for name in names {
+            let symbol = stores.intern(name);
+            assert_eq!(
+                stores.meaning(symbol),
+                Meaning::Relax,
+                "{} must preserve restored \\{name}",
+                engine.name()
+            );
+        }
+        assert!(stores.primitive_meaning("iftrue").is_some());
+        assert_eq!(
+            stores.primitive_meaning("ifdefined").is_some(),
+            !matches!(engine, EngineMode::Tex82),
+            "{} e-TeX restored registry",
+            engine.name()
+        );
+        assert_eq!(
+            stores.primitive_meaning("pdfprimitive").is_some(),
+            matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+            "{} pdfTeX restored registry",
             engine.name()
         );
     }

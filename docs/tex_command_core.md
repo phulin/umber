@@ -3668,10 +3668,12 @@ these exact normal-dependency edges:
 - `tex-incr -> tex-expand, tex-lex` remains in its legacy delivery,
   `InputStack`, expansion-context, and checkpoint integration.
   `umber2-johp.26` owns that cutover.
-- `umber -> tex-expand, tex-lex` remains in direct/CLI and virtual compilation,
-  `lex-dump`/`expand-dump`, the profiling runner, LaTeX compatibility
-  registration, and legacy resolver/resource adapters. Canonical TeX82,
-  e-TeX, and pdfTeX session/profile setup calls `tex-command` directly;
+- `umber -> tex-expand, tex-lex` remains in direct/CLI and virtual execution,
+  `lex-dump`/`expand-dump`, the profiling runner, the Umber-specific LaTeX
+  compatibility registry, and legacy resolver/resource adapters. Virtual
+  fresh-INITEX and format-restore policy now calls the canonical TeX82, e-TeX,
+  and pdfTeX registries in `tex-command` directly while preserving restored
+  live meanings; the broader virtual executor cutover remains separate.
   `umber2-johp.24`,
   `umber2-johp.25`, and `umber2-johp.26` own the production session cutovers;
   `umber2-johp.15` owns final adapter and crate deletion after parity.

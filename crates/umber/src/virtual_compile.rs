@@ -386,23 +386,23 @@ impl EngineMode {
         match self {
             Self::Tex82 => {}
             Self::ETex => {
-                tex_expand::install_etex_expandable_primitives(stores);
+                tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
             }
             Self::PdfTex => {
-                tex_expand::install_etex_expandable_primitives(stores);
+                tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::pdftex::install_pdftex_layer(stores);
                 crate::pdftex::initialize_pdftex_parameter_defaults(stores);
                 stores.enable_pdf_output();
             }
             Self::Latex => {
-                tex_expand::install_etex_expandable_primitives(stores);
+                tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::install_latex_compatibility_layer(stores);
             }
             Self::PdfLatex => {
-                tex_expand::install_etex_expandable_primitives(stores);
+                tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::pdftex::install_pdftex_layer(stores);
                 crate::pdftex::initialize_pdftex_parameter_defaults(stores);
@@ -416,12 +416,12 @@ impl EngineMode {
     pub fn install_after_format(self, stores: &mut Universe) {
         match self {
             Self::Tex82 => {
-                tex_expand::register_expandable_primitives(stores);
+                tex_command::register_tex82_expandable_primitives(stores);
                 tex_exec::register_unexpandable_primitives(stores);
             }
             Self::ETex => {
-                tex_expand::register_expandable_primitives(stores);
-                tex_expand::register_etex_expandable_primitives(stores);
+                tex_command::register_tex82_expandable_primitives(stores);
+                tex_command::register_etex_expandable_primitives(stores);
                 tex_exec::register_unexpandable_primitives(stores);
                 tex_exec::register_etex_unexpandable_primitives(stores);
             }
