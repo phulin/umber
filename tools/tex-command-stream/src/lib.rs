@@ -35,6 +35,7 @@ pub mod compare;
 pub mod documents;
 pub mod group;
 pub mod report;
+pub mod semantic;
 
 pub use compare::{
     AlignmentTuning, Comparison, DEFAULT_ANCHOR_SCAN, DEFAULT_REALIGN_CONFIRMATION,
