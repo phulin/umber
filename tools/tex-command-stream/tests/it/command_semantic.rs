@@ -984,6 +984,11 @@ fn observed_tokens_text(tokens: &[ObservedToken]) -> String {
 /// filters operate on that canonical transition, not the internal reason.
 fn canonical_alignment_transition(transition: &str) -> &str {
     match transition {
+        // Raw brace delivery retains its command-owned reason internally,
+        // while tex-oracle schema v1 exposes TeX82 §309's `align_state`
+        // mutation as the canonical `state_change` transition. This is the
+        // same lowering performed by the full command-stream translator.
+        "begin_group" | "end_group" => "state_change",
         "missing_parameter"
         | "extra_parameter"
         | "missing_left_brace"
@@ -992,6 +997,19 @@ fn canonical_alignment_transition(transition: &str) -> &str {
         | "outer_validity" => "recovery",
         transition => transition,
     }
+}
+
+#[test]
+fn semantic_alignment_projection_lowers_raw_braces_to_state_changes() {
+    assert_eq!(
+        canonical_alignment_transition("begin_group"),
+        "state_change"
+    );
+    assert_eq!(canonical_alignment_transition("end_group"), "state_change");
+    assert_eq!(
+        canonical_alignment_transition("backup_correction"),
+        "backup_correction"
+    );
 }
 
 fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<String> {

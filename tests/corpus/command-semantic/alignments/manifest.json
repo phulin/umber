@@ -156,7 +156,11 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
-          785
+          309,
+          325,
+          777,
+          785,
+          800
         ]
       },
       "projection": {
@@ -180,14 +184,7 @@
         "alignment:state_change:999999"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-4lsp",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "alignment:state_change:-999999",
-          "actual": "alignment:state_change:1000000"
-        }
+        "kind": "pass"
       }
     },
     {
@@ -198,7 +195,11 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
-          785
+          309,
+          325,
+          777,
+          785,
+          800
         ]
       },
       "projection": {
@@ -221,14 +222,7 @@
         "alignment:state_change:999999"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-4lsp",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "alignment:state_change:-999999",
-          "actual": "alignment:state_change:1000000"
-        }
+        "kind": "pass"
       }
     },
     {
