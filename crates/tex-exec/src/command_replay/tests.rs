@@ -3662,25 +3662,129 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         observations.0
     );
     assert_eq!(
-        control
-            .step(&mut universe)
-            .expect("inserted paragraph ends the outer horizontal list"),
-        ReplayStep::Continue
+        control.current_mode(),
+        crate::Mode::RestrictedHorizontal,
+        "TeX82 §§768-769 keep an \\halign cell in restricted horizontal mode"
     );
-    // TeX82 §1051's `privileged`: the retried stop is delivered below outer
-    // vertical mode -- inside the alignment -- so it reports an illegal case
-    // and leaves the job running until the source runs out.
+    assert!(
+        observations.0.windows(5).any(|events| matches!(
+            events,
+            [
+                CommandObservation::Diagnostic(diagnostic),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+                CommandObservation::Input(inserted),
+                CommandObservation::Recovery(inserted_recovery),
+            ] if diagnostic.diagnostic == "off_save_replay"
+                && backup.transition == InputTransition::Backup
+                && recovery.kind == RecoveryKind::Backup
+                && inserted.transition == InputTransition::Recovery
+                && inserted_recovery.kind == RecoveryKind::InsertedToken
+        )),
+        "unexpected stop recovery: {:?}",
+        observations.0
+    );
+    assert_eq!(terminal_text(&universe), "\n! Missing } inserted.\n");
+    observations.0.clear();
     assert_eq!(
         control
-            .step(&mut universe)
-            .expect("stop is not privileged inside the alignment"),
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("inserted off_save closer"),
         ReplayStep::Continue
     );
-    assert!(terminal_text(&universe).contains("You can't use `\\end'"));
+    assert!(observations.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Command(delivery)
+            if delivery.boundary == CommandDeliveryBoundary::Raw
+                && delivery.spelling == ObservedToken::Character {
+                    character: '}',
+                    catcode: Catcode::EndGroup,
+                }
+    )));
+}
+
+#[test]
+fn canonical_alignment_cell_modes_are_observer_independent_and_finite() {
+    fn enter_cell(
+        source: &[u8],
+        observed: bool,
+    ) -> (CommandReplayControl, Universe, ObservationRecorder) {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+        for _ in 0..16 {
+            if control
+                .active_alignment
+                .as_ref()
+                .is_some_and(|alignment| alignment.cell_open)
+            {
+                return (control, universe, observations);
+            }
+            let step = if observed {
+                control.step_with_observer(&mut universe, &mut observations)
+            } else {
+                control.step(&mut universe)
+            };
+            assert_eq!(step.expect("alignment setup"), ReplayStep::Continue);
+        }
+        panic!("alignment cell did not open within finite fuel");
+    }
+
+    // TeX82 §§768-769: init_row selects -hmode for \halign and -vmode for
+    // \valign, and init_span preserves that mode for the cell semantic level.
+    for (source, expected) in [
+        (
+            br"\halign{#\cr{\end".as_slice(),
+            crate::Mode::RestrictedHorizontal,
+        ),
+        (
+            br"\valign{#\cr{\end".as_slice(),
+            crate::Mode::InternalVertical,
+        ),
+    ] {
+        let (plain, _, _) = enter_cell(source, false);
+        let (observed, _, _) = enter_cell(source, true);
+        assert_eq!(plain.current_mode(), expected);
+        assert_eq!(observed.current_mode(), expected);
+    }
+
+    let (mut plain, mut plain_universe, _) = enter_cell(br"\halign{#\cr{\end", false);
+    let (mut observed, mut observed_universe, mut observations) =
+        enter_cell(br"\halign{#\cr{\end", true);
+    observations.0.clear();
+    for _ in 0..8 {
+        if !terminal_text(&plain_universe).is_empty() {
+            break;
+        }
+        assert_eq!(
+            plain
+                .step(&mut plain_universe)
+                .expect("plain stop recovery"),
+            ReplayStep::Continue
+        );
+    }
+    for _ in 0..8 {
+        if !terminal_text(&observed_universe).is_empty() {
+            break;
+        }
+        assert_eq!(
+            observed
+                .step_with_observer(&mut observed_universe, &mut observations)
+                .expect("observed stop recovery"),
+            ReplayStep::Continue
+        );
+    }
+    assert_eq!(observed.current_mode(), plain.current_mode());
     assert_eq!(
-        control.step(&mut universe).expect("input runs out"),
-        ReplayStep::EndOfInput
+        terminal_text(&observed_universe),
+        terminal_text(&plain_universe)
     );
+    assert!(observations.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Diagnostic(diagnostic)
+            if diagnostic.diagnostic == "off_save_replay"
+    )));
 }
 
 #[test]

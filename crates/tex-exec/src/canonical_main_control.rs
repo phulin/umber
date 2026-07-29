@@ -9041,7 +9041,10 @@ fn replay_alignment_row_mode(kind: AlignmentKind) -> Mode {
 
 fn replay_alignment_cell_mode(kind: AlignmentKind) -> Mode {
     match kind {
-        AlignmentKind::HAlign => Mode::Horizontal,
+        // TeX82 §768: `init_row` changes an \halign from internal vertical
+        // to restricted horizontal mode, and §769's `init_span` preserves
+        // that mode on the cell's fresh semantic level.
+        AlignmentKind::HAlign => Mode::RestrictedHorizontal,
         AlignmentKind::VAlign => Mode::InternalVertical,
     }
 }
@@ -9087,7 +9090,7 @@ fn capture_replay_alignment_cell(
     }
 
     // TeX82 §1131's `do_endv` runs `end_graf` before §791's `fin_col`.
-    // This is a no-op for an \halign cell's unrestricted horizontal level,
+    // This is a no-op for an \halign cell's restricted horizontal level,
     // but a \valign cell is internal vertical and may have a paragraph open
     // above it. Close that paragraph before popping and packaging the cell;
     // otherwise the paragraph is mistaken for the cell, leaving the actual
@@ -9100,7 +9103,11 @@ fn capture_replay_alignment_cell(
     // but §815's negative pretolerance makes its immediate transition into
     // the hyphenating pass certain. Publish §919's one-way trie lifecycle at
     // this canonical boundary, before `align_peek` fetches what follows.
-    if modes.current_mode() == Mode::Horizontal && stores.int_param(IntParam::PRETOLERANCE) < 0 {
+    if matches!(
+        modes.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) && stores.int_param(IntParam::PRETOLERANCE) < 0
+    {
         stores.close_hyphenation_patterns();
     }
     let mut cell = crate::assignments::commit_current_list(modes, stores)?;
