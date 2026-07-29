@@ -960,7 +960,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
     let mut control = pdftex_image_control(&mut stores);
     register_source(
         &mut control,
-        br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox image.pdf",
+        br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
     );
     let state_before = stores.testing_state_hash();
 
@@ -1034,7 +1034,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
     let mut control = pdftex_image_control(&mut stores);
     register_source(
         &mut control,
-        br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox immediate.pdf",
+        br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
     );
     let state_before = stores.testing_state_hash();
 
