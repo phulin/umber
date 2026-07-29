@@ -15,7 +15,6 @@ tex82_oracle_area=tex82-oracle
 etex26_oracle_area=etex26-oracle
 pdftex14027_oracle_area=pdftex14027-oracle
 oracle_regeneration_manifest=tests/oracle-regeneration-manifest.txt
-tex82_committed_fixture=tests/corpus/command/tex82/command-transitions-v1
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -104,9 +103,14 @@ Reference tools:
     etex26      compatibility+extended-eight-bit
     pdftex14027 initex-etex-eight-bit
     all         canonical
-  The committed fixture selector tex82/command-transitions-v1 binds the
-  focused TeX82 transition source, schema-v1 stream, and ordinary artifacts.
-  It is valid only with the explicit tex82/initex-eight-bit oracle selection.
+  Each committed selector under tests/corpus/command/tex82 (one row per
+  fixture in tests/oracle-regeneration-manifest.txt, e.g.
+  tex82/command-transitions-v1) binds one one-or-few-source minifixture's
+  schema-v1 stream and ordinary artifacts. --fixture is valid only with the
+  explicit tex82/initex-eight-bit oracle selection; --bootstrap-fixture
+  additionally re-checks the derived candidate against the tex82 minifixture
+  regeneration budget (see crates/tex-oracle/src/minifixture_budget.rs) so a
+  fixture that grew back into a document is rejected before it is committed.
   The all/canonical invocation is the cross-engine transparency gate. It
   validates the pinned contract and source manifests, runs every engine's
   clean/instrumented transparency checks, and writes one aggregate record.
@@ -591,6 +595,14 @@ oracle_fixture_contract_row() {
     "$oracle_regeneration_manifest"
 }
 
+# Every registered tex82 command fixture selector, in contract order. This is
+# the whole enumeration mechanism: a fixture becomes selectable the moment its
+# fixture/fixture-audit rows land in the contract, with no other script or
+# registry to update.
+tex82_fixture_selectors() {
+  awk '$1 == "fixture" && $3 == "tex82" { print $2 }' "$oracle_regeneration_manifest"
+}
+
 validate_oracle_source_manifest() {
   local manifest_path="$1"
   local archive_count=0
@@ -708,44 +720,52 @@ validate_oracle_contract() {
   done < <(awk '$1 == "engine" { print }' "$oracle_regeneration_manifest")
   [[ "$row_count" -eq 3 ]] ||
     die "oracle regeneration contract must contain exactly three engines"
-  [[ "$(awk '$1 == "fixture" && $2 == "tex82/command-transitions-v1" {
-      count++
-    } END { print count + 0 }' "$oracle_regeneration_manifest")" -eq 1 ]] ||
-    die 'oracle regeneration contract must declare the representative fixture exactly once'
-  local fixture_record fixture_selector fixture_engine fixture_profile
+
+  # Every committed tex82 command fixture is validated the same way,
+  # generically: this loop is the whole selector list, so registering another
+  # split fixture needs only a fixture/fixture-audit pair in the contract, not
+  # a code change here. `$3` (the fixture currently being bootstrapped, if
+  # any) is the one committed manifest allowed to disagree with the contract's
+  # pinned digest, because bootstrapping is what is about to update it.
+  local bootstrap_selector="${3:-}"
+  local fixture_count=0
+  local fixture_selector fixture_engine fixture_profile
   local fixture_manifest fixture_manifest_digest fixture_extra
-  fixture_record="$(oracle_fixture_contract_row tex82/command-transitions-v1)"
-  read -r _ fixture_selector fixture_engine fixture_profile fixture_manifest \
-    fixture_manifest_digest fixture_extra <<<"$fixture_record"
-  [[ -z "${fixture_extra:-}" &&
-      "$fixture_engine" == tex82 &&
-      "$fixture_profile" == initex-eight-bit &&
-      "$fixture_manifest" == \
-        tests/corpus/command/tex82/command-transitions-v1/manifest.json ]] ||
-    die 'representative fixture regeneration identity drift'
-  if [[ "$bootstrap_fixture" -eq 0 ]]; then
-    [[ -f "$fixture_manifest" &&
-        "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
-      die 'representative committed fixture manifest identity drift'
-  fi
-  [[ "$(awk '$1 == "fixture-audit" &&
-      $2 == "tex82/command-transitions-v1" {
-      count++
-    } END { print count + 0 }' "$oracle_regeneration_manifest")" -eq 1 ]] ||
-    die 'oracle regeneration contract must declare the fixture audit exactly once'
-  local audit_record audit_selector semantic_matrix semantic_digest
-  local audit_matrix audit_digest audit_extra
-  audit_record="$(awk '$1 == "fixture-audit" &&
-    $2 == "tex82/command-transitions-v1" { print; exit }' \
+  while read -r _ fixture_selector fixture_engine fixture_profile fixture_manifest \
+    fixture_manifest_digest fixture_extra; do
+    [[ -n "$fixture_selector" ]] || continue
+    fixture_count=$((fixture_count + 1))
+    [[ -z "${fixture_extra:-}" &&
+        "$fixture_engine" == tex82 &&
+        "$fixture_profile" == initex-eight-bit ]] ||
+      die "${fixture_selector} has a noncanonical TeX82 fixture regeneration identity"
+    [[ "$fixture_manifest" == "$(tex82_fixture_directory "$fixture_selector")/manifest.json" ]] ||
+      die "${fixture_selector} pins manifest ${fixture_manifest} instead of $(tex82_fixture_directory "$fixture_selector")/manifest.json"
+    if [[ "$bootstrap_fixture" -eq 0 || "$fixture_selector" != "$bootstrap_selector" ]]; then
+      [[ -f "$fixture_manifest" &&
+          "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
+        die "${fixture_selector} committed fixture manifest identity drift"
+    fi
+    local audit_record audit_selector semantic_matrix semantic_digest
+    local audit_matrix audit_digest audit_extra
+    audit_record="$(tex82_fixture_matrix_row "$fixture_selector")"
+    [[ -n "$audit_record" ]] || die "${fixture_selector} has no fixture-audit contract row"
+    read -r _ audit_selector semantic_matrix semantic_digest audit_matrix \
+      audit_digest audit_extra <<<"$audit_record"
+    [[ -z "${audit_extra:-}" &&
+        -f "$semantic_matrix" &&
+        -f "$audit_matrix" &&
+        "$(sha256_file "$semantic_matrix")" == "$semantic_digest" &&
+        "$(sha256_file "$audit_matrix")" == "$audit_digest" ]] ||
+      die "${fixture_selector} fixture audit identity drift"
+  done < <(awk '$1 == "fixture" { print }' "$oracle_regeneration_manifest")
+  [[ "$fixture_count" -ge 1 ]] ||
+    die 'oracle regeneration contract must declare at least one TeX82 command fixture'
+  local audit_row_count
+  audit_row_count="$(awk '$1 == "fixture-audit" { count++ } END { print count + 0 }' \
     "$oracle_regeneration_manifest")"
-  read -r _ audit_selector semantic_matrix semantic_digest audit_matrix \
-    audit_digest audit_extra <<<"$audit_record"
-  [[ -z "${audit_extra:-}" &&
-      -f "$semantic_matrix" &&
-      -f "$audit_matrix" &&
-      "$(sha256_file "$semantic_matrix")" == "$semantic_digest" &&
-      "$(sha256_file "$audit_matrix")" == "$audit_digest" ]] ||
-    die 'representative fixture audit identity drift'
+  [[ "$audit_row_count" -eq "$fixture_count" ]] ||
+    die 'oracle regeneration contract has a fixture-audit row with no matching fixture'
   [[ -n "$(oracle_contract_row "$selected_engine")" || "$selected_engine" == all ]] ||
     die "unknown oracle engine: ${selected_engine}"
 }
@@ -802,6 +822,16 @@ validate_oracle_build_record() {
   [[ "$trace_count" -gt 0 ]] || die "${engine} build emitted no semantic traces"
 }
 
+tex82_fixture_directory() {
+  printf 'tests/corpus/command/%s\n' "$1"
+}
+
+tex82_fixture_matrix_row() {
+  local fixture="$1"
+  awk -v selector="$fixture" '$1 == "fixture-audit" && $2 == selector { print; exit }' \
+    "$oracle_regeneration_manifest"
+}
+
 validate_committed_oracle_fixture() {
   local fixture="$1"
   local compare_live="${2:-0}"
@@ -809,43 +839,41 @@ validate_committed_oracle_fixture() {
   local live_dir
   local candidate_events
   local expected_header
-  local source
+  local source channel_path channel semantic_matrix audit_matrix
+  local audit_record audit_selector semantic_digest audit_digest audit_extra
 
   [[ -n "$(oracle_fixture_contract_row "$fixture")" ]] ||
     die "unknown committed oracle fixture: ${fixture}"
-  fixture_dir="${repo_root}/${tex82_committed_fixture}"
-  live_dir="${target_dir}/tex82-oracle/transitions/clean"
+  fixture_dir="${repo_root}/$(tex82_fixture_directory "$fixture")"
+  live_dir="${target_dir}/tex82-oracle/${fixture#tex82/}/clean"
+  audit_record="$(tex82_fixture_matrix_row "$fixture")"
+  [[ -n "$audit_record" ]] || die "${fixture} has no fixture-audit contract row"
+  read -r _ audit_selector semantic_matrix semantic_digest audit_matrix \
+    audit_digest audit_extra <<<"$audit_record"
 
   run_command "Validating committed oracle fixture ${fixture}" \
     cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
       --fixture "$fixture_dir" \
-      --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
-      --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
+      --semantic-matrix "$semantic_matrix" \
+      --audit-matrix "$audit_matrix"
 
   [[ "$compare_live" -eq 1 ]] || return 0
   for source in "${fixture_dir}"/sources/*; do
     cmp -s "$source" "${live_dir}/$(basename "$source")" ||
       die "${fixture} focused source drift: $(basename "$source")"
   done
-  cmp -s "${fixture_dir}/outputs/terminal.txt" "${live_dir}/terminal.txt" ||
-    die "${fixture} terminal observation drift"
-  cmp -s "${fixture_dir}/outputs/ordinary.log" "${live_dir}/ordinary.log" ||
-    die "${fixture} normalized log observation drift"
-  cmp -s "${fixture_dir}/outputs/status.txt" "${live_dir}/status.txt" ||
-    die "${fixture} status observation drift"
-  cmp -s "${fixture_dir}/outputs/transitions.dvi" \
-    "${live_dir}/transitions.dvi" ||
-    die "${fixture} DVI observation drift"
-  cmp -s "${fixture_dir}/outputs/transitions-effects.out" \
-    "${live_dir}/transitions-effects.out" ||
-    die "${fixture} generated-effect observation drift"
+  for channel_path in "${fixture_dir}"/outputs/*; do
+    channel="$(basename "$channel_path")"
+    cmp -s "$channel_path" "${live_dir}/${channel}" ||
+      die "${fixture} ${channel} observation drift"
+  done
 
   candidate_events="$(mktemp)"
   expected_header="$(sed -n '1p' "${fixture_dir}/events.jsonl")"
   {
     printf '%s\n' "$expected_header"
     sed -n '2,$p' \
-      "${target_dir}/tex82-oracle/transitions/instrumentable/tex82-events.jsonl"
+      "${target_dir}/tex82-oracle/${fixture#tex82/}/instrumentable/tex82-events.jsonl"
   } >"$candidate_events"
   cmp -s "${fixture_dir}/events.jsonl" "$candidate_events" || {
     rm -f "$candidate_events"
@@ -856,9 +884,16 @@ validate_committed_oracle_fixture() {
 
 bootstrap_tex82_oracle_fixture() {
   local fixture="$1"
-  local fixture_dir="${repo_root}/${tex82_committed_fixture}"
+  local fixture_dir
+  fixture_dir="${repo_root}/$(tex82_fixture_directory "$fixture")"
   local fixture_parent fixture_name candidate_dir backup_dir
   local contract_candidate manifest_digest
+  local audit_record audit_selector semantic_matrix semantic_digest audit_matrix
+  local audit_digest audit_extra
+  audit_record="$(tex82_fixture_matrix_row "$fixture")"
+  [[ -n "$audit_record" ]] || die "${fixture} has no fixture-audit contract row"
+  read -r _ audit_selector semantic_matrix semantic_digest audit_matrix \
+    audit_digest audit_extra <<<"$audit_record"
   fixture_parent="$(dirname "$fixture_dir")"
   fixture_name="$(basename "$fixture_dir")"
   candidate_dir="$(mktemp -d "${fixture_parent}/.${fixture_name}.bootstrap.XXXXXX")"
@@ -867,16 +902,15 @@ bootstrap_tex82_oracle_fixture() {
   run_command "Deriving ${fixture} candidate from pinned TeX82 oracle" \
     cargo run -q -p tex-oracle --bin tex-oracle-bootstrap -- \
       --template "$fixture_dir" \
-      --live-directory "${target_dir}/tex82-oracle/transitions/clean" \
-      --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
-      --event-stream "${target_dir}/tex82-oracle/transitions/instrumentable/tex82-events.jsonl" \
+      --live-directory "${target_dir}/tex82-oracle/${fixture#tex82/}/clean" \
+      --event-stream "${target_dir}/tex82-oracle/${fixture#tex82/}/instrumentable/tex82-events.jsonl" \
       --build-record "${target_dir}/tex82-oracle/build-record.txt" \
       --output "$candidate_dir"
-  run_command "Validating derived ${fixture} candidate" \
+  run_command "Validating derived ${fixture} candidate (including the minifixture budget)" \
     cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
       --fixture "$candidate_dir" \
-      --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
-      --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
+      --semantic-matrix "$semantic_matrix" \
+      --audit-matrix "$audit_matrix"
 
   manifest_digest="$(sha256_file "${candidate_dir}/manifest.json")"
   awk -v selector="$fixture" -v digest="$manifest_digest" '
@@ -947,21 +981,25 @@ regen_oracle() {
   esac
   [[ "$profile" == "$expected_profile" ]] ||
     die "oracle ${engine} requires --profile ${expected_profile}"
-  if [[ -n "$fixture" &&
-        "${engine}:${profile}:${fixture}" != \
-          "tex82:initex-eight-bit:tex82/command-transitions-v1" ]]; then
-    die "fixture ${fixture} requires --oracle tex82 --profile initex-eight-bit"
+  if [[ -n "$fixture" ]]; then
+    [[ "$engine" == tex82 && "$profile" == initex-eight-bit ]] ||
+      die "fixture ${fixture} requires --oracle tex82 --profile initex-eight-bit"
+    [[ -n "$(oracle_fixture_contract_row "$fixture")" ]] ||
+      die "unknown committed oracle fixture: ${fixture}"
   fi
   [[ "$bootstrap_fixture" -eq 0 || "$validate_only" -eq 0 ]] ||
     die '--bootstrap-fixture cannot be combined with --validate-only'
-  [[ "$bootstrap_fixture" -eq 0 ||
-      "${engine}:${profile}:${fixture}" == \
-        "tex82:initex-eight-bit:tex82/command-transitions-v1" ]] ||
-    die '--bootstrap-fixture requires the canonical TeX82 fixture selector'
-  validate_oracle_contract "$engine" "$bootstrap_fixture"
+  [[ "$bootstrap_fixture" -eq 0 || -n "$fixture" ]] ||
+    die '--bootstrap-fixture requires an explicit --fixture selector'
+  validate_oracle_contract "$engine" "$bootstrap_fixture" "$fixture"
   if [[ "$validate_only" -eq 1 ]]; then
-    if [[ -n "$fixture" || "$engine" == tex82 || "$engine" == all ]]; then
-      validate_committed_oracle_fixture tex82/command-transitions-v1 0
+    if [[ -n "$fixture" ]]; then
+      validate_committed_oracle_fixture "$fixture" 0
+    elif [[ "$engine" == tex82 || "$engine" == all ]]; then
+      local selector
+      for selector in $(tex82_fixture_selectors); do
+        validate_committed_oracle_fixture "$selector" 0
+      done
     fi
     return 0
   fi
@@ -984,8 +1022,13 @@ regen_oracle() {
   done
   if [[ "$bootstrap_fixture" -eq 1 ]]; then
     bootstrap_tex82_oracle_fixture "$fixture"
-  elif [[ -n "$fixture" || "$profile" == canonical || "$engine" == tex82 ]]; then
-    validate_committed_oracle_fixture tex82/command-transitions-v1 1
+  elif [[ -n "$fixture" ]]; then
+    validate_committed_oracle_fixture "$fixture" 1
+  elif [[ "$profile" == canonical || "$engine" == tex82 ]]; then
+    local selector
+    for selector in $(tex82_fixture_selectors); do
+      validate_committed_oracle_fixture "$selector" 1
+    done
   fi
   if [[ "$profile" == canonical ]]; then
     write_cross_engine_oracle_record

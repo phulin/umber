@@ -13,7 +13,7 @@ const TEX82_GEOMETRY_SOURCE: &str = "tests/tex82-oracle/geometry.tex";
 const TEX82_GEOMETRY_EVENTS: &str = "tests/tex82-oracle/geometry-expected.jsonl";
 
 #[cfg(test)]
-pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_399;
+pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_891;
 
 /// A deterministic inventory of the offline TeX82 command-trace suite.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -403,14 +403,29 @@ mod tests {
     fn committed_tex82_command_trace_suite_is_complete_and_offline() {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let suite = validate_tex82_command_trace_suite(repository).expect("committed suite");
-        assert_eq!(suite.fixtures.len(), 1);
+        // `umber2-alfh.2` split the former single 14-source `command-transitions-v1`
+        // fixture into one minifixture per independent behavior (`fixtures`
+        // sorts by selector, so alphabetically-first `alignment-delivery-v1`
+        // is index 0); the input-stack/EOF-recovery seams that are inherently
+        // about nested files stayed on the trimmed `command-transitions-v1`.
+        assert_eq!(suite.fixtures.len(), 6);
         assert_eq!(suite.events, COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT);
-        assert_eq!(suite.fixtures[0].selector, "tex82/command-transitions-v1");
+        assert_eq!(suite.fixtures[0].selector, "tex82/alignment-delivery-v1");
         assert!(
             suite.fixtures[0]
                 .seams
                 .iter()
                 .any(|seam| seam == "alignment/u template push")
+        );
+        assert!(
+            suite
+                .fixtures
+                .iter()
+                .find(|fixture| fixture.selector == "tex82/command-transitions-v1")
+                .expect("command-transitions-v1 fixture")
+                .seams
+                .iter()
+                .any(|seam| seam == "input/source push")
         );
     }
 

@@ -7,8 +7,18 @@
 #   fixture-audit SELECTOR SEMANTIC-MATRIX SEMANTIC-MATRIX-SHA256 AUDIT-MATRIX AUDIT-MATRIX-SHA256
 contract-schema 2
 event-schema 1
-engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt 454d2078536ed714aa288ae46f12c0edd14b70649cab723788077cb06dcf32d9 tex82-oracle-web2c-texlive-2025
+engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt b645a2a5f252f03f80698f50fee874f63425362a76d73f756aabf2bb7df61a3d tex82-oracle-web2c-texlive-2025
 engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt 6fe33cb32ee042016c3bd1ac0076eb4752c769078ff0e09e9676ab37ff3b19a6 etex26-oracle-web2c-texlive-2025
 engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt 9841528765723d64c32f9f6e7d59c64cf6029c9b90ef9e50e40c4e53d551ca58 pdftex14027-oracle-web2c-texlive-2025
-fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json 46850dc699ecaf53eb06c199e2c80a237b2fea0238d0a632f1379170a78d0030
-fixture-audit tex82/command-transitions-v1 tests/tex82-oracle/semantic-event-matrix.txt b0d211123b390d73d755ff879718aec50c938cdbc8f386f0920beab536bf1535 tests/tex82-oracle/fixture-audit-matrix.txt 12499d065d49f2cef209ad5fe43d8263f6bef80d1f607f5a4a5b9a05cefad30d
+fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json 7b332f42e979b24b2b10271e5d75b5df87519621c65bd8e1a6b4e717745c8896
+fixture tex82/case-shift-v1 tex82 initex-eight-bit tests/corpus/command/tex82/case-shift-v1/manifest.json 116214fc57a6e13097089518a2557e02547835b363f4b58bb1be450122e265b1
+fixture tex82/expansion-macros-v1 tex82 initex-eight-bit tests/corpus/command/tex82/expansion-macros-v1/manifest.json 72a0e0436aae77df55a9a5ccc0fe0683a38cbcefba06548f8a26eab8482422dc
+fixture tex82/alignment-delivery-v1 tex82 initex-eight-bit tests/corpus/command/tex82/alignment-delivery-v1/manifest.json 334e542954c1bcb1bafda7fdeaf38ddb67ed5c013b8dd489ffd86961b76cfcbc
+fixture tex82/off-save-v1 tex82 initex-eight-bit tests/corpus/command/tex82/off-save-v1/manifest.json bc6f2fd9ed1603545573c5394c8e35288af47362c1fd68e3d435bf5b38382504
+fixture tex82/scanner-conditionals-v1 tex82 initex-eight-bit tests/corpus/command/tex82/scanner-conditionals-v1/manifest.json f2ed2bf1b2eab7d650587bd70b5d0f0bfb4032d43f8f6cd8357b9e0ced0546d0
+fixture-audit tex82/command-transitions-v1 tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt 2802a9c14dc8906eec751623a56cc383268182b8d37121c7864c09cbdd14ea7e tests/tex82-oracle/command-transitions-v1-audit-matrix.txt 93a5205afaaf6b0d5ac208515fe2857c0c730c5ec60380c45f44c2b372022818
+fixture-audit tex82/case-shift-v1 tests/tex82-oracle/case-shift-v1-semantic-matrix.txt d2f47a744a644381c091bd05bbdadc011bb6a1436db733b9b47784cdc2638a5b tests/tex82-oracle/case-shift-v1-audit-matrix.txt 44c6fafdc94c7e31f07f987a68d70e8adde5deac71525cc38814403eb7c2caa1
+fixture-audit tex82/expansion-macros-v1 tests/tex82-oracle/expansion-macros-v1-semantic-matrix.txt 760f81c64b88c4d13f7d13305bd0ff400af2a0a190181b6f99baf770527935f6 tests/tex82-oracle/expansion-macros-v1-audit-matrix.txt dbb275ecc811ba5146b9afb80658339e799fb705c2df53f34e47ada0c1d953d8
+fixture-audit tex82/alignment-delivery-v1 tests/tex82-oracle/alignment-delivery-v1-semantic-matrix.txt 02557066312662b7f0e4b5a86434f49bce433117a5c1a277ad54d20954b70a08 tests/tex82-oracle/alignment-delivery-v1-audit-matrix.txt 70dcd35cc9968d651da60041c04e1288e357e3f694c72abc51f8975e045957af
+fixture-audit tex82/off-save-v1 tests/tex82-oracle/off-save-v1-semantic-matrix.txt d6f39975834ec4121e6bb1bdcd43283d77e9a81c04a1aa8ba7ca7d95dd217463 tests/tex82-oracle/off-save-v1-audit-matrix.txt 513ce147b9b385bb66e11d1863ab0d1159b3810c11d1376ed71ffdd54de020c4
+fixture-audit tex82/scanner-conditionals-v1 tests/tex82-oracle/scanner-conditionals-v1-semantic-matrix.txt 8ded17af8f55f1ceea7535f5b95176a9b54bef9cf4620c6e02742d50a6822083 tests/tex82-oracle/scanner-conditionals-v1-audit-matrix.txt 86a44008408ab4d8b410768bad6d1e79a39bf853284c927c514b702330e73ca1

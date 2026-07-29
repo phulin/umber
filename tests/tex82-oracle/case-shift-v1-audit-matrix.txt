@@ -1,0 +1,5 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+command|tex.web|get_token|log,terminal
+command|tex.web|get_x_token, x_token, and expand|log,terminal
+token_list|tex.web|scan_toks and the_toks|log

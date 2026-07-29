@@ -1,0 +1,5 @@
+# Required schema-v1 TeX82 command-core observations.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
+command|uppercase case-shift command|case-shift.tex|shift_case balanced-text collection|"control_sequence":"uppercase"
+command|lowercase case-shift command|case-shift.tex|shift_case balanced-text collection|"control_sequence":"lowercase"
+token_list|case-shift code-zero macro definition|case-shift.tex|shift_case replay into macro definition|"control_sequence":"tracezerocode"

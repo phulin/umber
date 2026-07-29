@@ -103,9 +103,37 @@ regeneration. It derives a separate candidate's focused sources, clean ordinary
 outputs, bound semantic stream, manifest, and contract digest from the pinned
 oracle, validates the candidate with both coverage matrices, and publishes
 only after that validation. The ordinary selector continues to reject stale or
-corrupt committed artifacts. The TeX82 builder stages every `.tex` sibling of
-`transitions.tex` (except `smoke.tex`) into the focused run, so a newly pinned
-child source participates in the same reproducible command.
+corrupt committed artifacts.
+
+`umber2-alfh.2` split the single `command-transitions-v1` fixture -- which had
+grown to 14 sources and 2.2 MB of events -- into one minifixture per
+independent behavior, enforced by `crates/tex-oracle/src/minifixture_budget.rs`
+(10 sources, 4 KiB of source bytes, and 8,000 events; a fixture that grows past
+that ceiling fails `--bootstrap-fixture` rather than being committed). The
+`tex82_fixtures` table in `scripts/build-tex82-oracle.sh` names every
+selector's entry source and companions explicitly; the TeX82 builder stages
+only that row's own sources into its run, not every `.tex` sibling in
+`tests/tex82-oracle/`. `command-transitions-v1` itself kept `transitions.tex`
+and the companions its input-stack, scanner-status, and physical-EOF-recovery
+behavior inherently needs across nested files (`transitions-child.tex`,
+`input-recovery.tex`, and the five `input-eof-*.tex` legal/EOF programs);
+`case-shift.tex`, `expansion-macros.tex`, `alignment-delivery.tex`,
+`off-save.tex`, and `scanner-conditionals.tex` (with its
+`scanner-conditionals-eof.tex` companion) each became their own one-or-two-source
+fixture under `tests/corpus/command/tex82/<name>-v1/`. Each split fixture has
+its own `tests/tex82-oracle/<name>-v1-semantic-matrix.txt` and
+`<name>-v1-audit-matrix.txt`, registered as `fixture`/`fixture-audit` rows in
+`tests/oracle-regeneration-manifest.txt`; `--fixture tex82/<name>` and
+`--bootstrap-fixture` work identically for every one of them, and
+`crates/tex-oracle/src/suite.rs`'s `validate_tex82_command_trace_suite`
+discovers the committed selector set from `tests/corpus/command/tex82` itself
+rather than from a hardcoded list, so registering another split fixture needs
+only its own directory and contract rows, not a code change. The legacy
+`tests/tex82-oracle/semantic-event-matrix.txt` and `fixture-audit-matrix.txt`
+remain committed unchanged and still describe every family correctly, but they
+are no longer wired into the regeneration contract; they stay only because
+`crates/tex-command/tests/it/character_input.rs` reads them directly as a
+pinned external cross-check.
 The focused source pins TeX's four job-clock parameters before shipout so the
 ordinary DVI preamble remains exact even though the canonical `onlyTeX`
 program does not consume Web2C's reproducible-clock environment variables.

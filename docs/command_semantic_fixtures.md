@@ -107,9 +107,17 @@ The dependency-light `tex-oracle` crate owns parsing and validation:
 ```bash
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
   --fixture tests/corpus/command/tex82/command-transitions-v1 \
-  --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
-  --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
+  --semantic-matrix tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt \
+  --audit-matrix tests/tex82-oracle/command-transitions-v1-audit-matrix.txt
 ```
+
+Every other split fixture under `tests/corpus/command/tex82` follows the same
+`--fixture DIRECTORY --semantic-matrix tests/tex82-oracle/<name>-semantic-matrix.txt
+--audit-matrix tests/tex82-oracle/<name>-audit-matrix.txt` shape; this crate
+also enforces the tex82 minifixture regeneration budget
+(`crates/tex-oracle/src/minifixture_budget.rs`) against `--fixture` here,
+rejecting a fixture that grew past 10 sources, 4 KiB of source bytes, or 8,000
+events before it can be committed.
 
 The complete committed TeX82 command suite has one deterministic, offline
 entry point. It inventories every directory under `tests/corpus/command/tex82`,
@@ -257,48 +265,72 @@ reference engine. TeX82 and aggregate validation always include this audit;
 the fixture selector remains valid only with its exact engine and profile, so
 cross-engine or unknown selections fail.
 
-The first representative fixture is
-`tests/corpus/command/tex82/command-transitions-v1`. It uses focused,
-font-independent INITEX sources and commits the complete TeX82-applicable
-schema-v1 transition matrix plus terminal, normalized-log, status, DVI, and
-generated-effect observations. Its input-focused sources isolate M/N/S
-tokenization, ignored/invalid/comment/end-line handling, `^^` notation,
-`get_token`, nested parameter replay, legal source retirement, and each
-non-normal scanner-status EOF recovery. Outer-validity diagnostics carry the
-canonical live scanner status as a typed name, and the trace records the exact
-inserted right-brace, `\par`, frozen `\cr`, and frozen `\fi` tokens. The main
-source explicitly assigns `\year`,
-`\month`, `\day`, and `\time` before shipout because canonical TeX82's
-`onlyTeX` host boundary does not honor Web2C's `SOURCE_DATE_EPOCH`; this makes
-the ordinary DVI preamble exact across regeneration runs.
-Its `expansion-macros.tex` child separately exercises `get_x_token`,
-`\noexpand`, `\expandafter`, `\csname`, conversion primitives, canonical
-macro matching through nine parameters, paragraph and overlap recovery,
-nested parameter replay, definition forms and prefixes, ordinary and expanded
-`scan_toks`, and direct `\the` splices. Committed `\meaning` and `\show`
-transcript bytes independently expose the representative resulting meanings.
-The `case-shift.tex` child independently pins TeX82 §914's unexpanded
+`umber2-alfh.2` split what was originally one 14-source, 2.2 MB-of-events
+fixture into six one-or-few-source minifixtures under
+`tests/corpus/command/tex82/`, each still using focused, font-independent
+INITEX sources and committing the same per-channel contract (terminal,
+normalized log, status, and, where the source ships or writes one, DVI and
+generated-effect observations). Splitting changed only which directory a
+source's events live in; the behavior each source exercises, described below,
+did not change.
+
+`command-transitions-v1` kept `transitions.tex` plus the companions its own
+subject -- input-stack, scanner-status, and macro/mutation/effect
+transitions -- inherently needs across nested physical files:
+`transitions-child.tex` and the five `input-eof-*.tex` legal/EOF programs it
+reaches through `input-recovery.tex`. It commits the complete
+TeX82-applicable schema-v1 transition matrix. Its input-focused sources
+isolate M/N/S tokenization, ignored/invalid/comment/end-line handling, `^^`
+notation, `get_token`, nested parameter replay, legal source retirement, and
+each non-normal scanner-status EOF recovery. Outer-validity diagnostics carry
+the canonical live scanner status as a typed name, and the trace records the
+exact inserted right-brace, `\par`, frozen `\cr`, and frozen `\fi` tokens. The
+main source explicitly assigns `\year`, `\month`, `\day`, and `\time` before
+shipout because canonical TeX82's `onlyTeX` host boundary does not honor
+Web2C's `SOURCE_DATE_EPOCH`; this makes the ordinary DVI preamble exact across
+regeneration runs. It also covers assignment-scoped committed meaning,
+catcode, code-table, parameter, and register writes at the `eq_define`,
+`geq_define`, `eq_word_define`, and `geq_word_define` seams, and committed
+message, expanded write, output-stream open/close, and successful DVI shipout
+ordinary effects, including the exact generated write file.
+
+`expansion-macros-v1`'s `expansion-macros.tex` separately exercises
+`get_x_token`, `\noexpand`, `\expandafter`, `\csname`, conversion primitives,
+canonical macro matching through nine parameters, paragraph and overlap
+recovery, nested parameter replay, definition forms and prefixes, ordinary
+and expanded `scan_toks`, and direct `\the` splices. Committed `\meaning` and
+`\show` transcript bytes independently expose the representative resulting
+meanings.
+
+`case-shift-v1`'s `case-shift.tex` independently pins TeX82 §914's unexpanded
 `\uppercase` and `\lowercase` collection, current code-table substitution,
 zero-code preservation, replay ordering, and macro-definition result through
 both command events and transcript-visible `\meaning` output.
-Its `scanner-conditionals.tex` child separately exercises signed radix
-integers, fractional physical dimensions, infinite-order glue, typed internal
-integer/dimension/glue/token-list values, and reference-visible `\the`
-spellings. The same source covers condition push/change/branch/pop lifecycle,
-`\if`, `\ifcat`, raw-operand `\ifx`, `\ifcase` progress, nested conditions
-inside both evaluation and `pass_text`, and skipped balanced braces. Inserted
-relax, extra-delimiter, and EOF-during-skip recovery remain visible in the
-normalized transcript; `scanner-conditionals-eof.tex` isolates the last case.
-Its `alignment-delivery.tex` child separately exercises preamble lifecycle and
-repetition, literal-brace `align_state`, control-sequence group aliases, tab,
-`\span`, `\cr`, and `\crcr` interception, u/v/omit-template delivery and
-retirement, `\noalign`, nested suspend/resume ownership, backup correction,
-and preamble, brace, and extra-tab recovery. Transcript messages independently
-expose template and no-align execution; shipped font-independent rules bind
-successful alignment packaging into the committed DVI observation.
-Its `off-save.tex` child isolates executor recovery without using Umber as an
-oracle: an `\endgroup` above bottom level is backed up, paired with an inserted
-right brace, and replayed; the replay then reaches bottom level and is dropped.
-The following message is a bounded-progress observation. Schema-v1 diagnostic
-events distinguish the two `off_save` branches, while the existing recovery
-events retain the exact replay and inserted-closer tokens.
+
+`scanner-conditionals-v1`'s `scanner-conditionals.tex` separately exercises
+signed radix integers, fractional physical dimensions, infinite-order glue,
+typed internal integer/dimension/glue/token-list values, and
+reference-visible `\the` spellings. The same source covers condition
+push/change/branch/pop lifecycle, `\if`, `\ifcat`, raw-operand `\ifx`,
+`\ifcase` progress, nested conditions inside both evaluation and `pass_text`,
+and skipped balanced braces. Inserted relax, extra-delimiter, and
+EOF-during-skip recovery remain visible in the normalized transcript; its
+`scanner-conditionals-eof.tex` companion isolates the last case.
+
+`alignment-delivery-v1`'s `alignment-delivery.tex` separately exercises
+preamble lifecycle and repetition, literal-brace `align_state`,
+control-sequence group aliases, tab, `\span`, `\cr`, and `\crcr` interception,
+u/v/omit-template delivery and retirement, `\noalign`, nested suspend/resume
+ownership, backup correction, and preamble, brace, and extra-tab recovery.
+Transcript messages independently expose template and no-align execution;
+shipped font-independent rules bind successful alignment packaging into the
+committed DVI observation, which is why this is the one split fixture besides
+`command-transitions-v1` that commits a `dvi` channel.
+
+`off-save-v1`'s `off-save.tex` isolates executor recovery without using
+Umber as an oracle: an `\endgroup` above bottom level is backed up, paired
+with an inserted right brace, and replayed; the replay then reaches bottom
+level and is dropped. The following message is a bounded-progress
+observation. Schema-v1 diagnostic events distinguish the two `off_save`
+branches, while the existing recovery events retain the exact replay and
+inserted-closer tokens.

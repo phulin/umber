@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use crate::suite::COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT;
 use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
     CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
@@ -321,16 +320,22 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
     )
     .expect("committed canonical fixture");
     assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
-    assert_eq!(
-        fixture.stream.events.len(),
-        COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT
-    );
+    // `umber2-alfh.2` split the former single 14-source fixture into one
+    // minifixture per independent behavior; this one keeps the
+    // input-stack/scanner-status/EOF-recovery seams that inherently need
+    // nested files, so its own event count is a fraction of the former
+    // whole-suite `COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT`.
+    assert_eq!(fixture.stream.events.len(), 3_960);
     fixture
         .audit_matrices(
-            &fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt"))
-                .expect("semantic matrix"),
-            &fs::read(repository.join("tests/tex82-oracle/fixture-audit-matrix.txt"))
-                .expect("fixture audit matrix"),
+            &fs::read(
+                repository.join("tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt"),
+            )
+            .expect("semantic matrix"),
+            &fs::read(
+                repository.join("tests/tex82-oracle/command-transitions-v1-audit-matrix.txt"),
+            )
+            .expect("fixture audit matrix"),
         )
         .expect("complete bidirectional fixture audit");
 }
@@ -378,9 +383,11 @@ fn fixture_audit_rejects_missing_behavior_and_unowned_observations() {
     )
     .expect("committed canonical fixture");
     let semantic =
-        fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt")).expect("matrix");
+        fs::read(repository.join("tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt"))
+            .expect("matrix");
     let audit = String::from_utf8(
-        fs::read(repository.join("tests/tex82-oracle/fixture-audit-matrix.txt")).expect("audit"),
+        fs::read(repository.join("tests/tex82-oracle/command-transitions-v1-audit-matrix.txt"))
+            .expect("audit"),
     )
     .expect("utf8");
 

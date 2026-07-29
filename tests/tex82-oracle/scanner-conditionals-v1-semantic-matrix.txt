@@ -1,0 +1,21 @@
+# Required schema-v1 TeX82 command-core observations.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
+scanner|focused signed-radix integer|scanner-conditionals.tex|scan_int sign and radix completion|"scanner":"integer","result":{"type":"integer","value":-83}
+scanner|focused fractional physical dimension|scanner-conditionals.tex|scan_dimen fraction and unit completion|"scanner":"dimension","result":{"type":"scaled","value":5920358}
+scanner|focused infinite-order glue|scanner-conditionals.tex|scan_glue components committed|"scanner":"glue","result":{"type":"glue","value":{"width":163840,"stretch":196608,"stretch_order":"fill","shrink":262144,"shrink_order":"fil"}
+scanner|focused internal integer|scanner-conditionals.tex|scan_something_internal integer return|"scanner":"internal","result":{"type":"integer","value":-83}
+scanner|focused internal dimension|scanner-conditionals.tex|scan_something_internal dimension return|"scanner":"internal","result":{"type":"scaled","value":5920358}
+scanner|focused internal glue|scanner-conditionals.tex|scan_something_internal glue return|"scanner":"internal","result":{"type":"glue","value":{"width":163840,"stretch":196608,"stretch_order":"fill","shrink":262144,"shrink_order":"fil"}
+scanner|focused internal token list|scanner-conditionals.tex|scan_something_internal token-list return|"scanner":"internal","result":{"type":"tokens","value":[{"character":83,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":65,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":84,"catcode":"letter"},{"character":79,"catcode":"letter"},{"character":75,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":83,"catcode":"letter"}]}
+condition|if character predicate|scanner-conditionals.tex|conditional if_char_code branch commit|"transition":"branch","condition":"if","limit":"evaluating","branch":"true"
+condition|ifcat predicate|scanner-conditionals.tex|conditional if_cat_code branch commit|"transition":"branch","condition":"ifcat","limit":"evaluating","branch":"true"
+condition|ifx raw operands|scanner-conditionals.tex|conditional ifx_code raw-token comparison|"transition":"branch","condition":"ifx","limit":"evaluating","branch":"true"
+condition|pass_text skipping scope|scanner-conditionals.tex|pass_text scanner-status scope|"event":"scanner_status","data":{"from":"normal","to":"skipping"}
+condition|pass_text nested conditional|scanner-conditionals.tex|pass_text nested if_test counter|"control_sequence":"ifnum","location":{"source":"scanner-conditionals.tex","line":27,"byte":25}
+condition|pass_text skipped braces|scanner-conditionals.tex|get_next literal-brace delivery while skipping|"command":"left_brace","operand":{"type":"integer","value":123},"location":{"source":"scanner-conditionals.tex","line":27,"byte":11}
+condition|false-branch delimiter change|scanner-conditionals.tex|conditional common_ending limit commit|"transition":"limit_change","condition":"iffalse","limit":"fi"
+condition|true-branch delimiter change|scanner-conditionals.tex|conditional exact-frame limit commit|"transition":"limit_change","condition":"if","limit":"else"
+condition|focused ifcase progress|scanner-conditionals.tex|ifcase skip-progress branch|"transition":"branch","condition":"ifcase","limit":"or","branch":"case"
+condition|nested operand evaluation|scanner-conditionals.tex|recursive conditional during outer scan_int|"control_sequence":"nestedconditionoperand","argument_count":0
+diagnostic|extra delimiter recovery|scanner-conditionals.tex|expand fi_or_else legality recovery|"diagnostic":"conditional_extra_delimiter"
+diagnostic|focused incomplete pass_text recovery|scanner-conditionals-eof.tex|outer-validity EOF recovery under skipping|"diagnostic":"conditional_incomplete"

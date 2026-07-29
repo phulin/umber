@@ -1,0 +1,7 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+alignment|tex.web|get_next and back_input|dvi,log
+alignment|tex.web|init_align, get_preamble_token, init_row, and init_col|dvi,log
+alignment|tex.web|fin_col, align_peek, and no_align|dvi,log
+alignment|tex.web|align_error and fin_align|dvi,log
+input|tex.web|Input stacks and states; begin_file_reading and end_file_reading|status,terminal

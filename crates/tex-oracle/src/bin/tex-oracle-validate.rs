@@ -3,7 +3,8 @@ use std::fs;
 use std::process::ExitCode;
 
 use tex_oracle::{
-    CommittedFixture, ObservationStream, Tex82ObserverProfile, validate_tex82_command_trace_suite,
+    CommittedFixture, ObservationStream, Tex82ObserverProfile, validate_minifixture_budget,
+    validate_tex82_command_trace_suite,
 };
 
 #[allow(
@@ -98,6 +99,10 @@ fn main() -> ExitCode {
         }
         return match CommittedFixture::load(&path) {
             Ok(fixture) => {
+                if let Err(error) = validate_minifixture_budget(&fixture) {
+                    eprintln!("invalid oracle fixture: {error}");
+                    return ExitCode::FAILURE;
+                }
                 if let (Some(semantic), Some(audit)) = (semantic_matrix, audit_matrix) {
                     let semantic_bytes = match fs::read(&semantic) {
                         Ok(bytes) => bytes,

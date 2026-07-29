@@ -1,0 +1,32 @@
+# Required schema-v1 TeX82 command-core observations.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
+alignment|begin|alignment-delivery.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin","align_state":-1000000,"nesting":1
+alignment|finish|alignment-delivery.tex|pop_alignment pre-retirement seam|"event":"alignment","data":{"transition":"finish","align_state":999999,"nesting":1
+alignment|nested suspension|alignment-delivery.tex|push_alignment outer suspension|"transition":"suspend","align_state":1,"nesting":1
+alignment|nested resumption|alignment-delivery.tex|pop_alignment exact outer-state restoration|"transition":"resume","align_state":1,"nesting":1
+alignment|nested ownership identity|alignment-delivery.tex|detached alignment-depth counter|"transition":"begin","align_state":-1000000,"nesting":2
+alignment|preamble start|alignment-delivery.tex|init_align preamble entry|"transition":"preamble_start","align_state":-1000000,"nesting":1
+alignment|preamble finish|alignment-delivery.tex|init_align preamble completion|"transition":"preamble_finish","align_state":-1000000,"nesting":1
+alignment|repeated preamble marker|alignment-delivery.tex|get_preamble_token loop marker|"command":"tab_mark","operand":{"type":"integer","value":38},"location":{"source":"alignment-delivery.tex","line":25,"byte":37}
+alignment|literal brace increment|alignment-delivery.tex|get_next left-brace accounting|"transition":"state_change","align_state":1,"nesting":1,"previous_align_state":0
+alignment|literal brace decrement|alignment-delivery.tex|get_next right-brace accounting|"transition":"state_change","align_state":0,"nesting":1,"previous_align_state":1
+alignment|control-sequence group alias|alignment-delivery.tex|get_next meaning delivery without literal-brace accounting|"command":"begin_group","operand":{"type":"integer","value":0},"control_sequence":"alignmentbegingroup","location":{"source":"alignment-delivery.tex","line":11,"byte":25}
+alignment|backup correction|alignment-delivery.tex|back_input literal-brace correction|"transition":"backup_correction","align_state":0,"nesting":1,"previous_align_state":1
+alignment|u template push|alignment-delivery.tex|begin_token_list u_template branch|"transition":"template_push","align_state":1000000,"template":"u","nesting":1
+alignment|u template retirement|alignment-delivery.tex|end_token_list u_template branch|"transition":"template_retire","align_state":1000000,"template":"u","nesting":1
+alignment|v template push|alignment-delivery.tex|begin_token_list v_template branch|"transition":"template_push","align_state":0,"template":"v","nesting":1
+alignment|v template retirement|alignment-delivery.tex|end_token_list v_template branch|"transition":"template_retire","align_state":1000000,"template":"v","nesting":1
+alignment|omit template push|alignment-delivery.tex|begin_token_list omit_template branch|"transition":"template_push","align_state":0,"template":"omit","nesting":1
+alignment|omit template retirement|alignment-delivery.tex|end_token_list omit_template branch|"transition":"template_retire","align_state":1000000,"template":"omit","nesting":1
+alignment|tab delimiter|alignment-delivery.tex|get_next tab_mark intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"tab"
+alignment|span delimiter|alignment-delivery.tex|get_next span_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"span"
+alignment|cr delimiter|alignment-delivery.tex|get_next cr_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"cr"
+alignment|crcr delimiter|alignment-delivery.tex|get_next cr_cr_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"crcr"
+alignment|noalign delivery|alignment-delivery.tex|align_peek no_align command|"command":"no_align","operand":{"type":"integer","value":0},"control_sequence":"noalign","location":{"source":"alignment-delivery.tex","line":20,"byte":11}
+alignment|missing parameter recovery|alignment-delivery.tex|init_align missing parameter branch|,"recovery":"missing_parameter"
+alignment|extra parameter recovery|alignment-delivery.tex|init_align extra parameter branch|,"recovery":"extra_parameter"
+alignment|missing right brace recovery|alignment-delivery.tex|align_error positive-depth correction|,"recovery":"missing_right_brace"
+alignment|missing left brace recovery|alignment-delivery.tex|align_error negative-depth correction|,"recovery":"missing_left_brace"
+alignment|extra tab recovery|alignment-delivery.tex|fin_col extra-tab correction|,"recovery":"extra_tab"
+input|alignment-template push|alignment-delivery.tex|begin_token_list template branch|"transition":"push","reason":"alignment_template"
+input|alignment-template retirement|alignment-delivery.tex|end_token_list template branch|"transition":"retire","reason":"alignment_template"

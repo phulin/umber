@@ -1,0 +1,5 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+diagnostic|tex.web|back_input and check_outer_validity|log,status,terminal
+scanner|tex.web|scan_int, scan_dimen, scan_glue, and scan_something_internal|log
+condition|tex.web|conditional and pass_text|log

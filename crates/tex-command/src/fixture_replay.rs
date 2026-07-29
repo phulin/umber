@@ -253,7 +253,11 @@ fn repository_root() -> PathBuf {
 #[test]
 fn every_committed_tex82_fixture_registers_and_replays_deterministically() {
     let registry = Tex82FixtureRegistry::load(repository_root()).expect("committed registry");
-    assert_eq!(registry.fixtures().count(), 1);
+    // The registry enumerates the corpus rather than a list, so this asserts
+    // only that it found something to replay. Pinning an exact count made the
+    // test a second, silent registry of how many fixtures exist, which
+    // `umber2-alfh.2`'s split then had to come back and edit.
+    assert!(registry.fixtures().count() > 0);
     for fixture in registry.fixtures() {
         assert_eq!(fixture.profile, CommandProfile::TEX82);
         let first = fixture.replay().expect("first replay");

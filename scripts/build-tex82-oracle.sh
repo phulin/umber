@@ -24,13 +24,27 @@ trip_geometry_profile_executable="${bin_dir}/umber-tex82-oracle-trip-geometry-pr
 geometry_profile_executable="${bin_dir}/umber-tex82-oracle-geometry-profile"
 instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
-transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 geometry_input="${repo_root}/tests/tex82-oracle/geometry.tex"
 geometry_expected="${repo_root}/tests/tex82-oracle/geometry-expected.jsonl"
 clock_change="${repo_root}/tests/tex82-oracle/deterministic-clock.ch"
 clock_input="${repo_root}/tests/tex82-oracle/clock.tex"
-transition_source_dir="${repo_root}/tests/tex82-oracle"
-semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
+tex82_fixture_source_dir="${repo_root}/tests/tex82-oracle"
+# One committed one-or-few-source minifixture per row: NAME:ENTRY-FILE:COMPANION-FILES
+# (comma separated, empty when the entry file is fully self-contained). Sources
+# that are inherently a multi-file interaction -- a source pushed by \input, an
+# EOF observed mid-nested-file -- keep their companion in the same row instead
+# of being forced apart; everything else runs as its own one-source job. Adding
+# a row here and its sibling entry in tests/oracle-regeneration-manifest.txt is
+# the whole mechanism for registering another split fixture: nothing else in
+# this script names a fixture literally.
+tex82_fixtures=(
+  "command-transitions-v1:transitions.tex:input-recovery.tex,transitions-child.tex,input-eof-normal.tex,input-eof-defining.tex,input-eof-matching.tex,input-eof-absorbing.tex,input-eof-aligning.tex"
+  "case-shift-v1:case-shift.tex:"
+  "expansion-macros-v1:expansion-macros.tex:"
+  "alignment-delivery-v1:alignment-delivery.tex:"
+  "off-save-v1:off-save.tex:"
+  "scanner-conditionals-v1:scanner-conditionals.tex:scanner-conditionals-eof.tex"
+)
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -123,8 +137,14 @@ verify_inputs() {
   done < "$manifest"
   [[ -f "$instrumentation_change" ]] ||
     fail "missing instrumentation change file: $instrumentation_change"
-  [[ -f "$semantic_event_matrix" ]] ||
-    fail "missing semantic event matrix: $semantic_event_matrix"
+  local fixture_spec fixture_name fixture_entry fixture_companions
+  for fixture_spec in "${tex82_fixtures[@]}"; do
+    IFS=':' read -r fixture_name fixture_entry fixture_companions <<<"$fixture_spec"
+    [[ -f "${tex82_fixture_source_dir}/${fixture_entry}" ]] ||
+      fail "missing ${fixture_name} entry source: ${fixture_entry}"
+    [[ -f "${repo_root}/tests/tex82-oracle/${fixture_name}-semantic-matrix.txt" ]] ||
+      fail "missing semantic matrix for ${fixture_name}"
+  done
   [[ -f "$geometry_expected" ]] ||
     fail "missing geometry expectation: $geometry_expected"
 }
@@ -270,64 +290,82 @@ run_smoke() {
     > "${run_dir}/ordinary.log"
 }
 
-run_transitions() {
-  local executable="$1" variant="$2" run_dir status=0 source source_name
-  run_dir="${out_dir}/transitions/${variant}"
+# Runs one committed tex82 command-transitions minifixture (see $tex82_fixtures
+# above) under one built executable variant, and normalizes its log. Per-source
+# content markers are deliberately not asserted here: the semantic-matrix
+# pattern check driven from $tex82_fixtures after every variant has run is the
+# precise version of that same sanity check, one committed JSON fragment per
+# required command-core seam instead of a human log string.
+run_tex82_fixture() {
+  local name="$1" entry="$2" companions="$3" executable="$4" variant="$5"
+  local run_dir status=0 stem companion
+  run_dir="${out_dir}/${name}/${variant}"
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
-  cp "$transition_input" "${run_dir}/transitions.tex"
-  for source in "${transition_source_dir}"/*.tex; do
-    source_name="$(basename "$source")"
-    [[ "$source_name" == smoke.tex || "$source_name" == transitions.tex ]] && continue
-    cp "$source" "$run_dir/"
-  done
+  cp "${tex82_fixture_source_dir}/${entry}" "${run_dir}/"
+  if [[ -n "$companions" ]]; then
+    local companion_list=()
+    IFS=',' read -r -a companion_list <<<"$companions"
+    for companion in "${companion_list[@]}"; do
+      cp "${tex82_fixture_source_dir}/${companion}" "${run_dir}/"
+    done
+  fi
   (
     cd "$run_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
       SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
       TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
-      "$executable" -ini -interaction=nonstopmode transitions.tex \
+      "$executable" -ini -interaction=nonstopmode "$entry" \
       >terminal.txt 2>&1
   ) || status="$?"
   [[ "$status" -le 1 ]] ||
-    fail "$variant transition run exited with unexpected status $status"
+    fail "${name}/${variant} run exited with unexpected status $status"
   printf '%s\n' "$status" >"${run_dir}/status.txt"
-  [[ -f "${run_dir}/transitions.log" ]] ||
-    fail "$variant transition run did not write transitions.log"
-  [[ -f "${run_dir}/transitions.dvi" ]] ||
-    fail "$variant transition run did not write transitions.dvi"
-  [[ -f "${run_dir}/transitions-effects.out" ]] ||
-    fail "$variant transition run did not write transitions-effects.out"
-  grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
-    fail "$variant transition marker is absent"
-  for marker in \
-    'UMBER-TEX82-ALIGNMENT-BEGIN' \
-    'UMBER-TEX82-U-TEMPLATE' \
-    'UMBER-TEX82-V-TEMPLATE' \
-    'UMBER-TEX82-NOALIGN' \
-    'UMBER-TEX82-ALIGNMENT-END' \
-    'UMBER-TEX82-OFF-SAVE-BEGIN' \
-    'UMBER-TEX82-OFF-SAVE-PROGRESS' \
-    '! Missing # inserted in alignment preamble.' \
-    'You have given more \span or & marks than there were' \
-    '! Missing { inserted.' \
-    '! Missing } inserted.' \
-    'UMBER-TEX82-SCANNERS: I=-83' \
-    'UMBER-TEX82-IF=TRUE' \
-    'UMBER-TEX82-IFCAT=TRUE' \
-    'UMBER-TEX82-IFX=TRUE' \
-    'UMBER-TEX82-SKIP=KEPT' \
-    'UMBER-TEX82-CASE=TWO' \
-    'UMBER-TEX82-NESTED-EVALUATION=TRUE' \
-    'UMBER-TEX82-LIMIT-RECOVERY' \
-    'UMBER-TEX82-SKIP-RECOVERY' \
-    '! Extra \or.' \
-    '! Incomplete \iffalse; all text was ignored after line 1.'; do
-    grep -Fq "$marker" "${run_dir}/transitions.log" ||
-      fail "$variant scanner/conditional observation is absent: $marker"
-  done
-  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
+  stem="${entry%.tex}"
+  [[ -f "${run_dir}/${stem}.log" ]] ||
+    fail "${name}/${variant} run did not write ${stem}.log"
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/${stem}.log" \
     >"${run_dir}/ordinary.log"
+}
+
+# Runs one fixture's clean/instrumentable/instrumentable-repeat variants,
+# checks that instrumentation left every observable channel unchanged and that
+# the instrumented trace is deterministic, then requires every one of that
+# fixture's committed semantic-matrix rows to be present in the trace.
+run_and_validate_tex82_fixture() {
+  local name="$1" entry="$2" companions="$3"
+  local fixture_matrix="${repo_root}/tests/tex82-oracle/${name}-semantic-matrix.txt"
+  local channel_path channel trace family boundary fixture seam pattern extra
+  run_tex82_fixture "$name" "$entry" "$companions" "$clean_executable" clean
+  run_tex82_fixture "$name" "$entry" "$companions" "$instrumentable_executable" \
+    instrumentable
+  run_tex82_fixture "$name" "$entry" "$companions" "$instrumentable_executable" \
+    instrumentable-repeat
+  for channel_path in "${out_dir}/${name}/clean"/*; do
+    channel="$(basename "$channel_path")"
+    case "$channel" in
+      *.tex | *.log | tex82-events.jsonl) continue ;;
+    esac
+    cmp "${out_dir}/${name}/clean/${channel}" \
+      "${out_dir}/${name}/instrumentable/${channel}" >/dev/null ||
+      fail "instrumentable oracle changed ${name} ${channel}"
+    cmp "${out_dir}/${name}/instrumentable/${channel}" \
+      "${out_dir}/${name}/instrumentable-repeat/${channel}" >/dev/null ||
+      fail "repeated instrumentable oracle changed ${name} ${channel}"
+  done
+  trace="${out_dir}/${name}/instrumentable/tex82-events.jsonl"
+  cmp "$trace" "${out_dir}/${name}/instrumentable-repeat/tex82-events.jsonl" \
+    >/dev/null ||
+    fail "instrumentable oracle emitted a nondeterministic ${name} trace"
+  cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
+  while IFS='|' read -r family boundary fixture seam pattern extra; do
+    [[ -z "$family" || "$family" == \#* ]] && continue
+    [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+      -z "${extra:-}" ]] ||
+      fail "malformed semantic event matrix row for ${family:-unknown} in ${name}"
+    grep -Fq "$pattern" "$trace" ||
+      fail "${name} trace is missing $family/$boundary from $fixture at $seam"
+  done < "$fixture_matrix"
 }
 
 run_geometry() {
@@ -437,20 +475,20 @@ write_build_record() {
       "$(sha_digest 256 "${out_dir}/smoke/clean/ordinary.log")"
     printf 'smoke-ordinary-log-sha256 instrumentable %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/instrumentable/ordinary.log")"
-    printf 'transition-trace-sha256 instrumentable %s\n' \
-      "$(sha_digest 256 "${out_dir}/transitions/instrumentable/tex82-events.jsonl")"
     printf 'geometry-trace-sha256 geometry-profile %s\n' \
       "$(sha_digest 256 "${out_dir}/geometry/geometry-profile/tex82-events.jsonl")"
-    for variant in clean instrumentable instrumentable-repeat; do
-      printf 'transition-terminal-sha256 %s %s\n' "$variant" \
-        "$(sha_digest 256 "${out_dir}/transitions/${variant}/terminal.txt")"
-      printf 'transition-ordinary-log-sha256 %s %s\n' "$variant" \
-        "$(sha_digest 256 "${out_dir}/transitions/${variant}/ordinary.log")"
-      printf 'transition-dvi-sha256 %s %s\n' "$variant" \
-        "$(sha_digest 256 "${out_dir}/transitions/${variant}/transitions.dvi")"
-      printf 'transition-effect-output-sha256 %s %s\n' "$variant" \
+    local fixture_spec fixture_name fixture_entry fixture_companions variant
+    for fixture_spec in "${tex82_fixtures[@]}"; do
+      IFS=':' read -r fixture_name fixture_entry fixture_companions <<<"$fixture_spec"
+      printf 'fixture-trace-sha256 %s instrumentable %s\n' "$fixture_name" \
         "$(sha_digest 256 \
-          "${out_dir}/transitions/${variant}/transitions-effects.out")"
+          "${out_dir}/${fixture_name}/instrumentable/tex82-events.jsonl")"
+      for variant in clean instrumentable instrumentable-repeat; do
+        printf 'fixture-terminal-sha256 %s %s %s\n' "$fixture_name" "$variant" \
+          "$(sha_digest 256 "${out_dir}/${fixture_name}/${variant}/terminal.txt")"
+        printf 'fixture-ordinary-log-sha256 %s %s %s\n' "$fixture_name" "$variant" \
+          "$(sha_digest 256 "${out_dir}/${fixture_name}/${variant}/ordinary.log")"
+      done
     done
   } > "$record"
 }
@@ -483,38 +521,17 @@ cmp "${out_dir}/clock/clean/clock.log" \
 cmp "${out_dir}/clock/instrumentable/clock.log" \
   "${out_dir}/clock/instrumentable-repeat/clock.log" >/dev/null ||
   fail "repeated instrumentable oracle changed pinned-clock log output"
-run_transitions "$clean_executable" clean
-run_transitions "$instrumentable_executable" instrumentable
-run_transitions "$instrumentable_executable" instrumentable-repeat
 cmp "${out_dir}/smoke/clean/terminal.txt" \
   "${out_dir}/smoke/instrumentable/terminal.txt" >/dev/null ||
   fail "instrumentable oracle changed ordinary terminal output"
 cmp "${out_dir}/smoke/clean/ordinary.log" \
   "${out_dir}/smoke/instrumentable/ordinary.log" >/dev/null ||
   fail "instrumentable oracle changed ordinary log output"
-for channel in terminal.txt ordinary.log status.txt transitions.dvi \
-  transitions-effects.out; do
-  cmp "${out_dir}/transitions/clean/${channel}" \
-    "${out_dir}/transitions/instrumentable/${channel}" >/dev/null ||
-    fail "instrumentable oracle changed transition ${channel}"
-  cmp "${out_dir}/transitions/instrumentable/${channel}" \
-    "${out_dir}/transitions/instrumentable-repeat/${channel}" >/dev/null ||
-    fail "repeated instrumentable oracle changed transition ${channel}"
+for fixture_spec in "${tex82_fixtures[@]}"; do
+  IFS=':' read -r fixture_name fixture_entry fixture_companions <<<"$fixture_spec"
+  run_and_validate_tex82_fixture "$fixture_name" "$fixture_entry" \
+    "$fixture_companions"
 done
-cmp "${out_dir}/transitions/instrumentable/tex82-events.jsonl" \
-  "${out_dir}/transitions/instrumentable-repeat/tex82-events.jsonl" >/dev/null ||
-  fail "instrumentable oracle emitted a nondeterministic transition trace"
-cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
-  "${out_dir}/transitions/instrumentable/tex82-events.jsonl"
-transition_trace="${out_dir}/transitions/instrumentable/tex82-events.jsonl"
-while IFS='|' read -r family boundary fixture seam pattern extra; do
-  [[ -z "$family" || "$family" == \#* ]] && continue
-  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
-    -z "${extra:-}" ]] ||
-    fail "malformed semantic event matrix row for ${family:-unknown}"
-  grep -Fq "$pattern" "$transition_trace" ||
-    fail "transition trace is missing $family/$boundary from $fixture at $seam"
-done < "$semantic_event_matrix"
 build_variant "$trip_profile_executable" "$trip_profile_change"
 build_variant "$trip_geometry_profile_executable" "$trip_geometry_profile_change"
 build_variant "$geometry_profile_executable" "$geometry_profile_change"

@@ -1,0 +1,30 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**off-save.tex
+(./off-save.tex UMBER-TEX82-OFF-SAVE-BEGIN
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.6 {\endgroup
+              }
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+! Extra \endgroup.
+<recently read> \endgroup 
+                          
+l.6 {\endgroup
+              }
+Things are pretty mixed up, but I think the worst is over.
+
+! Too many }'s.
+l.6 {\endgroup}
+               
+You've closed more groups than you opened.
+Such booboos are generally harmless, so keep going.
+
+UMBER-TEX82-OFF-SAVE-PROGRESS )
+No pages of output.

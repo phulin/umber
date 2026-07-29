@@ -1,0 +1,78 @@
+# Required schema-v1 TeX82 command-core observations.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
+command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
+command|nonprintable control-sequence name escape|transitions.tex|umber_trace_char and umber_trace_hex JSON escaping|"control_sequence":"\u000b"
+command|short control-sequence name escape|transitions.tex|umber_trace_char short JSON control escapes|"control_sequence":"\t"
+command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"
+input|token-list push|transitions.tex|begin_token_list ordinary branch|"transition":"push","reason":"token_list"
+input|token-list retirement|transitions.tex|end_token_list ordinary branch|"transition":"retire","reason":"token_list"
+input|macro push|transitions.tex|begin_token_list macro branch|"transition":"push","reason":"macro"
+input|macro retirement|transitions.tex|end_token_list macro branch|"transition":"retire","reason":"macro"
+input|backup push|transitions.tex|back_input committed level|"transition":"push","reason":"backup"
+input|backup retirement|transitions.tex|end_token_list backed_up branch|"transition":"retire","reason":"backup"
+input|recovery push|transitions.tex|back_input inserted level|"transition":"push","reason":"recovery"
+input|recovery retirement|transitions.tex|end_token_list inserted branch|"transition":"retire","reason":"recovery"
+recovery|exact backup|transitions.tex|back_input committed level|"event":"recovery","data":{"kind":"backup"
+recovery|inserted token|transitions.tex|back_input recovery insertion|"event":"recovery","data":{"kind":"inserted_token"
+recovery|inserted control sequence|transitions.tex|inserted-relax and outer-validity recovery|"event":"recovery","data":{"kind":"inserted_control_sequence"
+scanner_status|matching entry and restoration|transitions.tex|macro_call scanner-status scope|"from":"normal","to":"matching"
+scanner_status|defining entry and restoration|transitions.tex|scan_toks scanner-status scope|"from":"normal","to":"defining"
+scanner_status|absorbing entry and restoration|transitions.tex|scan_toks scanner-status scope|"from":"normal","to":"absorbing"
+scanner_status|aligning entry and restoration|transitions.tex|init_align scanner-status scope|"from":"normal","to":"aligning"
+macro|completed argument|transitions.tex|macro_call post-strip argument commit|"event":"macro","data":{"transition":"argument"
+macro|activation|transitions.tex|macro_call replacement activation commit|"event":"macro","data":{"transition":"activation"
+token_list|delimiter match|transitions.tex|macro_call delimiter completion|"purpose":"macro_delimiter_match"
+token_list|overlap recovery|transitions.tex|macro_call delimiter overlap fallback|"purpose":"macro_delimiter_recovery"
+token_list|parameter conversion|transitions.tex|scan_toks parameter token conversion|"purpose":"parameter_conversion"
+token_list|macro replacement completion|transitions.tex|scan_toks macro-definition completion|"purpose":"macro_replacement"
+token_list|ordinary scan_toks completion|transitions.tex|scan_toks absorbing completion|"purpose":"scan_toks"
+token_list|expanded scan_toks completion|transitions.tex|scan_toks expanded completion|"purpose":"expanded_scan_toks"
+token_list|direct the splice|transitions.tex|scan_toks the_toks splice|"purpose":"the_toks"
+scanner|integer result|transitions.tex|scan_int successful exit|"event":"scanner","data":{"scanner":"integer"
+scanner|dimension result|transitions.tex|scan_dimen successful exit|"event":"scanner","data":{"scanner":"dimension"
+scanner|glue result|transitions.tex|scan_glue committed return|"event":"scanner","data":{"scanner":"glue"
+scanner|internal result|transitions.tex|scan_something_internal committed return|"event":"scanner","data":{"scanner":"internal"
+condition|limit change|transitions.tex|conditional exact-frame limit commit|"event":"condition","data":{"transition":"limit_change"
+condition|branch selection|transitions.tex|conditional selected branch commit|"event":"condition","data":{"transition":"branch"
+condition|frame pop|transitions.tex|conditional frame unlink seam|"event":"condition","data":{"transition":"pop"
+condition|ifcase progress|transitions.tex|ifcase skip-progress branch|"condition":"ifcase"
+diagnostic|evaluating-limit recovery|transitions.tex|inserted-relax conditional recovery|"diagnostic":"conditional_limit_recovery"
+diagnostic|outer control sequence|transitions.tex|check_outer_validity control-sequence recovery|"diagnostic":"outer_validity_control_sequence"
+mutation|meaning write|transitions.tex|eq_define committed meaning write|"event":"mutation","data":{"target":"meaning"
+mutation|catcode write|transitions.tex|eq_define committed catcode write|"event":"mutation","data":{"target":"catcode"
+mutation|code-table write|transitions.tex|eq_define/eq_word_define committed code-table write|"event":"mutation","data":{"target":"code_table"
+mutation|parameter write|transitions.tex|eq_define/eq_word_define committed parameter write|"event":"mutation","data":{"target":"parameter"
+mutation|register write|transitions.tex|eq_define/eq_word_define committed register write|"event":"mutation","data":{"target":"register"
+mutation|local scope|transitions.tex|local eqtb write commit|,"scope":"local"
+mutation|global scope|transitions.tex|global eqtb write commit|,"scope":"global"
+effect|message|transitions.tex|issue_message after ordinary print|"event":"effect","data":{"kind":"message"
+effect|write|transitions.tex|write_out after expanded output commit|"event":"effect","data":{"kind":"write"
+effect|open|transitions.tex|out_what after stream-open commit|"event":"effect","data":{"kind":"open"
+effect|close|transitions.tex|out_what after stream-close commit|"event":"effect","data":{"kind":"close"
+effect|shipout|transitions.tex|ship_out after DVI page commit|"event":"effect","data":{"kind":"shipout"
+effect|ordered termination|transitions.tex|final_end before transport close|"event":"effect","data":{"kind":"terminate"
+input|source push|transitions.tex and transitions-child.tex|begin_file_reading|"transition":"push","reason":"source"
+scanner_status|skipping entry and restoration|transitions.tex and transitions-child.tex|pass_text scanner-status scope|"from":"normal","to":"skipping"
+condition|frame push|transitions.tex and transitions-child.tex|conditional frame link commit|"event":"condition","data":{"transition":"push"
+input|source retirement|transitions-child.tex|end_file_reading|"transition":"retire","reason":"source"
+input|terminal stop|transitions-child.tex|get_next terminal read stop|"transition":"stop","reason":"source"
+diagnostic|incomplete skipped text|transitions-child.tex|outer-validity EOF recovery|"diagnostic":"conditional_incomplete"
+diagnostic|outer EOF|transitions-child.tex|check_outer_validity EOF recovery|"diagnostic":"outer_validity_eof"
+source|ignored character and trailing-space collapse|input-recovery.tex|get_next M/N/S source-token loop|{"character":65,"catcode":"letter"},{"character":105,"catcode":"letter"},{"character":103,"catcode":"letter"},{"character":110,"catcode":"letter"},{"character":111,"catcode":"letter"},{"character":114,"catcode":"letter"},{"character":101,"catcode":"letter"},{"character":100,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":66,"catcode":"letter"}
+source|comment discard and blank-line par|input-recovery.tex|get_next end_line and new_line cases|{"character":66,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"par"},{"character":68,"catcode":"letter"}
+source|disabled endlinechar|input-recovery.tex|firm_up_the_line and get_next line refill|"key":{"type":"name","value":"noendline"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":66,"catcode":"letter"}]}
+source|canonical hexadecimal superscript notation|input-recovery.tex|get_next superscript reduction|"key":{"type":"name","value":"caretnotation"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":122,"catcode":"letter"}]}
+source|invalid-character consume and restart|input-recovery.tex|get_next invalid_char case|"key":{"type":"name","value":"invalidcharacter"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":66,"catcode":"letter"}]}
+command|get_token string operand|input-recovery.tex|string_code scan_toks operand fetch|"control_sequence":"physicaltokens","location":{"source":"input-recovery.tex","line":17,"byte":42}
+command|get_token meaning operand|input-recovery.tex|meaning_code scan_toks operand fetch|"control_sequence":"physicaltokens","location":{"source":"input-recovery.tex","line":18,"byte":44}
+diagnostic|skipping EOF|input-recovery.tex and transitions-child.tex|check_outer_validity skipping EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"skipping"}]
+recovery|skipping EOF frozen fi|input-recovery.tex and transitions-child.tex|check_outer_validity skipping insertion|"kind":"inserted_token","tokens":[{"character":0,"catcode":"escape","control_sequence":"fi"}]
+input|legal source EOF|input-eof-normal.tex|end_file_reading under normal scanner status|"transition":"retire","reason":"source","name":"input-eof-normal.tex"
+diagnostic|defining EOF|input-eof-defining.tex|check_outer_validity defining EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"defining"}]
+recovery|defining EOF right brace|input-eof-defining.tex|check_outer_validity defining insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
+diagnostic|matching EOF|input-eof-matching.tex|check_outer_validity matching EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"matching"}]
+recovery|matching EOF par|input-eof-matching.tex|check_outer_validity matching insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"par"}]
+diagnostic|absorbing EOF|input-eof-absorbing.tex|check_outer_validity absorbing EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"absorbing"}]
+recovery|absorbing EOF right brace|input-eof-absorbing.tex|check_outer_validity absorbing insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
+diagnostic|aligning EOF|input-eof-aligning.tex|check_outer_validity aligning EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"aligning"}]
+recovery|aligning EOF frozen cr|input-eof-aligning.tex|check_outer_validity aligning insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"cr"}]

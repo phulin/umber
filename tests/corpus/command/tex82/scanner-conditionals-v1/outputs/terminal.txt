@@ -1,0 +1,26 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)
+(./scanner-conditionals.tex
+UMBER-TEX82-SCANNERS: I=-83, D=90.3375pt, G=2.5pt plus 3.0fill minus 4.0
+fil, T=SCANNER TOKENS UMBER-TEX82-IF=TRUE UMBER-TEX82-IFCAT=TRUE
+UMBER-TEX82-IFX=TRUE UMBER-TEX82-SKIP=KEPT UMBER-TEX82-CASE=TWO
+UMBER-TEX82-NESTED-EVALUATION=TRUE
+! Missing number, treated as zero.
+<to be read again> 
+                   \relax 
+...
+l.46 \ifnum1<\else
+                  \message{UMBER-TEX82-LIMIT-RECOVERY}\fi
+UMBER-TEX82-LIMIT-RECOVERY
+! Extra \or.
+l.47 \or
+        
+(./scanner-conditionals-eof.tex)
+! Incomplete \iffalse; all text was ignored after line 1.
+<inserted text> 
+                \fi 
+l.48 ...scanner-conditionals-eof
+                                
+UMBER-TEX82-SKIP-RECOVERY )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on scanner-conditionals.log.

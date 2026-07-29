@@ -1,0 +1,7 @@
+# Required schema-v1 TeX82 command-core observations.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
+off_save|above-bottom replay|off-save.tex|off_save above-bottom branch|"diagnostic":"off_save_replay","arguments":[{"type":"token","value":{"character":0,"catcode":"escape","control_sequence":"endgroup"}}]
+off_save|above-bottom backup|off-save.tex|off_save back_input replay seam|"kind":"backup","tokens":[{"character":0,"catcode":"escape","control_sequence":"endgroup"}]
+off_save|above-bottom inserted closer|off-save.tex|off_save ins_list right-brace insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
+off_save|bottom-level drop|off-save.tex|off_save bottom-level branch|"diagnostic":"off_save_bottom_drop","arguments":[{"type":"token","value":{"character":0,"catcode":"escape","control_sequence":"endgroup"}}]
+off_save|bottom-level bounded progress|off-save.tex|off_save return to ordinary command loop|"kind":"message","channel":"terminal","value":{"type":"bytes","value":[85,77,66,69,82,45,84,69,88,56,50,45,79,70,70,45,83,65,86,69,45,80,82,79,71,82,69,83,83]}

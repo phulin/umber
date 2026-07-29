@@ -1,3 +1,7 @@
+\catcode`\{=1
+\catcode`\}=2
+\catcode`\#=6
+\catcode`\&=4
 \let\alignmentbegingroup=\begingroup
 \let\alignmentendgroup=\endgroup
 \message{UMBER-TEX82-ALIGNMENT-BEGIN}
@@ -32,3 +36,5 @@
 \setbox16=\vbox{\halign{#\cr
   \relax&\relax\cr}}
 \message{UMBER-TEX82-ALIGNMENT-END}
+\shipout\vbox{\box10\box11}
+\end

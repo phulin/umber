@@ -8,6 +8,7 @@ mod bootstrap;
 mod encoding;
 mod fixture;
 mod fixture_audit;
+mod minifixture_budget;
 mod normalize;
 mod profile;
 mod schema;
@@ -19,6 +20,10 @@ pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
 pub use fixture::{
     CanonicalCitation, CommittedFixture, FIXTURE_CONTRACT_VERSION, FIXTURE_MANIFEST_NAME,
     FixtureArtifact, FixtureError, FixtureManifest, FixtureProfile, ToolIdentity,
+};
+pub use minifixture_budget::{
+    MINIFIXTURE_MAX_EVENTS, MINIFIXTURE_MAX_SOURCE_BYTES, MINIFIXTURE_MAX_SOURCES,
+    validate_minifixture_budget,
 };
 pub use normalize::{NormalizedEvent, Normalizer};
 pub use profile::Tex82ObserverProfile;

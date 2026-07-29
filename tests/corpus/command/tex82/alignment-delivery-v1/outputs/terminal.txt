@@ -1,0 +1,52 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)
+(./alignment-delivery.tex UMBER-TEX82-ALIGNMENT-BEGIN
+UMBER-TEX82-U-TEMPLATE UMBER-TEX82-V-TEMPLATE UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE UMBER-TEX82-NOALIGN UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE
+! Missing # inserted in alignment preamble.
+<to be read again> 
+                   &
+l.28 ...ox12=\vbox{\halign{left&
+                                right#\cr
+! Only one # is allowed per tab.
+l.30 \setbox13=\vbox{\halign{##
+                               \cr
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.33   {\relax&
+               \relax\cr}}
+! Missing { inserted.
+<inserted text> 
+                {
+...
+l.35   \relax\iffalse}\fi&
+                          }\relax\cr}}
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.35   \relax\iffalse}\fi&
+                          }\relax\cr}}
+! Missing \cr inserted.
+<inserted text> 
+                \cr 
+...
+l.35   \relax\iffalse}\fi&}
+                           \relax\cr}}
+! Misplaced \cr.
+l.35 ...x\iffalse}\fi&}\relax\cr
+                                }}
+! Too many }'s.
+l.35 ...iffalse}\fi&}\relax\cr}}
+                                
+! Extra alignment tab has been changed to \cr.
+<template> \endtemplate 
+                        
+l.37   \relax&
+              \relax\cr}}
+UMBER-TEX82-ALIGNMENT-END [0] )
+(see the transcript file for additional information)
+Output written on alignment-delivery.dvi (1 page, 316 bytes).
+Transcript written on alignment-delivery.log.

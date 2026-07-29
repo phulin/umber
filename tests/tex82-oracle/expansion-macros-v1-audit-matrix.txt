@@ -1,0 +1,8 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+command|tex.web|get_token|log,terminal
+command|tex.web|get_x_token, x_token, and expand|log,terminal
+recovery|tex.web|back_input and check_outer_validity|log,terminal
+macro|tex.web|macro_call|log
+token_list|tex.web|scan_toks and the_toks|log
+mutation|tex.web|eq_define, geq_define, eq_word_define, and geq_word_define|log

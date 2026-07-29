@@ -19,7 +19,6 @@
 \edef\frozen{\noexpand\relax}
 \catcode`\^=7 \let\^^K=\relax \^^K \let\^^I=\relax \^^I
 \lccode`Z=`z
-\input case-shift
 \tolerance=1234
 \count0="2A
 \count1=\count0
@@ -44,16 +43,12 @@
 \ifcase2 case zero\or case one\or case two\else case fallback\fi
 \iffalse {skipped {braces}}\else kept\fi
 \ifnum1<\else recovered\fi
-\input alignment-delivery
-\input off-save
 \immediate\openout0=transitions-effects.out
 \immediate\write0{UMBER-TEX82-WRITE}
 \immediate\closeout0
 \shipout\vbox{\box10\box11}
 \message{UMBER-TEX82-TRANSITIONS}
 \outer\def\outercommand{}
-\input expansion-macros
-\input scanner-conditionals
 \input input-recovery
 \input transitions-child
 \def\takeone#1{}

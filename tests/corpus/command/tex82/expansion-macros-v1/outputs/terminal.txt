@@ -1,0 +1,45 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)
+(./expansion-macros.tex
+Runaway argument?
+{BEFORE
+! Paragraph ended before \shortparagraph was complete.
+<to be read again> 
+                   \par 
+l.31 ...hortparagraph{BEFORE\par
+                                 AFTER}}
+! Too many }'s.
+l.31 ...graph{BEFORE\par AFTER}}
+                                
+
+EXPANSION-RESULTS: getx=macro:->EXPANDED; noexpand=macro:->\noexpandleaf
+ NOEXPAND; expandafter=macro:->FIRSTSECOND; csname=macro:->CSNAME; undef
+ined-csname=\relax; convert=macro:->-42/xiv/\constructedname/expansion-m
+acros; undelimited=macro:->[{GROUPED}]; leading=macro:->[MATCHED]; neste
+d=macro:->[A{B}C]; overlap=macro:->[a]; hashbrace=macro:->[HASH]{BRACE};
+ nine=macro:->91; long-paragraph=macro:->[BEFORE\par AFTER]; short-parag
+raph-recovery=macro:->\par AFTER; replay=macro:->[REPLAY]; direct-toks=m
+acro:->DIRECT \expandleaf 
+> \ordinarydefinition=macro:
+#1->ORDINARY #1.
+l.59 \show\ordinarydefinition
+                             
+> \globaldefinition=macro:
+#1->GLOBAL #1.
+l.60 \show\globaldefinition
+                           
+> \expandeddefinition=macro:
+->EXPANDED.
+l.61 \show\expandeddefinition
+                             
+> \globalexpandeddefinition=macro:
+->EXPANDED.
+l.62 ...globalexpandeddefinition
+                                
+> \qualifieddefinition=\long\outer macro:
+#1->QUALIFIED #1.
+l.63 \show\qualifieddefinition
+                              
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on expansion-macros.log.

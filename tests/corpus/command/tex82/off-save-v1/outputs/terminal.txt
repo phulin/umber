@@ -1,0 +1,20 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)
+(./off-save.tex UMBER-TEX82-OFF-SAVE-BEGIN
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.6 {\endgroup
+              }
+! Extra \endgroup.
+<recently read> \endgroup 
+                          
+l.6 {\endgroup
+              }
+! Too many }'s.
+l.6 {\endgroup}
+               
+UMBER-TEX82-OFF-SAVE-PROGRESS )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on off-save.log.

@@ -1,0 +1,3 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+off_save|tex.web|off_save|log,terminal

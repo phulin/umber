@@ -1,0 +1,88 @@
+This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**alignment-delivery.tex
+(./alignment-delivery.tex UMBER-TEX82-ALIGNMENT-BEGIN
+UMBER-TEX82-U-TEMPLATE UMBER-TEX82-V-TEMPLATE UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE UMBER-TEX82-NOALIGN UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE
+! Missing # inserted in alignment preamble.
+<to be read again> 
+                   &
+l.28 ...ox12=\vbox{\halign{left&
+                                right#\cr
+There should be exactly one # between &'s, when an
+\halign or \valign is being set up. In this case you had
+none, so I've put one in; maybe that will work.
+
+! Only one # is allowed per tab.
+l.30 \setbox13=\vbox{\halign{##
+                               \cr
+There should be exactly one # between &'s, when an
+\halign or \valign is being set up. In this case you had
+more than one, so I'm ignoring all but the first.
+
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.33   {\relax&
+               \relax\cr}}
+I've put in what seems to be necessary to fix
+the current column of the current alignment.
+Try to go on, since this might almost work.
+
+! Missing { inserted.
+<inserted text> 
+                {
+...
+l.35   \relax\iffalse}\fi&
+                          }\relax\cr}}
+I've put in what seems to be necessary to fix
+the current column of the current alignment.
+Try to go on, since this might almost work.
+
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.35   \relax\iffalse}\fi&
+                          }\relax\cr}}
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+! Missing \cr inserted.
+<inserted text> 
+                \cr 
+...
+l.35   \relax\iffalse}\fi&}
+                           \relax\cr}}
+I'm guessing that you meant to end an alignment here.
+
+! Misplaced \cr.
+l.35 ...x\iffalse}\fi&}\relax\cr
+                                }}
+I can't figure out why you would want to use a tab mark
+or \cr or \span just now. If something like a right brace
+up above has ended a previous alignment prematurely,
+you're probably due for more error messages, and you
+might try typing `S' now just to see what is salvageable.
+
+! Too many }'s.
+l.35 ...iffalse}\fi&}\relax\cr}}
+                                
+You've closed more groups than you opened.
+Such booboos are generally harmless, so keep going.
+
+! Extra alignment tab has been changed to \cr.
+<template> \endtemplate 
+                        
+l.37   \relax&
+              \relax\cr}}
+You have given more \span or & marks than there were
+in the preamble to the \halign or \valign now in progress.
+So I'll assume that you meant to type \cr instead.
+
+UMBER-TEX82-ALIGNMENT-END [0] )
+Output written on alignment-delivery.dvi (1 page, 316 bytes).
