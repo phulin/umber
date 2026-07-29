@@ -158,3 +158,62 @@ libraries, and platform are inputs. Reproducibility means the complete pinned
 source, ordered changes, flags, profile invocation, library artifacts, and
 recorded host toolchain determine the result; it does not assert one
 cross-platform binary digest.
+
+## Running a command-semantic minifixture through the oracle
+
+`scripts/run-minifixture-oracle.sh` runs one or more
+`tests/corpus/command-semantic/<domain>/manifest.json` cases through the
+already-built instrumented executable above and captures every channel a
+case's run can produce: terminal text, the raw and host-clock-normalized log,
+the DVI/PDF page artifact, `status.txt` (exit code), any writer-effect file
+the source itself opens (via `\openout`/`\write`, discovered rather than
+assumed at a fixed name), and the schema-v1 `pdftex14027-events.jsonl` trace.
+It never builds the oracle and performs no network access.
+
+```bash
+scripts/run-minifixture-oracle.sh --case main-control/eqtb-regions
+scripts/run-minifixture-oracle.sh --all
+```
+
+Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
+with its `source`, any `inputs` files (written as the manifest's exact
+string, byte for byte), and any `font_inputs` TFM (copied from the
+repository path the manifest names).
+
+**Interaction mode.** The script always passes
+`-interaction=scrollmode`, not the `batchmode` the rest of this oracle's own
+smoke/extension/state fixtures use. Two constraints select it:
+`\read`-from-terminal and `\pausing` (used by the 8 cases with a
+`terminal_lines` manifest field) are hard errors, respectively no-ops, under
+`batchmode`/`nonstopmode` (tex.web requires `interaction>nonstop_mode`), so
+those modes would misrun exactly the cases meant to exercise terminal
+interaction. The tex82 default, `errorstopmode`, satisfies that but also
+stops and prompts at _every_ error, not only the ones a case's
+`terminal_lines` anticipates: verified directly, `main-control/font-definition`
+(no `terminal_lines`) hits an ordinary error under `errorstopmode` and, with
+no further terminal input queued, halts at "! Emergency stop." before
+reaching the rest of the source. `scrollmode` is `>nonstop_mode` (so
+`\read`/`\pausing` work) and still "omits error stops" like batch/nonstopmode
+do, so an undeclared error just prints and the run completes. Known gap:
+`main-control/show-completion` specifically exercises the
+`errorstopmode`-only `?␣` prompt after `\showthe`; under `scrollmode` that
+prompt never appears, so that one case's terminal channel cannot be
+reproduced faithfully by this runner.
+
+**Profile fidelity.** The manifest `profile` field maps to an invocation as:
+
+- `initex` (default) → `-ini`, no e-TeX.
+- `etex-initex` → `-ini -etex`, the same invocation the rest of this oracle
+  already uses.
+- `etex-loaded` and `production` → **not reproduced**. Both need a genuinely
+  loaded (`\dump`-ed and reloaded) format; `tools/tex-command-stream`'s
+  in-process `SessionProfile::EtexLoaded`/`Production` build this by dumping
+  and restoring an in-memory `Universe`, which has no analog here yet (a real
+  `\dump` format file plus a `-fmt` invocation). The 3 `etex-loaded` and 2
+  `production` cases are skipped with an explicit message rather than run
+  under the wrong profile.
+
+This entry point is intentionally separate from
+`scripts/regen-fixtures.sh`'s `command-semantic` area, which derives its
+per-channel contracts without a reference engine; wiring reference-engine
+capture into that area is future work, not part of this script.
