@@ -797,6 +797,14 @@ fn buffered_memory_output_is_readable_as_same_job_input_and_rolls_back() {
             .is_none(),
         "pending-output lookup must not bypass driver input policy"
     );
+    assert!(
+        world
+            .read_same_run_output_file("materialized.tex")
+            .expect("same-run lookup")
+            .is_none(),
+        "same-run lookup must not consume ordinary host input"
+    );
+    assert!(world.input_records().is_empty());
     let before = world.snapshot();
 
     world.open_out(slot, "same-job.tex");
@@ -832,6 +840,8 @@ fn buffered_memory_output_is_readable_as_same_job_input_and_rolls_back() {
         .read_file("same-job.tex")
         .expect("committed output is readable");
     assert_eq!(content.bytes(), b"first\nsecond\n");
+    assert_eq!(content.origin(), InputOrigin::SameRunGenerated);
+    assert!(world.external_input_records().next().is_none());
 }
 
 #[test]

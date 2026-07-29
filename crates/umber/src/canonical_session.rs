@@ -472,6 +472,7 @@ impl<'a> CanonicalEngineSession<'a> {
                         let mut world = CanonicalResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
+                    let fulfillment = fulfillment.or_else(|| self.same_run_output(&need));
                     let Some(fulfillment) = fulfillment else {
                         declined = declined.saturating_add(1);
                         if declined >= self.no_progress_limit {
@@ -505,6 +506,7 @@ impl<'a> CanonicalEngineSession<'a> {
                         let mut world = CanonicalResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
+                    let fulfillment = fulfillment.or_else(|| self.same_run_output(&need));
                     let Some(fulfillment) = fulfillment else {
                         declined = declined.saturating_add(1);
                         if declined >= self.no_progress_limit {
@@ -520,6 +522,28 @@ impl<'a> CanonicalEngineSession<'a> {
                 }
             }
         }
+    }
+
+    /// Resolves an exact input name from output already committed by this
+    /// retained run when host search policy declines it.
+    ///
+    /// TeX82 §§1328, 1374 close output streams before later input opens use
+    /// the resulting file. The active World is the owner of those committed
+    /// effects, so this fallback must remain inside the session instead of
+    /// requiring every host search policy to mirror relative output paths.
+    fn same_run_output(
+        &mut self,
+        need: &CanonicalResourceNeed,
+    ) -> Option<CanonicalResourceFulfillment> {
+        let CanonicalResourceNeed::Input { name } = need else {
+            return None;
+        };
+        self.stores
+            .world_mut()
+            .read_same_run_output_file(name)
+            .ok()
+            .flatten()
+            .map(|content| CanonicalResourceFulfillment::world_input(name, content))
     }
 
     fn publish_completed_boundaries(
@@ -1029,6 +1053,47 @@ mod tests {
             CanonicalSessionError::NoProgress { attempts: 2, .. }
         ));
         assert!(session.stores().world().effect_records().is_empty());
+    }
+
+    #[test]
+    fn committed_output_is_visible_to_later_input_after_atomic_retry() {
+        let (mut stores, root) = prepared_session(
+            br"\immediate\openout1=same.out
+\immediate\write1{generated}
+\immediate\closeout1
+\shipout\hbox{}
+\input same.out
+\end",
+        );
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session.set_no_progress_limit(1);
+        session
+            .register_authored_root("job.tex", root)
+            .expect("root registers");
+        let mut host = OneInputHost { calls: 0 };
+
+        let run = session
+            .run(&mut host, &mut Vec::new())
+            .expect("same-run output makes retry progress");
+
+        assert_eq!(host.calls, 1, "host policy gets one bounded opportunity");
+        assert_eq!(
+            session.stores().world().memory_output("same.out"),
+            Some(&b"generated\n"[..]),
+            "retry neither duplicates nor loses the committed output"
+        );
+        assert_eq!(run.artifacts.len(), 2);
+        assert!(
+            session
+                .stores()
+                .world()
+                .input_records()
+                .iter()
+                .any(|record| {
+                    record.path() == Path::new("same.out")
+                        && record.origin() == tex_state::InputOrigin::SameRunGenerated
+                })
+        );
     }
 
     #[test]

@@ -1469,6 +1469,7 @@ pub struct World {
     effects: Arc<Vec<EffectRecord>>,
     stream_bufs: Arc<StreamBufState>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
+    committed_output_paths: BTreeSet<PathBuf>,
     rng: RngState,
     pdf_rng: PdfRandomState,
     pdf_time_micros: u64,
@@ -1511,6 +1512,7 @@ impl Clone for World {
             effects: self.effects.clone(),
             stream_bufs: self.stream_bufs.clone(),
             committed_write_streams: self.committed_write_streams.clone(),
+            committed_output_paths: self.committed_output_paths.clone(),
             rng: self.rng,
             pdf_rng: self.pdf_rng.clone(),
             pdf_time_micros: self.pdf_time_micros,
@@ -1547,6 +1549,7 @@ impl PartialEq for World {
             && self.effects == other.effects
             && self.stream_bufs == other.stream_bufs
             && self.committed_write_streams == other.committed_write_streams
+            && self.committed_output_paths == other.committed_output_paths
             && self.rng == other.rng
             && self.pdf_rng == other.pdf_rng
             && self.pdf_time_micros == other.pdf_time_micros
@@ -1722,6 +1725,7 @@ impl World {
             effects: Arc::new(Vec::new()),
             stream_bufs: Arc::new(StreamBufState::default()),
             committed_write_streams: Default::default(),
+            committed_output_paths: BTreeSet::new(),
             rng: RngState::default(),
             pdf_rng: PdfRandomState::from_seed(random_seed),
             pdf_time_micros: monotonic_micros,
@@ -1861,11 +1865,18 @@ impl World {
                     Some(FileModificationDate::utc(self.job_clock)),
                     InputOrigin::SameRunGenerated,
                 ),
-                None => (
-                    self.materialized_file_bytes(path)?,
-                    self.materialized_file_modification_date(path),
-                    InputOrigin::External,
-                ),
+                None => {
+                    let origin = if self.committed_output_paths.contains(path) {
+                        InputOrigin::SameRunGenerated
+                    } else {
+                        InputOrigin::External
+                    };
+                    (
+                        self.materialized_file_bytes(path)?,
+                        self.materialized_file_modification_date(path),
+                        origin,
+                    )
+                }
             };
         Ok(self.register_input_content(path, bytes, modification_date, origin))
     }
@@ -1884,6 +1895,32 @@ impl World {
         Ok(Some(self.register_input_content(
             path,
             Arc::from(bytes),
+            Some(FileModificationDate::utc(self.job_clock)),
+            InputOrigin::SameRunGenerated,
+        )))
+    }
+
+    /// Reads an exact path only when this run generated it.
+    ///
+    /// Unlike [`Self::read_file`], a miss neither consults ordinary host
+    /// inputs nor allocates an input record. This lets retained sessions give
+    /// their own committed outputs canonical precedence without bypassing
+    /// driver-owned search policy for external files.
+    pub fn read_same_run_output_file(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<FileContent>, WorldError> {
+        let path = path.as_ref();
+        if let Some(content) = self.read_pending_output_file(path)? {
+            return Ok(Some(content));
+        }
+        if !self.committed_output_paths.contains(path) {
+            return Ok(None);
+        }
+        let bytes = self.materialized_file_bytes(path)?;
+        Ok(Some(self.register_input_content(
+            path,
+            bytes,
             Some(FileModificationDate::utc(self.job_clock)),
             InputOrigin::SameRunGenerated,
         )))
@@ -2925,6 +2962,7 @@ impl World {
         self.effects.hash(&mut hasher);
         self.stream_bufs.hash(&mut hasher);
         self.committed_write_streams.hash(&mut hasher);
+        self.committed_output_paths.hash(&mut hasher);
         self.rng.hash(&mut hasher);
         self.pdf_rng.hash(&mut hasher);
         self.pdf_time_micros.hash(&mut hasher);
@@ -3235,6 +3273,7 @@ impl World {
             EffectRecord::StreamOpen { slot, target } => {
                 Self::truncate_output(&mut self.backend, target.path())
                     .map_err(|error| error.effect_retry(EffectRetrySafety::Poisoned))?;
+                self.committed_output_paths.insert(target.path().to_owned());
                 self.committed_write_streams[slot.index()] = Some(target.clone());
             }
             EffectRecord::StreamClose { slot } => {
