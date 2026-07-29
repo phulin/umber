@@ -3281,6 +3281,27 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
 }
 
 #[test]
+fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\catcode`\#=6 \catcode`\&=4
+           \setbox0=\hbox{\valign{#\cr x\cr}}
+           \ifhmode\count0=2\else\count0=1\fi
+           \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    // TeX82 §1131 runs `end_graf` before `fin_col`. The paragraph opened by
+    // `x` is therefore closed before the valign cell, row, alignment, and
+    // enclosing hbox levels are packaged in order.
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(control.current_mode(), Mode::Vertical);
+}
+
+#[test]
 fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

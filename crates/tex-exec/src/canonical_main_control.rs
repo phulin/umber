@@ -9001,6 +9001,15 @@ fn capture_replay_alignment_cell(
     }
 
     // TeX82 §1131's `do_endv` runs `end_graf` before §791's `fin_col`.
+    // This is a no-op for an \halign cell's unrestricted horizontal level,
+    // but a \valign cell is internal vertical and may have a paragraph open
+    // above it. Close that paragraph before popping and packaging the cell;
+    // otherwise the paragraph is mistaken for the cell, leaving the actual
+    // cell and row levels on the mode nest after `fin_align`.
+    if active.kind == AlignmentKind::VAlign {
+        crate::assignments::end_paragraph(modes, stores)?;
+    }
+
     // Canonical alignment packaging still defers that paragraph's lowering,
     // but §815's negative pretolerance makes its immediate transition into
     // the hyphenating pass certain. Publish §919's one-way trie lifecycle at
