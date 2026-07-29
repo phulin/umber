@@ -58,7 +58,7 @@ use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecError};
 use tex_state::{JobClock, Universe, World};
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceWorld, CanonicalSessionError,
+    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError,
 };
 
 const DEFAULT_SOURCE: &str = "gentle";
@@ -251,23 +251,29 @@ impl CanonicalResourceHost for CorpusHost {
         &mut self,
         world: &mut CanonicalResourceWorld<'_>,
         need: &CanonicalResourceNeed,
-    ) -> Option<CanonicalResourceFulfillment> {
+    ) -> CanonicalResourceOutcome {
         match need {
             CanonicalResourceNeed::Input { name } => world
                 .read_file(canonical_input_path(name))
                 .ok()
-                .map(|content| CanonicalResourceFulfillment::world_input(name, content)),
+                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::world_input(
+                        name, content,
+                    ))
+                }),
             CanonicalResourceNeed::Font { request } => world
                 .read_file(canonical_font_path(&request.name))
                 .ok()
-                .map(|metrics| CanonicalResourceFulfillment::Font {
-                    request: request.clone(),
-                    resource: Box::new(FontResource::Tfm {
-                        metrics,
-                        opentype: None,
-                    }),
+                .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    })
                 }),
-            CanonicalResourceNeed::PdfImage { .. } => None,
+            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
         }
     }
 }

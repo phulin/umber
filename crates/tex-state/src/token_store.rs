@@ -108,6 +108,10 @@ impl TokenSemanticIdBuilder {
             Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => self.stream.tag(3),
             Token::Frozen(crate::token::FrozenToken::END_V) => self.stream.tag(4),
             Token::Frozen(crate::token::FrozenToken::EXPANDED_TEXT_BOUNDARY) => self.stream.tag(6),
+            Token::Frozen(crate::token::FrozenToken::RELAX) => self.stream.tag(7),
+            Token::Frozen(crate::token::FrozenToken::UNDEFINED_CONTROL_SEQUENCE) => {
+                self.stream.tag(8)
+            }
             Token::Frozen(frozen) => {
                 self.stream.tag(5);
                 self.stream.u16(

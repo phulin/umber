@@ -3369,7 +3369,11 @@ impl CommandProcessor<'_> {
                             components.name.clear();
                             components.extension.clear();
                         }
-                        '.' if components.extension.is_empty() => components.extension.push(ch),
+                        '.' => {
+                            components.name.push_str(&components.extension);
+                            components.extension.clear();
+                            components.extension.push(ch);
+                        }
                         _ if components.extension.is_empty() => components.name.push(ch),
                         _ => components.extension.push(ch),
                     }

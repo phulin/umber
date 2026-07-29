@@ -23,7 +23,8 @@ use tex_state::{JobClock, Universe, World};
 
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceWorld, CanonicalSessionError, EngineMode, dvi_from_page_plans,
+    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode,
+    dvi_from_page_plans,
 };
 
 #[path = "e2e_conformance/assets.rs"]
@@ -373,32 +374,38 @@ impl CanonicalResourceHost for StagedDirResourceHost {
         &mut self,
         world: &mut CanonicalResourceWorld<'_>,
         need: &CanonicalResourceNeed,
-    ) -> Option<CanonicalResourceFulfillment> {
+    ) -> CanonicalResourceOutcome {
         match need {
             CanonicalResourceNeed::Input { name } => {
                 let path = with_default_extension(name, "tex");
-                world
-                    .read_file(self.base_dir.join(path))
-                    .ok()
-                    .map(|content| CanonicalResourceFulfillment::world_input(name, content))
+                world.read_file(self.base_dir.join(path)).ok().map_or(
+                    CanonicalResourceOutcome::Unavailable,
+                    |content| {
+                        CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::world_input(name, content),
+                        )
+                    },
+                )
             }
             CanonicalResourceNeed::Font { request } => {
                 let path = with_default_extension(&request.name, "tfm");
-                Some(world.read_file(self.base_dir.join(path)).map_or_else(
-                    |_| CanonicalResourceFulfillment::Font {
-                        request: request.clone(),
-                        resource: Box::new(FontResource::Unavailable),
-                    },
-                    |metrics| CanonicalResourceFulfillment::Font {
-                        request: request.clone(),
-                        resource: Box::new(FontResource::Tfm {
-                            metrics,
-                            opentype: None,
-                        }),
-                    },
-                ))
+                CanonicalResourceOutcome::Fulfilled(
+                    world.read_file(self.base_dir.join(path)).map_or_else(
+                        |_| CanonicalResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Unavailable),
+                        },
+                        |metrics| CanonicalResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Tfm {
+                                metrics,
+                                opentype: None,
+                            }),
+                        },
+                    ),
+                )
             }
-            CanonicalResourceNeed::PdfImage { .. } => None,
+            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
         }
     }
 }

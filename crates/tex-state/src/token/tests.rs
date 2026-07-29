@@ -131,6 +131,21 @@ fn expanded_text_boundary_is_distinct_from_alignment_and_primitive_tokens() {
 }
 
 #[test]
+fn frozen_relax_is_outside_the_primitive_index_range() {
+    let relax = Token::frozen_relax();
+    let Token::Frozen(relax) = relax else {
+        panic!("frozen relax must remain inaccessible");
+    };
+    assert_eq!(relax.primitive_index(), None);
+
+    let last = super::FrozenToken::SENTINEL_BASE - super::FrozenToken::PRIMITIVE_BASE - 1;
+    assert_eq!(
+        super::FrozenToken::primitive(last).primitive_index(),
+        Some(last)
+    );
+}
+
+#[test]
 fn invariant_fast_decode_matches_checked_decode_for_every_token_kind() {
     let tokens = [
         Token::Char {

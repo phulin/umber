@@ -293,3 +293,23 @@ fn frozen_primitive_tokens_have_distinct_semantic_hashes_and_round_trip() {
     );
     assert_eq!(restored.testing_state_hash(), universe.testing_state_hash());
 }
+
+#[test]
+fn frozen_relax_has_distinct_semantic_identity_and_format_round_trips() {
+    let mut universe = Universe::new();
+    let checkpoint = universe.snapshot();
+    let primitive = universe.intern_token_list(&[Token::frozen_primitive(7)]);
+    universe.set_toks(0, primitive);
+    let primitive_hash = universe.snapshot().state_hash();
+
+    universe.rollback(&checkpoint);
+    let relax = universe.intern_token_list(&[Token::frozen_relax()]);
+    universe.set_toks(0, relax);
+    let relax_hash = universe.snapshot().state_hash();
+    assert_ne!(relax_hash, primitive_hash);
+
+    let bytes = universe.dump_format().expect("frozen relax format");
+    let restored = Universe::from_format(World::memory(), &bytes).expect("restore frozen relax");
+    assert_eq!(restored.tokens(restored.toks(0)), &[Token::frozen_relax()]);
+    assert_eq!(restored.testing_state_hash(), universe.testing_state_hash());
+}

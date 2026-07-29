@@ -7988,6 +7988,8 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
         Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
         Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
         Token::Frozen(crate::token::FrozenToken::EXPANDED_TEXT_BOUNDARY) => hasher.tag(6),
+        Token::Frozen(crate::token::FrozenToken::RELAX) => hasher.tag(7),
+        Token::Frozen(crate::token::FrozenToken::UNDEFINED_CONTROL_SEQUENCE) => hasher.tag(8),
         Token::Frozen(frozen) => {
             hasher.tag(5);
             hasher.u16(

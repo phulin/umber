@@ -24,6 +24,10 @@ impl FrozenToken {
     const SENTINEL_BASE: u16 = Self::RELAX.0;
 
     pub(crate) const fn primitive(index: u16) -> Self {
+        assert!(
+            index < Self::SENTINEL_BASE - Self::PRIMITIVE_BASE,
+            "frozen primitive index overlaps the sentinel range"
+        );
         Self(Self::PRIMITIVE_BASE + index)
     }
 

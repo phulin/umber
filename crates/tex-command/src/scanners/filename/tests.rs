@@ -100,8 +100,18 @@ fn filename_components_split_area_name_and_extension_canonically() {
 
     let scanned = scan_text("area.with.dot/final.part.ext ");
     assert_eq!(scanned.components.area, "area.with.dot/");
-    assert_eq!(scanned.components.name, "final");
-    assert_eq!(scanned.components.extension, ".part.ext");
+    assert_eq!(scanned.components.name, "final.part");
+    assert_eq!(scanned.components.extension, ".ext");
+
+    let scanned = scan_text("area..with...dots/final..part...ext ");
+    assert_eq!(scanned.components.area, "area..with...dots/");
+    assert_eq!(scanned.components.name, "final..part..");
+    assert_eq!(scanned.components.extension, ".ext");
+
+    let scanned = scan_text("first.name.ext/second.part.ext ");
+    assert_eq!(scanned.components.area, "first.name.ext/");
+    assert_eq!(scanned.components.name, "second.part");
+    assert_eq!(scanned.components.extension, ".ext");
 
     let mut defaulted = scan_text("area/paper ");
     defaulted.components.apply_default_extension(".tex");
@@ -256,11 +266,40 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     };
     assert_eq!(error, CommandError::MissingInput(".tex".to_owned()));
     assert!(!command.name_in_progress());
-    let sentinel = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .get_x_token()
-        .expect("sentinel delivery succeeds")
-        .expect("sentinel remains above the restored input");
-    assert_eq!(sentinel.meaning(), Meaning::Relax);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let sentinel = processor
+            .get_x_token()
+            .expect("sentinel delivery succeeds")
+            .expect("sentinel remains above the restored input");
+        assert_eq!(sentinel.meaning(), Meaning::Relax);
+        let restored_input = processor
+            .get_token()
+            .expect("restored input delivery succeeds")
+            .expect("restored input follows the sentinel");
+        assert_eq!(
+            restored_input.meaning(),
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Input)
+        );
+        for expected in ['i', 'n', 'c'] {
+            assert_eq!(
+                processor
+                    .get_token()
+                    .expect("filename character delivery succeeds")
+                    .expect("filename character remains")
+                    .meaning(),
+                Meaning::CharToken {
+                    ch: expected,
+                    cat: Catcode::Letter,
+                }
+            );
+        }
+    }
+
+    let snapshot = command.snapshot();
+    command.begin_file_name().expect("guard begins");
+    command.rollback(snapshot).expect("guard state rolls back");
+    assert!(!command.name_in_progress());
 
     let mut command = CommandState::default();
     push(&mut command, text_tokens("missing "));

@@ -42,7 +42,7 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use canonical_session::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceWorld, CanonicalSessionError, CanonicalSessionState,
+    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, CanonicalSessionState,
     DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
 };
 pub use editor_session::{
@@ -540,7 +540,7 @@ impl CanonicalResourceHost for FileSessionResolvers {
         &mut self,
         world: &mut CanonicalResourceWorld<'_>,
         need: &tex_exec::CanonicalResourceNeed,
-    ) -> Option<CanonicalResourceFulfillment> {
+    ) -> CanonicalResourceOutcome {
         match need {
             tex_exec::CanonicalResourceNeed::Input { name } => {
                 if let Some(result) = self
@@ -548,26 +548,30 @@ impl CanonicalResourceHost for FileSessionResolvers {
                     .0
                     .read_restricted_pipe_from_canonical_world(world, name)
                 {
-                    return result.ok().map(|text| {
-                        CanonicalResourceFulfillment::input(
+                    return result.map_or(CanonicalResourceOutcome::Unavailable, |text| {
+                        CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
                             name,
                             RegisteredSourceKind::Generated,
                             Arc::from(text.into_bytes()),
-                        )
+                        ))
                     });
                 }
                 self.input
                     .0
                     .read_from_canonical_world(world, name)
                     .ok()
-                    .map(|content| CanonicalResourceFulfillment::world_input(name, content))
+                    .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                        CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::world_input(name, content),
+                        )
+                    })
             }
             tex_exec::CanonicalResourceNeed::Font { request } => {
                 let mut path = PathBuf::from(&request.name);
                 if path.extension().is_none() {
                     path.set_extension("tfm");
                 }
-                Some(
+                CanonicalResourceOutcome::Fulfilled(
                     self.font
                         .0
                         .read_from_canonical_world(world, &path)
@@ -587,11 +591,13 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 )
             }
             tex_exec::CanonicalResourceNeed::PdfImage { request } => {
-                let content = self
+                let Ok(content) = self
                     .image
                     .0
                     .read_exact_from_canonical_world(world, &request.name)
-                    .ok()?;
+                else {
+                    return CanonicalResourceOutcome::Unavailable;
+                };
                 let legacy = LegacyPdfImageRequest {
                     name: request.name.clone(),
                     page: match &request.page {
@@ -617,7 +623,7 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 let resource = virtual_compile::parse_image(&content, &legacy)
                     .map(PdfImageResource::Available)
                     .unwrap_or_else(PdfImageResource::Invalid);
-                Some(CanonicalResourceFulfillment::PdfImage {
+                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::PdfImage {
                     request: request.clone(),
                     resource: Box::new(resource),
                 })

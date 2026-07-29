@@ -42,6 +42,17 @@ pub enum CanonicalResourceFulfillment {
     },
 }
 
+/// One host decision for a canonical resource suspension.
+#[derive(Clone, Debug)]
+pub enum CanonicalResourceOutcome {
+    /// The host selected immutable backing for the exact request.
+    Fulfilled(CanonicalResourceFulfillment),
+    /// The host completed its search and proved that the resource is absent.
+    Unavailable,
+    /// The host made no final decision, so the same suspension may be retried.
+    Declined,
+}
+
 impl CanonicalResourceFulfillment {
     /// Creates the exact retained input answer for a suspended `\\input`.
     #[must_use]
@@ -103,7 +114,7 @@ pub trait CanonicalResourceHost {
         &mut self,
         world: &mut CanonicalResourceWorld<'_>,
         need: &CanonicalResourceNeed,
-    ) -> Option<CanonicalResourceFulfillment>;
+    ) -> CanonicalResourceOutcome;
 }
 
 /// Result of driving the retained engine until it either completes or awaits
@@ -455,9 +466,32 @@ impl<'a> CanonicalEngineSession<'a> {
         Ok(())
     }
 
+    fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
+        match need {
+            CanonicalResourceNeed::Input { name } => {
+                let capabilities = self.control.capabilities_mut();
+                capabilities.mark_input_unavailable(name);
+                if !name.contains(['/', '\\', ':']) {
+                    capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
+                }
+            }
+            CanonicalResourceNeed::Font { request } => {
+                self.control.capabilities_mut().register_font(
+                    canonical_font_path(&request.name),
+                    FontResource::Unavailable,
+                )
+            }
+            CanonicalResourceNeed::PdfImage { request } => self
+                .control
+                .capabilities_mut()
+                .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
+        }
+    }
+
     /// Runs the canonical engine using host policy only for typed immutable
-    /// needs. A declining host is bounded; successful fulfillment resets the
-    /// no-progress epoch because the next operation is replayed atomically.
+    /// needs. Repeated declines or definitive absences are bounded; successful
+    /// fulfillment resets the no-progress epoch because the next operation is
+    /// replayed atomically.
     pub fn run(
         &mut self,
         host: &mut dyn CanonicalResourceHost,
@@ -468,23 +502,39 @@ impl<'a> CanonicalEngineSession<'a> {
             match self.advance_until_waiting(checkpoints)? {
                 CanonicalSessionState::Complete(result) => return Ok(result),
                 CanonicalSessionState::NeedResource(need) => {
-                    let fulfillment = {
+                    let outcome = {
                         let mut world = CanonicalResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
-                    let fulfillment = fulfillment.or_else(|| self.same_run_output(&need));
-                    let Some(fulfillment) = fulfillment else {
-                        declined = declined.saturating_add(1);
-                        if declined >= self.no_progress_limit {
-                            return Err(CanonicalSessionError::NoProgress {
-                                need,
-                                attempts: declined,
-                            });
+                    match outcome {
+                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                            self.fulfill(&need, fulfillment)?;
+                            declined = 0;
                         }
-                        continue;
-                    };
-                    self.fulfill(&need, fulfillment)?;
-                    declined = 0;
+                        CanonicalResourceOutcome::Unavailable => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                self.mark_unavailable(&need);
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                        CanonicalResourceOutcome::Declined => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                    }
+                    if declined >= self.no_progress_limit {
+                        return Err(CanonicalSessionError::NoProgress {
+                            need,
+                            attempts: declined,
+                        });
+                    }
                 }
             }
         }
@@ -502,23 +552,39 @@ impl<'a> CanonicalEngineSession<'a> {
             match self.advance_until_waiting_with_observer(checkpoints, observer)? {
                 CanonicalSessionState::Complete(result) => return Ok(result),
                 CanonicalSessionState::NeedResource(need) => {
-                    let fulfillment = {
+                    let outcome = {
                         let mut world = CanonicalResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
-                    let fulfillment = fulfillment.or_else(|| self.same_run_output(&need));
-                    let Some(fulfillment) = fulfillment else {
-                        declined = declined.saturating_add(1);
-                        if declined >= self.no_progress_limit {
-                            return Err(CanonicalSessionError::NoProgress {
-                                need,
-                                attempts: declined,
-                            });
+                    match outcome {
+                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                            self.fulfill(&need, fulfillment)?;
+                            declined = 0;
                         }
-                        continue;
-                    };
-                    self.fulfill(&need, fulfillment)?;
-                    declined = 0;
+                        CanonicalResourceOutcome::Unavailable => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                self.mark_unavailable(&need);
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                        CanonicalResourceOutcome::Declined => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                    }
+                    if declined >= self.no_progress_limit {
+                        return Err(CanonicalSessionError::NoProgress {
+                            need,
+                            attempts: declined,
+                        });
+                    }
                 }
             }
         }
@@ -650,42 +716,52 @@ mod tests {
             &mut self,
             world: &mut CanonicalResourceWorld<'_>,
             need: &CanonicalResourceNeed,
-        ) -> Option<CanonicalResourceFulfillment> {
+        ) -> CanonicalResourceOutcome {
             match need {
-                CanonicalResourceNeed::Input { name } => world
-                    .read_file(name)
-                    .ok()
-                    .map(|content| CanonicalResourceFulfillment::world_input(name, content)),
+                CanonicalResourceNeed::Input { name } => world.read_file(name).ok().map_or(
+                    CanonicalResourceOutcome::Unavailable,
+                    |content| {
+                        CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::world_input(name, content),
+                        )
+                    },
+                ),
                 CanonicalResourceNeed::Font { request } => world
                     .read_file(canonical_font_path(&request.name))
                     .ok()
-                    .map(|metrics| CanonicalResourceFulfillment::Font {
-                        request: request.clone(),
-                        resource: Box::new(FontResource::Tfm {
-                            metrics,
-                            opentype: None,
-                        }),
+                    .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
+                        CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Tfm {
+                                metrics,
+                                opentype: None,
+                            }),
+                        })
                     }),
                 CanonicalResourceNeed::PdfImage { request } => world
                     .read_file(&request.name)
                     .ok()
-                    .map(|content| CanonicalResourceFulfillment::PdfImage {
-                        request: request.clone(),
-                        resource: Box::new(PdfImageResource::Available(
-                            tex_state::PdfExternalImageSource {
-                                identity: content.hash(),
-                                metadata: tex_state::PdfExternalImageMetadata::Raster(
-                                    tex_state::PdfRasterImageMetadata::placeholder(),
-                                ),
-                                natural_width: tex_state::scaled::Scaled::from_raw(
-                                    tex_state::scaled::Scaled::UNITY,
-                                ),
-                                natural_height: tex_state::scaled::Scaled::from_raw(
-                                    tex_state::scaled::Scaled::UNITY,
-                                ),
-                                bytes: content.shared_bytes(),
+                    .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                        CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::PdfImage {
+                                request: request.clone(),
+                                resource: Box::new(PdfImageResource::Available(
+                                    tex_state::PdfExternalImageSource {
+                                        identity: content.hash(),
+                                        metadata: tex_state::PdfExternalImageMetadata::Raster(
+                                            tex_state::PdfRasterImageMetadata::placeholder(),
+                                        ),
+                                        natural_width: tex_state::scaled::Scaled::from_raw(
+                                            tex_state::scaled::Scaled::UNITY,
+                                        ),
+                                        natural_height: tex_state::scaled::Scaled::from_raw(
+                                            tex_state::scaled::Scaled::UNITY,
+                                        ),
+                                        bytes: content.shared_bytes(),
+                                    },
+                                )),
                             },
-                        )),
+                        )
                     }),
             }
         }
@@ -700,18 +776,44 @@ mod tests {
             &mut self,
             _world: &mut CanonicalResourceWorld<'_>,
             need: &CanonicalResourceNeed,
-        ) -> Option<CanonicalResourceFulfillment> {
+        ) -> CanonicalResourceOutcome {
             self.calls += 1;
             match need {
                 CanonicalResourceNeed::Input { name } if name == "child.tex" => {
-                    Some(CanonicalResourceFulfillment::input(
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
                         "child.tex",
                         RegisteredSourceKind::Generated,
                         Arc::from(&b"\\relax"[..]),
                     ))
                 }
-                _ => None,
+                _ => CanonicalResourceOutcome::Declined,
             }
+        }
+    }
+
+    struct UnavailableThenInputHost {
+        unavailable: usize,
+        calls: usize,
+    }
+
+    impl CanonicalResourceHost for UnavailableThenInputHost {
+        fn fulfill(
+            &mut self,
+            _world: &mut CanonicalResourceWorld<'_>,
+            need: &CanonicalResourceNeed,
+        ) -> CanonicalResourceOutcome {
+            self.calls += 1;
+            if self.calls <= self.unavailable {
+                return CanonicalResourceOutcome::Unavailable;
+            }
+            let CanonicalResourceNeed::Input { name } = need else {
+                return CanonicalResourceOutcome::Unavailable;
+            };
+            CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                name,
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\relax"[..]),
+            ))
         }
     }
 
@@ -1053,6 +1155,52 @@ mod tests {
             CanonicalSessionError::NoProgress { attempts: 2, .. }
         ));
         assert!(session.stores().world().effect_records().is_empty());
+    }
+
+    #[test]
+    fn completed_input_absence_retries_only_in_interactive_modes() {
+        for interaction in [
+            tex_state::InteractionMode::Scroll,
+            tex_state::InteractionMode::ErrorStop,
+        ] {
+            let (mut stores, root) = prepared_session(b"\\input missing\\end");
+            stores.set_interaction_mode(interaction);
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session
+                .register_authored_root("job.tex", root)
+                .expect("root registers");
+            let mut host = UnavailableThenInputHost {
+                unavailable: 2,
+                calls: 0,
+            };
+
+            session
+                .run(&mut host, &mut Vec::new())
+                .expect("interactive lookup retries after completed absence");
+            assert_eq!(host.calls, 3);
+        }
+
+        for interaction in [
+            tex_state::InteractionMode::Batch,
+            tex_state::InteractionMode::Nonstop,
+        ] {
+            let (mut stores, root) = prepared_session(b"\\input missing\\end");
+            stores.set_interaction_mode(interaction);
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session
+                .register_authored_root("job.tex", root)
+                .expect("root registers");
+            let mut host = UnavailableThenInputHost {
+                unavailable: usize::MAX,
+                calls: 0,
+            };
+
+            session
+                .run(&mut host, &mut Vec::new())
+                .expect("fatal termination still completes retained cleanup");
+            assert!(session.control.fatal_error().is_some());
+            assert_eq!(host.calls, 1);
+        }
     }
 
     #[test]

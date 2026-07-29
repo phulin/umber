@@ -948,9 +948,7 @@ fn hash_traced_token_semantic_stable(
         }
         Token::Frozen(frozen) => {
             3_u8.hash(state);
-            frozen.primitive_index().hash(state);
-            token.is_frozen_end_template().hash(state);
-            token.is_frozen_endv().hash(state);
+            frozen.raw().hash(state);
         }
     }
 }
