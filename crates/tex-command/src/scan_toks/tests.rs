@@ -454,6 +454,75 @@ fn completed_direct_splice_scan_rolls_back_to_the_exact_input_state() {
 }
 
 #[test]
+fn empty_direct_splice_is_unobserved_across_rollback_and_retry() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+    let register = universe.intern("empty").symbol();
+    universe.set_meaning(register, Meaning::ToksRegister(3));
+    let empty = universe.intern_token_list(&[]);
+    universe.set_toks(3, empty);
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(the),
+            Token::Cs(register),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let expected = command.clone();
+    let mut snapshot = Some(command.snapshot());
+    let mut capabilities = CommandHostCapabilities::default();
+
+    for attempt in 0..2 {
+        let mut recorder = Recorder::default();
+        let scanned = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("empty direct splice scan succeeds");
+        assert_eq!(
+            universe.tokens(scanned.replacement_text.token_list()),
+            &[Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }],
+            "empty §478 result changes no collected tokens"
+        );
+        assert!(
+            !recorder.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "splice" && record.purpose == "the_toks"
+            )),
+            "empty §478 result publishes no splice observation"
+        );
+        if attempt == 0 {
+            command
+                .rollback(snapshot.take().expect("first attempt owns snapshot"))
+                .expect("rollback succeeds");
+            assert_eq!(command, expected);
+        }
+    }
+}
+
+#[test]
 fn macro_definition_converts_parameters_and_preserves_doubled_hashes() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

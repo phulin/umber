@@ -553,7 +553,7 @@ impl CommandProcessor<'_> {
                 .collect(),
         };
         #[cfg(any(test, feature = "instrumentation"))]
-        let observed = tokens
+        let observed: Vec<_> = tokens
             .iter()
             .copied()
             .map(|token| self.observed_token(token))
@@ -561,12 +561,17 @@ impl CommandProcessor<'_> {
         output.extend(tokens);
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
+        // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
+        // Keep the observation on that same semantic boundary: an empty
+        // internal token list contributes no splice transition at all.
         #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::TokenList(TokenListRecord {
-            transition: "splice",
-            purpose: "the_toks",
-            tokens: observed,
-        }));
+        if !observed.is_empty() {
+            self.observe(CommandObservation::TokenList(TokenListRecord {
+                transition: "splice",
+                purpose: "the_toks",
+                tokens: observed,
+            }));
+        }
         Ok(true)
     }
 
