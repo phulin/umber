@@ -3042,6 +3042,97 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
 }
 
 #[test]
+fn etex_font_character_dimensions_select_metrics_and_preserve_following_token() {
+    use tex_state::font::{CharMetrics, CharTag, FontMetrics, LoadedFont};
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let font_symbol = universe.intern("metric-font").symbol();
+    let mut characters = vec![None; 256];
+    characters[65] = Some(CharMetrics {
+        width: Scaled::from_raw(101),
+        height: Scaled::from_raw(202),
+        depth: Scaled::from_raw(303),
+        italic_correction: Scaled::from_raw(404),
+        tag: CharTag::None,
+    });
+    let font = universe.intern_font_with_identifier(
+        LoadedFont::new(
+            "metric-font",
+            "metric-font.tfm",
+            [7; 32],
+            0,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+        ),
+        font_symbol,
+    );
+    universe.set_meaning(font_symbol, Meaning::Font(font));
+
+    for (primitive, character, expected) in [
+        (P::FontCharWd, "65", 101),
+        (P::FontCharHt, "65", 202),
+        (P::FontCharDp, "65", 303),
+        (P::FontCharIc, "65", 404),
+        (P::FontCharWd, "255", 0),
+    ] {
+        let enquiry = internal_primitive(&mut universe, "font-character-enquiry", primitive);
+        let mut tokens = vec![enquiry, Token::Cs(font_symbol)];
+        tokens.extend(character.chars().map(char_token));
+        tokens.push(char_token('!'));
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        push(&mut command, tokens);
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let target = processor
+            .get_x_token()
+            .expect("font enquiry delivers")
+            .expect("font enquiry exists");
+        assert_eq!(
+            processor
+                .scan_the_internal_value(&target)
+                .expect("font enquiry scans"),
+            Some(InternalValue::Dimension(Scaled::from_raw(expected)))
+        );
+        assert!(matches!(
+            processor
+                .get_x_token()
+                .expect("following token delivers")
+                .expect("following token exists")
+                .meaning(),
+            Meaning::CharToken { ch: '!', .. }
+        ));
+    }
+}
+
+#[test]
+fn etex_font_character_dimensions_use_zero_for_nullfont() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let enquiry = internal_primitive(&mut universe, "fontcharwd", P::FontCharWd);
+    let current_font = internal_primitive(&mut universe, "font", P::Font);
+    assert_eq!(
+        scan_with_profile(
+            &mut universe,
+            CommandProfile::ETEX26,
+            vec![enquiry, current_font, char_token('0')],
+            |processor| processor.scan_dimension().expect("nullfont metric scans")
+        )
+        .value,
+        Scaled::from_raw(0)
+    );
+}
+
+#[test]
 fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() {
     use tex_state::meaning::UnexpandablePrimitive as P;
     use tex_state::page::{PageDimension, PageInteger};

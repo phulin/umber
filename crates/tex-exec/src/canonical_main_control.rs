@@ -6408,6 +6408,10 @@ fn scan_unclassified_primitive(
         | P::EndGroup
         | P::ErrMessage
         | P::Font
+        | P::FontCharDp
+        | P::FontCharHt
+        | P::FontCharIc
+        | P::FontCharWd
         | P::FontDimen
         | P::FutureLet
         | P::Gdef
@@ -6649,10 +6653,6 @@ fn scan_unclassified_primitive(
         | P::DisplayWidowPenalties
         | P::EndL
         | P::EndR
-        | P::FontCharDp
-        | P::FontCharHt
-        | P::FontCharIc
-        | P::FontCharWd
         | P::GlobalDefs
         | P::GlueExpr
         | P::GlueShrink

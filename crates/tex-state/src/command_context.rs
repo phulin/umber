@@ -465,6 +465,12 @@ impl CommandContext<'_> {
         self.universe.font_name(font)
     }
 
+    /// Reads one immutable TFM character metric for e-TeX font enquiries.
+    #[must_use]
+    pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
+        self.universe.font_char_metrics(font, code)
+    }
+
     /// Reads the control-sequence identity assigned to a font.
     #[must_use]
     pub fn font_identifier_symbol(&self, font: FontId) -> Option<Symbol> {

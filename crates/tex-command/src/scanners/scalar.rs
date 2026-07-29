@@ -1798,6 +1798,34 @@ impl CommandProcessor<'_> {
                 let number = u32::try_from(number).unwrap_or(0);
                 InternalValue::Dimension(self.state.font_dimen(font, number))
             }
+            // e-TeX 2.6 etex.ch [17.3413--3453]'s four font-character
+            // enquiries are read-only dimensions.  They scan the font
+            // identifier before the bounded character number, then select
+            // one component of the TFM character info; an absent character
+            // (including every character of nullfont) supplies zero.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::FontCharWd
+                | UnexpandablePrimitive::FontCharHt
+                | UnexpandablePrimitive::FontCharDp
+                | UnexpandablePrimitive::FontCharIc),
+            ) => {
+                let font = self.scan_font_selector()?;
+                let character = self.scan_character_number()?;
+                let metrics = u8::try_from(u32::from(character))
+                    .ok()
+                    .and_then(|code| self.state.font_char_metrics(font, code));
+                let dimension = metrics.map_or_else(
+                    || Scaled::from_raw(0),
+                    |metrics| match primitive {
+                        UnexpandablePrimitive::FontCharWd => metrics.width,
+                        UnexpandablePrimitive::FontCharHt => metrics.height,
+                        UnexpandablePrimitive::FontCharDp => metrics.depth,
+                        UnexpandablePrimitive::FontCharIc => metrics.italic_correction,
+                        _ => unreachable!("outer match restricts primitive"),
+                    },
+                );
+                InternalValue::Dimension(dimension)
+            }
             // TeX82 §426's "Fetch a font integer": `assign_font_int` runs
             // `scan_font_ident` and then reads `hyphen_char[cur_val]` (`m=0`,
             // `\hyphenchar`) or `skew_char[cur_val]` (`\skewchar`) at
