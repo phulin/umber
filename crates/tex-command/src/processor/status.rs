@@ -90,12 +90,14 @@ impl CommandProcessor<'_> {
         from: ScannerStatus,
         to: ScannerStatus,
     ) {
+        let from = crate::observation::canonical_names::scanner_status_name(&from);
+        let to = crate::observation::canonical_names::scanner_status_name(&to);
+        if from == to {
+            return;
+        }
         observe!(
             self,
-            CommandObservation::ScannerStatus(ScannerStatusRecord {
-                from: crate::observation::canonical_names::scanner_status_name(&from),
-                to: crate::observation::canonical_names::scanner_status_name(&to),
-            }),
+            CommandObservation::ScannerStatus(ScannerStatusRecord { from, to }),
         );
     }
 

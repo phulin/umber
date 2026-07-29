@@ -2020,6 +2020,39 @@ fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
 }
 
 #[test]
+fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
+    // e-TeX 2.6 etex.ch [17.4750--4758] saves `scanner_status`, assigns
+    // `normal` while `get_next` reads the operand, and restores the saved
+    // value. The canonical transition trace records state changes, so an
+    // already-normal scan has no synthetic normal-to-normal records.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifdefined-observation-case",
+        ExpandablePrimitive::IfDefined,
+        [other('q')],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    assert_eq!(next_character(&mut processor), 't');
+    drop(processor);
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|observation| matches!(observation, CommandObservation::ScannerStatus(_)))
+    );
+}
+
+#[test]
 fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
@@ -2047,12 +2080,26 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     });
     let _prior = command.begin_scanner_status(defining.clone());
     let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 't');
         assert_eq!(processor.command.scanner.status(), &defining);
         assert!(processor.command.expansion.pending_diagnostics.is_empty());
     }
+    let transitions = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::ScannerStatus(record) => Some((record.from, record.to)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transitions,
+        vec![("defining", "normal"), ("normal", "defining")]
+    );
     let defining = command.begin_scanner_status(ScannerStatus::Normal);
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
     assert!(
