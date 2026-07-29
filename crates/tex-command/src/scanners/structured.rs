@@ -3403,6 +3403,11 @@ impl CommandProcessor<'_> {
                 continue;
             };
             let bytes = registration.shared_bytes();
+            // §537's `a_make_name_string`: tex.web records the name it
+            // actually opened on the level, and later prints exactly that
+            // as the transcript's `(name` -- so it is the attempted name
+            // that resolved, not the name the user typed.
+            let registration = registration.with_name(attempted_name.as_str());
             let source = self
                 .command
                 .register_source(registration)

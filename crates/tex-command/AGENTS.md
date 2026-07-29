@@ -57,7 +57,12 @@ print channel of its own.
   rather than which channel TeX reads them as. An open with no explicit class
   is §537 `start_input`'s file, because §537 is how TeX reaches every `\input`
   and the job's root file alike; only §331's terminal and §483's `\read`
-  streams need `open_registered_source_as` (`umber2-johp.245`).
+  streams need `open_registered_source_as` (`umber2-johp.245`). It also owns
+  `SourceRegistration::with_name` (§537's `a_make_name_string`) and
+  `FileFramingEvent`, the queued `Open`/`Close` record of when a `File` level
+  opened or exhausted. `tex-command` still prints nothing: `CommandState`
+  accumulates the queue and `take_file_framing_events` drains it for a later
+  layer to render as tex.web's `(name`/`)` transcript bracketing.
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
   and focused line-contract tests.

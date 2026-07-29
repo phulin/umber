@@ -209,6 +209,7 @@ impl CommandState {
             semantic_diagnostics: Vec::new(),
             name_in_progress: false,
             named_token_list_pushes: Vec::new(),
+            file_framing_events: Vec::new(),
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,
                 ..TransientState::default()

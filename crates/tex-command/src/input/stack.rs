@@ -8,8 +8,8 @@ use tex_state::token::OriginId;
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
-    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass, StoredReplayReason,
-    TokenBehavior, TokenCursor, TokenPayload,
+    FileFramingEvent, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SourceNameClass,
+    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 
 /// One committed input-lifecycle transition.
@@ -289,8 +289,16 @@ impl CommandState {
             // only in §360's `name>17` (real-file) refill branch. §483's
             // `name<=17` read/terminal pseudo-sources retire without
             // consuming a pending forced EOF meant for their parent file.
+            //
+            // §362 also prints `)` for exactly that same `name>17` case,
+            // so the framing close is queued here under the one gate.
+            // `pop_input_level_at_end_of_job` deliberately does not mirror
+            // it: its unconditional §1335 unwinding is the *other* closing
+            // mechanism, `final_cleanup`'s `␣)` per still-open file, which
+            // the engine renders from its own `open_parens` count.
             if name_class == SourceNameClass::File {
                 self.input.force_eof = false;
+                self.file_framing_events.push(FileFramingEvent::Close);
             }
             self.input.levels.pop();
             return Ok(InputRetirement {

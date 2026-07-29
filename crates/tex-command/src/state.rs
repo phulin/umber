@@ -7,9 +7,9 @@ use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
-    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, RegisteredSourceKind,
-    SourceCharacter, SourceCursor, SourceLevel, SourceNameClass, SourceRegistration,
-    SourceRegistrationError, SourceTokenizationStep,
+    FileFramingEvent, InputLevel, InputLevelId, PhysicalLine, RegisteredSource,
+    RegisteredSourceKind, SourceCharacter, SourceCursor, SourceLevel, SourceNameClass,
+    SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
@@ -68,6 +68,33 @@ pub struct CommandState {
     /// waits here until the same operation publishes its other committed
     /// observations.
     pub(crate) named_token_list_pushes: Vec<(InputLevelId, StoredReplayReason)>,
+    /// tex.web §537/§362 file-bracketing transitions, in the order they
+    /// happened, waiting for the engine to render them as `(name`/`)`.
+    ///
+    /// This lives on [`CommandState`] rather than on the short-lived
+    /// [`crate::CommandProcessor`] borrow that
+    /// `take_restricted_integer_recoveries` uses, and deliberately so. A
+    /// file's open and its eventual retirement are not generally the same
+    /// executor step -- a source stays live, and typically outlives many
+    /// processor episodes, between `\input` and its last line -- so a
+    /// processor-local accumulator would already have lost the open event by
+    /// the time the close event is due, or would need its own cross-step
+    /// carry mechanism duplicating this one.
+    ///
+    /// Placing it here is safe under rollback for the same reason
+    /// `named_token_list_pushes` above already is:
+    /// [`CommandState::snapshot`](crate::CommandState::snapshot) clones this
+    /// whole struct before a step runs, and
+    /// [`CommandState::rollback`](crate::CommandState::rollback) replaces the
+    /// whole struct wholesale (`*self = snapshot.state`) if that step is
+    /// undone. A queued event from a rolled-back step is therefore restored
+    /// away along with every other command-state mutation that step made --
+    /// nothing prints a paren for an open that never committed -- while a
+    /// committed step's events survive exactly as long as the rest of its
+    /// committed state does, until the executor drains them with
+    /// [`Self::take_file_framing_events`]. No per-field bookkeeping is
+    /// needed because the whole-struct snapshot already covers it.
+    pub(crate) file_framing_events: Vec<FileFramingEvent>,
 }
 
 /// A recoverable command-owned semantic diagnostic awaiting executor output.
@@ -292,6 +319,20 @@ impl CommandState {
     pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
         self.semantic_diagnostics.drain(..).collect()
     }
+    /// Drains the queued §537/§362 file-bracketing transitions, in order.
+    ///
+    /// `tex-command` never prints (see the crate's `AGENTS.md`); this hands
+    /// the engine exactly the ordered `Open`/`Close` record it needs to
+    /// render tex.web's `(name` and `)` transcript bracketing itself. The
+    /// executor is expected to call this once per committed step -- draining
+    /// after a rolled-back step is harmless but pointless, since rollback
+    /// already restored the whole [`CommandState`] to its pre-step value and
+    /// left nothing queued that the step added.
+    #[must_use]
+    pub fn take_file_framing_events(&mut self) -> Vec<FileFramingEvent> {
+        std::mem::take(&mut self.file_framing_events)
+    }
+
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.
     ///
@@ -994,6 +1035,13 @@ impl CommandState {
         ))
     }
 
+    /// Pushes one source level and, for a named text file, queues its §537
+    /// open for [`Self::take_file_framing_events`].
+    ///
+    /// This is the one place a source level enters the input stack, so
+    /// gating the open event here on [`SourceNameClass::File`] -- rather than
+    /// at each of this method's callers -- is what keeps every future opener
+    /// correct by construction instead of by remembering to check.
     fn push_source_level(
         &mut self,
         registered: RegisteredSource,
@@ -1003,6 +1051,12 @@ impl CommandState {
     ) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
+        if matches!(name_class, SourceNameClass::File)
+            && let Some(name) = registered.name.clone()
+        {
+            self.file_framing_events
+                .push(FileFramingEvent::Open { name });
+        }
         self.input.levels.push(InputLevel::Source(SourceLevel {
             identity,
             cursor: SourceCursor::new(registered),

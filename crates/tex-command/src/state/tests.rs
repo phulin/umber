@@ -5,12 +5,12 @@ use super::{
     CommandRuntime, CommandState, MeaningCacheEntry, NormalizedLineCacheEntry, TransientState,
 };
 use crate::conditionals::ConditionStack;
-use crate::input::InputState;
+use crate::input::{FileFramingEvent, InputState};
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
 use crate::{
     AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError, AlignmentRequest,
-    AlignmentRequestResult,
+    AlignmentRequestResult, RegisteredSourceKind, SourceNameClass, SourceRegistration,
 };
 
 fn templates() -> AlignmentCellTemplates {
@@ -280,5 +280,133 @@ fn typed_requests_preserve_nested_alignment_delivery_without_token_classificatio
             .expect("outer cell resumes")
             .templates,
         templates()
+    );
+}
+
+fn register_named(state: &mut CommandState, name: &str, bytes: &[u8]) -> tex_state::SourceId {
+    state
+        .register_source(
+            SourceRegistration::new(RegisteredSourceKind::Generated, bytes.to_vec())
+                .with_name(name),
+        )
+        .expect("named source registers")
+}
+
+fn source_level_identity(state: &CommandState) -> crate::input::InputLevelId {
+    match state.input.levels.last().expect("source level opened") {
+        crate::input::InputLevel::Source(level) => level.identity,
+        crate::input::InputLevel::Tokens(_) => panic!("opened source is not a source level"),
+    }
+}
+
+#[test]
+fn opening_a_named_file_source_queues_exactly_one_open_event() {
+    // §537's `start_input` prints `(` and the opened file's name; a `File`
+    // open is the only source open this queue ever reports for.
+    let mut state = CommandState::default();
+    let source = register_named(&mut state, "show-box.tex", b"\\showbox0\n");
+
+    state
+        .open_registered_source(source)
+        .expect("named source opens as a text file");
+
+    assert_eq!(
+        state.take_file_framing_events(),
+        vec![FileFramingEvent::Open {
+            name: "show-box.tex".into(),
+        }]
+    );
+}
+
+#[test]
+fn exhausting_a_named_file_source_queues_exactly_one_close_event() {
+    // §362 prints `)` once a text file's last line is consumed.
+    let mut state = CommandState::default();
+    let source = register_named(&mut state, "show-box.tex", b"");
+    state
+        .open_registered_source(source)
+        .expect("named source opens as a text file");
+    let identity = source_level_identity(&state);
+    let _ = state.take_file_framing_events();
+
+    state
+        .retire_exhausted_input(identity)
+        .expect("the exact opened level retires");
+
+    assert_eq!(
+        state.take_file_framing_events(),
+        vec![FileFramingEvent::Close]
+    );
+}
+
+#[test]
+fn read_stream_and_terminal_source_levels_queue_no_framing_events() {
+    // §331's terminal and §483's `\read` streams are never bracketed by
+    // tex.web, even when their registration happens to carry a name.
+    for class in [SourceNameClass::Terminal, SourceNameClass::ReadStream(0)] {
+        let mut state = CommandState::default();
+        let source = register_named(&mut state, "would-not-print.tex", b"x\n");
+        state
+            .open_registered_source_as(source, class)
+            .expect("source opens under the requested classification");
+        let identity = source_level_identity(&state);
+
+        assert!(state.take_file_framing_events().is_empty());
+
+        state
+            .retire_exhausted_input(identity)
+            .expect("the exact opened level retires");
+
+        assert!(state.take_file_framing_events().is_empty());
+    }
+}
+
+#[test]
+fn draining_file_framing_events_twice_yields_them_only_once() {
+    let mut state = CommandState::default();
+    let source = register_named(&mut state, "once.tex", b"x\n");
+    state
+        .open_registered_source(source)
+        .expect("named source opens as a text file");
+
+    assert_eq!(state.take_file_framing_events().len(), 1);
+    assert!(state.take_file_framing_events().is_empty());
+}
+
+#[test]
+fn nested_file_opens_and_closes_queue_in_exact_occurrence_order() {
+    // An inner `\input` opens and closes entirely inside the outer file's
+    // lifetime, so the queue must read open-open-close-close: the order the
+    // transitions happened in, not the order the levels were popped from.
+    let mut state = CommandState::default();
+    let outer = register_named(&mut state, "outer.tex", b"");
+    state
+        .open_registered_source(outer)
+        .expect("outer source opens");
+    let inner = register_named(&mut state, "inner.tex", b"");
+    state
+        .open_registered_source(inner)
+        .expect("inner source opens");
+    let inner_identity = source_level_identity(&state);
+    state
+        .retire_exhausted_input(inner_identity)
+        .expect("inner source retires");
+    let outer_identity = source_level_identity(&state);
+    state
+        .retire_exhausted_input(outer_identity)
+        .expect("outer source retires");
+
+    assert_eq!(
+        state.take_file_framing_events(),
+        vec![
+            FileFramingEvent::Open {
+                name: "outer.tex".into(),
+            },
+            FileFramingEvent::Open {
+                name: "inner.tex".into(),
+            },
+            FileFramingEvent::Close,
+            FileFramingEvent::Close,
+        ]
     );
 }

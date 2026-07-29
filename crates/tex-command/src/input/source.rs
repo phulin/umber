@@ -69,12 +69,39 @@ pub enum SourceNameClass {
     File,
 }
 
+/// One tex.web §537/§362 file-bracketing transition, queued for the engine.
+///
+/// `tex-command` prints nothing (see the crate's `AGENTS.md`): this is the
+/// record of when a [`SourceNameClass::File`] level opened or exhausted, in
+/// the exact order it happened, so a later layer can render §537's `(name`
+/// and §362's `)` without tex-command ever touching a print channel. Only a
+/// `File` level produces an event -- §331's terminal and §483's `\read`
+/// streams are excluded by construction, because both the push that opens a
+/// level and the retirement that exhausts one gate on the same
+/// [`SourceNameClass`] test rather than tracking bracketing state
+/// independently.
+///
+/// `Close` carries no name: tex.web's §362 `end_file_reading` prints a bare
+/// `)`, and the queue's strict open/close ordering is already enough for a
+/// stack-disciplined consumer to know which file is closing.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FileFramingEvent {
+    /// §537 `start_input`: `print_char("("); slow_print(name)`.
+    Open {
+        /// The §537 `a_make_name_string` name from [`SourceRegistration::with_name`].
+        name: Arc<str>,
+    },
+    /// §362: a file's last line was consumed, printing `print_char(")")`.
+    Close,
+}
+
 /// Host-neutral input used to register one complete immutable source.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SourceRegistration {
     kind: RegisteredSourceKind,
     bytes: Arc<[u8]>,
     world_record: Option<InputRecordId>,
+    name: Option<Arc<str>>,
 }
 
 impl SourceRegistration {
@@ -85,6 +112,7 @@ impl SourceRegistration {
             kind,
             bytes: bytes.into(),
             world_record: None,
+            name: None,
         }
     }
 
@@ -96,7 +124,23 @@ impl SourceRegistration {
             kind: RegisteredSourceKind::World,
             bytes: content.shared_bytes(),
             world_record: Some(content.record()),
+            name: None,
         }
+    }
+
+    /// Attaches tex.web §537's `a_make_name_string` name.
+    ///
+    /// §537's `start_input` is the only place tex.web ever names a source:
+    /// `name:=a_make_name_string(cur_file)` records the opened file's name so
+    /// §303's `name>17` case -- and §313's transcript rendering of it -- has
+    /// something to print. A registration with no name is exactly §331's
+    /// terminal or §483's `\read` pseudo-file, neither of which §537 ever
+    /// touches, so leaving this unset is the correct default rather than a
+    /// gap to fill in later.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     /// Returns the acquisition class retained with the backing.
@@ -115,6 +159,12 @@ impl SourceRegistration {
     #[must_use]
     pub fn shared_bytes(&self) -> Arc<[u8]> {
         Arc::clone(&self.bytes)
+    }
+
+    /// Returns the §537 name attached by [`Self::with_name`], if any.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 }
 
@@ -204,6 +254,10 @@ pub(crate) struct RegisteredSource {
     pub(crate) kind: RegisteredSourceKind,
     pub(crate) mode: CharacterMode,
     pub(crate) bytes: Arc<[u8]>,
+    /// tex.web §537's `a_make_name_string` name, carried from the
+    /// [`SourceRegistration`] that produced this backing. See
+    /// [`SourceRegistration::with_name`].
+    pub(crate) name: Option<Arc<str>>,
     descriptor: Arc<SourceDescriptor>,
 }
 
@@ -261,6 +315,7 @@ impl RegisteredSource {
             kind: registration.kind,
             mode,
             bytes: registration.bytes,
+            name: registration.name,
             descriptor: Arc::new(descriptor),
         })
     }
@@ -274,6 +329,7 @@ impl fmt::Debug for RegisteredSource {
             .field("kind", &self.kind)
             .field("mode", &self.mode)
             .field("bytes", &self.bytes)
+            .field("name", &self.name)
             .field("world_record", &self.world_record())
             .finish()
     }
@@ -285,6 +341,7 @@ impl PartialEq for RegisteredSource {
             && self.kind == other.kind
             && self.mode == other.mode
             && self.bytes == other.bytes
+            && self.name == other.name
             && self.world_record() == other.world_record()
     }
 }
@@ -297,6 +354,7 @@ impl Hash for RegisteredSource {
         self.kind.hash(state);
         self.mode.hash(state);
         self.bytes.hash(state);
+        self.name.hash(state);
         self.world_record().hash(state);
     }
 }

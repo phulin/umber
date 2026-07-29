@@ -161,6 +161,32 @@ fn world_registration_retains_the_selected_input_record_for_provenance() {
 }
 
 #[test]
+fn with_name_survives_registration_into_the_backing() {
+    // §537's `a_make_name_string` name has to reach the opened level, not
+    // just the registration that requested it.
+    let registration = SourceRegistration::new(RegisteredSourceKind::Generated, b"x".to_vec())
+        .with_name("child.tex");
+    assert_eq!(registration.name(), Some("child.tex"));
+
+    let registered = RegisteredSource::register(
+        SourceId::new(1),
+        CommandProfile::TEX82,
+        registration.clone(),
+    )
+    .expect("named registration registers");
+    assert_eq!(registered.name.as_deref(), Some("child.tex"));
+
+    let unnamed = RegisteredSource::register(
+        SourceId::new(2),
+        CommandProfile::TEX82,
+        SourceRegistration::new(RegisteredSourceKind::Generated, b"y".to_vec()),
+    )
+    .expect("unnamed registration registers");
+    assert_eq!(unnamed.name, None);
+    assert_ne!(registered, unnamed);
+}
+
+#[test]
 fn opening_requires_a_retained_registration() {
     let mut state = CommandState::new(CommandProfile::TEX82);
 
