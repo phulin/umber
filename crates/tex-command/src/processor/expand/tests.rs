@@ -879,6 +879,11 @@ fn frozen_undefined_control_sequence_reports_then_resumes_source_once() {
         }
     }
     assert!(universe.symbol("never").is_none());
+    assert_eq!(
+        command.take_semantic_diagnostics(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
+    );
+    assert!(command.take_semantic_diagnostics().is_empty());
 
     let records = command_and_diagnostic_observations(&recorder.0);
     assert!(matches!(
@@ -899,6 +904,57 @@ fn frozen_undefined_control_sequence_reports_then_resumes_source_once() {
             && expanded_a.boundary == CommandDeliveryBoundary::Expanded
             && expanded_a.command == "letter"
     ));
+}
+
+#[test]
+fn undefined_semantic_diagnostic_survives_unobserved_execution_and_snapshot_retry() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\undefined A".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let snapshot = command.snapshot();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let run = |command: &mut CommandState,
+               runtime: &mut CommandRuntime,
+               universe: &mut Universe,
+               capabilities: &mut CommandHostCapabilities| {
+        let mut processor = processor(command, runtime, universe, capabilities);
+        let resumed = processor
+            .get_x_token()
+            .expect("undefined recovery is finite")
+            .expect("following token resumes");
+        assert_eq!(
+            resumed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        drop(processor);
+        command.take_semantic_diagnostics()
+    };
+
+    assert_eq!(
+        run(&mut command, &mut runtime, &mut universe, &mut capabilities),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
+    );
+    assert!(command.take_semantic_diagnostics().is_empty());
+
+    command.rollback(snapshot).expect("rollback succeeds");
+    assert_eq!(
+        run(&mut command, &mut runtime, &mut universe, &mut capabilities),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence],
+        "rollback replays the command-owned semantic diagnostic exactly once"
+    );
 }
 
 /// TeX82 §§370/380 are independent of whether `undefined_cs` came from the

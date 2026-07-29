@@ -504,6 +504,9 @@ impl CommandProcessor<'_> {
             // inserting a replacement token; §380 then restarts its one
             // expanded-fetch loop at the following input token.
             Meaning::Undefined => {
+                self.command
+                    .semantic_diagnostics
+                    .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence);
                 self.observe_command_diagnostic("undefined_control_sequence", &command);
                 Ok(())
             }

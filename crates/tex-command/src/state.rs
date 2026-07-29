@@ -40,6 +40,14 @@ pub struct CommandState {
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
     pub(crate) replay_completions: Vec<InputLevelId>,
+    /// Semantic diagnostics committed by command processing but rendered by
+    /// the executor's World-facing diagnostic boundary.
+    ///
+    /// This queue is unconditional command state, not observation state.
+    /// Consequently an unobserved episode has identical semantics, while the
+    /// ordinary command snapshot makes a failed aggregate operation restore
+    /// the queue together with the input transition that produced it.
+    pub(crate) semantic_diagnostics: Vec<CommandSemanticDiagnostic>,
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
@@ -58,6 +66,13 @@ pub struct CommandState {
     /// waits here until the same operation publishes its other committed
     /// observations.
     pub(crate) named_token_list_pushes: Vec<(InputLevelId, StoredReplayReason)>,
+}
+
+/// A recoverable command-owned semantic diagnostic awaiting executor output.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CommandSemanticDiagnostic {
+    /// TeX82 §370's undefined-control-sequence expansion error.
+    UndefinedControlSequence,
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.
@@ -230,6 +245,17 @@ impl CommandState {
                 position: 0,
             })
             .collect()
+    }
+
+    /// Takes semantic diagnostics committed by completed command episodes.
+    ///
+    /// The executor drains this inside the same aggregate operation that ran
+    /// the episode. If a later action suspends or fails, aggregate rollback
+    /// restores both this queue and the input cursor from the pre-step
+    /// snapshot, so retry reproduces the diagnostic exactly once.
+    #[must_use]
+    pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
+        self.semantic_diagnostics.drain(..).collect()
     }
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.

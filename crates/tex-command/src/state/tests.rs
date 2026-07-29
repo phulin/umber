@@ -84,6 +84,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         alignment,
         expansion,
         transient,
+        semantic_diagnostics,
         ..
     } = CommandState::default();
 
@@ -153,6 +154,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         rollback_roots,
         next_builder_identity,
         active_expansion_depth,
+        semantic_diagnostics,
     ));
 }
 
@@ -192,6 +194,7 @@ fn default_state_is_quiescent() {
     assert!(state.alignment.suspended.is_empty());
     assert!(state.alignment.active_cell.is_none());
     assert!(state.expansion.pending_diagnostics.is_empty());
+    assert!(state.semantic_diagnostics.is_empty());
     assert!(state.transient.builders.is_empty());
     assert_eq!(state.transient.active_expansion_depth, 0);
 }

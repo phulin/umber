@@ -1547,7 +1547,10 @@ fn frozen_endwrite_is_internal_but_source_endwrite_stays_undefined() {
         terminal.contains("! Undefined control sequence."),
         "{terminal:?}"
     );
-    assert!(terminal.contains("BEFORE \\endwrite AFTER"), "{terminal:?}");
+    assert!(
+        terminal.contains("BEFORE AFTER"),
+        "§380 expansion diagnoses and discards source-level undefined \\endwrite: {terminal:?}"
+    );
     assert!(terminal.contains("REPLAYED"), "{terminal:?}");
 }
 

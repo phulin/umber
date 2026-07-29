@@ -157,6 +157,11 @@ impl<'a> CommandProcessor<'a> {
         std::mem::take(&mut self.restricted_integer_recoveries)
     }
 
+    /// Claims command-owned semantic diagnostics in detection order.
+    pub fn take_semantic_diagnostics(&mut self) -> Vec<crate::CommandSemanticDiagnostic> {
+        self.command.take_semantic_diagnostics()
+    }
+
     /// Reads a live integer parameter while main control selects an
     /// assignment policy for a completed command operation.
     #[must_use]

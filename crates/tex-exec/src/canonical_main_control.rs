@@ -1047,6 +1047,12 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::RestrictedInteger),
             );
+            diagnostics.extend(
+                processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command),
+            );
             scanned
         };
         report_pending_diagnostics(stores, diagnostics);
@@ -1421,6 +1427,12 @@ impl CanonicalMainControl {
                     .take_restricted_integer_recoveries()
                     .into_iter()
                     .map(PendingDiagnostic::RestrictedInteger),
+            );
+            diagnostics.extend(
+                processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command),
             );
             scanned
         };
@@ -2514,6 +2526,12 @@ impl CanonicalMainControl {
                     .take_restricted_integer_recoveries()
                     .into_iter()
                     .map(PendingDiagnostic::RestrictedInteger),
+            );
+            diagnostics.extend(
+                processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command),
             );
             scanned
         };
@@ -12865,6 +12883,9 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// (`missing_to`, `recovered`, ...) keep carrying it there instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
+    /// A command-owned diagnostic whose semantic transition completed before
+    /// the World-facing executor could render it.
+    Command(tex_command::CommandSemanticDiagnostic),
     /// TeX82 §§433-§437's shared `print_err`/`help2`/`int_error`.
     RestrictedInteger(tex_command::RestrictedIntegerRecovery),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
@@ -12894,6 +12915,9 @@ fn printed_command(stores: &Universe, meaning: Meaning) -> String {
 fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDiagnostic>) {
     for diagnostic in diagnostics {
         match diagnostic {
+            PendingDiagnostic::Command(
+                tex_command::CommandSemanticDiagnostic::UndefinedControlSequence,
+            ) => crate::diagnostics::report_undefined_control_sequence(stores),
             PendingDiagnostic::RestrictedInteger(recovery) => {
                 report_restricted_integer_recovery(stores, recovery.class, recovery.scanned);
             }

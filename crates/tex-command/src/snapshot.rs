@@ -77,6 +77,8 @@ pub enum CommandSummaryError {
     LiveRollbackRoot,
     /// Scanner warning context remains installed despite normal status.
     ScannerWarningContext,
+    /// A command diagnostic has not yet crossed the executor boundary.
+    PendingSemanticDiagnostic,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -93,6 +95,9 @@ impl fmt::Display for CommandSummaryError {
             Self::LiveTokenBuilder => "a semantic token builder is live",
             Self::LiveRollbackRoot => "a temporary rollback root is live",
             Self::ScannerWarningContext => "scanner warning context remains installed",
+            Self::PendingSemanticDiagnostic => {
+                "a command semantic diagnostic is awaiting executor delivery"
+            }
         })
     }
 }
@@ -148,6 +153,9 @@ impl CommandState {
         if self.scanner.warning().is_some() {
             return Err(CommandSummaryError::ScannerWarningContext);
         }
+        if !self.semantic_diagnostics.is_empty() {
+            return Err(CommandSummaryError::PendingSemanticDiagnostic);
+        }
         if self.transient.active_expansion_depth != 0 {
             return Err(CommandSummaryError::ExpansionActive);
         }
@@ -198,6 +206,7 @@ impl CommandState {
             },
             expansion: summary.expansion,
             replay_completions: Vec::new(),
+            semantic_diagnostics: Vec::new(),
             named_token_list_pushes: Vec::new(),
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,

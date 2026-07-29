@@ -5294,20 +5294,21 @@ fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment(
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
-            .expect("first lookahead replay"),
+            .expect("expanded lookahead replay"),
         ReplayStep::Continue
     );
-    assert!(matches!(
-        observations.0.as_slice(),
-        [.., CommandObservation::Command(delivery)]
-            if matches!(delivery.spelling, ObservedToken::ControlSequence(ref name) if name == "first")
-    ));
-    observations.0.clear();
     assert_eq!(
-        control
-            .step_with_observer(&mut universe, &mut observations)
-            .expect("second lookahead replay"),
-        ReplayStep::Continue
+        observations
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Diagnostic(diagnostic)
+                    if diagnostic.diagnostic == "undefined_control_sequence"
+            ))
+            .count(),
+        1,
+        "TeX82 §§370/380 diagnose and discard the undefined first token once"
     );
     assert!(observations.0.iter().any(|observation| {
         matches!(
@@ -5334,6 +5335,49 @@ fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment(
         ReplayStep::Continue
     );
     assert_end_after_ejecting_residual_page(&mut control, &mut universe);
+}
+
+#[test]
+fn canonical_undefined_diagnostic_commits_once_with_or_without_observation() {
+    let run = |observed: bool| {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        register_source(&mut control, br"\undefined x\end");
+        let mut observations = ObservationRecorder::default();
+
+        let step = if observed {
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("observed undefined recovery")
+        } else {
+            control
+                .step(&mut universe)
+                .expect("unobserved undefined recovery")
+        };
+        assert_eq!(step, ReplayStep::Continue);
+        assert_eq!(universe.world().error_channel().error_count(), 1);
+        let text = terminal_text(&universe);
+        assert_eq!(text.matches("Undefined control sequence").count(), 1);
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|observation| matches!(
+                    observation,
+                    CommandObservation::Diagnostic(diagnostic)
+                        if diagnostic.diagnostic == "undefined_control_sequence"
+                ))
+                .count(),
+            usize::from(observed)
+        );
+        (text, universe.world().error_channel().error_count())
+    };
+
+    assert_eq!(
+        run(false),
+        run(true),
+        "observation cannot change the committed semantic diagnostic"
+    );
 }
 
 #[test]
