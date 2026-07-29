@@ -5418,9 +5418,17 @@ fn scan_command(
                     .tokens,
             ))
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
-            ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
-        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
+            // pdftex.web §§1535 and 1542 call `check_pdfoutput` before
+            // `reserveobjnum`, `useobjnum`, the integer, stream/attr/file
+            // options, body scan, or allocation.
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
+            }
+            Ok(ScannedStep::PdfObject(
+                processor.scan_pdf_object_request().map_err(command_error)?,
+            ))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfReferenceObject) => {
             Ok(ScannedStep::PdfReferenceObject(
                 processor
@@ -5799,7 +5807,7 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
             Ok(ScannedStep::ImmediateExtension(
                 processor
-                    .scan_immediate_extension()
+                    .scan_immediate_extension(processor.int_param(IntParam::PDF_OUTPUT) > 0)
                     .map_err(command_error)?,
             ))
         }
@@ -10474,6 +10482,9 @@ fn apply_scanned_step(
         ScannedStep::ImmediateExtension(extension) => {
             match extension {
                 ImmediateExtension::Continue => {}
+                ImmediateExtension::PdfObjectInDviMode => {
+                    return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
+                }
                 ImmediateExtension::OpenOut { stream, file_name } => {
                     let stream = replay_stream_slot(stream, stores);
                     stores

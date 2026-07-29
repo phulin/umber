@@ -404,6 +404,176 @@ fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfobj", UnexpandablePrimitive::PdfObject),
+        ("immediate", UnexpandablePrimitive::Immediate),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+fn token_character_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
+    stores
+        .tokens(tokens)
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
+    // pdftex.web §§1535 and 1542 call `check_pdfoutput` before the complete
+    // `reserveobjnum`/`useobjnum`, integer, stream/attr/file, body, and
+    // allocation paths. Aggregate retry must therefore see the whole command.
+    let mut reserve_stores = Universe::new_with_plain_catcodes();
+    let mut reserve_control = pdftex_object_control(&mut reserve_stores);
+    register_source(&mut reserve_control, br"\pdfobj reserveobjnum");
+    assert!(matches!(
+        reserve_control.step(&mut reserve_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+    ));
+    assert!(reserve_stores.pdf_raw_objects().is_empty());
+    assert_eq!(reserve_stores.pdf_last_object(), 0);
+
+    reserve_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        reserve_control
+            .step(&mut reserve_stores)
+            .expect("reserveobjnum retry preserves the complete command"),
+        MainControlStep::Continue
+    );
+    assert_eq!(reserve_stores.pdf_raw_objects().len(), 1);
+    assert!(reserve_stores.pdf_raw_objects()[0].data().is_none());
+
+    let mut ordinary_stores = Universe::new_with_plain_catcodes();
+    let mut ordinary_control = pdftex_object_control(&mut ordinary_stores);
+    register_source(&mut ordinary_control, br"\pdfobj{ordinary}");
+    assert!(matches!(
+        ordinary_control.step(&mut ordinary_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+    ));
+    assert!(ordinary_stores.pdf_raw_objects().is_empty());
+
+    ordinary_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        ordinary_control
+            .step(&mut ordinary_stores)
+            .expect("ordinary-object retry preserves its body"),
+        MainControlStep::Continue
+    );
+    let ordinary = ordinary_stores.pdf_raw_objects()[0]
+        .data()
+        .expect("ordinary object is initialized");
+    assert!(!ordinary.is_stream());
+    assert!(!ordinary.is_file());
+    assert_eq!(
+        token_character_text(&ordinary_stores, ordinary.data()),
+        "ordinary"
+    );
+
+    let mut define_stores = Universe::new_with_plain_catcodes();
+    let mut define_control = pdftex_object_control(&mut define_stores);
+    register_source(
+        &mut define_control,
+        br"\pdfobj useobjnum 37 stream attr{/Subtype /XML} file{payload}",
+    );
+    assert!(matches!(
+        define_control.step(&mut define_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+    ));
+    assert!(define_stores.pdf_raw_objects().is_empty());
+    assert_eq!(define_stores.pdf_return_value(), 0);
+    assert!(terminal_text(&define_stores).is_empty());
+
+    define_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        define_control
+            .step(&mut define_stores)
+            .expect("definition retry preserves every option and operand"),
+        MainControlStep::Continue
+    );
+    assert_eq!(define_stores.pdf_return_value(), -1);
+    assert!(terminal_text(&define_stores).contains("invalid object number being ignored"));
+    let record = define_stores.pdf_raw_objects()[0];
+    let data = record.data().expect("retried object is initialized");
+    assert!(data.is_stream());
+    assert!(data.is_file());
+    assert_eq!(
+        token_character_text(
+            &define_stores,
+            data.stream_attr().expect("stream attribute survives retry")
+        ),
+        "/Subtype /XML"
+    );
+    assert_eq!(token_character_text(&define_stores, data.data()), "payload");
+}
+
+#[test]
+fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
+    // pdftex.web §1621 expands the command after `\immediate`, then invokes
+    // §1542's complete `\pdfobj` case. Its DVI check therefore wins over the
+    // immediate-reserved-object error and every operand remains retryable.
+    let mut reserve_stores = Universe::new_with_plain_catcodes();
+    let mut reserve_control = pdftex_object_control(&mut reserve_stores);
+    register_source(&mut reserve_control, br"\immediate\pdfobj reserveobjnum");
+    assert!(matches!(
+        reserve_control.step(&mut reserve_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+    ));
+    assert!(reserve_stores.pdf_raw_objects().is_empty());
+
+    reserve_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        reserve_control.step(&mut reserve_stores),
+        Err(ExecError::PdfImmediateReservedObject)
+    ));
+    assert!(reserve_stores.pdf_raw_objects().is_empty());
+
+    let mut define_stores = Universe::new_with_plain_catcodes();
+    let mut define_control = pdftex_object_control(&mut define_stores);
+    register_source(
+        &mut define_control,
+        br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}",
+    );
+    assert!(matches!(
+        define_control.step(&mut define_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+    ));
+    assert!(define_stores.pdf_raw_objects().is_empty());
+    assert_eq!(define_stores.pdf_return_value(), 0);
+
+    define_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        define_control
+            .step(&mut define_stores)
+            .expect("immediate retry preserves every option and operand"),
+        MainControlStep::Continue
+    );
+    assert_eq!(define_stores.pdf_return_value(), -1);
+    let record = define_stores.pdf_raw_objects()[0];
+    assert!(record.is_immediate());
+    let data = record.data().expect("immediate object is initialized");
+    assert!(data.is_stream());
+    assert!(data.is_file());
+    assert_eq!(
+        token_character_text(
+            &define_stores,
+            data.stream_attr().expect("stream attribute survives retry")
+        ),
+        "/Type /Metadata"
+    );
+    assert_eq!(
+        token_character_text(&define_stores, data.data()),
+        "retry.dat"
+    );
+}
+
 fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {
     for (name, primitive) in [
         ("pdfannot", UnexpandablePrimitive::PdfAnnot),

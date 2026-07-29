@@ -1940,6 +1940,74 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
 }
 
 #[test]
+fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
+    // pdftex.web §§1535, 1542, and 1621: `\immediate` performs its expanded
+    // command lookahead, but the recursive `\pdfobj` case checks output mode
+    // before recognizing any keyword or scanning any operand.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let pdfobj = universe.intern("pdfobj").symbol();
+    universe.set_meaning(
+        pdfobj,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject),
+    );
+    push(
+        &mut command,
+        [
+            vec![Token::Cs(pdfobj)],
+            text_tokens(" useobjnum 37 stream attr{x} file{y}"),
+        ]
+        .concat(),
+    );
+    let snapshot = command.snapshot();
+
+    let result = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(false)
+            .expect("DVI result needs no operand scan")
+    };
+    assert_eq!(result, ImmediateExtension::PdfObjectInDviMode);
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("operand input remains valid")
+            .expect("space after pdfobj remains unconsumed")
+            .meaning()
+    };
+    assert!(matches!(
+        next,
+        Meaning::CharToken {
+            cat: Catcode::Space,
+            ..
+        }
+    ));
+
+    command
+        .rollback(snapshot)
+        .expect("scanner attempt rolls back");
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(true)
+            .expect("PDF retry scans the preserved request")
+    };
+    assert!(matches!(
+        request,
+        ImmediateExtension::PdfObject(PdfObjectRequest::Define {
+            use_object: Some(37),
+            stream: true,
+            stream_attr: Some(_),
+            file: true,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

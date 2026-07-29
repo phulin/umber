@@ -812,6 +812,10 @@ pub enum InputStreamRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImmediateExtension {
     Continue,
+    /// pdftex.web §§1535, 1542, and 1621 reject `\\immediate\\pdfobj` after
+    /// the recursive expanded-command lookahead but before scanning any
+    /// `\\pdfobj` option or operand.
+    PdfObjectInDviMode,
     OpenOut {
         stream: i32,
         file_name: ScannedFileName,
@@ -2094,7 +2098,10 @@ impl CommandProcessor<'_> {
     /// and `closeout`, and backs every other expanded command up for ordinary
     /// main control.  The integer, optional-equals, filename, and write-text
     /// scans remain in this command-owned episode.
-    pub fn scan_immediate_extension(&mut self) -> Result<ImmediateExtension, CommandError> {
+    pub fn scan_immediate_extension(
+        &mut self,
+        pdf_output_enabled: bool,
+    ) -> Result<ImmediateExtension, CommandError> {
         let command = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
@@ -2131,9 +2138,15 @@ impl CommandProcessor<'_> {
                 let stream = self.scan_write_stream()?;
                 Ok(ImmediateExtension::CloseOut { stream })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
-                ImmediateExtension::PdfObject(self.scan_pdf_object_request()?),
-            ),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
+                if !pdf_output_enabled {
+                    Ok(ImmediateExtension::PdfObjectInDviMode)
+                } else {
+                    Ok(ImmediateExtension::PdfObject(
+                        self.scan_pdf_object_request()?,
+                    ))
+                }
+            }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm) => {
                 Ok(ImmediateExtension::PdfForm(
                     self.scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)?,
