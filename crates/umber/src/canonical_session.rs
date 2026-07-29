@@ -187,6 +187,8 @@ pub struct CanonicalEngineSession<'a> {
     control: CanonicalMainControl,
     root_registered: bool,
     started: bool,
+    /// Whether TeX82 §1332's engine-termination boundary has committed.
+    terminated: bool,
     artifact_cursor: usize,
     effect_cursor: usize,
     no_progress_limit: u8,
@@ -202,6 +204,7 @@ impl<'a> CanonicalEngineSession<'a> {
             control: CanonicalMainControl::with_profile(profile),
             root_registered: false,
             started: false,
+            terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
         }
     }
@@ -220,6 +223,7 @@ impl<'a> CanonicalEngineSession<'a> {
             stores,
             root_registered: false,
             started: false,
+            terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
         }
     }
@@ -235,6 +239,7 @@ impl<'a> CanonicalEngineSession<'a> {
             stores,
             root_registered: false,
             started: false,
+            terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
         }
     }
@@ -341,6 +346,9 @@ impl<'a> CanonicalEngineSession<'a> {
             self.started = true;
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
+        if self.terminated {
+            return self.finish();
+        }
         loop {
             match self.control.advance(self.stores)? {
                 CanonicalStepResult::Suspended(need) => {
@@ -349,6 +357,7 @@ impl<'a> CanonicalEngineSession<'a> {
                 CanonicalStepResult::Progress(step) => {
                     self.publish_completed_boundaries(checkpoints)?;
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                        self.terminated = true;
                         return self.finish();
                     }
                 }
@@ -374,6 +383,9 @@ impl<'a> CanonicalEngineSession<'a> {
             self.started = true;
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
+        if self.terminated {
+            return self.finish();
+        }
         loop {
             match self.control.advance_with_observer(self.stores, observer)? {
                 CanonicalStepResult::Suspended(need) => {
@@ -382,6 +394,17 @@ impl<'a> CanonicalEngineSession<'a> {
                 CanonicalStepResult::Progress(step) => {
                     self.publish_completed_boundaries(checkpoints)?;
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                        // TeX82 §§1332, 1335: source exhaustion and an
+                        // effective stop both leave `main_control` for the
+                        // single `close_files_and_terminate` boundary. An
+                        // effective `\end` already publishes this effect with
+                        // its final-cleanup records; EndOfInput has no scanned
+                        // command to own it, so the retained session publishes
+                        // the lifecycle event after the committed source stop.
+                        if matches!(step, MainControlStep::EndOfInput) {
+                            observer.committed(engine_termination_observation());
+                        }
+                        self.terminated = true;
                         return self.finish();
                     }
                 }
@@ -561,6 +584,14 @@ impl<'a> CanonicalEngineSession<'a> {
     }
 }
 
+fn engine_termination_observation() -> tex_command::CommandObservation {
+    tex_command::CommandObservation::Effect(tex_command::EffectRecord {
+        kind: "terminate",
+        detail: "engine\0".into(),
+        tokens: None,
+    })
+}
+
 fn canonical_font_path(name: &str) -> PathBuf {
     let path = PathBuf::from(name);
     if path.extension().is_none() {
@@ -709,6 +740,147 @@ mod tests {
                 "loaded={loaded}: committed effects are observed"
             );
         }
+    }
+
+    #[test]
+    fn source_exhaustion_terminates_once_after_stop_under_finite_fuel() {
+        let (mut stores, root) = prepared_session(b"");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session.set_fuel_limit(16).expect("finite fuel");
+        session
+            .register_authored_root("empty.tex", root)
+            .expect("root registers");
+        let mut observations = ObservationRecorder::default();
+
+        assert!(matches!(
+            session
+                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .expect("empty source completes"),
+            CanonicalSessionState::Complete(_)
+        ));
+        let stop = observations
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Input(input)
+                        if input.transition == tex_command::InputTransition::Stop
+                            && input.reason == tex_command::InputReason::Source
+                )
+            })
+            .expect("terminal source stop");
+        let terminations = observations
+            .0
+            .iter()
+            .enumerate()
+            .filter(|(_, observation)| {
+                matches!(
+                    observation,
+                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                )
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(terminations, vec![stop + 1]);
+        let burned = session.fuel_burned();
+        assert!(burned <= session.fuel_limit());
+
+        assert!(matches!(
+            session
+                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .expect("completed session remains complete"),
+            CanonicalSessionState::Complete(_)
+        ));
+        assert_eq!(session.fuel_burned(), burned);
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|observation| matches!(
+                    observation,
+                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn unobserved_completion_does_not_republish_termination() {
+        let (mut stores, root) = prepared_session(b"");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_authored_root("empty.tex", root)
+            .expect("root registers");
+
+        assert!(matches!(
+            session
+                .advance_until_waiting(&mut Vec::new())
+                .expect("unobserved source completes"),
+            CanonicalSessionState::Complete(_)
+        ));
+        let mut observations = ObservationRecorder::default();
+        assert!(matches!(
+            session
+                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .expect("completion remains latched"),
+            CanonicalSessionState::Complete(_)
+        ));
+        assert!(observations.0.is_empty());
+    }
+
+    #[test]
+    fn resource_suspension_does_not_publish_or_latch_termination() {
+        let (mut stores, root) = prepared_session(br"\input child");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_authored_root("job.tex", root)
+            .expect("root registers");
+        let mut observations = ObservationRecorder::default();
+
+        let need = match session
+            .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+            .expect("missing child suspends")
+        {
+            CanonicalSessionState::NeedResource(need) => need,
+            CanonicalSessionState::Complete(_) => panic!("missing child must suspend"),
+        };
+        assert!(
+            !observations.0.iter().any(|observation| matches!(
+                observation,
+                CommandObservation::Effect(effect) if effect.kind == "terminate"
+            )),
+            "rolled-back suspension cannot terminate the session"
+        );
+
+        session
+            .fulfill(
+                &need,
+                CanonicalResourceFulfillment::input(
+                    "child.tex",
+                    RegisteredSourceKind::Generated,
+                    Arc::from(&b""[..]),
+                ),
+            )
+            .expect("child fulfillment matches");
+        assert!(matches!(
+            session
+                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .expect("retry completes"),
+            CanonicalSessionState::Complete(_)
+        ));
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|observation| matches!(
+                    observation,
+                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                ))
+                .count(),
+            1
+        );
     }
 
     #[test]
