@@ -1124,9 +1124,10 @@ impl ModeNest {
             return Err(ExecError::EmptyModeNestSummary);
         }
         if summary.levels.len() > Self::MAX_LIVE_LEVELS {
-            return Err(ExecError::SemanticNestCapacity {
-                limit: Self::TEX82_NEST_SIZE,
-            });
+            return Err(ExecError::Fatal(tex_command::FatalError::overflow(
+                "semantic nest size",
+                Self::TEX82_NEST_SIZE as i32,
+            )));
         }
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
@@ -1161,9 +1162,10 @@ impl ModeNest {
     /// and the journal unchanged.
     pub fn push(&mut self, mode: Mode) -> Result<(), ExecError> {
         if self.levels.len() > Self::TEX82_NEST_SIZE {
-            return Err(ExecError::SemanticNestCapacity {
-                limit: Self::TEX82_NEST_SIZE,
-            });
+            return Err(ExecError::Fatal(tex_command::FatalError::overflow(
+                "semantic nest size",
+                Self::TEX82_NEST_SIZE as i32,
+            )));
         }
         let mut level = ModeLevelSummary::new(mode);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {

@@ -52,9 +52,6 @@ pub enum ExecError {
     OpenTypeMathUnsupported,
     EmptyModeNestSummary,
     CannotPopBaseMode,
-    SemanticNestCapacity {
-        limit: usize,
-    },
     /// A mode level cannot be discarded until its buffered horizontal run has
     /// been materialized into the list it belongs to.
     UncommittedPendingHchars,
@@ -414,9 +411,6 @@ impl fmt::Display for ExecError {
                 write!(f, "register number {value} is out of range")
             }
             Self::ArithmeticOverflow => write!(f, "Arithmetic overflow"),
-            Self::SemanticNestCapacity { limit } => {
-                write!(f, "TeX capacity exceeded, sorry [semantic nest size={limit}]")
-            }
             Self::InvalidCode { context, value } => {
                 write!(f, "Invalid code ({value}) while scanning {context}")
             }
@@ -575,7 +569,6 @@ impl std::error::Error for ExecError {
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
-            | Self::SemanticNestCapacity { .. }
             | Self::UncommittedPendingHchars
             | Self::UndefinedControlSequence { .. }
             | Self::UnexpectedMacroDelivery { .. }
@@ -706,7 +699,6 @@ impl ExecError {
             | Self::OpenTypeMathUnsupported
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
-            | Self::SemanticNestCapacity { .. }
             | Self::UncommittedPendingHchars
             | Self::MissingPrefixedCommand
             | Self::MissingControlSequence { .. }

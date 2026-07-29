@@ -3,6 +3,7 @@ use super::{
     ExecError, IncompleteFraction, Mode, ModeLevelSummary, ModeNest,
 };
 use std::sync::Arc;
+use tex_command::FatalError;
 use tex_state::Universe;
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::math::FractionThickness;
@@ -211,12 +212,21 @@ fn semantic_nest_capacity_and_bottom_pop_recovery_match_tex82() {
     nest.current_list_mutation().push(kern(29));
     let full = nest.summary();
 
+    let error = nest.push(Mode::Math).expect_err("nest_size overflow");
     assert!(matches!(
-        nest.push(Mode::Math),
-        Err(ExecError::SemanticNestCapacity {
-            limit: ModeNest::TEX82_NEST_SIZE
+        &error,
+        ExecError::Fatal(FatalError::CapacityExceeded {
+            resource: "semantic nest size",
+            amount: 40
         })
     ));
+    assert_eq!(
+        error.as_fatal(),
+        Some(FatalError::CapacityExceeded {
+            resource: "semantic nest size",
+            amount: 40,
+        })
+    );
     assert_eq!(nest.summary(), full);
 
     while nest.depth() > 1 {
@@ -242,10 +252,15 @@ fn semantic_nest_capacity_rejection_does_not_record_a_journal_push() {
     nest.reset_journal_for_test();
     let cursor = nest.begin_journal();
 
-    assert!(matches!(
-        nest.push(Mode::Horizontal),
-        Err(ExecError::SemanticNestCapacity { .. })
-    ));
+    let error = nest.push(Mode::Horizontal).expect_err("nest_size overflow");
+    assert_eq!(
+        error.as_fatal(),
+        Some(FatalError::CapacityExceeded {
+            resource: "semantic nest size",
+            amount: 40,
+        })
+    );
+    assert_eq!(nest.journal_inverse_len_for_test(), 0);
     nest.rollback_journal(cursor).expect("empty rollback");
     assert_eq!(nest.summary(), full);
 }
@@ -264,14 +279,24 @@ fn semantic_nest_summary_cannot_bypass_tex82_capacity() {
         full
     );
 
-    let mut oversized = full;
+    let mut oversized = full.clone();
     Arc::make_mut(&mut oversized.levels).push(ModeLevelSummary::new(Mode::Math));
+    let error = ModeNest::from_summary(oversized).expect_err("oversized mode summary");
     assert!(matches!(
-        ModeNest::from_summary(oversized),
-        Err(ExecError::SemanticNestCapacity {
-            limit: ModeNest::TEX82_NEST_SIZE
+        &error,
+        ExecError::Fatal(FatalError::CapacityExceeded {
+            resource: "semantic nest size",
+            amount: 40
         })
     ));
+    assert_eq!(
+        error.as_fatal(),
+        Some(FatalError::CapacityExceeded {
+            resource: "semantic nest size",
+            amount: 40,
+        })
+    );
+    assert_eq!(nest.summary(), full);
 }
 
 fn align_state() -> AlignState {
