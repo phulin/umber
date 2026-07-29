@@ -187,18 +187,23 @@ fn rendered(text: &str) -> String {
 }
 
 /// What a case declares about one stream channel.
+///
+/// Every committed channel file holds the pinned reference engine's bytes --
+/// that is the one meaning a committed file has, for `file` and `xfail`
+/// alike (`umber2-alfh.7`). There is therefore exactly one place bytes can
+/// have come from, which is why this type carries no `authority` field: a
+/// field that can only ever hold one value distinguishes nothing, and a
+/// second source (an unadjudicated implementation-observed baseline, this
+/// corpus's own prior authority value until `umber2-alfh.1`) is now
+/// impossible to declare rather than merely unused.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum StreamDisposition {
     /// The channel must produce nothing at all.
     Empty,
-    /// The channel must match the committed file byte for byte.
-    ///
-    /// `authority` records where those bytes came from. `oracle` means a
-    /// reference engine produced them; `umber-baseline` means they are this
-    /// implementation's observed output, recorded so it cannot change
-    /// silently, and still owed an oracle adjudication.
-    File { authority: ChannelAuthority },
+    /// The channel must match the committed reference-engine file byte for
+    /// byte.
+    File,
     /// The committed file always holds the reference engine's bytes for this
     /// channel -- that is the one meaning a committed channel file has, `file`
     /// or `xfail` alike. This disposition instead says Umber does not yet
@@ -208,7 +213,6 @@ pub enum StreamDisposition {
     /// `bug` names the issue that will retire this disposition.
     Xfail {
         bug: String,
-        authority: ChannelAuthority,
         mismatch: ChannelMismatch,
     },
 }
@@ -228,17 +232,6 @@ pub struct ChannelMismatch {
     pub expected: String,
     /// Umber's observed line at that point.
     pub actual: String,
-}
-
-/// Where a committed channel expectation's bytes came from.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ChannelAuthority {
-    /// A pinned reference engine produced these bytes.
-    Oracle,
-    /// Umber produced these bytes. They are pinned against silent drift but
-    /// are not yet evidence of correctness.
-    UmberBaseline,
 }
 
 /// Every channel disposition one case declares.
@@ -352,6 +345,19 @@ pub fn compare(
     for channel in STREAM_CHANNELS {
         let observed = captured.stream(channel);
         let name = channel.name();
+        // The log channel's first line carries tex.web section 536's clock,
+        // which no two runs of the same job can ever agree on byte for byte.
+        // `normalize_log_clock` is the one normalization this corpus applies
+        // (`docs/job_framing.md`), so it is applied here, symmetrically, to
+        // both sides of every log comparison below rather than baked into
+        // either side's stored bytes alone.
+        let normalize = |bytes: &[u8]| -> Vec<u8> {
+            if channel == StreamChannel::Log {
+                normalize_log_clock(bytes)
+            } else {
+                bytes.to_vec()
+            }
+        };
         match contract.stream(channel) {
             StreamDisposition::Empty => {
                 if !observed.is_empty() {
@@ -361,7 +367,7 @@ pub fn compare(
                     });
                 }
             }
-            StreamDisposition::File { .. } => {
+            StreamDisposition::File => {
                 let Some(declared) = committed(channel) else {
                     failures.push(ChannelFailure::MissingFile {
                         channel: name,
@@ -369,7 +375,9 @@ pub fn compare(
                     });
                     continue;
                 };
-                if let Some(divergence) = first_line_difference(&declared, observed) {
+                if let Some(divergence) =
+                    first_line_difference(&normalize(&declared), &normalize(observed))
+                {
                     failures.push(ChannelFailure::Content {
                         channel: name,
                         line: divergence.line,
@@ -386,7 +394,7 @@ pub fn compare(
             // divergence that vanished is an xpass (Umber owes a promotion to
             // `file` and the bug owes closing), and a divergence that moved is
             // a changed failure reporting pinned against observed.
-            StreamDisposition::Xfail { bug, mismatch, .. } => {
+            StreamDisposition::Xfail { bug, mismatch } => {
                 let Some(reference) = committed(channel) else {
                     failures.push(ChannelFailure::MissingFile {
                         channel: name,
@@ -394,7 +402,7 @@ pub fn compare(
                     });
                     continue;
                 };
-                match first_line_difference(&reference, observed) {
+                match first_line_difference(&normalize(&reference), &normalize(observed)) {
                     None => failures.push(ChannelFailure::Xpass {
                         channel: name,
                         bug: bug.clone(),
@@ -434,6 +442,43 @@ fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
+/// tex.web section 536's clock suffix on the log channel's very first line --
+/// the one byte range no two runs of the same job can ever agree on, and the
+/// only normalization this corpus applies (`docs/job_framing.md`'s "Why the
+/// notices are configuration, not output" section). Replaces everything from
+/// the first `)  ` (a closing paren immediately followed by section 536's
+/// fixed two-space separator -- `format_ident`'s own closing paren, e.g.
+/// `(INITEX)` or `(preloaded format=…)`, followed by that separator and the
+/// clock) through the end of the first line with `) <HOST-CLOCK>`.
+///
+/// A first line with no such marker is returned unchanged, and so is a
+/// buffer whose first line has already been normalized: the normalized form
+/// has one space before `<HOST-CLOCK>`, not two, so it contains no `)  `
+/// marker for a second pass to find. That idempotence is what lets `compare`
+/// below apply this to both the committed reference (already normalized when
+/// it was written) and Umber's own freshly captured bytes (never
+/// normalized) with the same call.
+#[must_use]
+pub fn normalize_log_clock(bytes: &[u8]) -> Vec<u8> {
+    let first_newline = bytes.iter().position(|&byte| byte == b'\n');
+    let (first_line, rest) = match first_newline {
+        Some(index) => (&bytes[..index], &bytes[index..]),
+        None => (bytes, &b""[..]),
+    };
+    const MARKER: &[u8] = b")  ";
+    let Some(offset) = first_line
+        .windows(MARKER.len())
+        .position(|window| window == MARKER)
+    else {
+        return bytes.to_vec();
+    };
+    let mut normalized = Vec::with_capacity(bytes.len());
+    normalized.extend_from_slice(&first_line[..=offset]);
+    normalized.extend_from_slice(b" <HOST-CLOCK>");
+    normalized.extend_from_slice(rest);
+    normalized
+}
+
 /// Locates the first line at which two channel renderings differ, so a
 /// failure names what moved rather than printing two transcripts. `None`
 /// means the two sides match exactly.
@@ -443,7 +488,8 @@ fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
 /// UTF-8 replacement; only the *report* -- `ChannelMismatch`'s `expected`/
 /// `actual`, which exist to be read -- renders a differing line with
 /// [`String::from_utf8_lossy`].
-fn first_line_difference(declared: &[u8], observed: &[u8]) -> Option<ChannelMismatch> {
+#[must_use]
+pub fn first_line_difference(declared: &[u8], observed: &[u8]) -> Option<ChannelMismatch> {
     if declared == observed {
         return None;
     }

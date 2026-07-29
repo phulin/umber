@@ -89,9 +89,7 @@ fn every_diverging_channel_is_reported_not_just_the_first() {
 #[test]
 fn a_file_disposition_without_a_committed_file_fails() {
     let mut declared = contract();
-    declared.log = StreamDisposition::File {
-        authority: ChannelAuthority::UmberBaseline,
-    };
+    declared.log = StreamDisposition::File;
     let mut run = captured();
     run.streams[1] = b"anything".to_vec();
     assert_eq!(
@@ -106,9 +104,7 @@ fn a_file_disposition_without_a_committed_file_fails() {
 #[test]
 fn a_file_disposition_names_the_first_differing_line() {
     let mut declared = contract();
-    declared.log = StreamDisposition::File {
-        authority: ChannelAuthority::Oracle,
-    };
+    declared.log = StreamDisposition::File;
     let mut run = captured();
     run.streams[1] = b"same\nmoved\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
@@ -129,9 +125,7 @@ fn a_file_disposition_names_the_first_differing_line() {
 #[test]
 fn a_truncated_channel_reports_the_end_rather_than_matching() {
     let mut declared = contract();
-    declared.terminal = StreamDisposition::File {
-        authority: ChannelAuthority::Oracle,
-    };
+    declared.terminal = StreamDisposition::File;
     let mut run = captured();
     run.streams[0] = b"one\n".to_vec();
     let committed = |channel: StreamChannel| match channel {
@@ -157,7 +151,6 @@ fn a_truncated_channel_reports_the_end_rather_than_matching() {
 fn xfail_effects(mismatch: ChannelMismatch) -> StreamDisposition {
     StreamDisposition::Xfail {
         bug: "umber2-johp.246".into(),
-        authority: ChannelAuthority::Oracle,
         mismatch,
     }
 }
@@ -370,10 +363,10 @@ fn the_committed_schema_requires_exactly_the_contract_fields() {
     assert_eq!(declared, expected);
 
     // The `xfail` branch of `streamDisposition` must require exactly the
-    // fields `StreamDisposition::Xfail` carries: a bug id, an authority, and
-    // a mismatch pin. Missing `mismatch` here is exactly the drift this test
-    // exists to catch -- a schema that still allowed an `xfail` with no pin
-    // would document a contract Rust no longer accepts.
+    // fields `StreamDisposition::Xfail` carries: a bug id and a mismatch pin.
+    // Missing `mismatch` here is exactly the drift this test exists to catch
+    // -- a schema that still allowed an `xfail` with no pin would document a
+    // contract Rust no longer accepts.
     let one_of = schema["$defs"]["streamDisposition"]["oneOf"]
         .as_array()
         .expect("streamDisposition is a oneOf");
@@ -388,7 +381,7 @@ fn the_committed_schema_requires_exactly_the_contract_fields() {
         .map(|value| value.as_str().expect("required keys are strings"))
         .collect();
     xfail_declared.sort_unstable();
-    let mut xfail_expected = vec!["kind", "bug", "authority", "mismatch"];
+    let mut xfail_expected = vec!["kind", "bug", "mismatch"];
     xfail_expected.sort_unstable();
     assert_eq!(xfail_declared, xfail_expected);
 

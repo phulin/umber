@@ -35,8 +35,9 @@ pub mod channels;
 mod tests;
 
 pub use channels::{
-    CapturedChannels, ChannelAuthority, ChannelContract, ChannelFailure, ChannelMismatch,
-    STREAM_CHANNELS, StreamChannel, StreamDisposition, validate_xfail_disposition,
+    CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, STREAM_CHANNELS,
+    StreamChannel, StreamDisposition, first_line_difference, normalize_log_clock,
+    validate_xfail_disposition,
 };
 
 pub const SCHEMA: u32 = 1;
@@ -434,7 +435,7 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
                     path.display()
                 ));
             }
-            StreamDisposition::File { .. } | StreamDisposition::Xfail { .. } if !present => {
+            StreamDisposition::File | StreamDisposition::Xfail { .. } if !present => {
                 return Err(format!(
                     "case {} declares channel {} committed but {} is absent",
                     case.id,
@@ -444,7 +445,7 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
             }
             _ => {}
         }
-        if let StreamDisposition::Xfail { bug, mismatch, .. } = declared {
+        if let StreamDisposition::Xfail { bug, mismatch } = declared {
             validate_xfail_disposition(channel, bug, mismatch)
                 .map_err(|error| format!("case {}: {error}", case.id))?;
         }

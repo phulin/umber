@@ -111,24 +111,22 @@
           "properties": { "kind": { "const": "empty" } }
         },
         {
-          "description": "The channel must match `expected/<case-id>.<channel>` byte for byte.",
+          "description": "The channel must match `expected/<case-id>.<channel>` byte for byte against the pinned reference engine's committed bytes.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "authority"],
+          "required": ["kind"],
           "properties": {
-            "kind": { "const": "file" },
-            "authority": { "$ref": "#/$defs/channelAuthority" }
+            "kind": { "const": "file" }
           }
         },
         {
           "description": "The committed file holds the reference engine's bytes, exactly as `file` does. Umber does not yet match them; `mismatch` pins where its output first diverges, and `bug` names the issue that retires the pin.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "bug", "authority", "mismatch"],
+          "required": ["kind", "bug", "mismatch"],
           "properties": {
             "kind": { "const": "xfail" },
             "bug": { "type": "string", "pattern": "^umber2-[a-z0-9]+(?:\\.[a-z0-9]+)*$" },
-            "authority": { "$ref": "#/$defs/channelAuthority" },
             "mismatch": { "$ref": "#/$defs/channelMismatch" }
           }
         }
@@ -148,10 +146,6 @@
         "expected": { "type": "string" },
         "actual": { "type": "string" }
       }
-    },
-    "channelAuthority": {
-      "description": "Where a committed channel's bytes came from. `oracle` means a pinned reference engine produced them. `umber-baseline` means Umber produced them: they are pinned against silent drift and still owed an oracle adjudication.",
-      "enum": ["oracle", "umber-baseline"]
     },
     "projection": {
       "type": "object",
