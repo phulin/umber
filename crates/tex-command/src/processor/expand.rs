@@ -464,6 +464,9 @@ impl CommandProcessor<'_> {
                 self.expand_number(command, true)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
+                self.expand_unexpanded()
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
                 self.expand_fontname(command)
             }
@@ -804,9 +807,18 @@ impl CommandProcessor<'_> {
     /// token: §323's trace seam reports the current token of the level it just
     /// pushed, and an empty inserted list has none to report.
     fn insert_expansion_list(&mut self, payload: TokenPayload, first: Option<Token>) {
+        self.insert_expansion_list_with_behavior(payload, first, TokenBehavior::Recovery);
+    }
+
+    pub(crate) fn insert_expansion_list_with_behavior(
+        &mut self,
+        payload: TokenPayload,
+        first: Option<Token>,
+        behavior: TokenBehavior,
+    ) {
         let level = self.command.push_token_level(
             payload,
-            TokenBehavior::Recovery,
+            behavior,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );

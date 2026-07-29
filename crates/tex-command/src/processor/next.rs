@@ -1115,6 +1115,7 @@ impl CommandProcessor<'_> {
             if matches!(
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
+                    | TokenBehavior::Unexpanded
             ) {
                 command.suppress_expandable();
             }
@@ -1906,6 +1907,7 @@ enum RetirementRestart {
 fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
     match behavior {
         TokenBehavior::Ordinary
+        | TokenBehavior::Unexpanded
         | TokenBehavior::Recovery
         | TokenBehavior::MacroBody(_)
         | TokenBehavior::Parameter

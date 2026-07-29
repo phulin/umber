@@ -2439,6 +2439,47 @@ mod tests {
     }
 
     #[test]
+    fn etex_format_loaded_session_executes_unexpanded_with_finite_fuel() {
+        use crate::EngineMode;
+
+        let mode = EngineMode::ETex;
+        let mut initex = Universe::new_with_plain_catcodes();
+        mode.prepare_initex(&mut initex);
+        let format = initex.dump_format().expect("e-TeX format dumps");
+        let mut loaded =
+            Universe::from_format(World::default(), &format).expect("e-TeX format loads");
+        mode.install_after_format(&mut loaded);
+        loaded
+            .world_mut()
+            .set_memory_file(
+                "selected/job.tex",
+                b"\\edef\\holder{\\unexpanded{\\iftrue}}\\end",
+            )
+            .expect("format-loaded root is seeded");
+        let root = loaded
+            .world_mut()
+            .read_file("selected/job.tex")
+            .expect("format-loaded root is selected");
+        let mut legacy_input = InputStack::new(MemoryInput::new("legacy loaded input"));
+        let mut session = EngineSession::with_command_profile(
+            &mut legacy_input,
+            &mut loaded,
+            ExecutionContext::new("loaded"),
+            mode.command_profile(),
+        );
+        session
+            .canonical_main_control_mut()
+            .set_fuel_limit(1_000)
+            .expect("finite command fuel is valid");
+        session
+            .register_canonical_world_root("job.tex", root)
+            .expect("format-loaded canonical root registers");
+        session
+            .execute()
+            .expect("format-loaded unexpanded execution completes");
+    }
+
+    #[test]
     fn direct_file_host_retries_world_font_and_image_in_fresh_and_format_sessions() {
         use crate::EngineMode;
 

@@ -21,6 +21,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
 use tex_state::CommandLineSource;
 
+use crate::input::{SharedTokenBuffer, TokenBehavior, TokenPayload};
 use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
@@ -597,6 +598,44 @@ impl CommandProcessor<'_> {
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
     fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
+        let raw = self.scan_unexpanded_general_text()?;
+        let observed = raw
+            .iter()
+            .copied()
+            .map(|token| self.observed_token(token))
+            .collect::<Vec<_>>();
+        output.extend(raw);
+        self.command.expansion.cumulative_expansions = self
+            .command
+            .expansion
+            .cumulative_expansions
+            .saturating_add(1);
+        // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
+        if !observed.is_empty() {
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "the_toks",
+                    tokens: observed,
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn expand_unexpanded(&mut self) -> Result<(), CommandError> {
+        let raw = self.scan_unexpanded_general_text()?;
+        let first = raw.first().map(|token| token.semantic_token());
+        self.insert_expansion_list_with_behavior(
+            TokenPayload::Transient(SharedTokenBuffer::new(raw)),
+            first,
+            TokenBehavior::Unexpanded,
+        );
+        Ok(())
+    }
+
+    fn scan_unexpanded_general_text(&mut self) -> Result<Vec<TracedTokenWord>, CommandError> {
         // e-TeX 2.6 etex.ch [27.465] routes `\unexpanded` through
         // `scan_general_text`: its opening brace is fetched by §403's
         // expanded nonblank/non-relax loop, even though the balanced text
@@ -617,26 +656,7 @@ impl CommandProcessor<'_> {
                 tokens: observed.clone(),
             }),
         );
-        output.extend(raw);
-        self.command.expansion.cumulative_expansions = self
-            .command
-            .expansion
-            .cumulative_expansions
-            .saturating_add(1);
-        // TeX82 §478 attaches the list returned by `the_toks` only when it is
-        // nonempty. e-TeX's §27.465 `\unexpanded` return follows that same
-        // direct-splice boundary after `scan_general_text` has completed.
-        if !observed.is_empty() {
-            observe!(
-                self,
-                CommandObservation::TokenList(TokenListRecord {
-                    transition: "splice",
-                    purpose: "the_toks",
-                    tokens: observed,
-                }),
-            );
-        }
-        Ok(())
+        Ok(raw)
     }
 }
 

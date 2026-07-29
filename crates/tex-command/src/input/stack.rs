@@ -442,6 +442,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
             };
         }
         TokenBehavior::Ordinary
+        | TokenBehavior::Unexpanded
         | TokenBehavior::Recovery
         | TokenBehavior::MacroBody(_)
         | TokenBehavior::Parameter

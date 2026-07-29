@@ -119,6 +119,56 @@ fn install_expandable(
     symbol
 }
 
+#[test]
+fn etex_unexpanded_returns_each_balanced_token_without_expanding_it() {
+    // e-TeX 2.6 etex.ch §27.465 routes `\unexpanded` through
+    // `scan_general_text`, then returns its token list through `the_toks`.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let unexpanded =
+        install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+    let payload = install_macro(
+        &mut universe,
+        "payload",
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        },
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(unexpanded)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Cs(payload)),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+            traced(Token::Cs(payload)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuel::new(32).expect("finite test fuel");
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(&mut fuel);
+
+    let literal = processor
+        .get_x_token()
+        .expect("unexpanded scan succeeds")
+        .expect("literal token is returned");
+    assert_eq!(literal.spelling().semantic_token(), Token::Cs(payload));
+    assert!(!is_expandable_command(&literal));
+    assert_eq!(rendered(&mut processor), "X");
+    assert!(fuel.burned() <= 32);
+}
+
 fn rendered(processor: &mut CommandProcessor<'_>) -> String {
     let mut text = String::new();
     while let Some(command) = processor.get_x_token().expect("conversion expands") {

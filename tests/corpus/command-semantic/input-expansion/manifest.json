@@ -4,6 +4,23 @@
   "property_domain": "input-tokenization-control-sequences-expansion",
   "cases": [
     {
+      "id": "etex-unexpanded-delivery",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "profile": "etex-initex",
+      "source": "etex-unexpanded-delivery.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [465]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [0, 1]
+      },
+      "expected": ["count:0=1", "count:1=0"],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-noexpand-undefined",
       "property_id": "tex82.expansion.delivery-and-primitives",
       "profile": "etex-initex",
