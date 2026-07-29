@@ -628,7 +628,11 @@ mod tests {
         // operand. Both still describe the same raw `call`.
         let temp = tempfile::tempdir().expect("temp");
         let reference = macro_command_events(CanonicalValue::Integer(249_985));
-        for operand in [CanonicalValue::Integer(249_984), CanonicalValue::None] {
+        for operand in [
+            CanonicalValue::Integer(249_984),
+            CanonicalValue::Integer(249_986),
+            CanonicalValue::None,
+        ] {
             let actual = macro_command_events(operand);
             let expected = TripTriageChannels {
                 command_events: Some(&reference),
