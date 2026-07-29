@@ -191,6 +191,13 @@ pub enum PdfGraphicsRequest {
         action: Option<PdfColorStackActionRequest>,
     },
     SavePosition,
+    SnapReferencePoint,
+    SnapY {
+        glue: GlueSpec,
+    },
+    SnapYComp {
+        ratio: u16,
+    },
 }
 
 /// The completed action word and, for setters, its expanded payload.
@@ -947,7 +954,7 @@ impl CommandProcessor<'_> {
 
     /// Scans the unexpandable pdfTeX graphics whatsit family.
     ///
-    /// This follows pdftex.web's `pdfliteral` through `pdfrestore` scanners:
+    /// This follows pdftex.web's `pdfliteral` through `pdfsnapycomp` scanners:
     /// `shipout` is recognized before the literal mode, immediate literals
     /// and setters expand their balanced text now, and a shipout literal
     /// retains its unexpanded token list for traversal-time expansion.
@@ -995,6 +1002,13 @@ impl CommandProcessor<'_> {
                 Request::ColorStack { id, action }
             }
             UnexpandablePrimitive::PdfSavePos => Request::SavePosition,
+            UnexpandablePrimitive::PdfSnapRefPoint => Request::SnapReferencePoint,
+            UnexpandablePrimitive::PdfSnapY => Request::SnapY {
+                glue: self.scan_glue(false)?.value,
+            },
+            UnexpandablePrimitive::PdfSnapYComp => Request::SnapYComp {
+                ratio: self.scan_integer()?.value.clamp(0, 1000) as u16,
+            },
             _ => return Ok(None),
         };
         Ok(Some(request))

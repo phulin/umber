@@ -170,6 +170,180 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
+        ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
+        ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_snapping_is_any_mode_ordered_typed_material() {
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_snapping_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(
+            &mut control,
+            br"\pdfsnaprefpoint\pdfsnapy 4pt plus 2fil minus 1pt\pdfsnapycomp 1200",
+        );
+        for _ in 0..3 {
+            assert_eq!(
+                control.step(&mut stores).expect("snapping command"),
+                MainControlStep::Continue
+            );
+        }
+        let nodes = control.modes.current_list().nodes();
+        assert!(
+            matches!(
+                nodes,
+                [
+                    Node::Whatsit(Whatsit::PdfSnapRefPoint),
+                    Node::Whatsit(Whatsit::PdfSnapY { .. }),
+                    Node::Whatsit(Whatsit::PdfSnapYComp { ratio: 1000 })
+                ]
+            ),
+            "mode {mode:?}: {nodes:?}"
+        );
+        let Node::Whatsit(Whatsit::PdfSnapY { glue }) = nodes[1] else {
+            unreachable!()
+        };
+        let glue = stores.glue(glue);
+        assert_eq!(glue.width, Scaled::from_raw(4 * 65_536));
+        assert_eq!(glue.stretch_order, tex_state::glue::Order::Fil);
+    }
+}
+
+#[test]
+fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_snapping_control(&mut stores);
+    register_source(&mut control, br"\global\pdfsnaprefpoint");
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert!(control.modes.current_list().nodes().is_empty());
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("replayed snapping command"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
+    ));
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi = pdftex_snapping_control(&mut dvi_stores);
+    register_source(&mut dvi, br"\pdfsnapy 7pt");
+    assert!(matches!(
+        dvi.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfsnapy"))
+    ));
+    assert!(dvi.modes.current_list().nodes().is_empty());
+    dvi_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        dvi.step(&mut dvi_stores)
+            .expect("failed command retries with its operand intact"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        dvi.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfSnapY { .. })]
+    ));
+}
+
+#[test]
+fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_snapping_control(&mut stores);
+    register_source(&mut control, br"\pdfsnapy -1pt plus 2fil");
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfNavigation(
+            "pdfTeX error (ext1): negative snap glue"
+        ))
+    ));
+    assert!(control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_snapping_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\pdfsnaprefpoint\pdfsnapy 3pt\pdfsnapycomp 500",
+    );
+    assert_eq!(
+        control.step(&mut stores).expect("reference point"),
+        MainControlStep::Continue
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("snapping state checkpoints");
+    assert_eq!(
+        control.step(&mut stores).expect("snap glue"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut stores).expect("snap compensation"),
+        MainControlStep::Continue
+    );
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("snapping state restores");
+    assert_eq!(
+        control.step(&mut stores).expect("retried snap glue"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("retried snap compensation"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [
+            Node::Whatsit(Whatsit::PdfSnapRefPoint),
+            Node::Whatsit(Whatsit::PdfSnapY { .. }),
+            Node::Whatsit(Whatsit::PdfSnapYComp { ratio: 500 })
+        ]
+    ));
+}
+
 fn step_until_pdf_seed(control: &mut CanonicalMainControl, stores: &mut Universe, expected: i32) {
     for _ in 0..4 {
         control.step(stores).expect("canonical random command");

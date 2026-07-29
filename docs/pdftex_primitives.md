@@ -77,8 +77,9 @@ applicable.
 
 The backend-action row is partial because registration and retired-executor
 coverage do not establish canonical command-core coverage. The canonical
-`\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, and
-`\pdfrunninglinkoff`, `\pdfrunninglinkon`, and `\pdfspacefont` are complete.
+`\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`,
+`\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont`,
+`\pdfsnaprefpoint`, `\pdfsnapy`, and `\pdfsnapycomp` are complete.
 pdftex.web §§1527 and 1594–1598 make the first five operand-free any-mode
 commands that append ordered whatsits, with their accessibility or
 continuation-link effect interpreted during shipout. The running-link policy
@@ -88,6 +89,12 @@ the toggles neither open nor close links. Section 1599 makes `\pdfspacefont`
 an any-mode command that scans expanded general text and globally replaces
 the deferred fallback-font name. The remaining names must each reach the same
 canonical boundary before this row returns to done.
+
+pdftex.web §§1527 and 1638 make the snapping family any-mode PDF extensions.
+`\pdfsnaprefpoint` scans no operand, `\pdfsnapy` scans ordinary glue and rejects
+a negative width, and `\pdfsnapycomp` scans an integer clamped to `0..=1000`.
+All three append typed ordered whatsits consumed by positioned PDF traversal;
+DVI-mode rejection occurs before operand scanning.
 
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in

@@ -5458,13 +5458,33 @@ fn scan_command(
             | UnexpandablePrimitive::PdfSave
             | UnexpandablePrimitive::PdfRestore
             | UnexpandablePrimitive::PdfColorStack
-            | UnexpandablePrimitive::PdfSavePos),
-        ) => Ok(ScannedStep::PdfGraphics(
-            processor
-                .scan_pdf_graphics_request(primitive)
-                .map_err(command_error)?
-                .expect("graphics primitive has a typed request"),
-        )),
+            | UnexpandablePrimitive::PdfSavePos
+            | UnexpandablePrimitive::PdfSnapRefPoint
+            | UnexpandablePrimitive::PdfSnapY
+            | UnexpandablePrimitive::PdfSnapYComp),
+        ) => {
+            if matches!(
+                primitive,
+                UnexpandablePrimitive::PdfSnapRefPoint
+                    | UnexpandablePrimitive::PdfSnapY
+                    | UnexpandablePrimitive::PdfSnapYComp
+            ) && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+            {
+                let name = match primitive {
+                    UnexpandablePrimitive::PdfSnapRefPoint => "pdfsnaprefpoint",
+                    UnexpandablePrimitive::PdfSnapY => "pdfsnapy",
+                    UnexpandablePrimitive::PdfSnapYComp => "pdfsnapycomp",
+                    _ => unreachable!(),
+                };
+                return Err(ExecError::PdfExtensionInDviMode(name));
+            }
+            Ok(ScannedStep::PdfGraphics(
+                processor
+                    .scan_pdf_graphics_request(primitive)
+                    .map_err(command_error)?
+                    .expect("graphics primitive has a typed request"),
+            ))
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfAnnot
             | UnexpandablePrimitive::PdfStartLink
@@ -6416,6 +6436,9 @@ fn scan_unclassified_primitive(
         | P::PdfRestore
         | P::PdfSave
         | P::PdfSavePos
+        | P::PdfSnapRefPoint
+        | P::PdfSnapY
+        | P::PdfSnapYComp
         | P::PdfResetTimer
         | P::PdfSetRandomSeed
         | P::PdfSetMatrix
@@ -6630,9 +6653,6 @@ fn scan_unclassified_primitive(
         | P::PdfOutline
         | P::PdfRpCode
         | P::PdfShbsCode
-        | P::PdfSnapRefPoint
-        | P::PdfSnapY
-        | P::PdfSnapYComp
         | P::PdfStbsCode
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
@@ -7289,6 +7309,9 @@ fn apply_pdf_graphics_request(
             PdfGraphicsRequest::Restore => "pdfrestore",
             PdfGraphicsRequest::ColorStack { .. } => "pdfcolorstack",
             PdfGraphicsRequest::SavePosition => unreachable!(),
+            PdfGraphicsRequest::SnapReferencePoint => "pdfsnaprefpoint",
+            PdfGraphicsRequest::SnapY { .. } => "pdfsnapy",
+            PdfGraphicsRequest::SnapYComp { .. } => "pdfsnapycomp",
         };
         return Err(ExecError::PdfExtensionInDviMode(primitive));
     }
@@ -7312,6 +7335,18 @@ fn apply_pdf_graphics_request(
         PdfGraphicsRequest::Save => Node::Whatsit(Whatsit::PdfSave),
         PdfGraphicsRequest::Restore => Node::Whatsit(Whatsit::PdfRestore),
         PdfGraphicsRequest::SavePosition => Node::Whatsit(Whatsit::PdfSavePos),
+        PdfGraphicsRequest::SnapReferencePoint => Node::Whatsit(Whatsit::PdfSnapRefPoint),
+        PdfGraphicsRequest::SnapY { glue } => {
+            if glue.width.raw() < 0 {
+                return Err(ExecError::PdfNavigation(
+                    "pdfTeX error (ext1): negative snap glue",
+                ));
+            }
+            Node::Whatsit(Whatsit::PdfSnapY {
+                glue: stores.intern_glue(glue),
+            })
+        }
+        PdfGraphicsRequest::SnapYComp { ratio } => Node::Whatsit(Whatsit::PdfSnapYComp { ratio }),
         PdfGraphicsRequest::ColorStack { id, action } => {
             let id = if id < 0 {
                 stores.world_mut().write_text(

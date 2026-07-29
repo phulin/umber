@@ -2014,6 +2014,50 @@ fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
 }
 
 #[test]
+fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        text_tokens(" 3pt plus 2fil minus 1pt -7 1007"),
+    );
+    let (reference, snap, low, high) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        (
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfSnapRefPoint)
+                .expect("reference scans")
+                .expect("reference request"),
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfSnapY)
+                .expect("glue scans")
+                .expect("snap request"),
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfSnapYComp)
+                .expect("low compensation scans")
+                .expect("compensation request"),
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfSnapYComp)
+                .expect("high compensation scans")
+                .expect("compensation request"),
+        )
+    };
+    assert_eq!(reference, PdfGraphicsRequest::SnapReferencePoint);
+    assert!(matches!(
+        snap,
+        PdfGraphicsRequest::SnapY { glue }
+            if glue.width == Scaled::from_raw(3 * 65_536)
+                && glue.stretch == Scaled::from_raw(2 * 65_536)
+                && glue.stretch_order == tex_state::glue::Order::Fil
+                && glue.shrink == Scaled::from_raw(65_536)
+    ));
+    assert_eq!(low, PdfGraphicsRequest::SnapYComp { ratio: 0 });
+    assert_eq!(high, PdfGraphicsRequest::SnapYComp { ratio: 1000 });
+}
+
+#[test]
 fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
