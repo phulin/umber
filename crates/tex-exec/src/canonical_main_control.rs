@@ -5492,12 +5492,19 @@ fn scan_command(
         ) => {
             if matches!(
                 primitive,
-                UnexpandablePrimitive::PdfOutline | UnexpandablePrimitive::PdfDest
+                UnexpandablePrimitive::PdfOutline
+                    | UnexpandablePrimitive::PdfDest
+                    | UnexpandablePrimitive::PdfThread
+                    | UnexpandablePrimitive::PdfStartThread
+                    | UnexpandablePrimitive::PdfEndThread
             ) && processor.int_param(IntParam::PDF_OUTPUT) <= 0
             {
                 let name = match primitive {
                     UnexpandablePrimitive::PdfOutline => "pdfoutline",
                     UnexpandablePrimitive::PdfDest => "pdfdest",
+                    UnexpandablePrimitive::PdfThread => "pdfthread",
+                    UnexpandablePrimitive::PdfStartThread => "pdfstartthread",
+                    UnexpandablePrimitive::PdfEndThread => "pdfendthread",
                     _ => unreachable!(),
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));

@@ -392,6 +392,50 @@ fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfthread", UnexpandablePrimitive::PdfThread),
+        ("pdfstartthread", UnexpandablePrimitive::PdfStartThread),
+        ("pdfendthread", UnexpandablePrimitive::PdfEndThread),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_thread_family_rejects_dvi_before_operand_scan() {
+    // pdftex.web §1567 checks pdfoutput before allocation and operand scanning.
+    for (source, primitive) in [
+        (
+            br"\pdfthread width 5pt attr{/I <<>>} name{retry}".as_slice(),
+            "pdfthread",
+        ),
+        (
+            br"\pdfstartthread depth 7pt num 42".as_slice(),
+            "pdfstartthread",
+        ),
+        (br"\pdfendthread".as_slice(), "pdfendthread"),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_thread_control(&mut stores);
+        register_source(&mut control, source);
+        assert!(
+            matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+        );
+        assert!(control.modes.current_list().nodes().is_empty());
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        assert_eq!(
+            control
+                .step(&mut stores)
+                .expect("retry preserves every operand"),
+            MainControlStep::Continue
+        );
+        assert_eq!(control.modes.current_list().nodes().len(), 1);
+    }
+}
+
 fn pdftex_destination_control(stores: &mut Universe) -> CanonicalMainControl {
     let destination = stores.intern("pdfdest");
     stores.set_meaning(

@@ -114,6 +114,12 @@ The shared scanner and positioned PDF traversal continue to own the complete
 identifier, destination-kind, duplicate, coordinate, and backend contracts
 recorded in `pdftex_navigation.md`.
 
+pdftex.web §§1524 and 1567 make `\pdfthread`, `\pdfstartthread`, and
+`\pdfendthread` any-mode typed whatsits. DVI-mode rejection precedes node
+allocation and every dimension, attribute, and identifier scan; PDF-mode
+scanner, checkpoint, positioned traversal, and article-thread graph semantics
+remain owned by `pdftex_navigation.md`.
+
 The source-derived graphics-state, literal, color-stack, saved-position,
 snapping, timer, and random contracts are fixed in
 `pdftex_graphics_state.md`. In particular, the pinned source has
