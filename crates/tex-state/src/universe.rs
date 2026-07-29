@@ -1396,8 +1396,11 @@ impl Universe {
             ));
         }
         let mut hashes = Vec::with_capacity(suffix.artifacts.len());
-        for artifact in suffix.artifacts.iter().cloned() {
-            hashes.push(self.world.publish_prepared_artifact(artifact)?);
+        for artifact in &suffix.artifacts {
+            hashes.push(self.world.store_prepared_artifact(artifact)?);
+        }
+        for artifact in suffix.artifacts {
+            self.world.record_prepared_artifact(artifact);
         }
         for (page, hash) in suffix.pdf_pages.iter_mut().zip(hashes) {
             page.retarget_artifact(hash);

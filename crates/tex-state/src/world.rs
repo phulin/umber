@@ -2573,19 +2573,21 @@ impl World {
         Arc::make_mut(&mut self.committed_artifacts).split_off(start)
     }
 
-    pub(crate) fn publish_prepared_artifact(
+    pub(crate) fn store_prepared_artifact(
         &mut self,
-        artifact: CommittedArtifact,
+        artifact: &CommittedArtifact,
     ) -> Result<ContentHash, WorldError> {
         let verified = VerifiedArtifact {
             hash: artifact.hash,
             bytes: artifact.bytes.as_ref().to_vec(),
             render_provenance: artifact.render_provenance.clone(),
         };
-        let hash = self.store_verified_artifact(&verified)?;
-        Arc::make_mut(&mut self.artifact_commits).push(hash);
+        self.store_verified_artifact(&verified)
+    }
+
+    pub(crate) fn record_prepared_artifact(&mut self, artifact: CommittedArtifact) {
+        Arc::make_mut(&mut self.artifact_commits).push(artifact.hash);
         Arc::make_mut(&mut self.committed_artifacts).push(artifact);
-        Ok(hash)
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {

@@ -152,6 +152,88 @@ fn accepted_finalization_keeps_openout_page_unpublished() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Exercises authoritative real open failure and artifact CAS.
+fn replacement_openout_name_becomes_published_artifact_identity() {
+    let temp = tempfile::Builder::new()
+        .prefix("openout.")
+        .tempdir_in(".")
+        .expect("temporary output root");
+    let failed = Path::new(temp.path().file_name().expect("relative temporary name"));
+    let replacement = failed.join("replacement.out");
+    let source = format!(
+        "\\setbox0=\\hbox{{\\openout2={} \\write2{{x}}\\closeout2}}\
+         \\shipout\\copy0\\end",
+        failed.display()
+    );
+    let mut session = session(&source);
+    let attempt = session.compile_attempt();
+    assert!(
+        matches!(attempt, CompileAttemptResult::Complete(_)),
+        "{attempt:#?}"
+    );
+    let mut finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    let original_hash = finalization
+        .prepared_pages
+        .as_ref()
+        .expect("prepared openout page")
+        .artifacts()[0]
+        .hash();
+    finalization
+        .stores
+        .world_mut()
+        .retarget_output_backend(&World::real_with_artifact_dir(
+            temp.path().join("artifacts"),
+        ))
+        .expect("real finalization backend");
+    let mut plan =
+        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
+            .expect("empty driver plan")
+            .with_prepared_pages(finalization.prepared_pages);
+    let crate::FinalizationCommit::Retry {
+        plan: retained,
+        error,
+    } = plan
+        .commit_effects_retryable(&mut finalization.stores)
+        .expect("retry-safe open failure")
+    else {
+        panic!("directory open must retain finalization");
+    };
+    assert!(finalization.stores.world().committed_artifacts().is_empty());
+    let failed = error
+        .stream_open_unavailable()
+        .expect("failed target")
+        .to_owned();
+    finalization
+        .stores
+        .world_mut()
+        .retarget_pending_stream_open(&failed, &replacement)
+        .expect("retarget pending effect");
+    plan = retained;
+    plan.retarget_prepared_open(&failed, &replacement)
+        .expect("retarget prepared page");
+    assert!(matches!(
+        plan.commit_effects_retryable(&mut finalization.stores)
+            .expect("replacement succeeds"),
+        crate::FinalizationCommit::Committed(_)
+    ));
+
+    let [published] = finalization.stores.world().committed_artifacts() else {
+        panic!("one page publishes after the open succeeds");
+    };
+    assert_ne!(published.hash(), original_hash);
+    let page = tex_out::PageArtifact::from_bytes(published.bytes()).expect("published page parses");
+    assert!(page.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            tex_out::PageEffect::OpenOut { stream: 2, path }
+                if path == &replacement.to_string_lossy()
+        )
+    }));
+}
+
+#[test]
 fn finalization_rejects_a_session_without_accepted_output() {
     let error = session("\\end")
         .into_accepted_finalization()
