@@ -2509,8 +2509,7 @@ impl CanonicalMainControl {
             },
             scanned => scanned,
         };
-        let mutation =
-            applied_mutation_observation(&scanned, stores, self.command_profile(), self.initex);
+        let mutation = applied_mutation_observation(&scanned, stores, self.command_profile());
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
@@ -7785,14 +7784,13 @@ fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
     profile: CommandProfile,
-    initex: bool,
 ) -> Option<PendingMutation> {
     // e-TeX §§277-278 return before changing the save stack when extended
     // mode locally reassigns an identical eqtb value. Suppress the
     // corresponding observer record at the same semantic boundary;
     // otherwise instrumentation reports a mutation the engine did not
     // canonically perform.
-    if etex_redundant_local_definition_step(stores, scanned, initex) {
+    if etex_redundant_local_definition_step(stores, scanned) {
         return None;
     }
     let captured = match scanned {
@@ -9280,12 +9278,7 @@ fn apply_scanned_step(
         } => {
             if global {
                 stores.set_count_global(index, value);
-            } else if !etex_redundant_local_word_assignment(
-                stores,
-                command.initex,
-                stores.count(index),
-                value,
-            ) {
+            } else if !etex_redundant_local_word_assignment(stores, stores.count(index), value) {
                 stores.set_count(index, value);
             }
             Ok(ReplayStep::Continue)
@@ -9297,12 +9290,7 @@ fn apply_scanned_step(
         } => {
             if global {
                 stores.set_dimen_global(index, value);
-            } else if !etex_redundant_local_word_assignment(
-                stores,
-                command.initex,
-                stores.dimen(index),
-                value,
-            ) {
+            } else if !etex_redundant_local_word_assignment(stores, stores.dimen(index), value) {
                 stores.set_dimen(index, value);
             }
             Ok(ReplayStep::Continue)
@@ -9719,7 +9707,6 @@ fn apply_scanned_step(
                 stores.set_int_param_global(parameter, value);
             } else if !etex_redundant_local_word_assignment(
                 stores,
-                command.initex,
                 stores.int_param(parameter),
                 value,
             ) {
@@ -9737,7 +9724,6 @@ fn apply_scanned_step(
                 stores.set_dimen_param_global(parameter, value);
             } else if !etex_redundant_local_word_assignment(
                 stores,
-                command.initex,
                 stores.dimen_param(parameter),
                 value,
             ) {
@@ -9769,7 +9755,6 @@ fn apply_scanned_step(
                 stores.set_glue_param_global(parameter, value);
             } else if !etex_redundant_local_zero_glue_assignment(
                 stores,
-                command.initex,
                 stores.glue_param(parameter),
                 &value,
             ) {
@@ -9814,7 +9799,6 @@ fn apply_scanned_step(
                         stores.set_catcode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.catcode(character),
                         value,
                     ) {
@@ -9830,7 +9814,6 @@ fn apply_scanned_step(
                         stores.set_lccode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.lccode(character),
                         value,
                     ) {
@@ -9843,7 +9826,6 @@ fn apply_scanned_step(
                         stores.set_uccode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.uccode(character),
                         value,
                     ) {
@@ -9862,7 +9844,6 @@ fn apply_scanned_step(
                         stores.set_sfcode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.sfcode(character),
                         value,
                     ) {
@@ -9881,7 +9862,6 @@ fn apply_scanned_step(
                         stores.set_mathcode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.mathcode(character),
                         value,
                     ) {
@@ -9900,7 +9880,6 @@ fn apply_scanned_step(
                         stores.set_delcode_global(character, value);
                     } else if !etex_redundant_local_word_assignment(
                         stores,
-                        command.initex,
                         stores.delcode(character),
                         value,
                     ) {
@@ -11635,38 +11614,32 @@ fn effective_global(global_defs: i32, explicit_global: bool) -> bool {
 /// the save-stack and observation decisions share one canonical condition.
 fn etex_redundant_local_word_assignment<T: Eq>(
     stores: &Universe,
-    initex: bool,
     current: T,
     replacement: T,
 ) -> bool {
-    initex && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
+    stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
 }
 
 /// Whether e-TeX §§277-278 return before an observed assignment step touches
 /// either the save stack or its `eqtb` location.
-fn etex_redundant_local_definition_step(
-    stores: &Universe,
-    scanned: &ScannedStep,
-    initex: bool,
-) -> bool {
+fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep) -> bool {
     match scanned {
         ScannedStep::Count {
             index,
             value,
             global: false,
-        } => etex_redundant_local_word_assignment(stores, initex, stores.count(*index), *value),
+        } => etex_redundant_local_word_assignment(stores, stores.count(*index), *value),
         ScannedStep::Dimen {
             index,
             value,
             global: false,
-        } => etex_redundant_local_word_assignment(stores, initex, stores.dimen(*index), *value),
+        } => etex_redundant_local_word_assignment(stores, stores.dimen(*index), *value),
         ScannedStep::IntParam {
             index,
             value,
             global: false,
         } => etex_redundant_local_word_assignment(
             stores,
-            initex,
             stores.int_param(IntParam::new(*index)),
             *value,
         ),
@@ -11676,7 +11649,6 @@ fn etex_redundant_local_definition_step(
             global: false,
         } => etex_redundant_local_word_assignment(
             stores,
-            initex,
             stores.dimen_param(DimenParam::new(*index)),
             *value,
         ),
@@ -11686,7 +11658,6 @@ fn etex_redundant_local_definition_step(
             global: false,
         } => etex_redundant_local_zero_glue_assignment(
             stores,
-            initex,
             stores.glue_param(GlueParam::new(*index)),
             value,
         ),
@@ -11716,51 +11687,23 @@ fn etex_redundant_local_definition_step(
                 _ => None,
             }
             .is_some_and(|value| {
-                etex_redundant_local_word_assignment(
-                    stores,
-                    initex,
-                    stores.catcode(*character),
-                    value,
-                )
+                etex_redundant_local_word_assignment(stores, stores.catcode(*character), value)
             }),
             UnexpandablePrimitive::LcCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(
-                    stores,
-                    initex,
-                    stores.lccode(*character),
-                    value,
-                )
+                etex_redundant_local_word_assignment(stores, stores.lccode(*character), value)
             }),
             UnexpandablePrimitive::UcCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(
-                    stores,
-                    initex,
-                    stores.uccode(*character),
-                    value,
-                )
+                etex_redundant_local_word_assignment(stores, stores.uccode(*character), value)
             }),
             UnexpandablePrimitive::SfCode => u16::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(
-                    stores,
-                    initex,
-                    stores.sfcode(*character),
-                    value,
-                )
+                etex_redundant_local_word_assignment(stores, stores.sfcode(*character), value)
             }),
             UnexpandablePrimitive::MathCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(
-                    stores,
-                    initex,
-                    stores.mathcode(*character),
-                    value,
-                )
+                etex_redundant_local_word_assignment(stores, stores.mathcode(*character), value)
             }),
-            UnexpandablePrimitive::DelCode => etex_redundant_local_word_assignment(
-                stores,
-                initex,
-                stores.delcode(*character),
-                *value,
-            ),
+            UnexpandablePrimitive::DelCode => {
+                etex_redundant_local_word_assignment(stores, stores.delcode(*character), *value)
+            }
             _ => unreachable!("only code-table primitives are scanned"),
         },
         _ => false,
@@ -11777,12 +11720,10 @@ fn etex_redundant_local_definition_step(
 /// immutable contents.
 fn etex_redundant_local_zero_glue_assignment(
     stores: &Universe,
-    initex: bool,
     current: GlueId,
     replacement: &GlueSpec,
 ) -> bool {
-    initex
-        && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
+    stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
         && current == GlueId::ZERO
         && *replacement == GlueSpec::ZERO
 }

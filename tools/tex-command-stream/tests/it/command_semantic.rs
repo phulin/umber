@@ -114,6 +114,7 @@ enum SessionProfile {
     #[default]
     Initex,
     EtexInitex,
+    EtexLoaded,
     Production,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -633,6 +634,16 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
             CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
+        }
+        SessionProfile::EtexLoaded => {
+            let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
+            tex_exec::install_etex_unexpandable_primitives(&mut universe);
+            let format = universe
+                .dump_format()
+                .map_err(|error| format!("e-TeX format creation: {error}"))?;
+            universe = Universe::from_format(tex_state::World::memory(), &format)
+                .map_err(|error| format!("e-TeX format restore: {error}"))?;
+            CanonicalMainControl::with_profile(CommandProfile::ETEX26)
         }
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);

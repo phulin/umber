@@ -1717,12 +1717,12 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
 
     let mut tex82 = Universe::new_with_plain_catcodes();
     assert!(
-        !etex_redundant_local_word_assignment(&tex82, true, 13, 13),
+        !etex_redundant_local_word_assignment(&tex82, 13, 13),
         "TeX82 has no e-TeX reassignment shortcut"
     );
     tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
-    assert!(etex_redundant_local_word_assignment(&tex82, true, 13, 13));
-    assert!(!etex_redundant_local_word_assignment(&tex82, true, 13, 12));
+    assert!(etex_redundant_local_word_assignment(&tex82, 13, 13));
+    assert!(!etex_redundant_local_word_assignment(&tex82, 13, 12));
 }
 
 #[test]
@@ -1764,20 +1764,45 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
 
     let mut tex82 = Universe::new_with_plain_catcodes();
     assert!(
-        !etex_redundant_local_word_assignment(&tex82, true, tex82.lccode('A'), u32::from('a')),
+        !etex_redundant_local_word_assignment(&tex82, tex82.lccode('A'), u32::from('a')),
         "TeX82 performs the identical local eq_word_define"
     );
     tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
     assert!(etex_redundant_local_word_assignment(
         &tex82,
-        true,
         tex82.lccode('A'),
         u32::from('a')
     ));
-    assert!(
-        !etex_redundant_local_word_assignment(&tex82, false, tex82.lccode('A'), u32::from('a')),
-        "loaded-format e-TeX has not entered extended INITEX mode"
+
+    let format = stores.dump_format().expect("dump extended e-TeX format");
+    let mut loaded = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+    let mut loaded_control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    register_source(
+        &mut loaded_control,
+        br"{\lccode`A=`z \global\lccode`A=`q}\end",
     );
+    let mut loaded_observations = ObservationRecorder::default();
+    loop {
+        match loaded_control
+            .step_with_observer(&mut loaded, &mut loaded_observations)
+            .expect("format-loaded e-TeX code-table reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    let loaded_mutations: Vec<_> = loaded_observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "code_table" => {
+                Some((record.value.as_str(), record.global))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(loaded_mutations, [("lccode:65=113", true)]);
 }
 
 #[test]

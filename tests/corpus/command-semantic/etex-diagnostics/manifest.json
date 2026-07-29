@@ -4,6 +4,26 @@
   "property_domain": "main-control-groups-assignments",
   "cases": [
     {
+      "id": "etex-loaded-code-reassignment",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-code-reassignment.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [277, 278, 1337]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["mutation"],
+        "count_registers": [0]
+      },
+      "expected": [
+        "count:0=0"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-interaction-mode-read",
       "property_id": "tex82.assignment.interaction-mode",
       "profile": "etex-initex",
