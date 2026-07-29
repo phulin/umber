@@ -1530,6 +1530,31 @@ fn expanded_scan_toks_resumes_after_outer_token_aborts_macro_argument() {
 }
 
 #[test]
+fn expanded_scan_toks_outer_abort_reinstates_saved_collector_status() {
+    // TeX82 §§23, 394, and 400: nested outer-token recovery can leave
+    // `scanner_status := normal` as the abort unwinds, but scan_toks still
+    // owns the saved absorbing episode that must govern backed input.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let collector = ScannerStatus::Absorbing(AbsorbingContext {
+        owner: None,
+        builder: TokenBuilderId(17),
+        warning: ScannerWarning(17),
+    });
+    processor.command.begin_scanner_status(collector.clone());
+    processor
+        .command
+        .begin_scanner_status(ScannerStatus::Normal);
+
+    processor.restore_collector_status_after_outer_abort(&collector);
+
+    assert_eq!(processor.command.scanner.status(), &collector);
+}
+
+#[test]
 fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
     let mut universe = Universe::new_with_plain_catcodes();
     let macro_symbol = universe.intern("observed-macro").symbol();

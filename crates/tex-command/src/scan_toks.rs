@@ -369,6 +369,7 @@ impl CommandProcessor<'_> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
         let mut pending_parameter = None;
+        let collector_status = self.command.scanner.status().clone();
         loop {
             let command = if expanded {
                 self.get_next()?
@@ -376,7 +377,6 @@ impl CommandProcessor<'_> {
                 self.get_token()?
             }
             .ok_or(CommandError::input_invariant())?;
-
             if expanded && is_expandable_command(&command) {
                 if matches!(
                     command.meaning(),
@@ -403,9 +403,11 @@ impl CommandProcessor<'_> {
                     // get_x_token loop; this inlined expanded collector is
                     // that loop's owner while scan_toks is active.
                     match self.expand(command) {
-                        Ok(())
-                        | Err(CommandError::ParagraphInMacroArgument)
-                        | Err(CommandError::OuterInMacroArgument) => continue,
+                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
+                        Err(CommandError::OuterInMacroArgument) => {
+                            self.restore_collector_status_after_outer_abort(&collector_status);
+                            continue;
+                        }
                         Err(error) => return Err(error),
                     }
                 }
@@ -476,6 +478,22 @@ impl CommandProcessor<'_> {
             } else {
                 output.push(spelling);
             }
+        }
+    }
+
+    /// Reasserts §400's saved caller status after a nested §394 abort.
+    fn restore_collector_status_after_outer_abort(&mut self, collector_status: &ScannerStatus) {
+        // TeX82 §400 restores `scan_toks`'s saved absorbing/defining status
+        // when §394 aborts a macro call after §23 outer-token recovery. A
+        // nested expansion can unwind through more than one macro call, so
+        // the collector reasserts its own saved status before it rereads the
+        // backed outer token.
+        if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+            let prior = self.command.begin_scanner_status(collector_status.clone());
+            self.observe_scanner_status_transition(
+                prior.status().clone(),
+                self.command.scanner.status().clone(),
+            );
         }
     }
 
