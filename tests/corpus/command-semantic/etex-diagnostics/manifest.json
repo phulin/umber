@@ -417,6 +417,31 @@
         "count:4=7"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "etex-text-directions",
+      "property_id": "tex82.main-control.mode-dispatch",
+      "profile": "etex-initex",
+      "source": "etex-text-directions.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [3822, 3847, 3856, 3873]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [0],
+        "node_depth": 1
+      },
+      "expected": [
+        "box:0/0:hlist",
+        "box:0/0/0:direction",
+        "box:0/0/1:direction",
+        "box:0/0/2:direction",
+        "box:0/0/3:direction",
+        "box:0/0/4:glue"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

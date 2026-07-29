@@ -5068,6 +5068,56 @@ fn run_canonical_etex(source: &str) -> Universe {
     panic!("canonical e-TeX source did not terminate");
 }
 
+fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<Node>) {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical e-TeX source");
+    for _ in 0..1024 {
+        if control.step(&mut stores).expect("canonical e-TeX step") != MainControlStep::Continue {
+            return (stores, control.current_list().nodes().to_vec());
+        }
+    }
+    panic!("canonical e-TeX source did not stop consuming input");
+}
+
+#[test]
+fn canonical_etex_text_directions_follow_texxet_state() {
+    // e-TeX 2.6 `etex.ch` [17.3822--3880]: the nonzero `valign`
+    // modifiers append direction nodes in hmode exactly when
+    // `TeXXeT_state>0`.
+    let (enabled, nodes) = run_canonical_etex_current_list(
+        r"\TeXXeTstate=1\noindent
+          \beginL\endL\beginR\endR",
+    );
+    assert_eq!(enabled.int_param(IntParam::TEX_XET_STATE), 1);
+    assert_eq!(
+        nodes,
+        [
+            Node::Direction(tex_state::node::Direction::BeginL),
+            Node::Direction(tex_state::node::Direction::EndL),
+            Node::Direction(tex_state::node::Direction::BeginR),
+            Node::Direction(tex_state::node::Direction::EndR),
+        ]
+    );
+
+    let (disabled, nodes) = run_canonical_etex_current_list(r"\noindent\beginL\endL\beginR\endR");
+    assert!(nodes.is_empty());
+    let terminal = terminal_effect_text(&disabled);
+    for name in ["beginL", "endL", "beginR", "endR"] {
+        assert!(
+            terminal.contains(&format!("Improper \\{name}")),
+            "{terminal}"
+        );
+    }
+}
+
 #[test]
 fn canonical_showtokens_scans_unexpanded_balanced_general_text() {
     // e-TeX 2.6 etex.ch [17.3623--3671] uses scan_general_text, then the

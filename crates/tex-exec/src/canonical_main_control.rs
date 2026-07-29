@@ -3154,6 +3154,13 @@ struct MainControlParking {
 enum ScannedStep {
     Continue,
     Relax,
+    /// e-TeX 2.6 `etex.ch` [17.3822--3880]'s `hmode+valign` extension:
+    /// the four nonzero `valign` modifiers are text-direction nodes when
+    /// `\TeXXeTstate>0`; otherwise `eTeX_enabled` diagnoses and ignores them.
+    TextDirection {
+        direction: tex_state::node::Direction,
+        enabled: bool,
+    },
     AlignPeekRestart {
         alignment: AlignmentIdentity,
     },
@@ -6773,11 +6780,25 @@ fn scan_unclassified_primitive(
         // primitive is §1129's complete action; only the diagnostic is missing
         // (umber2-johp.110).
         P::NoAlign | P::Omit => Ok(ScannedStep::Continue),
-        P::BeginL
-        | P::BeginR
-        | P::DiscretionaryHyphen
-        | P::EndL
-        | P::EndR
+        // e-TeX 2.6 `etex.ch` [17.3822--3880] adds four nonzero modifiers to
+        // TeX82's `valign` command code. In horizontal mode `eTeX_enabled`
+        // first checks `TeXXeT_state>0`; only the enabled branch appends the
+        // corresponding zero-width math node. The ordinary zero modifier
+        // remains `\valign` and is dispatched above as an alignment.
+        P::BeginL | P::BeginR | P::EndL | P::EndR => {
+            let direction = match primitive {
+                P::BeginL => tex_state::node::Direction::BeginL,
+                P::BeginR => tex_state::node::Direction::BeginR,
+                P::EndL => tex_state::node::Direction::EndL,
+                P::EndR => tex_state::node::Direction::EndR,
+                _ => unreachable!("text-direction primitive matched above"),
+            };
+            Ok(ScannedStep::TextDirection {
+                direction,
+                enabled: processor.int_param(IntParam::TEX_XET_STATE) > 0,
+            })
+        }
+        P::DiscretionaryHyphen
         | P::GlobalDefs
         | P::LetterspaceFont
         | P::PageDiscards
@@ -8362,6 +8383,7 @@ fn applied_mutation_observation(
         | ScannedStep::IllegalLastItem { .. }
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark { .. }
+        | ScannedStep::TextDirection { .. }
         | ScannedStep::Paragraph
         | ScannedStep::ParagraphStart
         | ScannedStep::Character { .. } => return None,
@@ -9309,6 +9331,26 @@ fn apply_scanned_step(
             // it is still a word boundary: `?\\relax\\char96` must not form
             // the `?`` ligature across the relax.
             crate::assignments::flush_pending_hchars(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::TextDirection { direction, enabled } => {
+            if enabled {
+                crate::assignments::flush_pending_hchars(modes, stores)?;
+                modes
+                    .current_list_mutation()
+                    .push(Node::Direction(direction));
+            } else {
+                let name = match direction {
+                    tex_state::node::Direction::BeginL => "beginL",
+                    tex_state::node::Direction::EndL => "endL",
+                    tex_state::node::Direction::BeginR => "beginR",
+                    tex_state::node::Direction::EndR => "endR",
+                };
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("\n! Improper \\{name}.\nSorry, this \\{name} will be ignored.\n"),
+                );
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignPeekRestart { alignment } => {
