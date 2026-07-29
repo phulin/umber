@@ -258,6 +258,39 @@ The corpus holds 130 cases across 8 domains, with 8 strict xfails: 3 in
 domains carry none. Bounded in-memory terminal lines and named inputs keep the
 pausing, read, and input-open evidence hermetic.
 
+#### The Minimality Contract
+
+A minifixture is truly minimal: short, self-contained, loading no format and
+no macro package, containing only what is needed to exercise the one engine
+behavior its case is about. `validate_case` enforces this, so a violating
+source fails the gate rather than merely reading as unusual in review:
+
+- **No format or package loading.** A source may not reference `plain.tex` or
+  `\input plain`, and may not `\input` a file its case does not declare in its
+  `inputs` map (the same map that already backs `\openin`/read-stream cases).
+  Two committed cases legitimately `\input` a companion file --
+  `input-expansion/input-start-file` (`\input nested`) and
+  `input-expansion/input-level-lifecycle` (`\input child.tex`) -- and pass
+  because both targets are declared in those cases' `inputs` maps, not because
+  of anything naming the case. `\dump` is deliberately not forbidden: it writes
+  a format rather than loading one, so it does not bear on minimality, and
+  `main-control/final-cleanup-end-or-dump` exists to exercise tex.web §1335's
+  rejection of it. Forbidding it would have taken an exception carved to fit
+  that one source, which is the shape of rule that stops meaning anything. The
+  undeclared-`\input` check is what actually prevents a fixture assembling a
+  format, and it applies to every case alike.
+- **A byte ceiling**, `MAX_SOURCE_BYTES`. The observed maximum across the
+  corpus is 1,240 bytes (`etex-diagnostics/etex-expressions.tex`), so the
+  ceiling is 2,048 bytes: real headroom over every committed case, not the
+  4,096 the corpus never came close to.
+- **A line ceiling**, `MAX_SOURCE_LINES`. The observed maximum is 31 lines
+  (`main-control/spacefactor-assignment.tex`), so the ceiling is 64 lines, on
+  the same reasoning.
+
+Both constants and the format-loading check live in `tex_command_stream::semantic`
+alongside the rest of the corpus contract, with unit tests proving each rule's
+accept and reject direction in `tex-command-stream/src/semantic/tests.rs`.
+
 #### The Per-Channel Contract
 
 A projection is a focused property claim about one observable. It is not

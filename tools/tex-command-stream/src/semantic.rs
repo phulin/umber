@@ -31,6 +31,8 @@ use tex_state::{
 };
 
 pub mod channels;
+#[cfg(test)]
+mod tests;
 
 pub use channels::{
     CapturedChannels, ChannelAuthority, ChannelContract, ChannelFailure, STREAM_CHANNELS,
@@ -38,7 +40,17 @@ pub use channels::{
 };
 
 pub const SCHEMA: u32 = 1;
-pub const MAX_SOURCE_BYTES: u64 = 4 * 1024;
+// A command-semantic minifixture must be truly minimal: short, self-contained,
+// and exercising only the one engine behavior its case is about. The observed
+// maximum across the committed corpus is 1,240 bytes
+// (etex-diagnostics/etex-expressions.tex), so 2,048 is a real ceiling -- about
+// 65% of headroom over the largest legitimate case today -- rather than the
+// former 4,096, which nothing came close to.
+pub const MAX_SOURCE_BYTES: u64 = 2 * 1024;
+// The observed maximum is 31 lines (main-control/spacefactor-assignment.tex).
+// 64 gives the same kind of real, but not knife-edge, headroom as
+// `MAX_SOURCE_BYTES`.
+pub const MAX_SOURCE_LINES: usize = 64;
 // TeX82 permits 255 spans before the 256-span confusion boundary, so the
 // bounded semantic runner must admit that one deliberately maximal case.
 pub const MAX_STEPS: usize = 2_048;
@@ -395,6 +407,115 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Enforces the minifixture's size ceilings on an already-read source.
+///
+/// Kept separate from the file read in [`validate_case`] so both ceilings are
+/// plain, unit-testable checks over already-known lengths rather than logic
+/// entangled with the filesystem.
+fn validate_source_dimensions(id: &str, byte_len: usize, line_count: usize) -> Result<(), String> {
+    if byte_len == 0 || byte_len as u64 > MAX_SOURCE_BYTES {
+        return Err(format!(
+            "case {id} source must be 1..={MAX_SOURCE_BYTES} bytes"
+        ));
+    }
+    if line_count > MAX_SOURCE_LINES {
+        return Err(format!(
+            "case {id} source must be at most {MAX_SOURCE_LINES} lines"
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a minifixture source that would load a format or macro package.
+///
+/// A command-semantic minifixture is truly minimal: it loads no format and no
+/// macro package, so it may not reference `plain.tex` or `\input plain`, and it
+/// may not `\input` a file the case does not declare in its `inputs` map.
+///
+/// Two committed cases legitimately `\input` a companion file:
+/// `input-expansion/input-start-file` (`\input nested`) and
+/// `input-expansion/input-level-lifecycle` (`\input child.tex`). Both targets
+/// are declared in those cases' `inputs` maps, so the undeclared-target check
+/// below still passes them; nothing exempts them by name.
+///
+/// `\dump` is deliberately *not* forbidden. It writes a format rather than
+/// loading one, so it does not make a fixture less minimal, and
+/// `main-control/final-cleanup-end-or-dump` exists precisely to exercise tex.web
+/// §1335's rejection of it. Forbidding it would have required an exception
+/// carved to fit that one source, which is the shape of rule that stops meaning
+/// anything. What keeps a fixture from assembling a format is the
+/// undeclared-`\input` check below, and that applies to every case alike.
+fn validate_no_format_loading(case: &Case, source: &str) -> Result<(), String> {
+    if source.contains("plain.tex") {
+        return Err(format!(
+            "case {} source references plain.tex, which loads a format or package",
+            case.id
+        ));
+    }
+    if source.contains("\\input plain") {
+        return Err(format!(
+            "case {} source uses \\input plain, which loads a format",
+            case.id
+        ));
+    }
+    for target in input_targets(source) {
+        if !case.inputs.contains_key(&target) {
+            return Err(format!(
+                "case {} uses \\input {target:?}, which is not declared in this case's inputs map",
+                case.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Extracts every `\input` control word's TeX-normalized file-name argument.
+///
+/// This mirrors `\input`'s own file-name scanning closely enough for this
+/// corpus's purposes: it skips the control word, skips the blanks a control
+/// word always absorbs, then reads the run of non-blank,
+/// non-control-sequence characters that follows as the file name, appending
+/// `.tex` when the name has no extension of its own -- exactly the extension
+/// `\input nested` picks up. A longer control word such as `\inputlineno` is
+/// left alone.
+fn input_targets(source: &str) -> Vec<String> {
+    const KEYWORD: &str = "\\input";
+    let bytes = source.as_bytes();
+    let mut targets = Vec::new();
+    let mut search_from = 0;
+    while let Some(offset) = source[search_from..].find(KEYWORD) {
+        let start = search_from + offset;
+        let after_keyword = start + KEYWORD.len();
+        if bytes
+            .get(after_keyword)
+            .is_some_and(u8::is_ascii_alphabetic)
+        {
+            // A longer control word, e.g. `\inputlineno`; not `\input`.
+            search_from = after_keyword;
+            continue;
+        }
+        let mut cursor = after_keyword;
+        while bytes.get(cursor) == Some(&b' ') {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while bytes.get(cursor).is_some_and(|byte| {
+            !byte.is_ascii_whitespace() && *byte != b'\\' && *byte != b'%' && *byte != b'{'
+        }) {
+            cursor += 1;
+        }
+        let mut name = source[name_start..cursor].to_string();
+        if !name.is_empty() {
+            if !name.contains('.') {
+                name.push_str(".tex");
+            }
+            targets.push(name);
+        }
+        search_from = cursor.max(after_keyword + 1);
+    }
+    targets
+}
+
 pub fn validate_case(
     case: &Case,
     property_domain: &str,
@@ -435,14 +556,13 @@ pub fn validate_case(
         ));
     }
     let source_path = domain_dir.join(source);
-    let metadata = fs::metadata(&source_path)
-        .map_err(|error| format!("{}: {error}", source_path.display()))?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SOURCE_BYTES {
-        return Err(format!(
-            "case {} source must be 1..={MAX_SOURCE_BYTES} bytes",
-            case.id
-        ));
-    }
+    let source_bytes =
+        fs::read(&source_path).map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let byte_len = source_bytes.len();
+    let source_text = String::from_utf8(source_bytes)
+        .map_err(|error| format!("case {} source is not valid UTF-8: {error}", case.id))?;
+    validate_source_dimensions(&case.id, byte_len, source_text.lines().count())?;
+    validate_no_format_loading(case, &source_text)?;
     if case.provenance.authority.is_empty() {
         return Err(format!("case {} has empty canonical authority", case.id));
     }
