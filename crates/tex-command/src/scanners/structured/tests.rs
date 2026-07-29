@@ -2039,7 +2039,7 @@ fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
             processor
                 .get_x_token()
                 .expect("character")
-                .unwrap()
+                .expect("character is present")
                 .meaning(),
             processor.get_x_token().expect("source retirement"),
         )
@@ -2070,12 +2070,16 @@ fn start_input_nests_and_initializes_the_job_name_only_once() {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor.open_registered_input().expect("outer opens");
         processor.open_registered_input().expect("inner opens");
-        let child = processor.get_x_token().expect("child").unwrap().meaning();
+        let child = processor
+            .get_x_token()
+            .expect("child delivery")
+            .expect("child is present")
+            .meaning();
         let _child_end = processor.get_x_token().expect("child endline");
         let parent = processor
             .get_x_token()
             .expect("parent resumes")
-            .unwrap()
+            .expect("parent is present")
             .meaning();
         (child, parent)
     };
