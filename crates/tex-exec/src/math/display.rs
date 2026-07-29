@@ -271,9 +271,12 @@ pub(crate) fn finish_display_alignment(
         },
     );
 
+    // TeX82 §1206 splices §812's already-finished `(p,q)` list directly.
+    // `append_vertical_contribution` is that direct tail/page-contribution
+    // router; unlike `append_node_to_vertical_list`, it inserts no baseline
+    // glue around the rows §799 already separated.
     for node in finished.nodes {
-        let node = display_alignment_node(node);
-        append_vertical_contribution(nest, stores, node);
+        append_vertical_contribution(nest, stores, display_alignment_node(node));
     }
     if let Some(prev_depth) = finished.aux_prev_depth {
         nest.current_list_mutation().set_prev_depth(prev_depth);

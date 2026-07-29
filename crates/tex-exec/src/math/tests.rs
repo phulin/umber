@@ -107,14 +107,16 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         glue_order: Order::Normal,
         children: empty,
     }));
+    let second_alignment = alignment.clone();
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical);
+    nest.current_list_mutation().set_prev_depth(sp(10));
 
     finish_display_alignment(
         &mut nest,
         &mut stores,
         crate::align::FinishedAlignment {
-            nodes: vec![alignment],
+            nodes: vec![alignment, second_alignment],
             aux_prev_depth: Some(sp(7)),
         },
     )
@@ -126,16 +128,19 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         [
             Node::Penalty(11),
             Node::Glue { spec: above_spec, kind: GlueKind::AboveDisplaySkip, .. },
-            Node::HList(row),
+            Node::HList(first_row),
+            Node::HList(second_row),
             Node::Penalty(22),
             Node::Glue { spec: below_spec, kind: GlueKind::BelowDisplaySkip, .. },
         ] if *above_spec == above
             && *below_spec == below
-            && row.display
+            && first_row.display
+            && second_row.display
             // §812's display insertion only marks the material as display
             // content; the `\displayindent` shift is §800's `o`, applied by
             // §806/§807 while `fin_align` sets the boxes.
-            && row.shift == Scaled::from_raw(0)
+            && first_row.shift == Scaled::from_raw(0)
+            && second_row.shift == Scaled::from_raw(0)
     ));
     assert_eq!(nest.current_list().prev_depth(), Some(sp(7)));
 
