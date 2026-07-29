@@ -9284,7 +9284,20 @@ fn finish_replay_alignment_row(
     // no interline glue at all, which is why plain's `\pmatrix`/`\matrix`/
     // `\cases`/`\eqalign`/`\halign` bodies came out short by one
     // `\baselineskip` per row (`umber2-johp.260`).
-    crate::vertical::append_node_to_vertical_list(modes, stores, row)?;
+    match active.kind {
+        AlignmentKind::HAlign => {
+            crate::vertical::append_node_to_vertical_list(modes, stores, row)?;
+        }
+        AlignmentKind::VAlign => {
+            // TeX82 §799's other branch is a plain horizontal splice:
+            // `link(tail):=p; tail:=p; space_factor:=1000`. A valign row
+            // must not pass through §679's vertical baseline calculation;
+            // doing so inserts baselineskip between rows, and a surrounding
+            // hpack then counts that vertical glue as horizontal cell width.
+            modes.current_list_mutation().push(row);
+            modes.current_list_mutation().set_space_factor(1000);
+        }
+    }
     // §799 continues `if cur_head<>cur_tail then begin link(tail):=link(cur_head);
     // tail:=cur_tail end`: the migrated material is spliced immediately after the
     // row, as a plain list splice with no interline glue of its own.

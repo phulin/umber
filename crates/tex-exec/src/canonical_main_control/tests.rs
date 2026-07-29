@@ -89,6 +89,34 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
     assert_eq!(boxed.width.raw(), 3 * Scaled::UNITY);
 }
 
+#[test]
+fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
+    // TeX82 §799 appends a finished `\valign` row with a plain horizontal
+    // splice. The two row widths therefore total exactly 5pt in the enclosing
+    // `\halign` cell; routing them through §679 would insert 12pt baselineskip
+    // and make the cell spuriously 17pt wide.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(20_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode
+          \setbox0=\vbox{\halign{#\cr
+            \valign{#\cr\hbox{\kern2pt}\cr\hbox{\kern3pt}\cr}\cr}}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let root = stores.box_reg(0).expect("outer vbox is assigned");
+    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    assert_eq!(boxed.width.raw(), 5 * Scaled::UNITY);
+}
+
 fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);
