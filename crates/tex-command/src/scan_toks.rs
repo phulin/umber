@@ -600,9 +600,35 @@ impl CommandProcessor<'_> {
         // `\unexpanded\expandafter{...}` legal.
         let _ = self.scan_left_brace(true)?;
         let raw = self.collect_replacement(false, None)?;
+        let observed = raw
+            .iter()
+            .copied()
+            .map(|token| self.observed_token(token))
+            .collect::<Vec<_>>();
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "unexpanded",
+                tokens: observed.clone(),
+            }),
+        );
         output.extend(raw);
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
+        // TeX82 §478 attaches the list returned by `the_toks` only when it is
+        // nonempty. e-TeX's §27.465 `\unexpanded` return follows that same
+        // direct-splice boundary after `scan_general_text` has completed.
+        if !observed.is_empty() {
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "the_toks",
+                    tokens: observed,
+                }),
+            );
+        }
         Ok(())
     }
 }

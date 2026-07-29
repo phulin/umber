@@ -296,6 +296,93 @@ fn unexpanded_expands_scan_general_text_opener_before_copying_raw_body() {
 }
 
 #[test]
+fn unexpanded_observes_the_completed_raw_balanced_text_before_its_direct_splice() {
+    // e-TeX 2.6 etex.ch [17.3623--3699, 27.465] makes `scan_general_text`
+    // construct the raw balanced list before `the_toks` returns it to the
+    // enclosing expanded `scan_toks` collector.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let unexpanded =
+        install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+    let raw = universe.intern("raw").symbol();
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(unexpanded),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(raw),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder)
+    .scan_toks(ScanToksMode::General { expanded: true })
+    .expect("expanded token-list scan completes");
+
+    let unexpanded = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "complete"
+                        && record.purpose == "unexpanded"
+                        && record.tokens == [ObservedToken::ControlSequence("raw".into())]
+            )
+        })
+        .expect("raw balanced text completion is observed");
+    let enclosing = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "complete"
+                        && record.purpose == "expanded_scan_toks"
+            )
+        })
+        .expect("enclosing expanded scan completion is observed");
+    let splice = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "splice"
+                        && record.purpose == "the_toks"
+                        && record.tokens == [ObservedToken::ControlSequence("raw".into())]
+            )
+        })
+        .expect("raw balanced text is observed at the_toks attachment");
+    assert!(unexpanded < splice && splice < enclosing);
+}
+
+#[test]
 fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
