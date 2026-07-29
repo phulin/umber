@@ -216,8 +216,7 @@ pub(crate) fn canonical_command_identity_for_profile(
         ),
         Meaning::DimenParam(slot) => (
             "assign_dimen".into(),
-            variable_identity::dimen_parameter_code(slot)
-                .map(|code| variable_identity::dimen_base(dialect) + code),
+            variable_identity::dimen_parameter_address(dialect, slot),
         ),
         Meaning::GlueParam(slot) => (
             "assign_glue".into(),

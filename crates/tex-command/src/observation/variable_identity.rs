@@ -280,6 +280,25 @@ pub(crate) fn dimen_parameter_code(slot: u16) -> Option<i64> {
     (slot <= 20).then(|| i64::from(slot))
 }
 
+/// Returns the observed eqtb selector for a named dimension parameter.
+///
+/// e-TeX 2.6 [17.236] defines these selectors from `dimen_base`, while the
+/// pinned Web2C build places that named-parameter block one cell beyond the
+/// register-layout base used by its surrounding storage. Keep the translation
+/// profile-specific instead of shifting `scaled_base` and every `\dimen`
+/// register along with it.
+pub(crate) fn dimen_parameter_address(dialect: CommandDialect, slot: u16) -> Option<i64> {
+    dimen_parameter_code(slot).map(|code| {
+        dimen_base(dialect)
+            + code
+            + if matches!(dialect, CommandDialect::Etex26) {
+                1
+            } else {
+                0
+            }
+    })
+}
+
 /// Translates an Umber `GlueParam`/`MuGlueParam` bank slot to tex.web's
 /// `glue_par` code.
 ///
@@ -659,6 +678,32 @@ mod tests {
                 expected,
                 "{dialect:?}"
             );
+        }
+    }
+
+    #[test]
+    fn dimension_parameter_and_register_banks_are_profile_exact_and_bounded() {
+        for (dialect, parameter_base) in [
+            (CommandDialect::Tex82, 27_741_i64),
+            (CommandDialect::Etex26, 27_757),
+            (CommandDialect::Pdftex14027, 27_798),
+        ] {
+            for slot in 0_u16..=20 {
+                assert_eq!(
+                    dimen_parameter_address(dialect, slot),
+                    Some(parameter_base + i64::from(slot)),
+                    "{dialect:?} dimension parameter slot {slot}"
+                );
+            }
+            assert_eq!(dimen_parameter_code(21), None, "{dialect:?}");
+
+            for register in 0_u16..=255 {
+                assert_eq!(
+                    scaled_base(dialect) + i64::from(register),
+                    dimen_base(dialect) + 21 + i64::from(register),
+                    "{dialect:?} dimension register {register}"
+                );
+            }
         }
     }
 
