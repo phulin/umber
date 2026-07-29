@@ -69,6 +69,87 @@ fn macro_character_text(stores: &Universe, name: &str) -> String {
 }
 
 #[test]
+fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
+    // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+          #
+          \noindent#\par
+          \hbox{#}
+          \vbox{#}
+          $#$
+          $$#$$
+          \count0=7
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    for mode in [
+        "vertical",
+        "horizontal",
+        "restricted horizontal",
+        "internal vertical",
+        "math",
+        "display math",
+    ] {
+        assert!(
+            terminal.contains(&format!(
+                "You can't use `macro parameter character #' in {mode} mode"
+            )),
+            "missing {mode} diagnostic in {terminal:?}"
+        );
+    }
+    assert_eq!(stores.count(0), 7, "each illegal command is discarded");
+}
+
+#[test]
+fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() {
+    // The §1045 diagnostic is part of the parameter command's committed
+    // operation. A later resource suspension rolls back only its own input
+    // attempt and must neither erase nor duplicate the earlier report.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\nonstopmode#\input child\end");
+
+    assert!(matches!(
+        control.advance(&mut stores).expect("nonstopmode executes"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    assert!(matches!(
+        control.advance(&mut stores).expect("parameter recovers"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    let committed = terminal_text(&stores);
+    assert_eq!(committed.matches("macro parameter character #").count(), 1);
+
+    for _ in 0..3 {
+        assert!(matches!(
+            control.advance(&mut stores).expect("missing input suspends"),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+                if name == "child"
+        ));
+        assert_eq!(terminal_text(&stores), committed);
+    }
+
+    control.capabilities_mut().register_input(
+        "child",
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        terminal_text(&stores)
+            .matches("macro parameter character #")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
     // e-TeX 2.6 `etex.ch` [26.424]: `find_effective_tail` returns -1 for an
     // empty list, otherwise the e-TRIP node code of the real current tail.

@@ -3209,6 +3209,12 @@ enum ScannedStep {
     IllegalStop {
         token: Token,
     },
+    /// TeX82 §1045's `any_mode(mac_param): report_illegal_case`. A bare
+    /// parameter command is diagnosed and discarded in every mode; it does
+    /// not terminate main control.
+    IllegalMacroParameter {
+        token: Token,
+    },
     /// TeX82 §1054's `its_all_over` false branch: the backed-up stop stays
     /// live while `\\hbox to \\hsize{}`, `\\vfill`, and
     /// `\\penalty-'10000000000` are appended to the contribution list and
@@ -6854,13 +6860,11 @@ fn scan_unclassified_char_token(
             Ok(ScannedStep::MissingMathShift)
         }
         // TeX82 §1045's `any_mode(mac_param): report_illegal_case`. A bare
-        // parameter token has no operand of its own, so the only divergence
-        // is the missing diagnostic.
-        Catcode::Parameter => Err(unimplemented_meaning(
-            &command,
-            Meaning::CharToken { ch, cat },
-            mode,
-        )),
+        // parameter token has no operand of its own; the command is consumed
+        // after the diagnostic and main control continues.
+        Catcode::Parameter => Ok(ScannedStep::IllegalMacroParameter {
+            token: command.spelling().semantic_token(),
+        }),
         // TeX82 §1126's `any_mode(tab_mark)` (a category-4 character token)
         // and `any_mode(car_ret)` (a category-5 one, which `get_next`'s
         // §344 end-of-line handling normally consumes before delivery).
@@ -8144,6 +8148,7 @@ fn applied_mutation_observation(
         | ScannedStep::EndOfInput
         | ScannedStep::End { .. }
         | ScannedStep::IllegalStop { .. }
+        | ScannedStep::IllegalMacroParameter { .. }
         | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
         | ScannedStep::VerticalSkip { .. }
@@ -9431,6 +9436,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalItalicCorrection { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalMacroParameter { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
