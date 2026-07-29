@@ -1,5 +1,7 @@
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::TokenListId;
+use crate::macro_store::MacroMeaning;
+use crate::meaning::{Meaning, MeaningFlags};
 use crate::page::PageMark;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
@@ -15,6 +17,71 @@ mod replay_common;
 #[test]
 fn smoke() {
     assert!(!env!("CARGO_PKG_NAME").is_empty());
+}
+
+#[test]
+fn format_roundtrip_counts_structural_end_match_in_macro_observation_width() {
+    // TeX82 §§289/294/341/473 place `end_match` between a definition's
+    // parameter and replacement text. The format loader compacts away an
+    // unreachable frozen definition, then must still count that separator
+    // when deriving the next retained macro's observed `def_ref` head.
+    let mut universe = Universe::new();
+    let empty = universe.intern_token_list(&[]);
+    let frozen = universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    universe.register_primitive_meaning(
+        "frozen-only",
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition: frozen,
+        },
+    );
+    let body = universe.intern_token_list(&[Token::Char {
+        ch: '2',
+        cat: Catcode::Other,
+    }]);
+    let live = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, body));
+    let symbol = universe.intern("version");
+    universe.set_meaning(
+        symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: live,
+        },
+    );
+    let second_body = universe.intern_token_list(&[Token::Char {
+        ch: '6',
+        cat: Catcode::Other,
+    }]);
+    let second = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, second_body));
+    let second_symbol = universe.intern("revision");
+    universe.set_meaning(
+        second_symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: second,
+        },
+    );
+
+    let format = universe.dump_format().expect("macro format");
+    let loaded = Universe::from_format(World::memory(), &format).expect("load macro format");
+    let Meaning::Macro { definition, .. } =
+        loaded.meaning(loaded.symbol("version").expect("loaded version symbol"))
+    else {
+        panic!("loaded version meaning is a macro");
+    };
+    assert_eq!(
+        loaded.macro_definition_observation_operand(definition),
+        249_985
+    );
+    let Meaning::Macro { definition, .. } =
+        loaded.meaning(loaded.symbol("revision").expect("loaded revision symbol"))
+    else {
+        panic!("loaded revision meaning is a macro");
+    };
+    assert_eq!(
+        loaded.macro_definition_observation_operand(definition),
+        249_982
+    );
 }
 
 #[test]

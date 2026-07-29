@@ -18,7 +18,11 @@ use tex_command::{
 };
 use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
 use tex_state::{
-    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe, node::Node,
+    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe,
+    macro_store::MacroMeaning,
+    meaning::{Meaning, MeaningFlags},
+    node::Node,
+    token::Token,
 };
 
 const SCHEMA: u32 = 1;
@@ -640,6 +644,22 @@ fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
             tex_command::install_etex_expandable_primitives(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
+            // Bounded format-loaded macro identity probe. TeX82 §§341/1221
+            // expose the `def_ref` head after §1309's format memory compaction
+            // removes the unreachable frozen `\endwrite` definition.
+            let empty = universe.intern_token_list(&[]);
+            let relax = universe.intern("relax");
+            let replacement = universe.intern_token_list(&[Token::Cs(relax.symbol())]);
+            let format_macro =
+                universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+            let format_macro_symbol = universe.intern("formatmacro");
+            universe.set_meaning_global(
+                format_macro_symbol,
+                Meaning::Macro {
+                    flags: MeaningFlags::EMPTY,
+                    definition: format_macro,
+                },
+            );
             // Exercise e-TeX change [50.1307], which resets optional e-TeX
             // state cells immediately before tex.web §1307 dumps `eqtb`.
             universe.set_int_param(tex_state::env::banks::IntParam::TEX_XET_STATE, 1);

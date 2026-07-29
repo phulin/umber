@@ -682,9 +682,12 @@ fn decode_macros(
         patterns.push(MacroParameterPattern::from_tokens(
             tokens.get(parameter_text),
         ));
+        // TeX82 §§289/294/473 store one `end_match` word between parameter
+        // and replacement text. Umber represents that separator structurally,
+        // but §341's observed `def_ref` still advances across its memory word.
         observation_widths.push(
             u32::try_from(
-                1_usize + tokens.get(parameter_text).len() + tokens.get(replacement_text).len(),
+                2_usize + tokens.get(parameter_text).len() + tokens.get(replacement_text).len(),
             )
             .map_err(|_| StoreFormatError::Invalid("frozen macro observation width"))?,
         );
