@@ -24,6 +24,28 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "etex-loaded-meaning-reassignment",
+      "property_id": "tex82.assignment.macro-definitions",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-meaning-reassignment.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [277, 1221]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["mutation"],
+        "count_registers": [0]
+      },
+      "expected": [
+        "mutation:catcode:-:123=1:local",
+        "mutation:meaning:bgroup:left_brace:local",
+        "count:0=0"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-interaction-mode-read",
       "property_id": "tex82.assignment.interaction-mode",
       "profile": "etex-initex",

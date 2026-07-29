@@ -10322,7 +10322,8 @@ fn apply_scanned_step(
             };
             if global {
                 stores.set_meaning_global(target, meaning);
-            } else {
+            } else if !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning)
+            {
                 stores.set_meaning(target, meaning);
             }
             Ok(ReplayStep::Continue)
@@ -11635,6 +11636,12 @@ fn etex_redundant_local_word_assignment<T: Eq>(
 /// either the save stack or its `eqtb` location.
 fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep) -> bool {
     match scanned {
+        ScannedStep::Let {
+            target,
+            meaning,
+            global: false,
+            ..
+        } => etex_redundant_local_word_assignment(stores, stores.meaning(*target), *meaning),
         ScannedStep::Count {
             index,
             value,

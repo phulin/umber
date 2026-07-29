@@ -69,6 +69,45 @@ fn macro_character_text(stores: &Universe, name: &str) -> String {
 }
 
 #[test]
+fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
+    // e-TeX change [19.277] returns before local `eq_define` when both the
+    // command type and equivalent are identical. A global definition still
+    // commits, so the two controls distinguish the shortcut from filtering.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\catcode123=1 \let\bgroup={ \let\bgroup={ \global\let\bgroup={ \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("e-TeX meaning reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "meaning" => {
+                Some((record.value.as_str(), record.global))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mutations, [("left_brace", false), ("left_brace", true)]);
+}
+
+#[test]
 fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
     // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
     let mut stores = Universe::new_with_plain_catcodes();
