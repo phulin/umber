@@ -5275,3 +5275,44 @@ fn finalize_installs_spliced_accepted_artifacts() {
         );
     }
 }
+
+#[test]
+fn accepted_history_hands_openout_page_to_prepared_finalization() {
+    let text = "\\setbox0=\\hbox{\\openout2=original.out \\write2{x}\\closeout2}\
+                \\shipout\\copy0\\end";
+    let mut session = Session::start(
+        template(),
+        "prepared-openout",
+        RevisionId::new(1),
+        text,
+        usize::MAX,
+    )
+    .expect("session starts");
+    let accepted = session.cold().expect("revision accepts");
+    assert_eq!(accepted.revision, RevisionId::new(1));
+    assert_eq!(accepted.artifacts.len(), 1);
+    assert!(
+        accepted
+            .history
+            .iter()
+            .any(|record| record.artifact_prefix() == 1),
+        "accepted history owns the logical page prefix"
+    );
+
+    let AcceptedUniverseFinalization {
+        universe,
+        prepared_pages,
+    } = session
+        .into_accepted_universe()
+        .expect("accepted finalization handoff");
+    assert!(universe.world().committed_artifacts().is_empty());
+    assert!(universe.pdf_pages().is_empty());
+    assert_eq!(
+        prepared_pages
+            .as_ref()
+            .expect("prepared suffix")
+            .artifacts()
+            .len(),
+        1
+    );
+}
