@@ -3133,6 +3133,147 @@ fn etex_font_character_dimensions_use_zero_for_nullfont() {
 }
 
 #[test]
+fn etex_glue_component_enquiries_cover_values_orders_and_zero_components() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for (primitive, source, expected) in [
+        (
+            P::GlueStretch,
+            "1pt plus 2fil minus 3fill",
+            2 * Scaled::UNITY,
+        ),
+        (
+            P::GlueShrink,
+            "1pt plus 2fil minus 3fill",
+            3 * Scaled::UNITY,
+        ),
+    ] {
+        let mut universe = Universe::new();
+        let enquiry = internal_primitive(&mut universe, "glue-component", primitive);
+        let tokens = std::iter::once(enquiry)
+            .chain(scanner_tokens(source))
+            .collect();
+        assert_eq!(
+            scan_with_profile(&mut universe, CommandProfile::ETEX26, tokens, |processor| {
+                processor.scan_dimension().expect("component scans")
+            })
+            .value
+            .raw(),
+            expected
+        );
+    }
+
+    for (primitive, source, expected) in [
+        (P::GlueStretchOrder, "0pt plus 0fil", 1),
+        (P::GlueStretchOrder, "0pt plus 1filll", 3),
+        (P::GlueShrinkOrder, "0pt minus 1fill", 2),
+        (P::GlueShrinkOrder, "0pt", 0),
+    ] {
+        let mut universe = Universe::new();
+        let enquiry = internal_primitive(&mut universe, "glue-order", primitive);
+        let tokens = std::iter::once(enquiry)
+            .chain(scanner_tokens(source))
+            .collect();
+        assert_eq!(
+            scan_with_profile(&mut universe, CommandProfile::ETEX26, tokens, |processor| {
+                processor.scan_integer().expect("order scans")
+            })
+            .value,
+            expected
+        );
+    }
+}
+
+#[test]
+fn etex_glue_component_enquiries_scan_registers_and_coerce_mu_glue() {
+    use tex_state::glue::{GlueSpec, Order};
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let spec = GlueSpec {
+        width: Scaled::from_raw(11),
+        stretch: Scaled::from_raw(22),
+        stretch_order: Order::Fill,
+        shrink: Scaled::from_raw(33),
+        shrink_order: Order::Fil,
+    };
+    let glue = universe.intern_glue(spec);
+    universe.set_skip(7, glue);
+    universe.set_muskip(8, glue);
+
+    for (register, index, primitive, expected) in [
+        (
+            P::Skip,
+            '7',
+            P::GlueStretch,
+            InternalValue::Dimension(spec.stretch),
+        ),
+        (
+            P::Skip,
+            '7',
+            P::GlueShrinkOrder,
+            InternalValue::Integer(spec.shrink_order as i32),
+        ),
+        (
+            P::Muskip,
+            '8',
+            P::GlueShrink,
+            InternalValue::Dimension(spec.shrink),
+        ),
+    ] {
+        let enquiry = internal_primitive(&mut universe, "glue-enquiry", primitive);
+        let register = internal_primitive(&mut universe, "glue-register", register);
+        assert_eq!(
+            scan_internal_with(
+                &mut universe,
+                vec![enquiry, register, char_token(index)],
+                |_| {}
+            ),
+            expected
+        );
+    }
+    assert!(
+        diagnostic_text(&universe).contains("Incompatible glue units"),
+        "direct mu-glue input takes scan_normal_glue's TeX82 §408 recovery"
+    );
+}
+
+#[test]
+fn etex_glue_component_enquiry_preserves_the_following_token() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut universe = Universe::new();
+    let enquiry = internal_primitive(&mut universe, "gluestretch", P::GlueStretch);
+    let mut tokens = vec![enquiry];
+    tokens.extend(scanner_tokens("1pt plus 2fil!"));
+    let mut command = CommandState::new(CommandProfile::ETEX26);
+    push(&mut command, tokens);
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("glue component scans")
+            .value,
+        Scaled::from_raw(2 * Scaled::UNITY)
+    );
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("following token delivers")
+            .expect("following token exists")
+            .meaning(),
+        Meaning::CharToken { ch: '!', .. }
+    ));
+}
+
+#[test]
 fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() {
     use tex_state::meaning::UnexpandablePrimitive as P;
     use tex_state::page::{PageDimension, PageInteger};

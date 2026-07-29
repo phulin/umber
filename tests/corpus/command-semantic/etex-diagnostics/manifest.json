@@ -252,6 +252,26 @@
         "count:0=15"
       ],
       "expectation": { "kind": "pass" }
+    },
+    {
+      "id": "etex-glue-component-enquiries",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-glue-component-enquiries.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [5363, 5367, 5373, 5389, 5397, 5404]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["effect"],
+        "count_registers": [0]
+      },
+      "expected": [
+        "count:0=511"
+      ],
+      "expectation": { "kind": "pass" }
     }
   ]
 }

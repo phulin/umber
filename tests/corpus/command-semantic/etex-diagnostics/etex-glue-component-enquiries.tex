@@ -1,0 +1,13 @@
+\nonstopmode
+\skip0=1pt plus 2fil minus 3fill
+\count0=0
+\ifdim\gluestretch\skip0=2pt \advance\count0 by1 \fi
+\ifdim\glueshrink\skip0=3pt \advance\count0 by2 \fi
+\ifnum\gluestretchorder\skip0=1 \advance\count0 by4 \fi
+\ifnum\glueshrinkorder\skip0=2 \advance\count0 by8 \fi
+\ifnum\gluestretchorder 0pt plus 0filll=3 \advance\count0 by16 \fi
+\ifnum\glueshrinkorder 0pt=0 \advance\count0 by32 \fi
+\setbox0=\hbox{\ifdim\gluestretch\skip0=2pt \global\advance\count0 by64 \fi}
+\setbox1=\vbox{\ifnum\glueshrinkorder\skip0=2 \global\advance\count0 by128 \fi}
+$\ifdim\glueshrink\skip0=3pt \global\advance\count0 by256 \fi$
+\end

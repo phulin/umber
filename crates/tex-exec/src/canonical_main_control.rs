@@ -6415,6 +6415,10 @@ fn scan_unclassified_primitive(
         | P::FontDimen
         | P::FutureLet
         | P::Gdef
+        | P::GlueShrink
+        | P::GlueShrinkOrder
+        | P::GlueStretch
+        | P::GlueStretchOrder
         | P::HAlign
         | P::HBox
         | P::HFil
@@ -6655,10 +6659,6 @@ fn scan_unclassified_primitive(
         | P::EndR
         | P::GlobalDefs
         | P::GlueExpr
-        | P::GlueShrink
-        | P::GlueShrinkOrder
-        | P::GlueStretch
-        | P::GlueStretchOrder
         | P::GlueToMu
         | P::InterLinePenalties
         | P::LetterspaceFont
