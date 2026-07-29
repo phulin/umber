@@ -146,6 +146,18 @@ lookahead. A DVI failure therefore preserves every operand, box, object/form
 identity, and list for transactional retry, and takes precedence over an
 invalid register, void box, missing form object, or any-mode list insertion.
 
+pdftex.web §§1551–1552 make `\pdfximage` and `\pdfrefximage` one PDF-only,
+any-mode image family. Their shared output check precedes the create path's
+PDF-version check, image-object allocation, every rule, `attr`, `named`,
+`page`, `colorspace`, page-box, and file scan, and host image lookup. It also
+precedes the reference path's integer scan, image lookup, whatsit allocation,
+and current-list mutation. Section 1621's `\immediate\pdfximage` lookahead
+recurses into that same create case, so it has the same preflight and resource
+transaction. A DVI failure therefore preserves the complete input, image and
+object ledgers, last-image enquiries, and current list for retry, and takes
+precedence over every dimension, image-open, missing-reference, or resource
+diagnostic.
+
 pdftex.web §§1524, 1556, 1558, 1560, and 1561 make `\pdfannot`,
 `\pdfstartlink`, and `\pdfendlink` PDF-only extensions. Each checks
 `\pdfoutput` before allocation or operand scanning. For the two link commands,

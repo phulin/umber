@@ -5411,17 +5411,32 @@ fn scan_command(
                 global,
             })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage) => {
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfXImage | UnexpandablePrimitive::PdfRefXImage),
+        ) => {
+            // pdftex.web §§1551–1552 begin both image cases with
+            // `check_pdfoutput`, before version checking, image-object
+            // allocation, every rule/attr/named/page/colorspace/page-box/file
+            // scan, host image lookup, reference validation, whatsit
+            // allocation, or list mutation.
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                let name = match primitive {
+                    UnexpandablePrimitive::PdfXImage => "pdfximage",
+                    UnexpandablePrimitive::PdfRefXImage => "pdfrefximage",
+                    _ => unreachable!(),
+                };
+                return Err(ExecError::PdfExtensionInDviMode(name));
+            }
+            if primitive == UnexpandablePrimitive::PdfRefXImage {
+                return Ok(ScannedStep::PdfRefXImage {
+                    object: processor.scan_integer().map_err(command_error)?.value,
+                });
+            }
             Ok(ScannedStep::PdfXImage {
                 request: processor.scan_pdf_image_request().map_err(command_error)?,
                 // This placeholder is replaced after the processor borrow;
                 // it can never reach application.
                 resource: PdfImageResource::Unavailable,
-            })
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRefXImage) => {
-            Ok(ScannedStep::PdfRefXImage {
-                object: processor.scan_integer().map_err(command_error)?.value,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
@@ -5865,11 +5880,17 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
-            Ok(ScannedStep::ImmediateExtension(
-                processor
-                    .scan_immediate_extension(processor.int_param(IntParam::PDF_OUTPUT) > 0)
-                    .map_err(command_error)?,
-            ))
+            let extension = processor
+                .scan_immediate_extension(processor.int_param(IntParam::PDF_OUTPUT) > 0)
+                .map_err(command_error)?;
+            if let ImmediateExtension::PdfImage(request) = extension {
+                Ok(ScannedStep::PdfXImage {
+                    request,
+                    resource: PdfImageResource::Unavailable,
+                })
+            } else {
+                Ok(ScannedStep::ImmediateExtension(extension))
+            }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
             if matches!(mode, Mode::Math | Mode::DisplayMath) =>
@@ -10557,6 +10578,7 @@ fn apply_scanned_step(
                     let name = match primitive {
                         UnexpandablePrimitive::PdfObject => "pdfobj",
                         UnexpandablePrimitive::PdfXForm => "pdfxform",
+                        UnexpandablePrimitive::PdfXImage => "pdfximage",
                         _ => unreachable!("only immediate PDF extensions reach this result"),
                     };
                     return Err(ExecError::PdfExtensionInDviMode(name));
@@ -10586,6 +10608,9 @@ fn apply_scanned_step(
                 }
                 ImmediateExtension::PdfForm(request) => {
                     apply_pdf_form_request(request, stores, modes, true)?;
+                }
+                ImmediateExtension::PdfImage(_) => {
+                    unreachable!("immediate image requests are normalized before resolution")
                 }
             }
             Ok(ReplayStep::Continue)

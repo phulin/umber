@@ -159,6 +159,26 @@ pub struct PdfImageRequest {
     pub attr: Option<TracedTokenList>,
 }
 
+impl PdfImageRequest {
+    /// Whether two requests select the same immutable host image resource.
+    ///
+    /// pdftex.web §1550's `read_image` receives the file/page/page-box facts;
+    /// rule dimensions and `attr` are command/output state. Dimensions remain
+    /// in this deliberately conservative key, but `attr` cannot: its
+    /// `TracedTokenList` carries allocator-owned handles that are regenerated
+    /// when an aggregate resource suspension rolls back and retries. The
+    /// retried request still carries its fresh attribute list to application.
+    pub(crate) fn same_resource_as(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.width == other.width
+            && self.height == other.height
+            && self.depth == other.depth
+            && self.page == other.page
+            && self.page_box == other.page_box
+            && self.page_box_explicit == other.page_box_explicit
+    }
+}
+
 /// pdfTeX's `scan_pdf_box_spec` selectors.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfImagePageBox {
@@ -830,6 +850,7 @@ pub enum ImmediateExtension {
     },
     PdfObject(PdfObjectRequest),
     PdfForm(PdfFormRequest),
+    PdfImage(PdfImageRequest),
 }
 
 /// TeX82 §§1342/1350's normalized selector stored in a write whatsit.
@@ -2159,6 +2180,15 @@ impl CommandProcessor<'_> {
                     Ok(ImmediateExtension::PdfForm(
                         self.scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)?,
                     ))
+                }
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage) => {
+                if !pdf_output_enabled {
+                    Ok(ImmediateExtension::PdfExtensionInDviMode(
+                        UnexpandablePrimitive::PdfXImage,
+                    ))
+                } else {
+                    Ok(ImmediateExtension::PdfImage(self.scan_pdf_image_request()?))
                 }
             }
             _ => {

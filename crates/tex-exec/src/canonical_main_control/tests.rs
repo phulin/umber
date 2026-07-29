@@ -475,6 +475,36 @@ fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_image_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfximage", UnexpandablePrimitive::PdfXImage),
+        ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
+        ("immediate", UnexpandablePrimitive::Immediate),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
+    tex_state::PdfExternalImageSource {
+        identity: tex_state::ContentHash::from_bytes(b"canonical image preflight"),
+        metadata: tex_state::PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+            format: tex_state::PdfRasterFormat::Png,
+            width: 1,
+            height: 1,
+            bits_per_component: 8,
+            color_space: tex_state::PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        }),
+        natural_width: Scaled::from_raw(Scaled::UNITY),
+        natural_height: Scaled::from_raw(Scaled::UNITY),
+        bytes: Arc::from(&b"image bytes"[..]),
+    }
+}
+
 fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
     let children = stores.freeze_node_list(&[]);
     let list = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
@@ -899,6 +929,223 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
     missing_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     assert!(matches!(
         missing.step(&mut missing_stores),
+        Err(ExecError::PdfReferencedObjectNotFound)
+    ));
+    assert!(missing.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() {
+    // pdftex.web §1551 orders `check_pdfoutput` before `check_pdfversion`,
+    // image-object allocation, `scan_image`, and `read_image`. A failed
+    // aggregate operation therefore preserves every supported rule, attr,
+    // page, page-box, and filename operand for exact resource retry.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_image_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox image.pdf",
+    );
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.advance(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfximage"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(stores.pdf_external_images().is_empty());
+    assert_eq!(stores.pdf_last_external_image(), None);
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let pdf_state_before = stores.testing_state_hash();
+    let request = match control
+        .advance(&mut stores)
+        .expect("PDF image request suspends")
+    {
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+        other => panic!("expected image suspension, got {other:?}"),
+    };
+    assert_eq!(stores.testing_state_hash(), pdf_state_before);
+    assert!(stores.pdf_external_images().is_empty());
+    assert_eq!(request.name, "image.pdf");
+    assert_eq!(request.width, Some(Scaled::from_raw(10 * Scaled::UNITY)));
+    assert_eq!(request.height, Some(Scaled::from_raw(20 * Scaled::UNITY)));
+    assert_eq!(request.depth, Some(Scaled::from_raw(3 * Scaled::UNITY)));
+    assert_eq!(request.page, 2);
+    assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
+    assert!(request.page_box_explicit);
+    assert!(request.attr.is_some());
+
+    control.capabilities_mut().register_pdf_image(
+        request,
+        PdfImageResource::Available(test_pdf_image_source()),
+    );
+    assert_eq!(
+        control
+            .advance(&mut stores)
+            .expect("fulfilled retry preserves and consumes the complete request"),
+        CanonicalStepResult::Progress(MainControlStep::Continue)
+    );
+    let image = stores
+        .pdf_last_external_image()
+        .expect("retried image is allocated");
+    assert_eq!(
+        image.dimensions().width,
+        Scaled::from_raw(10 * Scaled::UNITY)
+    );
+    assert_eq!(
+        image.dimensions().height,
+        Scaled::from_raw(20 * Scaled::UNITY)
+    );
+    assert_eq!(
+        image.dimensions().depth,
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+    assert!(control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
+    // pdftex.web §1621 expands the command after `\immediate`, then invokes
+    // §1551's complete `\pdfximage` case. Its output check precedes every
+    // image operand and the recursive call performs the allocation only
+    // after resource lookup succeeds.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_image_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox immediate.pdf",
+    );
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.advance(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfximage"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(stores.pdf_external_images().is_empty());
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let pdf_state_before = stores.testing_state_hash();
+    let request = match control
+        .advance(&mut stores)
+        .expect("immediate image suspends")
+    {
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+        other => panic!("expected immediate image suspension, got {other:?}"),
+    };
+    assert_eq!(stores.testing_state_hash(), pdf_state_before);
+    assert_eq!(request.name, "immediate.pdf");
+    assert_eq!(request.width, Some(Scaled::from_raw(7 * Scaled::UNITY)));
+    assert_eq!(request.height, Some(Scaled::from_raw(8 * Scaled::UNITY)));
+    assert_eq!(request.depth, Some(Scaled::from_raw(2 * Scaled::UNITY)));
+    assert_eq!(request.page, 3);
+    assert_eq!(request.page_box, tex_command::PdfImagePageBox::Crop);
+    assert!(request.attr.is_some());
+
+    control.capabilities_mut().register_pdf_image(
+        request,
+        PdfImageResource::Available(test_pdf_image_source()),
+    );
+    assert_eq!(
+        control
+            .advance(&mut stores)
+            .expect("immediate image retry allocates in the same operation"),
+        CanonicalStepResult::Progress(MainControlStep::Continue)
+    );
+    assert_eq!(stores.pdf_external_images().len(), 1);
+    assert!(control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation() {
+    // pdftex.web §1552 is an `any_mode(extension)` case whose first operation
+    // is `check_pdfoutput`. The DVI error therefore wins over an invalid
+    // object in every mode and leaves the integer and list untouched.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_image_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(&mut control, br"\pdfrefximage 99");
+        let state_before = stores.testing_state_hash();
+
+        assert!(
+            matches!(
+                control.advance(&mut stores),
+                Err(ExecError::PdfExtensionInDviMode("pdfrefximage"))
+            ),
+            "mode {mode:?}"
+        );
+        assert_eq!(stores.testing_state_hash(), state_before, "mode {mode:?}");
+        assert!(control.modes.current_list().nodes().is_empty());
+        assert!(terminal_text(&stores).is_empty());
+    }
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let source = test_pdf_image_source();
+    let image = stores
+        .allocate_pdf_external_image(
+            source,
+            tex_state::PdfExternalImageDimensions {
+                width: Scaled::from_raw(11),
+                height: Scaled::from_raw(12),
+                depth: Scaled::from_raw(13),
+            },
+        )
+        .expect("reference target image");
+    assert_eq!(image.id().raw(), 1);
+    let mut control = pdftex_image_control(&mut stores);
+    control.modes.push(Mode::Math);
+    register_source(&mut control, br"\pdfrefximage 1");
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.advance(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefximage"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        control
+            .advance(&mut stores)
+            .expect("PDF retry preserves the reference integer"),
+        CanonicalStepResult::Progress(MainControlStep::Continue)
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfRefXImage {
+            object: 1,
+            width,
+            height,
+            depth,
+        })] if *width == Scaled::from_raw(11)
+            && *height == Scaled::from_raw(12)
+            && *depth == Scaled::from_raw(13)
+    ));
+
+    let mut missing_stores = Universe::new_with_plain_catcodes();
+    let mut missing = pdftex_image_control(&mut missing_stores);
+    register_source(&mut missing, br"\pdfrefximage 99");
+    assert!(matches!(
+        missing.advance(&mut missing_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefximage"))
+    ));
+    missing_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        missing.advance(&mut missing_stores),
         Err(ExecError::PdfReferencedObjectNotFound)
     ));
     assert!(missing.modes.current_list().nodes().is_empty());

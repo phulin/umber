@@ -2083,6 +2083,79 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
 }
 
 #[test]
+fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
+    // pdftex.web §§1551 and 1621: `\immediate` performs its expanded command
+    // lookahead, then the recursive `\pdfximage` case checks output mode
+    // before image allocation or any dimension, attr, page, box, or file
+    // scan.
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let pdfximage = universe.intern("pdfximage").symbol();
+    universe.set_meaning(
+        pdfximage,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage),
+    );
+    push(
+        &mut command,
+        [
+            vec![Token::Cs(pdfximage)],
+            text_tokens(" width 10pt height 20pt depth 3pt attr{x} page 2 mediabox image.pdf"),
+        ]
+        .concat(),
+    );
+    let snapshot = command.snapshot();
+
+    let result = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(false)
+            .expect("DVI result needs no image operand scan")
+    };
+    assert_eq!(
+        result,
+        ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfXImage)
+    );
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("operand input remains valid")
+            .expect("space after pdfximage remains unconsumed")
+            .meaning()
+    };
+    assert!(matches!(
+        next,
+        Meaning::CharToken {
+            cat: Catcode::Space,
+            ..
+        }
+    ));
+
+    command
+        .rollback(snapshot)
+        .expect("scanner attempt rolls back");
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(true)
+            .expect("PDF retry scans the preserved image request")
+    };
+    let ImmediateExtension::PdfImage(request) = request else {
+        panic!("expected an immediate image request, got {request:?}");
+    };
+    assert_eq!(request.name, "image.pdf");
+    assert_eq!(request.width, Some(Scaled::from_raw(10 * Scaled::UNITY)));
+    assert_eq!(request.height, Some(Scaled::from_raw(20 * Scaled::UNITY)));
+    assert_eq!(request.depth, Some(Scaled::from_raw(3 * Scaled::UNITY)));
+    assert_eq!(request.page, 2);
+    assert_eq!(request.page_box, PdfImagePageBox::Media);
+    assert!(request.page_box_explicit);
+    assert!(request.attr.is_some());
+}
+
+#[test]
 fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

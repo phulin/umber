@@ -160,7 +160,11 @@ impl CommandHostCapabilities {
 
     /// Registers a validated immutable image response for its exact request.
     pub fn register_pdf_image(&mut self, request: PdfImageRequest, resource: PdfImageResource) {
-        if let Some((_, existing)) = self.images.iter_mut().find(|(key, _)| *key == request) {
+        if let Some((_, existing)) = self
+            .images
+            .iter_mut()
+            .find(|(key, _)| key.same_resource_as(&request))
+        {
             *existing = resource;
         } else {
             self.images.push((request, resource));
@@ -171,7 +175,7 @@ impl CommandHostCapabilities {
     pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
         self.images
             .iter()
-            .find(|(key, _)| key == request)
+            .find(|(key, _)| key.same_resource_as(request))
             .map(|(_, resource)| resource.clone())
     }
 
