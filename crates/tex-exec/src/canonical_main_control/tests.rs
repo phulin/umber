@@ -230,6 +230,171 @@ fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
+    let outline = stores.intern("pdfoutline");
+    stores.set_meaning(
+        outline,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfOutline),
+    );
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_outline_is_immediate_any_mode_document_state() {
+    const MODES: [Mode; 6] = [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ];
+    for mode in MODES {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_outline_control(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode);
+        }
+        register_source(
+            &mut control,
+            br"\pdfoutline attr{/C [1 0 0]} goto name{later} count -2 {(Title)}",
+        );
+        assert_eq!(
+            control.step(&mut stores).expect("outline command"),
+            MainControlStep::Continue
+        );
+        assert!(
+            control.modes.current_list().nodes().is_empty(),
+            "mode {mode:?}: outlines are immediate document state"
+        );
+        let [outline] = stores.pdf_outlines() else {
+            panic!("mode {mode:?}: one outline expected");
+        };
+        assert_eq!(outline.count(), -2);
+        assert_ne!(outline.attributes(), TokenListId::EMPTY);
+        assert_eq!(
+            (
+                outline.action_object(),
+                outline.item_object(),
+                outline.title_object()
+            ),
+            (1, 2, 3),
+            "the outline reserves action, item, and title identities in order"
+        );
+    }
+}
+
+#[test]
+fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let mut control = pdftex_outline_control(&mut stores);
+    register_source(&mut control, br"\global\pdfoutline user{/S /URI}{Title}");
+    assert_eq!(
+        control.step(&mut stores).expect("prefix recovery"),
+        MainControlStep::Continue
+    );
+    assert!(stores.pdf_outlines().is_empty());
+    assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+    assert_eq!(
+        control.step(&mut stores).expect("replayed outline"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.pdf_outlines().len(), 1);
+
+    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi = pdftex_outline_control(&mut dvi_stores);
+    register_source(&mut dvi, br"\pdfoutline user{/S /URI}{Title}");
+    assert!(matches!(
+        dvi.step(&mut dvi_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfoutline"))
+    ));
+    assert!(dvi_stores.pdf_outlines().is_empty());
+    dvi_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        dvi.step(&mut dvi_stores)
+            .expect("failed command retries with every operand intact"),
+        MainControlStep::Continue
+    );
+    assert_eq!(dvi_stores.pdf_outlines().len(), 1);
+}
+
+#[test]
+fn pdf_outline_is_not_restored_by_ordinary_grouping() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_outline_control(&mut stores);
+    register_source(
+        &mut control,
+        br"{\pdfoutline goto name{later} count 1 {Title}}",
+    );
+    for label in ["open group", "outline", "close group"] {
+        assert_eq!(
+            control.step(&mut stores).expect(label),
+            MainControlStep::Continue
+        );
+    }
+    assert_eq!(stores.group_depth(), 0);
+    assert_eq!(stores.pdf_outlines().len(), 1);
+}
+
+#[test]
+fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_outline_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\pdfoutline goto name{later} count 1 {Title}",
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("outline state checkpoints");
+    assert_eq!(
+        control.step(&mut stores).expect("outline command"),
+        MainControlStep::Continue
+    );
+    let first_hash = stores.testing_state_hash();
+    let first_objects = {
+        let first = stores.pdf_outlines()[0];
+        (
+            first.action_object(),
+            first.item_object(),
+            first.title_object(),
+            first.count(),
+        )
+    };
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("outline state restores");
+    assert!(stores.pdf_outlines().is_empty());
+    assert_eq!(
+        control.step(&mut stores).expect("retried outline"),
+        MainControlStep::Continue
+    );
+    let retried = stores.pdf_outlines()[0];
+    assert_eq!(
+        (
+            retried.action_object(),
+            retried.item_object(),
+            retried.title_object(),
+            retried.count(),
+        ),
+        first_objects
+    );
+    assert_eq!(stores.testing_state_hash(), first_hash);
+}
+
 #[test]
 fn pdf_snapping_is_any_mode_ordered_typed_material() {
     const MODES: [Mode; 6] = [

@@ -16,12 +16,12 @@ use tex_command::{
     MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind, MathStyleKind,
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
-    PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
-    PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
+    PdfReferenceObjectRequest, PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent,
+    ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    ScannedBoxShiftPayload, ScannedDiscretionary, ScannedDisplayDiagnostic,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, DiagnosticRecord, EffectRecord, GeometryRecord,
@@ -5478,15 +5478,23 @@ fn scan_command(
             primitive @ (UnexpandablePrimitive::PdfAnnot
             | UnexpandablePrimitive::PdfStartLink
             | UnexpandablePrimitive::PdfEndLink
+            | UnexpandablePrimitive::PdfOutline
             | UnexpandablePrimitive::PdfDest
             | UnexpandablePrimitive::PdfThread
             | UnexpandablePrimitive::PdfStartThread
             | UnexpandablePrimitive::PdfEndThread),
-        ) => Ok(ScannedStep::PdfNavigation(
-            processor
-                .scan_pdf_navigation_request(primitive)
-                .map_err(command_error)?,
-        )),
+        ) => {
+            if primitive == UnexpandablePrimitive::PdfOutline
+                && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+            {
+                return Err(ExecError::PdfExtensionInDviMode("pdfoutline"));
+            }
+            Ok(ScannedStep::PdfNavigation(
+                processor
+                    .scan_pdf_navigation_request(primitive)
+                    .map_err(command_error)?,
+            ))
+        }
         Meaning::Font(font) => Ok(ScannedStep::FontSelect {
             font,
             selector: command.control_sequence(),
@@ -6413,6 +6421,7 @@ fn scan_unclassified_primitive(
         | P::PdfLiteral
         | P::PdfNames
         | P::PdfObject
+        | P::PdfOutline
         | P::PdfInterwordSpaceOff
         | P::PdfInterwordSpaceOn
         | P::PdfFakeSpace
@@ -6639,7 +6648,6 @@ fn scan_unclassified_primitive(
         | P::PdfMapLine
         | P::PdfNoBuiltinToUnicode
         | P::PdfNoLigatures
-        | P::PdfOutline
         | P::PdfRpCode
         | P::PdfShbsCode
         | P::PdfStbsCode
@@ -7160,6 +7168,25 @@ fn apply_pdf_navigation_request(
                 .push(Node::Whatsit(Whatsit::PdfLinkEnd {
                     object: open.record.object(),
                 }));
+        }
+        PdfNavigationRequest::Outline(PdfOutlineRequest {
+            attributes,
+            action,
+            count,
+            title,
+        }) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfoutline"));
+            }
+            stores
+                .create_pdf_outline(
+                    attributes.map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
+                    action,
+                    count,
+                    title.tokens.token_list(),
+                )
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            reserve_navigation_action_targets(stores, action)?;
         }
         PdfNavigationRequest::Destination(PdfDestinationRequest {
             structure,

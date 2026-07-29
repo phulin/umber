@@ -259,6 +259,7 @@ pub enum PdfNavigationRequest {
     Annotation(PdfAnnotationRequest),
     StartLink(PdfStartLinkRequest),
     EndLink,
+    Outline(PdfOutlineRequest),
     Destination(PdfDestinationRequest),
     Thread(PdfThreadRequest),
     EndThread,
@@ -279,6 +280,15 @@ pub struct PdfStartLinkRequest {
     pub dimensions: tex_state::PdfAnnotationDimensions,
     pub attributes: Option<ScannedBalancedText>,
     pub action: tex_state::PdfActionSpec,
+}
+
+/// Fully scanned `\\pdfoutline` document-state mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfOutlineRequest {
+    pub attributes: Option<ScannedBalancedText>,
+    pub action: tex_state::PdfActionSpec,
+    pub count: i32,
+    pub title: ScannedBalancedText,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1054,6 +1064,20 @@ impl CommandProcessor<'_> {
                 action: self.scan_pdf_action()?,
             })),
             UnexpandablePrimitive::PdfEndLink => Ok(Request::EndLink),
+            UnexpandablePrimitive::PdfOutline => Ok(Request::Outline(PdfOutlineRequest {
+                attributes: self
+                    .scan_keyword("attr")?
+                    .value
+                    .then(|| self.scan_balanced_text(true))
+                    .transpose()?,
+                action: self.scan_pdf_action()?,
+                count: if self.scan_keyword("count")?.value {
+                    self.scan_integer()?.value
+                } else {
+                    0
+                },
+                title: self.scan_balanced_text(true)?,
+            })),
             UnexpandablePrimitive::PdfDest => {
                 let structure = if self.scan_keyword("struct")?.value {
                     Some(self.scan_pdf_positive("struct identifier", false)?)
