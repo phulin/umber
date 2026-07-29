@@ -192,10 +192,13 @@ fn char_given_is_a_hyphenation_word_character_but_not_a_pattern_one() {
 }
 
 #[test]
-fn othercases_report_typed_diagnostics_and_preserve_the_partial_word() {
-    for (kind, expected_diagnostic) in [
-        (HyphenationDataKind::Exceptions, "improper_hyphenation"),
-        (HyphenationDataKind::Patterns, "bad_patterns"),
+fn othercases_print_errors_without_inventing_events_and_preserve_the_partial_word() {
+    for (kind, expected_message) in [
+        (
+            HyphenationDataKind::Exceptions,
+            "Improper \\hyphenation will be flushed",
+        ),
+        (HyphenationDataKind::Patterns, "Bad \\patterns"),
     ] {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
@@ -226,10 +229,39 @@ fn othercases_report_typed_diagnostics_and_preserve_the_partial_word() {
 
         let scanned = processor.scan_hyphenation_data(kind).expect("group scans");
         assert_eq!(words(&scanned), vec!["ab"]);
-        assert!(recorder.0.iter().any(|event| matches!(
-            event,
-            CommandObservation::Diagnostic(record)
-                if record.diagnostic == expected_diagnostic
-        )));
+        drop(processor);
+        assert!(
+            !recorder
+                .0
+                .iter()
+                .any(|event| matches!(event, CommandObservation::Diagnostic(_))),
+            "§§936/961 have no schema-v1 diagnostic observation"
+        );
+        let committed = universe
+            .world()
+            .memory_terminal_output()
+            .map(String::from_utf8_lossy)
+            .unwrap_or_default();
+        let pending: String = universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite {
+                    sink:
+                        tex_state::PrintSink::Terminal
+                        | tex_state::PrintSink::TerminalAndLog
+                        | tex_state::PrintSink::Log,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let terminal = committed.into_owned() + &pending;
+        assert!(
+            terminal.contains(expected_message),
+            "the §82 error remains visible on the terminal: {:?}",
+            terminal
+        );
     }
 }

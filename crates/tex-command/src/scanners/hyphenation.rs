@@ -18,7 +18,6 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
 use crate::{CommandError, CommandProcessor};
-use crate::{CommandObservation, DiagnosticRecord};
 
 #[cfg(test)]
 mod tests;
@@ -127,17 +126,9 @@ impl CommandProcessor<'_> {
             ),
             HyphenationDataKind::Patterns => ("Bad \\patterns", &["(See Appendix H.)"]),
         };
-        observe!(
-            self,
-            CommandObservation::Diagnostic(DiagnosticRecord {
-                severity: "error",
-                diagnostic: match kind {
-                    HyphenationDataKind::Exceptions => "improper_hyphenation",
-                    HyphenationDataKind::Patterns => "bad_patterns",
-                },
-                arguments: Vec::new(),
-            }),
-        );
+        // §§936/961 print and call §82's `error`, but the schema-v1 TeX82
+        // instrumentation records no diagnostic at either site. Publishing
+        // one here inserts an event before the loop resumes `get_x_token`.
         let mut report = self.state.print_err(message);
         report.help(help);
         report.error();
