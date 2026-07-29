@@ -695,8 +695,9 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_mark_class(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        let class = self.scan_integer()?.value;
-        let class = u16::try_from(class).unwrap_or(0);
+        // e-TeX 2.6 `etex.ch` [26.1178] uses the same
+        // `scan_register_num` as numbered marks and sparse registers.
+        let class = self.scan_extended_register_index()?;
         self.push_mark_text(self.state.page_mark_class(page_mark(primitive), class));
         Ok(())
     }

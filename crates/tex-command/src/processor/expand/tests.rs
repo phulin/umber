@@ -190,6 +190,97 @@ fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
 }
 
 #[test]
+fn etex_mark_class_enquiries_share_extended_register_scan_and_recovery() {
+    // e-TeX 2.6 `etex.ch` [26.1178]: all five class enquiries use the same
+    // `scan_register_num` as `\marks`, including invalid-to-zero recovery.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let primitives = [
+        (
+            "topmarks",
+            ExpandablePrimitive::TopMarks,
+            PageMark::Top,
+            'A',
+        ),
+        (
+            "firstmarks",
+            ExpandablePrimitive::FirstMarks,
+            PageMark::First,
+            'B',
+        ),
+        (
+            "botmarks",
+            ExpandablePrimitive::BotMarks,
+            PageMark::Bot,
+            'C',
+        ),
+        (
+            "splitfirstmarks",
+            ExpandablePrimitive::SplitFirstMarks,
+            PageMark::SplitFirst,
+            'D',
+        ),
+        (
+            "splitbotmarks",
+            ExpandablePrimitive::SplitBotMarks,
+            PageMark::SplitBot,
+            'E',
+        ),
+    ];
+    let mut input = Vec::new();
+    for (name, primitive, mark, value) in primitives {
+        let symbol = install_expandable(&mut universe, name, primitive);
+        let tokens = universe.intern_token_list(&[Token::Char {
+            ch: value,
+            cat: Catcode::Letter,
+        }]);
+        universe.set_page_mark_class(mark, 32_767, tokens);
+        input.push(traced(Token::Cs(symbol)));
+        input.extend("32767 ".chars().map(|ch| {
+            traced(Token::Char {
+                ch,
+                cat: if ch == ' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                },
+            })
+        }));
+    }
+    let topmarks = universe.intern("topmarks").symbol();
+    let zero = universe.intern_token_list(&[Token::Char {
+        ch: 'Z',
+        cat: Catcode::Letter,
+    }]);
+    universe.set_page_mark_class(PageMark::Top, 0, zero);
+    input.push(traced(Token::Cs(topmarks)));
+    input.extend("-1".chars().map(|ch| {
+        traced(Token::Char {
+            ch,
+            cat: Catcode::Other,
+        })
+    }));
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(input)),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(rendered(&mut processor), "ABCDEZ");
+    assert_eq!(
+        processor.take_restricted_integer_recoveries(),
+        vec![crate::RestrictedIntegerRecovery {
+            class: crate::RestrictedIntegerClass::Register,
+            scanned: -1,
+        }]
+    );
+}
+
+#[test]
 fn etex_revision_uses_the_canonical_conversion_token_path() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
