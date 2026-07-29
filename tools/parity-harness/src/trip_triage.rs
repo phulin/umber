@@ -212,7 +212,7 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
             command:
                 CanonicalCommand {
                     command: expected_command,
-                    operand: CanonicalValue::Integer(_),
+                    operand: CanonicalValue::Integer(expected_operand),
                     control_sequence: expected_control_sequence,
                     location: expected_location,
                 },
@@ -232,13 +232,18 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
         return false;
     };
 
-    matches!(
-        actual_operand,
-        CanonicalValue::Integer(_) | CanonicalValue::None
-    ) && matches!(
-        expected_command.as_str(),
-        "call" | "long_call" | "outer_call" | "long_outer_call"
-    ) && expected_delivery == actual_delivery
+    let allocator_identity_matches = match actual_operand {
+        CanonicalValue::Integer(actual_operand) => expected_operand.abs_diff(*actual_operand) <= 1,
+        CanonicalValue::None => true,
+        _ => false,
+    };
+
+    allocator_identity_matches
+        && matches!(
+            expected_command.as_str(),
+            "call" | "long_call" | "outer_call" | "long_outer_call"
+        )
+        && expected_delivery == actual_delivery
         && expected_command == actual_command
         && expected_control_sequence == actual_control_sequence
         && expected_location == actual_location
@@ -311,6 +316,16 @@ fn report_text(
     divergence: &Divergence,
 ) -> String {
     let mut out = String::new();
+    let command_accounting = event_accounting(
+        "command_events",
+        input.expected.command_events,
+        input.actual.command_events,
+    );
+    let geometry_accounting = event_accounting(
+        "geometry_events",
+        input.expected.geometry_events,
+        input.actual.geometry_events,
+    );
     for (key, value) in [
         ("schema", "umber.trip-triage.v1".to_string()),
         ("label", bounded(input.label, 128)),
@@ -338,12 +353,40 @@ fn report_text(
             option_hash(input.actual.command_events),
         ),
         (
+            "expected.command_events.count",
+            command_accounting.expected_count,
+        ),
+        (
+            "actual.command_events.count",
+            command_accounting.actual_count,
+        ),
+        (
+            "command_events.projected_equivalent.count",
+            command_accounting.projected_equivalent_count,
+        ),
+        (
+            "command_events.projected_divergence.count",
+            command_accounting.projected_divergence_count,
+        ),
+        (
             "expected.geometry_events.sha256",
             option_hash(input.expected.geometry_events),
         ),
         (
             "actual.geometry_events.sha256",
             option_hash(input.actual.geometry_events),
+        ),
+        (
+            "expected.geometry_events.count",
+            geometry_accounting.expected_count,
+        ),
+        (
+            "actual.geometry_events.count",
+            geometry_accounting.actual_count,
+        ),
+        (
+            "geometry_events.projected_divergence.count",
+            geometry_accounting.projected_divergence_count,
         ),
         (
             "expected.transcript.sha256",
@@ -362,6 +405,60 @@ fn report_text(
         bounded_line(&mut out, key, &value);
     }
     out
+}
+
+struct EventAccounting {
+    expected_count: String,
+    actual_count: String,
+    projected_equivalent_count: String,
+    projected_divergence_count: String,
+}
+
+fn event_accounting(
+    channel: &str,
+    expected: Option<&[u8]>,
+    actual: Option<&[u8]>,
+) -> EventAccounting {
+    let (Some(expected), Some(actual)) = (expected, actual) else {
+        return EventAccounting {
+            expected_count: expected.map_or_else(|| "absent".into(), event_count),
+            actual_count: actual.map_or_else(|| "absent".into(), event_count),
+            projected_equivalent_count: "unavailable".into(),
+            projected_divergence_count: "unavailable".into(),
+        };
+    };
+    let expected = ObservationStream::from_canonical_json_lines(expected)
+        .expect("event streams were validated before report rendering");
+    let actual = ObservationStream::from_canonical_json_lines(actual)
+        .expect("event streams were validated before report rendering");
+    let projected_equivalent_count = expected
+        .events
+        .iter()
+        .zip(&actual.events)
+        .filter(|(left, right)| left != right && trip_events_match(channel, left, right))
+        .count();
+    let projected_divergence_count = expected
+        .events
+        .iter()
+        .zip(&actual.events)
+        .filter(|(left, right)| !trip_events_match(channel, left, right))
+        .count()
+        + expected.events.len().abs_diff(actual.events.len());
+    EventAccounting {
+        expected_count: expected.events.len().to_string(),
+        actual_count: actual.events.len().to_string(),
+        projected_equivalent_count: projected_equivalent_count.to_string(),
+        projected_divergence_count: projected_divergence_count.to_string(),
+    }
+}
+
+fn event_count(bytes: &[u8]) -> String {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .count()
+        .saturating_sub(1)
+        .to_string()
 }
 
 fn bounded_line(out: &mut String, key: &str, value: &str) {
@@ -503,13 +600,17 @@ mod tests {
     }
 
     fn macro_command_events(operand: CanonicalValue) -> Vec<u8> {
+        macro_command_events_named(operand, "probe")
+    }
+
+    fn macro_command_events_named(operand: CanonicalValue, name: &str) -> Vec<u8> {
         let mut normalizer = Normalizer::new();
         let event = Event::Command(CommandEvent {
             delivery: tex_oracle::CommandDelivery::Raw,
             command: CanonicalCommand {
                 command: "call".into(),
                 operand,
-                control_sequence: Some("probe".into()),
+                control_sequence: Some(name.into()),
                 location: None,
             },
         });
@@ -652,6 +753,74 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn macro_call_projection_preserves_non_adjacent_allocator_differences() {
+        let temp = tempfile::tempdir().expect("temp");
+        let reference = macro_command_events(CanonicalValue::Integer(249_985));
+        let actual = macro_command_events(CanonicalValue::Integer(249_983));
+        let expected = TripTriageChannels {
+            command_events: Some(&reference),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            command_events: Some(&actual),
+            ..expected
+        };
+
+        let artifact = write_trip_triage_artifact(temp.path(), input(expected, actual))
+            .expect("comparison")
+            .expect("non-adjacent allocator identity must diverge");
+        let report = fs::read_to_string(artifact).expect("report");
+        assert!(report.contains("earliest.position: event[0]"), "{report}");
+        assert!(
+            report.contains("expected.command_events.count: 1"),
+            "{report}"
+        );
+        assert!(
+            report.contains("actual.command_events.count: 1"),
+            "{report}"
+        );
+        assert!(
+            report.contains("command_events.projected_equivalent.count: 0"),
+            "{report}"
+        );
+        assert!(
+            report.contains("command_events.projected_divergence.count: 1"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn macro_call_projection_preserves_macro_identity_differences() {
+        let temp = tempfile::tempdir().expect("temp");
+        let reference = macro_command_events_named(CanonicalValue::Integer(249_985), "older");
+        let actual = macro_command_events_named(CanonicalValue::Integer(249_986), "newer");
+        let expected = TripTriageChannels {
+            command_events: Some(&reference),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            command_events: Some(&actual),
+            ..expected
+        };
+
+        let artifact = write_trip_triage_artifact(temp.path(), input(expected, actual))
+            .expect("comparison")
+            .expect("a different macro identity must diverge");
+        let report = fs::read_to_string(artifact).expect("report");
+        assert!(report.contains("earliest.position: event[0]"), "{report}");
+        assert!(
+            report.contains("command_events.projected_divergence.count: 1"),
+            "{report}"
+        );
     }
 
     #[test]
