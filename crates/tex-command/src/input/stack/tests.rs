@@ -10,7 +10,7 @@ use crate::{CommandState, RegisteredSourceKind, SourceNameClass, SourceRegistrat
 
 use super::{
     InputRetirementAction, InputRetirementError, InputRetirementReason, OutParameterReplay,
-    ParameterReplayError,
+    ParameterReplayError, input_level_identity,
 };
 use crate::input::levels::{
     BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer,
@@ -111,6 +111,61 @@ fn retirement_validates_exact_level_identity_before_mutating() {
             .action,
         InputRetirementAction::ScantokensClosed
     );
+}
+
+#[test]
+fn file_source_retirement_clears_process_global_force_eof() {
+    let mut state = CommandState::default();
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"x"[..]),
+        ))
+        .expect("source registers");
+    state.open_registered_source(source).expect("source opens");
+    let identity = input_level_identity(state.input.levels.last().expect("source level is live"));
+    state.input.force_eof = true;
+
+    state
+        .retire_exhausted_input(identity)
+        .expect("forced source retires");
+
+    assert!(
+        !state.input.force_eof,
+        "TeX82 §362 clears true immediately before end_file_reading"
+    );
+}
+
+#[test]
+fn pseudo_source_retirement_preserves_process_global_force_eof() {
+    for name_class in [
+        SourceNameClass::Terminal,
+        SourceNameClass::ReadStream(0),
+        SourceNameClass::ReadStream(16),
+    ] {
+        let mut state = CommandState::default();
+        let source = state
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"x"[..]),
+            ))
+            .expect("source registers");
+        state
+            .open_registered_source_as(source, name_class)
+            .expect("pseudo-source opens");
+        let identity =
+            input_level_identity(state.input.levels.last().expect("source level is live"));
+        state.input.force_eof = true;
+
+        state
+            .retire_exhausted_input(identity)
+            .expect("pseudo-source retires");
+
+        assert!(
+            state.input.force_eof,
+            "TeX82 §§360–362 leave force_eof untouched for {name_class:?}"
+        );
+    }
 }
 
 #[test]

@@ -182,11 +182,13 @@ impl SourceCursor {
     pub(crate) fn next_exact_byte_step(
         &mut self,
         endlinechar: i32,
+        force_eof: bool,
         queries: &mut dyn SourceStepQueries,
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         self.next_source_step(
             endlinechar,
+            force_eof,
             CharacterMode::EightBitExact,
             SuperscriptPolicy::ExactByte,
             queries,
@@ -198,11 +200,13 @@ impl SourceCursor {
     pub(crate) fn next_unicode_step(
         &mut self,
         endlinechar: i32,
+        force_eof: bool,
         queries: &mut dyn SourceStepQueries,
         lines: &mut LineBackingRegistry<'_>,
     ) -> SourceTokenizationStep {
         self.next_source_step(
             endlinechar,
+            force_eof,
             CharacterMode::UnicodeExtended,
             SuperscriptPolicy::UnicodeExtended,
             queries,
@@ -213,6 +217,7 @@ impl SourceCursor {
     fn next_source_step(
         &mut self,
         endlinechar: i32,
+        force_eof: bool,
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
         queries: &mut dyn SourceStepQueries,
@@ -237,7 +242,7 @@ impl SourceCursor {
                 self.next_reduced_character(&bytes, mode, superscript, &mut catcode)
             else {
                 self.finish_line();
-                if self.end_after_line {
+                if self.end_after_line || force_eof {
                     return SourceTokenizationStep::End;
                 }
                 continue;

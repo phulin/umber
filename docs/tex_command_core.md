@@ -2520,9 +2520,12 @@ stable positive or negative response.
 The promoted scalar input/state slice keeps the same split concretely:
 `CommandHostCapabilities` maps a logical `\input` name to already-acquired
 immutable backing and supplies the immutable job name for the bounded
-processor call. `\input` registers that backing before opening a source level;
-`\endinput` marks only the active source to retire after its current physical
-line. TeX82 `end_file_reading` (§338) observes only that retirement; the
+processor call. `\input` registers that backing before opening a source level.
+`\endinput` sets TeX82 §362's process-global `force_eof`; only §360's next
+real-file (`name>17`) refill consumes and clears it before retiring that file.
+Intervening §483 terminal or `\read`/`\readline` pseudo-sources neither consume
+nor clear the pending flag. TeX82 `end_file_reading` (§338) observes only that
+retirement; the
 test-only canonical adapter attaches the still-active logical source name
 before removing its parallel trace frame, so source retirement preserves the
 same identity as the corresponding push without putting host naming into

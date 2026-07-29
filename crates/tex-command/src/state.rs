@@ -959,16 +959,20 @@ impl CommandState {
     /// source.  The remainder of its current line is still tokenized; no
     /// later physical line may be loaded.
     pub(crate) fn end_current_source_after_current_line(&mut self) -> bool {
-        self.input
+        let has_source = self
+            .input
             .levels
-            .iter_mut()
+            .iter()
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(level) => Some(level),
                 InputLevel::Tokens(_) => None,
             })
-            .map(|level| level.cursor.end_after_line = true)
-            .is_some()
+            .is_some();
+        if has_source {
+            self.input.force_eof = true;
+        }
+        has_source
     }
 
     fn push_alignment_template(
@@ -1061,10 +1065,21 @@ impl CommandState {
             crate::CharacterMode::EightBitExact,
             "exact-byte tokenization requires an exact-byte command profile"
         );
+        let force_eof = self.input.force_eof
+            && self
+                .input
+                .levels
+                .iter()
+                .rev()
+                .find_map(|level| match level {
+                    InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
+                    InputLevel::Tokens(_) => None,
+                })
+                == Some(true);
         let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
             return SourceTokenizationStep::End;
         };
-        cursor.next_exact_byte_step(endlinechar, queries, &mut lines)
+        cursor.next_exact_byte_step(endlinechar, force_eof, queries, &mut lines)
     }
 
     /// Tokenizes one Unicode-scalar source step using the caller's live code
@@ -1089,10 +1104,21 @@ impl CommandState {
             crate::CharacterMode::UnicodeExtended,
             "Unicode tokenization requires a UnicodeExtended command profile"
         );
+        let force_eof = self.input.force_eof
+            && self
+                .input
+                .levels
+                .iter()
+                .rev()
+                .find_map(|level| match level {
+                    InputLevel::Source(source) => Some(source.name_class == SourceNameClass::File),
+                    InputLevel::Tokens(_) => None,
+                })
+                == Some(true);
         let (Some(cursor), mut lines) = self.active_source_cursor(profile) else {
             return SourceTokenizationStep::End;
         };
-        cursor.next_unicode_step(endlinechar, queries, &mut lines)
+        cursor.next_unicode_step(endlinechar, force_eof, queries, &mut lines)
     }
 
     /// Borrows the active source cursor beside the source-identity counter.

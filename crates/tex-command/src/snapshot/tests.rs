@@ -178,6 +178,22 @@ fn quiescent_summary_roundtrip_is_exact_and_deterministic() {
     assert_eq!(semantic_hash(&republished), original_hash);
 }
 
+#[test]
+fn force_eof_is_owned_by_snapshot_identity_and_rollback() {
+    let mut state = populated_quiescent_state();
+    let false_snapshot = state.snapshot();
+    let false_hash = semantic_hash(&false_snapshot);
+    state.input.force_eof = true;
+    let true_snapshot = state.snapshot();
+
+    assert_ne!(semantic_hash(&true_snapshot), false_hash);
+    state.input.force_eof = false;
+    state
+        .rollback(true_snapshot)
+        .expect("non-default input state rolls back");
+    assert!(state.input.force_eof);
+}
+
 fn assert_rejected(mutate: impl FnOnce(&mut CommandState), expected: CommandSummaryError) {
     let mut state = populated_quiescent_state();
     mutate(&mut state);

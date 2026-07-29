@@ -1934,6 +1934,78 @@ fn canonical_openin_read_and_closein_use_registered_immutable_input() {
 }
 
 #[test]
+fn canonical_filename_scan_endinput_is_inherited_by_the_new_source_first_line() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"\n\\count1=7"[..]),
+        ),
+    );
+    register_source(
+        &mut control,
+        b"\\def\\stopinput{\\let\\input\\die}\\expandafter\\stopinput\\input child\\endinput\\input\n\\count2=8\\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    // TeX82 §§328, 362, and 537 use one process-global `force_eof` flag.
+    // `start_input` reads the child's first line directly, so the inherited
+    // flag permits that line, then §362 observes it instead of loading the
+    // second line and clears it immediately before retiring the child.
+    assert_eq!(universe.count(1), 0);
+    // The cleared flag does not leak into the multiline parent.
+    assert_eq!(universe.count(2), 8);
+}
+
+#[test]
+fn canonical_read_pseudo_sources_preserve_pending_endinput_for_parent_file() {
+    for raw_catcodes in [false, true] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = if raw_catcodes {
+            tex_expand::install_expandable_primitives(&mut universe);
+            tex_expand::install_etex_expandable_primitives(&mut universe);
+            crate::install_unexpandable_primitives(&mut universe);
+            crate::install_etex_unexpandable_primitives(&mut universe);
+            CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26)
+        } else {
+            CanonicalMainControl::tex82_initex(&mut universe)
+        };
+        control.capabilities_mut().register_input(
+            "stream.tex",
+            SourceRegistration::new(
+                RegisteredSourceKind::World,
+                Arc::<[u8]>::from(&b"read line"[..]),
+            ),
+        );
+        let read: &[u8] = if raw_catcodes {
+            br"\readline1 to \line"
+        } else {
+            br"\read1 to \line"
+        };
+        let mut source = br"\openin1=stream.tex \endinput".to_vec();
+        source.extend_from_slice(read);
+        source.extend_from_slice(b"\n\\count0=19\\end");
+        register_source(&mut control, &source);
+
+        run_to_end(&mut control, &mut universe);
+
+        let line = universe.intern("line");
+        assert!(
+            universe.macro_meaning(line).is_some(),
+            "same-line pseudo-source must execute before the parent refill"
+        );
+        assert_eq!(
+            universe.count(0),
+            0,
+            "TeX82 §§360–362 require the later parent line to remain unread"
+        );
+    }
+}
+
+#[test]
 fn canonical_read_collects_balanced_multiline_text_and_recovers_file_eof() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

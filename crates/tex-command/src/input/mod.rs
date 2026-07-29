@@ -44,6 +44,8 @@ pub(crate) struct InputState {
     pub(crate) registered_sources: Vec<RegisteredSource>,
     pub(crate) next_level_identity: u64,
     pub(crate) next_source_identity: u64,
+    /// TeX82 §362's process-global `force_eof`.
+    pub(crate) force_eof: bool,
 }
 
 impl InputState {

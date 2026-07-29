@@ -286,6 +286,13 @@ impl CommandState {
             };
             let name_class = source.name_class;
             let action = source_retirement_action(source.retirement);
+            // TeX82 §362 tests and clears the process-global `force_eof`
+            // only in §360's `name>17` (real-file) refill branch. §483's
+            // `name<=17` read/terminal pseudo-sources retire without
+            // consuming a pending forced EOF meant for their parent file.
+            if name_class == SourceNameClass::File {
+                self.input.force_eof = false;
+            }
             self.input.levels.pop();
             return Ok(InputRetirement {
                 identity: expected,

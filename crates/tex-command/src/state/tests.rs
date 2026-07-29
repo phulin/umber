@@ -93,6 +93,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         registered_sources,
         next_level_identity,
         next_source_identity,
+        force_eof,
     } = input;
     let ParameterState { activations, .. } = parameters;
     let ScannerState { .. } = scanner;
@@ -135,6 +136,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         registered_sources,
         next_level_identity,
         next_source_identity,
+        force_eof,
         activations,
         frames,
         next_identity,

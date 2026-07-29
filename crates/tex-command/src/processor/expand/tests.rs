@@ -485,6 +485,40 @@ fn endinput_keeps_its_line_but_retires_nested_source_before_the_next_line() {
 }
 
 #[test]
+fn child_endinput_retires_true_to_false_before_multiline_parent_resumes() {
+    let mut command = CommandState::default();
+    let parent = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\input{inc}\np".as_slice()),
+        ))
+        .expect("parent registers");
+    command
+        .open_registered_source(parent)
+        .expect("parent opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    install_expandable(&mut universe, "endinput", ExpandablePrimitive::EndInput);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "inc.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"c\\endinput\nx".as_slice()),
+        ),
+    );
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(chars(&mut processor), "c p ");
+    drop(processor);
+    assert!(
+        !command.input.force_eof,
+        "TeX82 §362 clears force_eof before retiring the child"
+    );
+}
+
+#[test]
 fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
