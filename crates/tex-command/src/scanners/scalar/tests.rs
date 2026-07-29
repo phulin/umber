@@ -3044,6 +3044,70 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
 }
 
 #[test]
+fn current_group_type_has_its_canonical_scanner_identity_only() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.enter_group_with_kind(tex_state::GroupKind::HBox);
+    let group_type = universe.intern("currentgrouptype").symbol();
+    let group_level = universe.intern("currentgrouplevel").symbol();
+    universe.set_meaning(
+        group_type,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
+    );
+    universe.set_meaning(
+        group_level,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupLevel),
+    );
+    push(
+        &mut command,
+        vec![Token::Cs(group_type), Token::Cs(group_level)],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("current group type scans")
+                .value,
+            2
+        );
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("current group level scans")
+                .value,
+            1
+        );
+    }
+    assert_eq!(
+        scanner_kinds(&recorder),
+        vec![
+            "current_group_type",
+            "internal",
+            "integer",
+            "internal",
+            "integer"
+        ]
+    );
+    assert!(recorder.0.iter().any(|record| {
+        matches!(
+            record,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "current_group_type" && scanner.value == "2"
+        )
+    }));
+}
+
+#[test]
 fn etex_font_character_dimensions_select_metrics_and_preserve_following_token() {
     use tex_state::font::{CharMetrics, CharTag, FontMetrics, LoadedFont};
     use tex_state::meaning::UnexpandablePrimitive as P;

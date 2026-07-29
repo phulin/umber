@@ -1997,7 +1997,21 @@ impl CommandProcessor<'_> {
                     .tok_param(tex_state::env::banks::TokParam::new(index)),
             },
             Meaning::InternalInteger(integer) => {
-                InternalValue::Integer(self.fetch_internal_integer(integer))
+                let value = self.fetch_internal_integer(integer);
+                // e-TeX 2.6 etex.ch [17.4750--4758] observes
+                // `current_group_type_code` immediately after that enquiry
+                // commits `cur_group`, before §413's shared internal result.
+                // This is deliberately specific: the neighboring e-TeX
+                // enquiries have distinct canonical scanner identities and
+                // must not be normalized to this one.
+                if integer == InternalInteger::CurrentGroupType {
+                    self.observe(CommandObservation::Scanner(ScannerRecord {
+                        kind: "current_group_type",
+                        value: value.to_string(),
+                        tokens: None,
+                    }));
+                }
+                InternalValue::Integer(value)
             }
             // `space_factor` is owned by the executor's active horizontal
             // list, rather than durable command state.  The bounded host

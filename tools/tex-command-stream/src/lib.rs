@@ -1370,7 +1370,7 @@ fn translate_observation(
                 }
             } else if matches!(
                 record.kind,
-                "integer" | "interaction_mode" | "expression_integer"
+                "integer" | "interaction_mode" | "expression_integer" | "current_group_type"
             ) {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
