@@ -103,6 +103,27 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "etex-zero-glue-reassignment",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-zero-glue-reassignment.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [277, 278]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": ["mutation"],
+        "count_registers": []
+      },
+      "expected": [
+        "mutation:parameter:glue_parameter:14:glue:width=65536;stretch=0;stretch_order=normal;shrink=0;shrink_order=normal:local",
+        "mutation:parameter:glue_parameter:14:glue:width=65536;stretch=0;stretch_order=normal;shrink=0;shrink_order=normal:local"
+      ],
+      "expectation": { "kind": "pass" }
+    },
+    {
       "id": "etex-int-parameter-profile",
       "property_id": "tex82.assignment.parameters-registers-arithmetic",
       "profile": "etex-initex",

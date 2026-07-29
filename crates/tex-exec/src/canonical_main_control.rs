@@ -32,7 +32,7 @@ use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{FontId, NodeListId, TokenListId};
+use tex_state::ids::{FontId, GlueId, NodeListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
@@ -7748,12 +7748,12 @@ fn applied_mutation_observation(
     profile: CommandProfile,
     initex: bool,
 ) -> Option<PendingMutation> {
-    // e-TeX's §275 `eq_word_define` returns before touching the save stack
-    // when extended mode locally reassigns an identical fullword value.
-    // Suppress the corresponding observer record at the same semantic
-    // boundary; otherwise instrumentation reports a mutation the engine did
-    // not canonically perform.
-    if etex_redundant_local_word_step(stores, scanned, initex) {
+    // e-TeX §§277-278 return before changing the save stack when extended
+    // mode locally reassigns an identical eqtb value. Suppress the
+    // corresponding observer record at the same semantic boundary;
+    // otherwise instrumentation reports a mutation the engine did not
+    // canonically perform.
+    if etex_redundant_local_definition_step(stores, scanned, initex) {
         return None;
     }
     let captured = match scanned {
@@ -9727,10 +9727,16 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = GlueParam::new(index);
-            let value = stores.intern_glue(value);
             if global {
+                let value = stores.intern_glue(value);
                 stores.set_glue_param_global(parameter, value);
-            } else {
+            } else if !etex_redundant_local_zero_glue_assignment(
+                stores,
+                command.initex,
+                stores.glue_param(parameter),
+                &value,
+            ) {
+                let value = stores.intern_glue(value);
                 stores.set_glue_param(parameter, value);
             }
             Ok(ReplayStep::Continue)
@@ -11601,9 +11607,13 @@ fn etex_redundant_local_word_assignment<T: Eq>(
     initex && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
 }
 
-/// Whether e-TeX §275's `eq_word_define` returns before an observed assignment
-/// step touches either the save stack or its fullword `eqtb` location.
-fn etex_redundant_local_word_step(stores: &Universe, scanned: &ScannedStep, initex: bool) -> bool {
+/// Whether e-TeX §§277-278 return before an observed assignment step touches
+/// either the save stack or its `eqtb` location.
+fn etex_redundant_local_definition_step(
+    stores: &Universe,
+    scanned: &ScannedStep,
+    initex: bool,
+) -> bool {
     match scanned {
         ScannedStep::Count {
             index,
@@ -11634,6 +11644,16 @@ fn etex_redundant_local_word_step(stores: &Universe, scanned: &ScannedStep, init
             initex,
             stores.dimen_param(DimenParam::new(*index)),
             *value,
+        ),
+        ScannedStep::GlueParam {
+            index,
+            value,
+            global: false,
+        } => etex_redundant_local_zero_glue_assignment(
+            stores,
+            initex,
+            stores.glue_param(GlueParam::new(*index)),
+            value,
         ),
         ScannedStep::CodeTable {
             primitive,
@@ -11710,6 +11730,26 @@ fn etex_redundant_local_word_step(stores: &Universe, scanned: &ScannedStep, init
         },
         _ => false,
     }
+}
+
+/// Whether e-TeX §277 sees the same canonical zero-glue pointer on both sides
+/// of a local `eq_define`.
+///
+/// TeX82 §1237's `trap_zero_glue` replaces every all-zero scanned
+/// specification with `zero_glue` before `define`. Equal nonzero glue values
+/// are deliberately not reassignment-identical: separately scanned literals
+/// occupy different glue-spec nodes in TeX even though Umber hash-conses their
+/// immutable contents.
+fn etex_redundant_local_zero_glue_assignment(
+    stores: &Universe,
+    initex: bool,
+    current: GlueId,
+    replacement: &GlueSpec,
+) -> bool {
+    initex
+        && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
+        && current == GlueId::ZERO
+        && *replacement == GlueSpec::ZERO
 }
 
 fn checked_character_code(value: i32, context: &'static str) -> Result<u32, ExecError> {

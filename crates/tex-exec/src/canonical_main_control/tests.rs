@@ -1310,6 +1310,53 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
 }
 
 #[test]
+fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
+    // e-TeX §277 suppresses a local `eq_define` when both its type and
+    // halfword identity are unchanged. TeX82 §1237 traps a scanned zero glue
+    // specification to the shared `zero_glue` pointer before that test.
+    // Separately scanned equal nonzero literals remain distinct pointers and
+    // are the negative control.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\parfillskip=0pt \parfillskip=1pt \parfillskip=1pt \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("e-TeX glue-parameter reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record)
+                if record.key.as_deref() == Some("glue_parameter:14") =>
+            {
+                Some(record.value.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(
+        stores.glue(stores.glue_param(GlueParam::new(14))).width,
+        Scaled::from_raw(65_536)
+    );
+}
+
+#[test]
 fn main_control_dispatch_matrix_consumes_each_command_once() {
     const MODES: [Mode; 6] = [
         Mode::Vertical,
