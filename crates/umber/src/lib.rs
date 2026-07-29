@@ -1891,7 +1891,7 @@ mod tests {
             .register_canonical_world_root("inputs/report.tex", root)
             .expect("root registers");
         session.provide_canonical_input(
-            "child",
+            "child.tex",
             RegisteredSourceKind::Generated,
             Arc::from(&b"\\message{nested}"[..]),
         );

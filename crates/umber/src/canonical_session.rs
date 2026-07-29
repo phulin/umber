@@ -598,7 +598,7 @@ mod tests {
         ) -> Option<CanonicalResourceFulfillment> {
             match need {
                 CanonicalResourceNeed::Input { name } => world
-                    .read_file(format!("{name}.tex"))
+                    .read_file(name)
                     .ok()
                     .map(|content| CanonicalResourceFulfillment::world_input(name, content)),
                 CanonicalResourceNeed::Font { request } => world
@@ -648,9 +648,9 @@ mod tests {
         ) -> Option<CanonicalResourceFulfillment> {
             self.calls += 1;
             match need {
-                CanonicalResourceNeed::Input { name } if name == "child" => {
+                CanonicalResourceNeed::Input { name } if name == "child.tex" => {
                     Some(CanonicalResourceFulfillment::input(
-                        "child",
+                        "child.tex",
                         RegisteredSourceKind::Generated,
                         Arc::from(&b"\\relax"[..]),
                     ))
