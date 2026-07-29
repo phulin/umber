@@ -5049,6 +5049,14 @@ pub(super) fn run_canonical_tex82(source: &str) -> Universe {
     panic!("canonical source did not terminate");
 }
 
+#[test]
+fn canonical_valign_noalign_preserves_the_alignment_mode() {
+    let stores =
+        run_canonical_tex82(r"\valign{#\cr a\cr\noalign{\spacefactor=1}}\global\count0=7\end");
+
+    assert_eq!(stores.count(0), 7);
+}
+
 fn run_canonical_etex(source: &str) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

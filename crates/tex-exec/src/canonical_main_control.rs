@@ -11525,11 +11525,13 @@ fn apply_scanned_step(
             active.align_peek_pending = false;
             active.noalign_depth = Some(1);
             enter_canonical_group(stores, command.state, GroupKind::NoAlign);
-            if matches!(
-                modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) {
-                let _ = crate::assignments::commit_current_list(modes, stores)?;
+            // TeX82 §785 leaves the alignment's own mode level in place when
+            // `\noalign` opens. It calls `normal_paragraph` only for an
+            // h-alignment's internal-vertical mode; a v-alignment is already
+            // in restricted horizontal mode, but that level is the alignment
+            // list itself, not a paragraph to pop.
+            if modes.current_mode() == Mode::InternalVertical {
+                crate::assignments::normal_paragraph(modes, stores);
             }
             Ok(ReplayStep::Continue)
         }
