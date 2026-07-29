@@ -442,8 +442,137 @@ fn each_real_stream_transition_is_observed_exactly_once() {
 }
 
 #[test]
-fn out_what_leader_suppression_and_open_retry_recovery_match_tex82() {
+fn out_what_retries_unavailable_openout_with_a_replacement_name() {
     let mut stores = Universe::new();
+    stores.world_mut().deny_memory_output("blocked.tex");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("recovered")
+        .expect("terminal replacement");
+    let ordinary = state_box(
+        &mut stores,
+        &[Node::Whatsit(Whatsit::OpenOut {
+            slot: StreamSlot::new(2),
+            path: "blocked".to_owned(),
+        })],
+        false,
+    );
+    let artifact = crate::assignments::test_stage_shipout_artifact(ordinary, &mut stores)
+        .expect("unavailable openout retries");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::OpenOut { stream: 2, path }] if path == "recovered.tex"
+    ));
+    let diagnostic = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(diagnostic.contains("I can't write on file `blocked.tex'"));
+    assert!(matches!(
+        stores.world().effect_records().last(),
+        Some(EffectRecord::StreamOpen { slot, target })
+            if *slot == StreamSlot::new(2)
+                && target.path() == std::path::Path::new("recovered.tex")
+    ));
+}
+
+#[test]
+fn out_what_retries_terminal_names_with_tex_buffer_rules() {
+    let mut stores = Universe::new();
+    for path in ["blocked.tex", ".tex", "again.tex"] {
+        stores.world_mut().deny_memory_output(path);
+    }
+    for line in ["", "again ignored", "\"final name\" ignored"] {
+        stores
+            .world_mut()
+            .push_memory_terminal_line(line)
+            .expect("terminal replacement");
+    }
+    let ordinary = state_box(
+        &mut stores,
+        &[Node::Whatsit(Whatsit::OpenOut {
+            slot: StreamSlot::new(2),
+            path: "blocked".to_owned(),
+        })],
+        false,
+    );
+    let artifact = crate::assignments::test_stage_shipout_artifact(ordinary, &mut stores)
+        .expect("repeated output retry succeeds");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::OpenOut { path, .. }] if path == "final name.tex"
+    ));
+}
+
+#[test]
+fn out_what_noninteractive_failure_is_fatal_without_reading_terminal() {
+    for interaction in [
+        tex_state::InteractionMode::Batch,
+        tex_state::InteractionMode::Nonstop,
+    ] {
+        let mut stores = Universe::new();
+        stores.set_interaction_mode(interaction);
+        stores.world_mut().deny_memory_output("blocked.tex");
+        stores
+            .world_mut()
+            .push_memory_terminal_line("must-remain")
+            .expect("terminal line");
+        let ordinary = state_box(
+            &mut stores,
+            &[Node::Whatsit(Whatsit::OpenOut {
+                slot: StreamSlot::new(2),
+                path: "blocked".to_owned(),
+            })],
+            false,
+        );
+        assert!(matches!(
+            crate::assignments::test_stage_shipout_artifact(ordinary, &mut stores),
+            Err(ExecError::Fatal(tex_command::FatalError::EmergencyStop {
+                help: "job aborted, file error in nonstop mode"
+            }))
+        ));
+        assert_eq!(
+            stores
+                .world_mut()
+                .read_terminal_line()
+                .expect("terminal remains readable")
+                .as_deref(),
+            Some("must-remain")
+        );
+    }
+}
+
+#[test]
+fn out_what_closes_existing_slot_before_failed_replacement() {
+    let mut stores = Universe::new();
+    let slot = StreamSlot::new(2);
+    stores.world_mut().open_out(slot, "existing.tex");
+    stores.world_mut().deny_memory_output("blocked.tex");
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let ordinary = state_box(
+        &mut stores,
+        &[Node::Whatsit(Whatsit::OpenOut {
+            slot,
+            path: "blocked".to_owned(),
+        })],
+        false,
+    );
+    assert!(crate::assignments::test_stage_shipout_artifact(ordinary, &mut stores).is_err());
+    assert!(matches!(
+        stores.world().effect_records().get(1),
+        Some(EffectRecord::StreamClose { slot: closed }) if *closed == slot
+    ));
+}
+
+#[test]
+fn out_what_preserves_leader_stream_suppression_before_open_retry() {
+    let mut stores = Universe::new();
+    stores.world_mut().deny_memory_output("suppressed.tex");
     let leader_children = stores.freeze_node_list(&[
         Node::Whatsit(Whatsit::OpenOut {
             slot: StreamSlot::new(3),
@@ -495,5 +624,8 @@ fn out_what_leader_suppression_and_open_retry_recovery_match_tex82() {
             |effect| matches!(effect, PageEffect::Special { payload, .. } if payload == b"kept")
         )
     );
-    assert!(stores.world().effect_records().is_empty());
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "leader-contained stream whatsits must not probe, prompt, or open"
+    );
 }

@@ -1674,7 +1674,11 @@
         },
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_leader_suppression_and_open_retry_recovery_match_tex82"
+          "test": "out_what_retries_unavailable_openout_with_a_replacement_name"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "out_what_preserves_leader_stream_suppression_before_open_retry"
         },
         {
           "path": "crates/tex-exec/src/effects/tests.rs",

@@ -1314,3 +1314,19 @@ fn effect_log_accepts_non_stream_effect_record_kinds() {
             && label == "page-resource"
     ));
 }
+
+#[test]
+fn real_output_open_outcome_does_not_create_or_probe_the_target() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let target = temp.path().join("not-created.tex");
+    let world = World::real_with_artifact_dir(temp.path().join("artifacts"));
+
+    assert_eq!(
+        world.retained_output_open_outcome(&target),
+        RetainedOutputOpenOutcome::DeferredToCommit
+    );
+    assert!(
+        !target.exists(),
+        "pre-commit availability must be effect-free"
+    );
+}

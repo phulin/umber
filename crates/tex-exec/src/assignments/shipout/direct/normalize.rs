@@ -288,7 +288,10 @@ fn append_whatsit_effect(
     let running_thread_depth = &mut overlay.running_thread_depth;
     match whatsit {
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
-            let path = super::super::super::variables::openout_target(path);
+            // TeX82 §1374 closes the old stream before it attempts the
+            // replacement, even when every subsequent open attempt fails.
+            stores.world_mut().close_out(slot);
+            let path = retry_openout_target(stores, path)?;
             stores.world_mut().open_out(slot, path.clone());
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),
@@ -622,6 +625,55 @@ fn append_whatsit_effect(
         | Whatsit::Language { .. } => {}
     }
     Ok(())
+}
+
+/// TeX82 §§1373--1374's `out_what` open loop.
+fn retry_openout_target(stores: &mut Universe, name: String) -> Result<String, ExecError> {
+    let mut path = super::super::super::variables::openout_target(name);
+    while stores.world().retained_output_open_outcome(&path)
+        == tex_state::RetainedOutputOpenOutcome::Unavailable
+    {
+        let interaction = stores.interaction_mode();
+        let mut report = stores.print_err("I can't write on file `");
+        report
+            .print(&path)
+            .print("'.\nPlease type another output file name");
+        drop(report);
+        if matches!(
+            interaction,
+            tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
+        ) {
+            return Err(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+                "job aborted, file error in nonstop mode",
+            )));
+        }
+        let replacement = stores
+            .command_context()
+            .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
+            .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+                "End of file on the terminal!",
+            )))?;
+        path = scan_terminal_output_name(&replacement);
+    }
+    Ok(path)
+}
+
+/// TeX82 §§530 and 1374 scan a replacement from the terminal buffer, not
+/// through `scan_file_name`'s expanded-token path.
+fn scan_terminal_output_name(line: &str) -> String {
+    let mut name = String::new();
+    let mut quoted = false;
+    for character in line.trim_start_matches(' ').chars() {
+        match character {
+            '"' => quoted = !quoted,
+            ' ' if !quoted => break,
+            _ => name.push(character),
+        }
+    }
+    if name.is_empty() {
+        return ".tex".to_owned();
+    }
+    super::super::super::variables::openout_target(name)
 }
 
 fn validate_pdf_matrix(payload: &[u8]) -> Result<(), ExecError> {

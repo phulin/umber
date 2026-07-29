@@ -152,9 +152,9 @@ pub use world::{
     EffectRecord, EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate,
     InputDependency, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputRecord,
     InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput, PrintSink, ReadTarget,
-    RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RngState, ShellEscapePolicy,
-    ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode,
-    WorldError, WorldSnapshot,
+    RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
+    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact, World,
+    WorldCommitMode, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

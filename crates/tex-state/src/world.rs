@@ -29,6 +29,14 @@ pub const STREAM_SLOT_COUNT: usize = 16;
 /// Hard ceiling for distinct semantic input paths retained by one World.
 pub const MAX_INPUT_DEPENDENCIES: usize = 8_192;
 
+/// An output-open answer that is safe to use before effect commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetainedOutputOpenOutcome {
+    Available,
+    Unavailable,
+    DeferredToCommit,
+}
+
 /// A process-local elapsed-time sample obtained through the host-effect boundary.
 ///
 /// Profiling data is deliberately separate from the snapshot-owned pdfTeX
@@ -1495,6 +1503,7 @@ pub struct World {
     effect_commit_fault: Option<EffectCommitFault>,
     #[cfg(test)]
     publish_rename_fault: Option<usize>,
+    unavailable_memory_outputs: BTreeSet<PathBuf>,
 }
 
 #[cfg(test)]
@@ -1538,6 +1547,7 @@ impl Clone for World {
             effect_commit_fault: self.effect_commit_fault,
             #[cfg(test)]
             publish_rename_fault: self.publish_rename_fault,
+            unavailable_memory_outputs: self.unavailable_memory_outputs.clone(),
         }
     }
 }
@@ -1560,6 +1570,7 @@ impl PartialEq for World {
             && self.input_contents == other.input_contents
             && self.input_dependencies == other.input_dependencies
             && self.terminal_inputs == other.terminal_inputs
+            && self.unavailable_memory_outputs == other.unavailable_memory_outputs
             && self.shell_escapes == other.shell_escapes
             && self.artifact_base == other.artifact_base
             && self.artifact_commits == other.artifact_commits
@@ -1751,6 +1762,7 @@ impl World {
             effect_commit_fault: None,
             #[cfg(test)]
             publish_rename_fault: None,
+            unavailable_memory_outputs: BTreeSet::new(),
         }
     }
 
@@ -2533,6 +2545,31 @@ impl World {
         });
         self.stream_bufs_mut().write_streams[slot.index()] = Some(target);
         self.stream_bufs_mut().partial_lines[slot.index()].clear();
+    }
+
+    /// Returns a retained host outcome for an output target when one exists.
+    ///
+    /// The memory backend has an authoritative, immutable answer. A real
+    /// filesystem does not: probing it here would either create the file
+    /// before the effect commit or introduce a probe/commit TOCTOU. Real
+    /// opens therefore remain deferred to the atomic `StreamOpen` effect.
+    #[must_use]
+    pub fn retained_output_open_outcome(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> RetainedOutputOpenOutcome {
+        match &self.backend {
+            WorldBackend::Real { .. } => RetainedOutputOpenOutcome::DeferredToCommit,
+            WorldBackend::Memory(_) if self.unavailable_memory_outputs.contains(path.as_ref()) => {
+                RetainedOutputOpenOutcome::Unavailable
+            }
+            WorldBackend::Memory(_) => RetainedOutputOpenOutcome::Available,
+        }
+    }
+
+    /// Makes one memory output name unavailable to focused engine tests.
+    pub fn deny_memory_output(&mut self, path: impl Into<PathBuf>) {
+        self.unavailable_memory_outputs.insert(path.into());
     }
 
     /// Closes an open numbered output stream.
