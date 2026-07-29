@@ -12,6 +12,4 @@ mod tex;
 
 pub(crate) use prefixed::is_prefixed_command;
 pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;
-pub use registry::{
-    install_tex82_expandable_primitives, register_tex82_expandable_primitives,
-};
+pub use registry::{install_tex82_expandable_primitives, register_tex82_expandable_primitives};
