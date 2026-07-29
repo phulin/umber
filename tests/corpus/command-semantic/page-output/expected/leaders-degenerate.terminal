@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./leaders-degenerate.tex
+Underfull \hbox (badness 10000) detected at line 8
+|
+
+Overfull \hbox (1.0pt too wide) detected at line 9
+|
+[1] )
+(see the transcript file for additional information)
+Output written on leaders-degenerate.dvi (1 page, 268 bytes).
+Transcript written on leaders-degenerate.log.

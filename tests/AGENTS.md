@@ -104,7 +104,7 @@ selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
 the exact same files.
 
-`tests/corpus/command-semantic` contains the versioned schema and independently owned domain manifests for tiny property-scoped semantic inputs. Every case's `expected` is the canonical projection: it is derived from the pinned instrumented reference engine, never from Umber's own output, so a case that cannot be reached by canonical execution is a defect in the case rather than a permanent xfail. `alignments/` projects alignment lifecycle and packing boundaries, `conditionals/` projects TeX82 and format-loaded e-TeX conditional observations, `input-expansion/` projects filtered input and command observations with hermetic host responses, `math/` projects selected command, mode, final-box, and committed shipout boundaries, and `page-output/` projects setlanguage replay, special whatsit placement, and hlist/vlist shipout artifacts, and `scanners-internal-quantities/` projects the internal unit probe, register fetches, glue coercion, radix forms, dimension fractions, and scaled division. The generic runner in `tools/tex-command-stream/tests/it/command_semantic.rs` discovers every domain without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, and strict xfail fingerprints, then compares concise canonical-main-control projections. Cargo tests invoke no live TeX and never read the long-document trace registry.
+`tests/corpus/command-semantic` contains the versioned schema and independently owned domain manifests for tiny property-scoped semantic inputs. Every case's `expected` is the canonical projection: it is derived from the pinned instrumented reference engine, never from Umber's own output, so a case that cannot be reached by canonical execution is a defect in the case rather than a permanent xfail. `alignments/` projects alignment lifecycle and packing boundaries, `conditionals/` projects conditional observations, `input-expansion/` projects filtered input and command observations with hermetic host responses, `math/` projects selected command, mode, final-box, and committed shipout boundaries, and `page-output/` projects setlanguage replay, special whatsit placement, hlist/vlist shipout artifacts, and `\leaders`/`\cleaders`/`\xleaders` placement (migrated from the retired `tests/corpus/leaders` ad hoc DVI area; `umber2-alfh.3`), and `scanners-internal-quantities/` projects the internal unit probe, register fetches, glue coercion, radix forms, dimension fractions, and scaled division. The generic runner in `tex_command_stream::semantic` discovers every domain without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, and strict xfail fingerprints, then compares concise canonical-main-control projections. It lives in the library rather than the test binary so `scripts/regen-fixtures.sh --area command-semantic` drives the same code the gate does; `tools/tex-command-stream/tests/it/command_semantic.rs` holds only the assertions. Cargo tests invoke no live TeX and never read the long-document trace registry.
 
 Each case also declares a `channels` block accounting for every observable its run produces -- `events`, `status`, `terminal`, `log`, `dvi`, and `effects` -- because a projection asserts one observable and is not coverage of the run. A case with no block fails validation; the only exemption is a case whose run does not complete, and it is granted only to a case already pinned as `xfail`. **The authority rule above governs `expected` (the projection), and the same rule now governs the channel bytes too.** Every committed channel file under `<domain>/expected/` holds the pinned instrumented pdfTeX 1.40.27 oracle's own bytes, for `file` and `xfail` alike (`umber2-alfh.1`/`umber2-alfh.7`): a channel where Umber does not yet match those bytes is `xfail` with a `mismatch` pinning the first divergence and a `bug`, never a self-pin against Umber's own output. `StreamDisposition` carries no `authority` field, because there is now exactly one place a committed channel's bytes can have come from; reading a green `file` channel as canonical evidence needs no further check.
 
@@ -266,12 +266,6 @@ The cargo test runs each case against its committed DVI fixture, and
 `scripts/regen-fixtures.sh` runs the same area with the same pinned CM TFMs as
 the other DVI corpora; keep cases primitive-only.
 
-`tests/corpus/leaders` contains leader-focused DVI byte-parity fixtures for
-`\leaders`, `\cleaders`, and `\xleaders`, with committed
-`<case>.expected.dvi` reference fixtures. The cargo test runs each case
-against its committed DVI fixture, and `scripts/regen-fixtures.sh` owns fixture
-regeneration for the area.
-
 `tests/corpus/pdf` contains primitive-only minimal PDF inputs, pinned pdfTeX
 reference PDFs, exact Umber PDFs, canonical structure projections, grayscale
 PGM renders, and renderer/hash attestations. Regeneration uses pdfTeX 1.40.27
@@ -363,8 +357,8 @@ Modes:
   only the affected cases or areas.
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
-  `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`,
-  `leaders`, `pdf`, `e2e`, `bib`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+  `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`, `pdf`,
+  `e2e`, `bib`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
 - `--area bib` re-exports the pinned upstream bibliography test data directly
   from its fixed Git commit, rebuilds its SHA-256 manifest, and validates the
   hermetic `bib-engine` integration test.

@@ -800,10 +800,13 @@ strict manifest round trips and identical ordered acquisition jobs and typed
 misses without network or TeX tooling.
 
 The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
-`tests/corpus/math`, `tests/corpus/align`, and `tests/corpus/leaders` commit TeX
-source files plus `.expected.dvi` reference fixtures. The default `umber` cargo
-tests run every `.tex` case in those areas against the committed DVI fixtures
-without invoking live reference tools.
+`tests/corpus/math`, and `tests/corpus/align` commit TeX source files plus
+`.expected.dvi` reference fixtures. The default `umber` cargo tests run every
+`.tex` case in those areas against the committed DVI fixtures without invoking
+live reference tools. `tests/corpus/leaders` retired the same way
+(`umber2-alfh.3`): its six cases now live as `command-semantic/page-output`'s
+`leaders-*` minifixtures, which gained oracle-compared terminal, log, and
+effects channels the ad hoc area never had.
 
 DVI regeneration runs the live reference engine through `tools/refexec`,
 copies the pinned local CM TFMs and area support files, uses INITEX for the math

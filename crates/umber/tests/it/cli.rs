@@ -808,12 +808,6 @@ fn run_align_corpus_matches_committed_dvi() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_leaders_corpus_matches_committed_dvi() {
-    assert_dvi_area_matches_committed_fixture("leaders");
-}
-
-#[test]
 #[allow(clippy::disallowed_methods)] // host-side command execution.
 fn removed_html_font_directory_names_the_typed_replacement() {
     let setup = dvi::DviCaseSetup::new("dvi", "boxes_rules");

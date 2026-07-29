@@ -1,0 +1,32 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**leaders-stretched-shrunk.tex
+(./leaders-stretched-shrunk.tex
+Loose \hbox (badness 100) detected at line 8
+ 
+
+\hbox(3.0+0.0)x64.0, glue set 1.0 []
+
+
+Tight \hbox (badness 100) detected at line 10
+ 
+
+\hbox(3.0+0.0)x22.0, glue set - 1.0 []
+
+
+Loose \hbox (badness 100) detected at line 12
+ 
+
+\hbox(3.0+0.0)x52.0, glue set 1.0 []
+
+
+Loose \vbox (badness 100) detected at line 15
+
+\vbox(50.0+0.0)x3.0, glue set 1.0 []
+
+
+Tight \vbox (badness 100) detected at line 17
+
+\vbox(22.0+0.0)x4.0, glue set - 1.0 []
+
+[1] )
+Output written on leaders-stretched-shrunk.dvi (1 page, 572 bytes).

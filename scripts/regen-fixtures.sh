@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
-dvi_areas=(dvi page math align leaders)
+dvi_areas=(dvi page math align)
 pdf_area=pdf
 e2e_area=e2e
 bib_area=bib
@@ -48,7 +48,7 @@ usage:
 
 Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
-  DVI:         dvi page math align leaders
+  DVI:         dvi page math align
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   minifixtures: command-semantic  (per-channel contracts; no reference engine)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
@@ -198,9 +198,6 @@ test_command_for_area() {
       ;;
     align)
       printf '%s\n' 'cargo test -p umber --test it run_align_corpus_matches_committed_dvi'
-      ;;
-    leaders)
-      printf '%s\n' 'cargo test -p umber --test it run_leaders_corpus_matches_committed_dvi'
       ;;
     pdf)
       printf '%s\n' 'cargo test -p umber --test it pdf_parity'
