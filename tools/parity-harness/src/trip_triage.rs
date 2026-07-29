@@ -250,11 +250,14 @@ impl TripProjection {
         let matches = expected == actual
             || (channel == "command_events"
                 && expected.sequence == actual.sequence
-                && macro_call_operand_is_reference(
+                && (macro_call_operand_is_reference(
                     &expected.semantic,
                     &actual.semantic,
                     &self.matched_macros,
-                ));
+                ) || frozen_endwrite_operand_is_reference(
+                    &expected.semantic,
+                    &actual.semantic,
+                )));
         if channel == "command_events" {
             self.observe_meaning_mutations(&expected.semantic, &actual.semantic);
         }
@@ -345,6 +348,52 @@ fn macro_call_operand_is_reference(
         && expected_command == actual_command
         && Some(expected_control_sequence) == actual_control_sequence.as_deref()
         && expected_location == actual_location
+}
+
+/// TeX82 §§222/1369 give the inaccessible `\endwrite` stopper an
+/// `outer_call` meaning whose `equiv` is `null`. The observed operand is
+/// therefore TeX's representation of that sentinel value, while Umber owns
+/// the same empty outer macro in its immutable definition store. Neither
+/// integer is semantic identity.
+///
+/// Unlike ordinary macros, this meaning has no mutation event from which the
+/// projection can learn a definition. Its frozen name, command, and lack of
+/// source provenance identify the one allocation-insensitive case.
+fn frozen_endwrite_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    let (
+        Event::Command(CommandEvent {
+            delivery: expected_delivery,
+            command:
+                CanonicalCommand {
+                    command: expected_command,
+                    operand: CanonicalValue::Integer(_),
+                    control_sequence: expected_control_sequence,
+                    location: None,
+                },
+        }),
+        Event::Command(CommandEvent {
+            delivery: actual_delivery,
+            command:
+                CanonicalCommand {
+                    command: actual_command,
+                    operand: actual_operand,
+                    control_sequence: actual_control_sequence,
+                    location: None,
+                },
+        }),
+    ) = (expected, actual)
+    else {
+        return false;
+    };
+
+    matches!(
+        actual_operand,
+        CanonicalValue::Integer(_) | CanonicalValue::None
+    ) && expected_delivery == actual_delivery
+        && expected_command == "outer_call"
+        && actual_command == expected_command
+        && expected_control_sequence.as_deref() == Some("endwrite")
+        && actual_control_sequence == expected_control_sequence
 }
 
 fn byte_divergence(channel: &'static str, expected: &[u8], actual: &[u8]) -> Option<Divergence> {
@@ -942,6 +991,57 @@ mod tests {
                     .expect("comparison")
                     .is_none()
             );
+        }
+    }
+
+    #[test]
+    fn frozen_endwrite_null_operand_is_not_allocator_identity() {
+        // TeX82 §§222/1369: `end_write` is an inaccessible frozen
+        // `outer_call` whose `equiv` is `null`, not an ordinary definition
+        // established by a meaning mutation.
+        let command = |operand, name: &str, command: &str, location| {
+            Event::Command(CommandEvent {
+                delivery: tex_oracle::CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: command.into(),
+                    operand,
+                    control_sequence: Some(name.into()),
+                    location,
+                },
+            })
+        };
+        let expected = command(
+            CanonicalValue::Integer(-268_435_455),
+            "endwrite",
+            "outer_call",
+            None,
+        );
+        for actual_operand in [CanonicalValue::Integer(249_877), CanonicalValue::None] {
+            let actual = command(actual_operand, "endwrite", "outer_call", None);
+            assert!(frozen_endwrite_operand_is_reference(&expected, &actual));
+        }
+
+        let source_location = Some(tex_oracle::SourceLocation {
+            source: "probe.tex".into(),
+            line: 1,
+            byte: 0,
+        });
+        for actual in [
+            command(
+                CanonicalValue::Integer(249_877),
+                "other",
+                "outer_call",
+                None,
+            ),
+            command(CanonicalValue::Integer(249_877), "endwrite", "call", None),
+            command(
+                CanonicalValue::Integer(249_877),
+                "endwrite",
+                "outer_call",
+                source_location,
+            ),
+        ] {
+            assert!(!frozen_endwrite_operand_is_reference(&expected, &actual));
         }
     }
 
