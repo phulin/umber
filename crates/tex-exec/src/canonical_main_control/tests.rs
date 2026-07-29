@@ -463,6 +463,56 @@ fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfxform", UnexpandablePrimitive::PdfXForm),
+        ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
+        ("immediate", UnexpandablePrimitive::Immediate),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
+    let children = stores.freeze_node_list(&[]);
+    let list = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width,
+            height: Scaled::from_raw(2),
+            depth: Scaled::from_raw(3),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        },
+    ))]);
+    stores.set_box_reg(register, list);
+}
+
+fn install_test_form(stores: &mut Universe) {
+    install_test_hbox(stores, 0, Scaled::from_raw(11));
+    let list = stores.take_box_reg_same_level(0).expect("test form box");
+    let identity = stores.reserve_pdf_form().expect("reserve test form");
+    stores
+        .initialize_pdf_form(
+            identity,
+            list,
+            (
+                Scaled::from_raw(11),
+                Scaled::from_raw(2),
+                Scaled::from_raw(3),
+            ),
+            None,
+            None,
+            false,
+        )
+        .expect("initialize test form");
+}
+
 fn token_character_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
     stores
         .tokens(tokens)
@@ -683,6 +733,175 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
     ));
     assert!(stores.pdf_raw_objects().is_empty());
     assert!(control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
+fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
+    // pdftex.web §§1548–1549 begin both cases with `check_pdfoutput`.
+    // `\pdfxform` therefore preserves attr/resources/the register and its box,
+    // while `\pdfrefxform` preserves its integer before lookup and whatsit
+    // insertion. The two commands are one PDF-output-preflight family.
+    let mut create_stores = Universe::new_with_plain_catcodes();
+    install_test_hbox(&mut create_stores, 7, Scaled::from_raw(17));
+    let mut create = pdftex_form_control(&mut create_stores);
+    register_source(
+        &mut create,
+        br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
+    );
+    let state_before = create_stores.testing_state_hash();
+
+    assert!(matches!(
+        create.step(&mut create_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+    ));
+    assert_eq!(create_stores.testing_state_hash(), state_before);
+    assert!(create_stores.box_reg(7).is_some());
+    assert!(create_stores.pdf_forms().next().is_none());
+    assert_eq!(create_stores.pdf_last_form(), 0);
+    assert!(create.modes.current_list().nodes().is_empty());
+
+    create_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        create
+            .step(&mut create_stores)
+            .expect("PDF retry preserves all form options and the register"),
+        MainControlStep::Continue
+    );
+    assert!(create_stores.box_reg(7).is_none());
+    let form = create_stores
+        .pdf_form(1)
+        .expect("retried form is allocated");
+    assert_eq!(form.width(), Scaled::from_raw(17));
+    assert_eq!(
+        token_character_text(
+            &create_stores,
+            form.attr().expect("form attribute survives retry")
+        ),
+        "/Subtype /Form"
+    );
+    assert_eq!(
+        token_character_text(
+            &create_stores,
+            form.resources().expect("form resources survive retry")
+        ),
+        "/ProcSet [/PDF]"
+    );
+
+    let mut reference_stores = Universe::new_with_plain_catcodes();
+    install_test_form(&mut reference_stores);
+    let mut reference = pdftex_form_control(&mut reference_stores);
+    reference.modes.push(Mode::Math);
+    register_source(&mut reference, br"\pdfrefxform 1");
+    let state_before = reference_stores.testing_state_hash();
+
+    assert!(matches!(
+        reference.step(&mut reference_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
+    ));
+    assert_eq!(reference_stores.testing_state_hash(), state_before);
+    assert!(reference.modes.current_list().nodes().is_empty());
+
+    reference_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        reference
+            .step(&mut reference_stores)
+            .expect("PDF retry preserves the reference operand in math mode"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        reference.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfRefXForm { object: 1, .. })]
+    ));
+}
+
+#[test]
+fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
+    // pdftex.web §§1548 and 1623 perform `\immediate` lookahead, then enter
+    // the same `\pdfxform` case whose first operation is `check_pdfoutput`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    install_test_hbox(&mut stores, 9, Scaled::from_raw(19));
+    let mut control = pdftex_form_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\immediate\pdfxform attr{/A 1} resources{/R 2} 9",
+    );
+    let state_before = stores.testing_state_hash();
+
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(stores.box_reg(9).is_some());
+    assert!(stores.pdf_forms().next().is_none());
+
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("immediate PDF retry preserves every form operand"),
+        MainControlStep::Continue
+    );
+    assert!(stores.box_reg(9).is_none());
+    let form = stores.pdf_form(1).expect("immediate form is allocated");
+    assert!(form.immediate());
+    assert_eq!(form.width(), Scaled::from_raw(19));
+}
+
+#[test]
+fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
+    // §§1548–1549 put DVI rejection before even the scans. On PDF retry,
+    // e-TeX's `scan_register_num` recovers an invalid selector to zero before
+    // §1548 allocates the form and diagnoses the resulting void box; §1549
+    // scans an integer and then diagnoses a missing form object.
+    let mut invalid_register_stores = Universe::new_with_plain_catcodes();
+    let mut invalid_register = pdftex_form_control(&mut invalid_register_stores);
+    register_source(&mut invalid_register, br"\pdfxform 40000");
+    let state_before = invalid_register_stores.testing_state_hash();
+
+    assert!(matches!(
+        invalid_register.step(&mut invalid_register_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+    ));
+    assert_eq!(invalid_register_stores.testing_state_hash(), state_before);
+    assert!(terminal_text(&invalid_register_stores).is_empty());
+    assert!(invalid_register_stores.pdf_forms().next().is_none());
+
+    invalid_register_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        invalid_register.step(&mut invalid_register_stores),
+        Err(ExecError::PdfXFormVoidBox)
+    ));
+    assert!(invalid_register_stores.pdf_forms().next().is_none());
+
+    let mut void_stores = Universe::new_with_plain_catcodes();
+    let mut void = pdftex_form_control(&mut void_stores);
+    register_source(&mut void, br"\pdfxform 12");
+    assert!(matches!(
+        void.step(&mut void_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+    ));
+    void_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        void.step(&mut void_stores),
+        Err(ExecError::PdfXFormVoidBox)
+    ));
+
+    let mut missing_stores = Universe::new_with_plain_catcodes();
+    let mut missing = pdftex_form_control(&mut missing_stores);
+    missing.modes.push(Mode::RestrictedHorizontal);
+    register_source(&mut missing, br"\pdfrefxform 99");
+    assert!(matches!(
+        missing.step(&mut missing_stores),
+        Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
+    ));
+    assert!(missing.modes.current_list().nodes().is_empty());
+    missing_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    assert!(matches!(
+        missing.step(&mut missing_stores),
+        Err(ExecError::PdfReferencedObjectNotFound)
+    ));
+    assert!(missing.modes.current_list().nodes().is_empty());
 }
 
 fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {

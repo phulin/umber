@@ -230,7 +230,7 @@ pub enum PdfFormRequest {
     Create {
         attr: Option<ScannedBalancedText>,
         resources: Option<ScannedBalancedText>,
-        box_register: i32,
+        box_register: u16,
     },
     Reference {
         object: i32,
@@ -812,10 +812,11 @@ pub enum InputStreamRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImmediateExtension {
     Continue,
-    /// pdftex.web §§1535, 1542, and 1621 reject `\\immediate\\pdfobj` after
-    /// the recursive expanded-command lookahead but before scanning any
-    /// `\\pdfobj` option or operand.
-    PdfObjectInDviMode,
+    /// The recursive expanded-command lookahead found a PDF-only extension,
+    /// whose own pdftex.web case runs `check_pdfoutput` before every operand
+    /// scan. The stomach turns this typed command identity into the canonical
+    /// DVI-mode error without giving the scanner the diagnostic channel.
+    PdfExtensionInDviMode(UnexpandablePrimitive),
     OpenOut {
         stream: i32,
         file_name: ScannedFileName,
@@ -1347,7 +1348,7 @@ impl CommandProcessor<'_> {
         Ok(PdfFormRequest::Create {
             attr,
             resources,
-            box_register: self.scan_integer()?.value,
+            box_register: self.scan_extended_register_index()?,
         })
     }
 
@@ -2140,7 +2141,9 @@ impl CommandProcessor<'_> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
                 if !pdf_output_enabled {
-                    Ok(ImmediateExtension::PdfObjectInDviMode)
+                    Ok(ImmediateExtension::PdfExtensionInDviMode(
+                        UnexpandablePrimitive::PdfObject,
+                    ))
                 } else {
                     Ok(ImmediateExtension::PdfObject(
                         self.scan_pdf_object_request()?,
@@ -2148,9 +2151,15 @@ impl CommandProcessor<'_> {
                 }
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm) => {
-                Ok(ImmediateExtension::PdfForm(
-                    self.scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)?,
-                ))
+                if !pdf_output_enabled {
+                    Ok(ImmediateExtension::PdfExtensionInDviMode(
+                        UnexpandablePrimitive::PdfXForm,
+                    ))
+                } else {
+                    Ok(ImmediateExtension::PdfForm(
+                        self.scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)?,
+                    ))
+                }
             }
             _ => {
                 self.back_input(command)?;

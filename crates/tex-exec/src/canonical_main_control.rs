@@ -5485,11 +5485,24 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfXForm | UnexpandablePrimitive::PdfRefXForm),
-        ) => Ok(ScannedStep::PdfForm(
-            processor
-                .scan_pdf_form_request(primitive)
-                .map_err(command_error)?,
-        )),
+        ) => {
+            // pdftex.web §§1548–1549 call `check_pdfoutput` before form-object
+            // allocation, either option scan, the box-register/integer scan,
+            // object validation, whatsit allocation, or list mutation.
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                let name = match primitive {
+                    UnexpandablePrimitive::PdfXForm => "pdfxform",
+                    UnexpandablePrimitive::PdfRefXForm => "pdfrefxform",
+                    _ => unreachable!(),
+                };
+                return Err(ExecError::PdfExtensionInDviMode(name));
+            }
+            Ok(ScannedStep::PdfForm(
+                processor
+                    .scan_pdf_form_request(primitive)
+                    .map_err(command_error)?,
+            ))
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfInfo
             | UnexpandablePrimitive::PdfCatalog
@@ -7587,14 +7600,12 @@ fn apply_pdf_form_request(
             resources,
             box_register,
         } => {
-            let index = u16::try_from(box_register)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(box_register))?;
             // pdfTeX allocates the form identity before it consumes the box.
             let identity = stores
                 .reserve_pdf_form()
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             let list = stores
-                .take_box_reg_same_level(index)
+                .take_box_reg_same_level(box_register)
                 .ok_or(ExecError::PdfXFormVoidBox)?;
             let dimensions = match stores.nodes(list).first().map(|node| node.to_owned()) {
                 Some(Node::HList(node) | Node::VList(node)) => {
@@ -10542,8 +10553,13 @@ fn apply_scanned_step(
         ScannedStep::ImmediateExtension(extension) => {
             match extension {
                 ImmediateExtension::Continue => {}
-                ImmediateExtension::PdfObjectInDviMode => {
-                    return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
+                ImmediateExtension::PdfExtensionInDviMode(primitive) => {
+                    let name = match primitive {
+                        UnexpandablePrimitive::PdfObject => "pdfobj",
+                        UnexpandablePrimitive::PdfXForm => "pdfxform",
+                        _ => unreachable!("only immediate PDF extensions reach this result"),
+                    };
+                    return Err(ExecError::PdfExtensionInDviMode(name));
                 }
                 ImmediateExtension::OpenOut { stream, file_name } => {
                     let stream = replay_stream_slot(stream, stores);

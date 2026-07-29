@@ -134,6 +134,18 @@ object-number assignment. A DVI failure therefore preserves the integer
 operand and aggregate state for transactional retry, and takes precedence
 over the missing-reference error that a PDF-mode retry can then report.
 
+pdftex.web §§1548–1549 make `\pdfxform` and `\pdfrefxform` one PDF-only,
+any-mode form family. Their shared output check precedes form-object
+allocation, every `attr`/`resources` option and box-register scan, the
+reference integer and object lookup, whatsit allocation, and current-list
+mutation. Section 1548 then allocates the form identity before scanning the
+create operands and uses e-TeX's recovered `scan_register_num`; section 1549
+scans and validates the referenced form before appending its whatsit. Section
+1623's `\immediate\pdfxform` enters that same create case after expanded
+lookahead. A DVI failure therefore preserves every operand, box, object/form
+identity, and list for transactional retry, and takes precedence over an
+invalid register, void box, missing form object, or any-mode list insertion.
+
 pdftex.web §§1524, 1556, 1558, 1560, and 1561 make `\pdfannot`,
 `\pdfstartlink`, and `\pdfendlink` PDF-only extensions. Each checks
 `\pdfoutput` before allocation or operand scanning. For the two link commands,

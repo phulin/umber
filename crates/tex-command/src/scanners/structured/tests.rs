@@ -1969,7 +1969,10 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
             .scan_immediate_extension(false)
             .expect("DVI result needs no operand scan")
     };
-    assert_eq!(result, ImmediateExtension::PdfObjectInDviMode);
+    assert_eq!(
+        result,
+        ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfObject)
+    );
     let next = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor
@@ -2005,6 +2008,78 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
             ..
         })
     ));
+}
+
+#[test]
+fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
+    // pdftex.web §§1548 and 1623: `\immediate` performs its expanded command
+    // lookahead, then the recursive `\pdfxform` case checks output mode before
+    // allocating a form or scanning attr/resources/the box register.
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let pdfxform = universe.intern("pdfxform").symbol();
+    universe.set_meaning(
+        pdfxform,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm),
+    );
+    push(
+        &mut command,
+        [
+            vec![Token::Cs(pdfxform)],
+            text_tokens(" attr{x} resources{y} 37"),
+        ]
+        .concat(),
+    );
+    let snapshot = command.snapshot();
+
+    let result = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(false)
+            .expect("DVI result needs no form operand scan")
+    };
+    assert_eq!(
+        result,
+        ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfXForm)
+    );
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("operand input remains valid")
+            .expect("space after pdfxform remains unconsumed")
+            .meaning()
+    };
+    assert!(matches!(
+        next,
+        Meaning::CharToken {
+            cat: Catcode::Space,
+            ..
+        }
+    ));
+
+    command
+        .rollback(snapshot)
+        .expect("scanner attempt rolls back");
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_immediate_extension(true)
+            .expect("PDF retry scans the preserved form request")
+    };
+    assert!(
+        matches!(
+            &request,
+            ImmediateExtension::PdfForm(PdfFormRequest::Create {
+                attr: Some(_),
+                resources: Some(_),
+                box_register: 37,
+            })
+        ),
+        "{request:?}"
+    );
 }
 
 #[test]
