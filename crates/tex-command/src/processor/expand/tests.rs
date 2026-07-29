@@ -2127,3 +2127,123 @@ fn converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion() {
         ]
     );
 }
+
+/// TeX82 §§471-472 route `font_name_code` through §577's
+/// `scan_font_ident`, so an ordinary font control sequence is converted
+/// directly and the enclosing expanded delivery resumes after it once.
+#[test]
+fn fontname_scans_a_valid_font_identifier() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let fontname = install_expandable(&mut universe, "fontname", ExpandablePrimitive::FontName);
+    let identifier = universe.intern("selectedfont").symbol();
+    let font = universe
+        .try_copy_font_with_identifier(tex_state::font::NULL_FONT, identifier)
+        .expect("font identity copies");
+    universe.set_meaning(identifier, Meaning::Font(font));
+    let expected = universe.font_name(font).to_owned();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(fontname)),
+            traced(Token::Cs(identifier)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert_eq!(rendered(&mut processor), expected);
+    assert_eq!(processor.command.expansion.cumulative_expansions, 1);
+}
+
+/// TeX82 §577 reports one missing-font-identifier error, backs up an invalid
+/// command, and selects `nullfont`. §§467/472 then insert the rendered
+/// null-font name before the rejected command is reconsidered. A following
+/// macro proves that §380's enclosing expansion loop resumes once rather than
+/// starting a second driver.
+#[test]
+fn fontname_invalid_character_and_control_recover_once_then_resume_expansion() {
+    for invalid_control in [false, true] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let fontname = install_expandable(&mut universe, "fontname", ExpandablePrimitive::FontName);
+        let continuation = install_macro(
+            &mut universe,
+            "continue",
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Other,
+            },
+        );
+        let invalid = if invalid_control {
+            let relax = universe.intern("relax").symbol();
+            universe.set_meaning(relax, Meaning::Relax);
+            Token::Cs(relax)
+        } else {
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        };
+        let null_font_name = universe.font_name(tex_state::font::NULL_FONT).to_owned();
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(fontname)),
+                traced(invalid),
+                traced(Token::Cs(continuation)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let delivered = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let mut delivered = Vec::new();
+            while let Some(command) = processor.get_x_token().expect("recovery is finite") {
+                delivered.push(command.spelling().semantic_token());
+            }
+            assert_eq!(processor.command.expansion.cumulative_expansions, 2);
+            delivered
+        };
+
+        let mut expected = null_font_name
+            .chars()
+            .map(|ch| Token::Char {
+                ch,
+                cat: if ch == ' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                },
+            })
+            .collect::<Vec<_>>();
+        expected.push(invalid);
+        expected.push(Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        });
+        assert_eq!(delivered, expected);
+
+        let diagnostics = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Diagnostic(diagnostic)
+                    if diagnostic.diagnostic == "missing_font_identifier" =>
+                {
+                    Some(diagnostic)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].arguments.is_empty());
+    }
+}

@@ -49,6 +49,9 @@ impl CommandProcessor<'_> {
                 Ok(self.state.math_family_font(size.into(), family.family))
             }
             _ => {
+                // §577 reports before §327's `back_error` backs up the
+                // rejected command. The fixed diagnostic has no operand.
+                self.observe_error_diagnostic("missing_font_identifier");
                 // `scan_font_ident` backs up a non-font command. Its normal
                 // main-control delivery is therefore still command-owned.
                 self.back_input(command)?;

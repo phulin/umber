@@ -461,14 +461,7 @@
         "diagnostic:error:missing_font_identifier:"
       ],
       "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-johp.254",
-        "mismatch": {
-          "index": 0,
-          "kind": "execution",
-          "expected": "diagnostic:error:missing_font_identifier:",
-          "actual": "main-control step: Command(InputInvariant)"
-        }
+        "kind": "pass"
       }
     },
     {

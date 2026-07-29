@@ -674,11 +674,14 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// TeX82 §471's `font_name_code: scan_font_ident` and §472's
+    /// `print(font_name[cur_val])`.
+    ///
+    /// `\fontname` owns no operand reading of its own: §577's
+    /// `scan_font_ident` is the only routine that turns a command into a
+    /// font, including its invalid-identifier recovery to `nullfont`.
     fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        let Meaning::Font(font) = target.meaning() else {
-            return Err(CommandError::input_invariant());
-        };
+        let font = self.scan_font_selector()?;
         self.push_rendered_text(&self.state.font_name(font), opener.origin());
         Ok(())
     }
