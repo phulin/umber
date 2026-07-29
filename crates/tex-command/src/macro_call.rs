@@ -47,6 +47,13 @@ pub(crate) struct MacroArguments {
     pub(crate) ranges: [Option<MacroArgumentRange>; 9],
 }
 
+/// Exhaustive result of TeX82's `macro_call`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum MacroCallOutcome {
+    Activated,
+    PrefixMismatchRecovered,
+}
+
 /// Incremental construction of one canonical macro activation.
 ///
 /// The scalar matcher completes arguments in definition order. Each completed
@@ -185,7 +192,7 @@ impl CommandProcessor<'_> {
     pub(crate) fn macro_call(
         &mut self,
         call: crate::CurrentCommand,
-    ) -> Result<MacroArguments, CommandError> {
+    ) -> Result<MacroCallOutcome, CommandError> {
         let Meaning::Macro { definition, .. } = call.meaning() else {
             return Err(CommandError::input_invariant());
         };
@@ -225,6 +232,19 @@ impl CommandProcessor<'_> {
         self.eof_recovered_while_matching = false;
         let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
             Ok(arguments) => arguments,
+            Err(CommandError::MacroPrefixMismatch) => {
+                // TeX82 §391 reports the mismatch through `error` and returns
+                // from `macro_call`; the mismatching token stays consumed and
+                // no replacement text is installed.
+                self.command.semantic_diagnostics.push(
+                    crate::CommandSemanticDiagnostic::MacroPrefixMismatch(macro_name),
+                );
+                self.observe_command_diagnostic("macro_prefix_mismatch", &call);
+                if let Some((prior, status)) = prior {
+                    self.restore_scanner_status_with_observation(status, prior);
+                }
+                return Ok(MacroCallOutcome::PrefixMismatchRecovered);
+            }
             Err(error) => {
                 if let Some((prior, status)) = prior {
                     self.restore_scanner_status_with_observation(status, prior);
@@ -275,7 +295,7 @@ impl CommandProcessor<'_> {
         if let Some((prior, status)) = prior {
             self.restore_scanner_status_with_observation(status, prior);
         }
-        Ok(arguments)
+        Ok(MacroCallOutcome::Activated)
     }
 
     fn macro_call_scalar(

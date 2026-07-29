@@ -39,6 +39,7 @@
 //!   printed and the prompt repeats.
 
 use crate::env::banks::IntParam;
+use crate::interner::ControlSequenceKind;
 use crate::scaled::Scaled;
 use crate::universe::{InteractionMode, Universe};
 use crate::world::PrintSink;
@@ -204,6 +205,19 @@ impl<'a> Printer<'a> {
         self.print(name)
     }
 
+    /// TeX82 §263's `sprint_cs`.
+    ///
+    /// Active-character control sequences print as their character, escaped
+    /// names use the live `\escapechar`, and §222's `null_cs` is the empty
+    /// named spelling represented by `\csname\endcsname`.
+    pub fn sprint_cs(&mut self, kind: ControlSequenceKind, name: &str) -> &mut Self {
+        match (kind, name) {
+            (ControlSequenceKind::ActiveCharacter, _) => self.print(name),
+            (ControlSequenceKind::Named, "") => self.print_esc("csname").print_esc("endcsname"),
+            (ControlSequenceKind::Named, _) => self.print_esc(name),
+        }
+    }
+
     /// tex.web §54's `term_offset`.
     #[must_use]
     pub fn terminal_offset(&self) -> usize {
@@ -294,6 +308,12 @@ impl<'a> ErrorReport<'a> {
     /// tex.web §63's `print_esc`.
     pub fn print_esc(&mut self, name: &str) -> &mut Self {
         self.printer.print_esc(name);
+        self
+    }
+
+    /// TeX82 §263's typed control-sequence renderer.
+    pub fn sprint_cs(&mut self, kind: ControlSequenceKind, name: &str) -> &mut Self {
+        self.printer.sprint_cs(kind, name);
         self
     }
 

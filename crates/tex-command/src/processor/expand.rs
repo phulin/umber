@@ -503,7 +503,10 @@ impl CommandProcessor<'_> {
                 | ExpandablePrimitive::Fi),
             ) => self.expand_conditional_delimiter(command, primitive),
             Meaning::Macro { .. } => {
-                self.macro_call(command)?;
+                match self.macro_call(command)? {
+                    crate::macro_call::MacroCallOutcome::Activated => {}
+                    crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
+                }
                 Ok(())
             }
             // TeX82 §375's `end_template` case replaces the inaccessible

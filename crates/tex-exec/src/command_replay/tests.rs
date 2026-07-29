@@ -156,6 +156,27 @@ fn terminal_text(universe: &Universe) -> String {
     committed + &pending
 }
 
+fn transcript_text(universe: &Universe) -> String {
+    let committed = universe
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::TerminalAndLog | tex_state::PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    committed + &pending
+}
+
 fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     universe
@@ -2175,35 +2196,147 @@ fn canonical_definition_recovery_keeps_target_and_parameter_tokens_command_owned
 }
 
 #[test]
-fn canonical_macro_prefix_mismatch_surfaces_its_own_command_error() {
-    // `\foo` requires the literal text `XY` before its (parameterless) body,
-    // but the invocation supplies `AB`. `CommandError::MacroPrefixMismatch`
-    // is not recovered anywhere in `tex-command`'s expansion loop (unlike
-    // `ParagraphInMacroArgument`/`OuterInMacroArgument`, which are absorbed
-    // in `processor/expand.rs`), so it must reach `tex-exec` as its own
-    // named `ExecError::Command` variant rather than collapsing into a
-    // generic `ExecError::MissingToken`.
+fn canonical_macro_prefix_mismatch_renders_every_control_sequence_kind_and_recovers_once() {
+    // TeX82 §§262–263, 391: `sprint_cs` distinguishes named, active, and
+    // null control sequences. The mismatching `A` is consumed, the body is
+    // never pushed, and the following assignment executes.
+    const HELP: [&str; 4] = [
+        "If you say, e.g., `\\def\\a1{...}', then you must always",
+        "put `1' after `\\a', since control sequence names are",
+        "made up of letters only. The macro here has not been",
+        "followed by the required stuff, so I'm ignoring it.",
+    ];
+    let cases: [(&[u8], &str); 3] = [
+        (
+            br"\def\foo X{\count7=1}\foo A\count7=9\end",
+            "Use of \\foo doesn't match its definition",
+        ),
+        (
+            br"\catcode126=13 \def~X{\count7=1}~A\count7=9\end",
+            "Use of ~ doesn't match its definition",
+        ),
+        (
+            br"\expandafter\def\csname\endcsname X{\count7=1}\csname\endcsname A\count7=9\end",
+            "Use of \\csname\\endcsname doesn't match its definition",
+        ),
+    ];
+
+    for (source, message) in cases {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+        loop {
+            match control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("canonical mismatch recovery executes")
+            {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
+        }
+
+        assert_eq!(universe.count(7), 9, "body did not activate for {message}");
+        for output in [terminal_text(&universe), transcript_text(&universe)] {
+            assert_eq!(output.matches(message).count(), 1, "{output}");
+            let message_at = output.find(message).expect("exact §391 message");
+            let mut prior = message_at;
+            for line in HELP {
+                let at = output.find(line).expect("exact §391 help");
+                assert!(prior < at, "message/help order in {output}");
+                prior = at;
+            }
+        }
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|observation| matches!(
+                    observation,
+                    CommandObservation::Diagnostic(diagnostic)
+                        if diagnostic.diagnostic == "macro_prefix_mismatch"
+                ))
+                .count(),
+            1
+        );
+        assert!(observations.0.iter().all(|observation| !matches!(
+            observation,
+            CommandObservation::Macro(record) if record.activation
+        )));
+        assert!(observations.0.iter().all(|observation| !matches!(
+            observation,
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Push
+                    && record.reason == InputReason::Macro
+        )));
+    }
+}
+
+#[test]
+fn macro_prefix_mismatch_diagnostic_is_atomic_across_input_resource_retry() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\def\foo XY{Z}\foo AB");
+    register_source(
+        &mut control,
+        br"\def\foo X{\count7=1}\foo A\input child\count7=9\end",
+    );
+    let mut observations = ObservationRecorder::default();
 
-    let error = loop {
-        match control.step(&mut universe) {
-            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
-                panic!("expected the mismatched macro invocation to fail")
-            }
-            Ok(MainControlStep::Continue) => {}
-            Err(error) => break error,
-        }
-    };
-
+    assert!(matches!(
+        control
+            .advance_with_observer(&mut universe, &mut observations)
+            .expect("definition executes"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    let committed_before_retry = observations.0.len();
+    let suspended = control
+        .advance_with_observer(&mut universe, &mut observations)
+        .expect("missing input suspends");
     assert!(
-        matches!(error, ExecError::Command(CommandError::MacroPrefixMismatch)),
-        "expected ExecError::Command(CommandError::MacroPrefixMismatch), got {error:?}"
+        matches!(
+            suspended,
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name })
+                if name == "child" || name == "child.tex"
+        ),
+        "{suspended:?}"
     );
     assert_eq!(
-        error.to_string(),
-        "macro invocation does not match its definition"
+        observations.0.len(),
+        committed_before_retry,
+        "rolled-back mismatch leaked observer records"
+    );
+    assert!(
+        !terminal_text(&universe).contains("doesn't match its definition"),
+        "rolled-back mismatch leaked output"
+    );
+
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b""[..])),
+    );
+    assert!(matches!(
+        control
+            .advance_with_observer(&mut universe, &mut observations)
+            .expect("resource retry commits"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    run_to_end(&mut control, &mut universe);
+
+    let message = "Use of \\foo doesn't match its definition";
+    assert_eq!(terminal_text(&universe).matches(message).count(), 1);
+    assert_eq!(transcript_text(&universe).matches(message).count(), 1);
+    assert_eq!(universe.count(7), 9);
+    assert_eq!(
+        observations
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Diagnostic(diagnostic)
+                    if diagnostic.diagnostic == "macro_prefix_mismatch"
+            ))
+            .count(),
+        1
     );
 }
 

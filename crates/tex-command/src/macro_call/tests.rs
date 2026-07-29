@@ -5,8 +5,8 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    MacroArgumentBuildError, MacroArgumentBuilder, MacroArguments, MacroParameterEscape,
-    ParameterState,
+    MacroArgumentBuildError, MacroArgumentBuilder, MacroArguments, MacroCallOutcome,
+    MacroParameterEscape, ParameterState,
 };
 use crate::CommandState;
 use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
@@ -153,12 +153,12 @@ fn activation_parent_tracks_the_live_nested_frame() {
     assert_eq!(parameters.parent_invocation(), OriginId::UNKNOWN);
 }
 
-fn run_macro(
+fn run_macro_call(
     source: &[u8],
     flags: MeaningFlags,
     parameters: &[Token],
     install_outer: bool,
-) -> Result<(CommandState, MacroArguments), CommandError> {
+) -> Result<(CommandState, MacroCallOutcome), CommandError> {
     let mut command = CommandState::default();
     let source = command
         .register_source(SourceRegistration::new(
@@ -207,6 +207,27 @@ fn run_macro(
         processor.macro_call(call)
     };
     result.map(|arguments| (command, arguments))
+}
+
+fn run_macro(
+    source: &[u8],
+    flags: MeaningFlags,
+    parameters: &[Token],
+    install_outer: bool,
+) -> Result<(CommandState, MacroArguments), CommandError> {
+    run_macro_call(source, flags, parameters, install_outer).and_then(|(command, outcome)| {
+        let MacroCallOutcome::Activated = outcome else {
+            return Err(CommandError::input_invariant());
+        };
+        let arguments = command
+            .parameters
+            .activations
+            .last()
+            .ok_or(CommandError::input_invariant())?
+            .arguments
+            .clone();
+        Ok((command, arguments))
+    })
 }
 
 #[test]
@@ -351,22 +372,27 @@ fn matching_transition_retains_the_enclosing_definition_status() {
 }
 
 #[test]
-fn scalar_matcher_rejects_compulsory_prefix_mismatch() {
-    assert_eq!(
-        run_macro(
-            b"\\m(x)",
-            MeaningFlags::EMPTY,
-            &[
-                Token::Char {
-                    ch: '[',
-                    cat: Catcode::Other
-                },
-                Token::param(1),
-            ],
-            false,
-        ),
-        Err(CommandError::MacroPrefixMismatch)
-    );
+fn scalar_matcher_reports_compulsory_prefix_mismatch_without_activating_body() {
+    let (mut command, outcome) = run_macro_call(
+        b"\\m(x)",
+        MeaningFlags::EMPTY,
+        &[
+            Token::Char {
+                ch: '[',
+                cat: Catcode::Other,
+            },
+            Token::param(1),
+        ],
+        false,
+    )
+    .expect("TeX82 §391 recovers after reporting the mismatch");
+
+    assert_eq!(outcome, MacroCallOutcome::PrefixMismatchRecovered);
+    assert!(command.parameters.activations.is_empty());
+    assert!(matches!(
+        command.take_semantic_diagnostics().as_slice(),
+        [crate::CommandSemanticDiagnostic::MacroPrefixMismatch(_)]
+    ));
 }
 
 #[test]
@@ -644,7 +670,16 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
             .get_next()
             .expect("macro call delivery")
             .expect("macro token");
-        let arguments = processor.macro_call(call).expect("macro matches");
+        let MacroCallOutcome::Activated = processor.macro_call(call).expect("macro matches") else {
+            panic!("matching macro must activate");
+        };
+        let arguments = &processor
+            .command
+            .parameters
+            .activations
+            .last()
+            .expect("activation")
+            .arguments;
         assert_eq!(arguments.buffer.len(), 1);
         assert_eq!(processor.command.parameters.activations.len(), 1);
         assert!(matches!(

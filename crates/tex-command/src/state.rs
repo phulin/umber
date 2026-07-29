@@ -76,6 +76,8 @@ pub struct CommandState {
 pub enum CommandSemanticDiagnostic {
     /// TeX82 §370's undefined-control-sequence expansion error.
     UndefinedControlSequence,
+    /// TeX82 §391's compulsory macro-parameter-text mismatch.
+    MacroPrefixMismatch(tex_state::interner::Symbol),
     /// TeX82 §415's missing-number recovery, deferred only when an earlier
     /// command-owned diagnostic is already waiting for executor output.
     MissingNumber,

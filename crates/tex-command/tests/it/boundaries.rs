@@ -177,7 +177,9 @@ fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
         1,
         "production must retain exactly one ordinary expanded-command loop"
     );
-    assert!(expansion.contains("self.macro_call(command)?;"));
+    assert!(expansion.contains("match self.macro_call(command)?"));
+    assert!(expansion.contains("MacroCallOutcome::Activated"));
+    assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
     assert!(expansion.contains("fn expand_noexpand("));
     assert!(expansion.contains("fn expand_expandafter("));
     for forbidden in ["Dispatch::Push", "Dispatch::PushTransient", "ExpansionMode"] {

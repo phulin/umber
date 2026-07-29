@@ -154,6 +154,21 @@ fn print_esc_uses_escapechar_and_omits_it_when_out_of_range() {
 }
 
 #[test]
+fn sprint_cs_distinguishes_named_active_and_null_control_sequences() {
+    use crate::interner::ControlSequenceKind;
+
+    let mut universe = Universe::new();
+    let mut printer = Printer::new(&mut universe, Selector::TermAndLog);
+    printer
+        .sprint_cs(ControlSequenceKind::Named, "foo")
+        .print_char('|')
+        .sprint_cs(ControlSequenceKind::ActiveCharacter, "~")
+        .print_char('|')
+        .sprint_cs(ControlSequenceKind::Named, "");
+    assert_eq!(terminal_text(&universe), "\\foo|~|\\csname\\endcsname");
+}
+
+#[test]
 fn error_channel_counts_scrolled_errors_and_records_the_long_help() {
     let mut channel = ErrorChannel::default();
     assert_eq!(channel.error_count(), 0);
