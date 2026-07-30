@@ -629,6 +629,15 @@ impl CanonicalMainControl {
         );
     }
 
+    /// Prints and accounts for the retained driver's already-open root input.
+    ///
+    /// This is TeX82 §537's opening boundary. Keeping its `open_parens`
+    /// mutation beside the print lets §1335 close an input abandoned by
+    /// `\end` or `\dump`, just as it closes command-opened inputs.
+    pub fn open_startup_input(&mut self, stores: &mut Universe, name: &str) {
+        crate::job::open_startup_input(&mut self.job, stores, name);
+    }
+
     /// Declares that this session was restored from a dumped format, so
     /// [`Self::begin_job`] frames it as `-fmt=<name>` rather than as INITEX.
     ///

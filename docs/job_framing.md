@@ -86,7 +86,11 @@ placed:
   open prints no paren, and a committed one cannot be dropped.
 - **`tex-exec`** gains `job.rs`, which owns the banner, the `**` line, the
   `open_parens` count, and the §1332 tail, and drains the command layer's
-  queue once per step.
+  queue once per step. A retained `CanonicalEngineSession` has already opened
+  its root before command execution, so it routes that §537 opening directly
+  through the same job owner: the terminal-only startup print and
+  `open_parens` mutation remain one operation, and §1335 can close an
+  unconsumed root with `␣)`.
 
 ## Why the banner says pdfTeX
 

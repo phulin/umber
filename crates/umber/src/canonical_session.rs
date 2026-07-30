@@ -423,9 +423,8 @@ impl<'a> CanonicalEngineSession<'a> {
             .startup_input_name
             .as_deref()
             .expect("a started canonical session has a registered root");
-        Printer::new(self.stores, Selector::TermOnly)
-            .print("(")
-            .print(startup_input_name);
+        self.control
+            .open_startup_input(self.stores, startup_input_name);
     }
 
     /// Observed variant of [`Self::advance_until_waiting`].
@@ -925,7 +924,7 @@ mod tests {
                 .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
                 .expect("observed run completes");
 
-            assert_eq!(run.terminal_text, "(observer observed");
+            assert_eq!(run.terminal_text, "(observer observed )");
             assert!(
                 observations
                     .0
@@ -1305,9 +1304,9 @@ mod tests {
                 .expect("bounded root completes");
 
             let expected_terminal = if initex {
-                "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)\n(./trip.tex"
+                "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)\n(./trip.tex )"
             } else {
-                "(./trip.tex"
+                "(./trip.tex )"
             };
             let (terminal, log) = transcript_channels(session.stores());
             assert_eq!(
@@ -1315,8 +1314,8 @@ mod tests {
                 "TeX82 §§1332, 537 startup framing, initex={initex}"
             );
             assert_eq!(
-                log, "",
-                "§537 runs before the transcript opens, initex={initex}"
+                log, " )",
+                "§537 opens before the transcript, but §1335 closes after it, initex={initex}"
             );
         }
     }
@@ -1546,8 +1545,9 @@ mod tests {
         // the first left `term_offset` nonzero. §537/§362 additionally
         // bracket the root and `\input child` in parens around their own
         // messages, each named as opened the way §537's `a_make_name_string`
-        // does: the startup input opening supplies `(job.tex`.
-        assert_eq!(run.terminal_text, "(job.tex once (child.tex child)");
+        // does: the startup input opening supplies `(job.tex`, and §1335
+        // closes that still-open root after the child reached ordinary EOF.
+        assert_eq!(run.terminal_text, "(job.tex once (child.tex child) )");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));

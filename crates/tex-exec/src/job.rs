@@ -302,6 +302,19 @@ pub(crate) fn close_open_parens(job: &mut JobFraming, stores: &mut Universe) {
     }
 }
 
+/// Records and prints the retained session's already-opened root source.
+///
+/// The retained driver selects the root before canonical execution starts,
+/// so this opening cannot arrive through [`FileFramingEvent`]. It is still
+/// TeX82 §537's `print_char("("); incr(open_parens)`: §1335 must therefore
+/// see it when `\end` or `\dump` abandons the still-open root.
+pub(crate) fn open_startup_input(job: &mut JobFraming, stores: &mut Universe, name: &str) {
+    Printer::new(stores, Selector::TermOnly)
+        .print_char('(')
+        .print(name);
+    job.open_parens = job.open_parens.saturating_add(1);
+}
+
 /// tex.web §1335's "(see the transcript file for additional information)"
 /// note.
 ///

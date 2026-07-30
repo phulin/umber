@@ -267,6 +267,21 @@ fn close_open_parens_is_a_no_op_when_nothing_is_open() {
     assert!(terminal_text(&stores).is_empty());
 }
 
+#[test]
+fn retained_startup_input_is_closed_by_final_cleanup() {
+    // TeX82 §§537/1335: a retained driver opens the root outside the command
+    // input queue, but `open_parens` must still make an abandoned root close.
+    let mut stores = Universe::new();
+    let mut job = JobFraming::default();
+
+    open_startup_input(&mut job, &mut stores, "./trip.tex");
+    close_open_parens(&mut job, &mut stores);
+
+    assert_eq!(terminal_text(&stores), "(./trip.tex )");
+    assert_eq!(log_text(&stores), " )");
+    assert_eq!(job.open_parens, 0);
+}
+
 const HISTORY_NOTE: &str = "(see the transcript file for additional information)";
 
 #[test]
