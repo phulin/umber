@@ -901,10 +901,10 @@ fn canonical_character_run_under_nullfont_never_reaches_the_lookahead() {
 
 /// TeX82 §581 wraps `char_warning` in §245's shared diagnostic scope, so
 /// `\tracingonline<=0` sends the warning only to the transcript. Positive
-/// `\tracingonline` restores terminal visibility, while exactly zero
-/// `\tracinglostchars` suppresses the warning entirely.
+/// `\tracingonline` restores terminal visibility. Its source predicate is
+/// `tracing_lost_chars>0`, so negative and zero values suppress the warning.
 #[test]
-fn canonical_missing_character_uses_the_shared_diagnostic_channel() {
+fn canonical_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
     let run = |tracing_online: i32, tracing_lost_chars: i32| {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
@@ -923,7 +923,7 @@ fn canonical_missing_character_uses_the_shared_diagnostic_channel() {
     for tracing_lost_chars in [-1, 0, 1] {
         for tracing_online in [-1, 0, 1] {
             let (terminal, transcript) = run(tracing_online, tracing_lost_chars);
-            let warns = tracing_lost_chars != 0;
+            let warns = tracing_lost_chars > 0;
             assert_eq!(
                 terminal.matches(warning).count(),
                 usize::from(warns && tracing_online > 0),

@@ -13804,7 +13804,7 @@ fn load_canonical_font(
 }
 
 fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {
-    if stores.int_param(IntParam::TRACING_LOST_CHARS) == 0 {
+    if stores.int_param(IntParam::TRACING_LOST_CHARS) <= 0 {
         return;
     }
     let font_name = stores.font_name(font).to_owned();

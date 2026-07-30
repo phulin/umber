@@ -9,7 +9,7 @@ use tex_state::token::TracedTokenWord;
 use tex_state::{EffectRecord, PrintSink};
 
 #[test]
-fn legacy_missing_character_uses_the_shared_diagnostic_channel() {
+fn legacy_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
     let warning = "Missing character: There is no Z in font nullfont!\n";
     for tracing_lost_chars in [-1, 0, 1] {
         for tracing_online in [-1, 0, 1] {
@@ -44,7 +44,8 @@ fn legacy_missing_character_uses_the_shared_diagnostic_channel() {
                     _ => None,
                 })
                 .collect();
-            let warns = tracing_lost_chars != 0;
+            // tex.web §581 says `if tracing_lost_chars>0 then`.
+            let warns = tracing_lost_chars > 0;
             assert_eq!(
                 terminal.matches(warning).count(),
                 usize::from(warns && tracing_online > 0),
