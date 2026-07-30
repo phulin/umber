@@ -10211,6 +10211,31 @@ fn canonical_nonscript_outside_math_mode_inserts_missing_dollar_sign() {
     assert!(text.contains("Missing $ inserted."), "{text}");
 }
 
+#[test]
+fn canonical_par_in_math_closes_math_before_replaying_paragraph_end() {
+    // TeX82 §§1046--1047 list `mmode+par_end` under `insert_dollar_sign`.
+    // The inserted `$` must close math before the same `\par` is replayed;
+    // otherwise following box recovery runs in math mode and can preserve an
+    // obsolete register value instead of installing the new hbox.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox3=\vbox{\vskip-3pt}$x\par\setbox3=\hbox{}\vsplit3 to0pt",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
+    assert!(text.contains("\\vsplit needs a \\vbox."), "{text}");
+    assert!(matches!(
+        universe
+            .box_reg(3)
+            .and_then(|id| universe.nodes(id).first()),
+        Some(tex_state::node_arena::NodeRef::HList(_))
+    ));
+}
+
 // umber2-johp.79: TeX82 §1046's `non_math(...)` table also lists every
 // math-noad, math-style, and math-delimiter primitive that
 // `scan_canonical_math_request` (or the `\left`/`\right`/`\middle` gate)

@@ -6469,6 +6469,19 @@ fn scan_command(
         {
             scan_off_save(processor, command, innermost_group)
         }
+        // TeX82 §§1046--1047 classify `mmode+par_end` as a math-mode
+        // mismatch: insert `$`, then rescan the same `\par` after the math
+        // list has closed. Treating it as an ordinary paragraph terminator
+        // leaves the math group open and lets subsequent recovery close
+        // unrelated groups instead.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
+            if matches!(mode, Mode::Math | Mode::DisplayMath) =>
+        {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ScannedStep::Paragraph),
         // TeX82 §1193 closes math only at `math_shift_group`; a `$` inside
         // any nested math group first runs §1064's `off_save`, which inserts
