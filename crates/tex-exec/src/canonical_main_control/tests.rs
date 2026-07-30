@@ -3978,6 +3978,65 @@ fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence
 }
 
 #[test]
+fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
+    // TeX82 §§62/1294: `print_nl("> ")` emits no leading newline when the
+    // selected terminal/log line is already closed. Exercise every §75
+    // interaction selector; `\newlinechar` must not turn this line transition
+    // into literal diagnostic-text rewriting.
+    for mode in [
+        tex_state::InteractionMode::Batch,
+        tex_state::InteractionMode::Nonstop,
+        tex_state::InteractionMode::Scroll,
+        tex_state::InteractionMode::ErrorStop,
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(mode);
+        stores.set_int_param(IntParam::NEWLINE_CHAR, 10);
+        if mode == tex_state::InteractionMode::ErrorStop {
+            stores
+                .world_mut()
+                .push_memory_terminal_line("s")
+                .expect("memory terminal accepts the show response");
+        }
+        stores.printer().print("\\show\\errorstopmode").print_ln();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        stores.set_interaction_mode(mode);
+        register_source(&mut control, br"\show\errorstopmode\end");
+        run_to_end(&mut control, &mut stores);
+
+        let output = terminal_text(&stores);
+        assert!(
+            output.starts_with("\\show\\errorstopmode\n> \\errorstopmode=\\errorstopmode."),
+            "{mode:?} inserted output before the show line: {output:?}"
+        );
+    }
+}
+
+#[test]
+fn consecutive_shows_and_following_error_preserve_only_canonical_separators() {
+    // TeX82 §§82/90/1293 leave one blank separator after each noninteractive
+    // show completion. The following `print_nl` must not add another.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\show\errorstopmode\show\scrollmode\undefined\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("> \\errorstopmode=\\errorstopmode.\n\n> \\scrollmode=\\scrollmode."),
+        "{output:?}"
+    );
+    assert!(
+        output.contains("\\scrollmode=\\scrollmode.\n\n! Undefined control sequence."),
+        "{output:?}"
+    );
+    assert!(!output.contains("\n\n\n> "), "{output:?}");
+}
+
+#[test]
 fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
     // TeX82 §1293 writes `show_activities` through the diagnostic printer.
     // The schema-v1 command stream has no detached effect for that report;

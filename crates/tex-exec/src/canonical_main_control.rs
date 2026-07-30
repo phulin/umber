@@ -11157,11 +11157,16 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DisplayDiagnostic(diagnostic) => {
-            // TeX82 §1294 and §1297 print their `>␣` line and then
-            // `goto common_ending`, skipping §1298; §1293's `error` supplies
-            // the terminating period and, in `error_stop_mode`, the prompt.
-            let text = diagnostic.text.trim_end_matches(['.', '\n']);
-            stores.printer().print(text);
+            // TeX82 §§62/1294/1297 begin the display with `print_nl(">␣")`,
+            // which closes a partial selected line but does not add a blank
+            // line when both selected sinks are already at column zero.
+            // The scanned value carries only formatting; replay owns this
+            // selector-sensitive line transition.
+            let text = diagnostic
+                .text
+                .trim_start_matches('\n')
+                .trim_end_matches(['.', '\n']);
+            stores.printer().print_nl(text);
             crate::diagnostics::complete_show(stores, false);
             Ok(ReplayStep::Continue)
         }

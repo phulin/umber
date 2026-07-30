@@ -691,6 +691,33 @@
       "expectation": { "kind": "pass" }
     },
     {
+      "id": "show-selector-transitions",
+      "property_id": "tex82.main-control.show-meaning",
+      "source": "show-selector-transitions.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [62, 75, 82, 90, 1293, 1294]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "> \\errorstopmode=\\errorstopmode.",
+          "> \\scrollmode=\\scrollmode.",
+          "! Undefined control sequence."
+        ],
+        "count_registers": [0]
+      },
+      "expected": [
+        "terminal-check:> \\errorstopmode=\\errorstopmode.=true",
+        "terminal-check:> \\scrollmode=\\scrollmode.=true",
+        "terminal-check:! Undefined control sequence.=true",
+        "count:0=1"
+      ],
+      "expectation": { "kind": "pass" },
+      "terminal_lines": ["s"]
+    },
+    {
       "id": "show-box",
       "property_id": "tex82.main-control.show-box",
       "source": "show-box.tex",
