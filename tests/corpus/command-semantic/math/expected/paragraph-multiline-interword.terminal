@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./paragraph-multiline-interword.tex
+Loose \hbox (badness 37) in paragraph at lines 13--13
+[]\tenrm alpha beta gamma delta
+
+Tight \hbox (badness 69) in paragraph at lines 13--13
+\tenrm epsilon zeta eta theta iota
+[1] )
+(see the transcript file for additional information)
+Output written on paragraph-multiline-interword.dvi (1 page, 256 bytes).
+Transcript written on paragraph-multiline-interword.log.

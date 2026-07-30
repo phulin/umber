@@ -732,6 +732,176 @@
       "expectation": {
         "kind": "pass"
       }
+    },
+    {
+      "id": "noalign-everycr-row-packaging",
+      "property_id": "tex82.align.package-unset-row",
+      "source": "noalign-everycr-row-packaging.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          799
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4
+      },
+      "expected": [
+        "box:0/0:vlist",
+        "box:0/0/0:hlist",
+        "box:0/0/0/0:glue",
+        "box:0/0/0/1:hlist",
+        "box:0/0/0/1/0:char",
+        "box:0/0/0/2:glue",
+        "box:0/0/1:rule",
+        "box:0/0/2:hlist",
+        "box:0/0/2/0:glue",
+        "box:0/0/2/1:hlist",
+        "box:0/0/2/1/0:char",
+        "box:0/0/2/2:glue",
+        "box:0/0/3:rule",
+        "box:0/0/4:hlist",
+        "box:0/0/4/0:glue",
+        "box:0/0/4/1:hlist",
+        "box:0/0/4/1/0:char",
+        "box:0/0/4/2:glue",
+        "box:0/0/5:rule",
+        "box:0/0/6:hlist",
+        "box:0/0/6/0:glue",
+        "box:0/0/6/1:hlist",
+        "box:0/0/6/1/0:char",
+        "box:0/0/6/2:glue",
+        "box:0/0/7:rule"
+      ],
+      "channels": {
+        "events": 857,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T���\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T���\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "display-halign-nested",
+      "property_id": "tex82.align.display-finish",
+      "source": "display-halign-nested.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1206,
+          1207
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4
+      },
+      "expected": [
+        "box:0/0:vlist",
+        "box:0/0/0:hlist",
+        "box:0/0/0/0:hlist",
+        "box:0/0/0/1:char",
+        "box:0/0/0/2:kern",
+        "box:0/0/0/3:char",
+        "box:0/0/0/4:char",
+        "box:0/0/0/5:char",
+        "box:0/0/0/6:char",
+        "box:0/0/0/7:char",
+        "box:0/0/0/8:penalty",
+        "box:0/0/0/9:glue",
+        "box:0/0/0/10:glue",
+        "box:0/0/1:penalty",
+        "box:0/0/2:glue",
+        "box:0/0/3:glue",
+        "box:0/0/4:hlist",
+        "box:0/0/4/0:glue",
+        "box:0/0/4/1:hlist",
+        "box:0/0/4/1/0:char",
+        "box:0/0/4/1/1:glue",
+        "box:0/0/4/2:glue",
+        "box:0/0/5:glue",
+        "box:0/0/6:hlist",
+        "box:0/0/6/0:glue",
+        "box:0/0/6/1:hlist",
+        "box:0/0/6/1/0:char",
+        "box:0/0/6/1/1:char",
+        "box:0/0/6/1/2:glue",
+        "box:0/0/6/2:glue",
+        "box:0/0/7:penalty",
+        "box:0/0/8:glue",
+        "box:0/0/9:glue",
+        "box:0/0/10:hlist",
+        "box:0/0/10/0:char",
+        "box:0/0/10/1:char",
+        "box:0/0/10/2:char",
+        "box:0/0/10/3:char",
+        "box:0/0/10/4:char",
+        "box:0/0/10/5:penalty",
+        "box:0/0/10/6:glue",
+        "box:0/0/10/7:glue"
+      ],
+      "channels": {
+        "events": 874,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./display-halign-nested.tex",
+            "actual": "(./display-halign-nested.tex [1] )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./display-halign-nested.tex",
+            "actual": "(./display-halign-nested.tex [1] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�Ǎ�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�Ǎ�\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

@@ -1,0 +1,23 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./paragraph-hyphen-word-length-limit.tex
+Underfull \hbox (badness 10000) in paragraph at lines 17--17
+[]\tenrm x
+
+Overfull \hbox (68.3338pt too wide) in paragraph at lines 17--17
+\tenrm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-
+
+Overfull \hbox (70.00049pt too wide) in paragraph at lines 17--17
+\tenrm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 
+
+Underfull \hbox (badness 10000) in paragraph at lines 18--18
+[]\tenrm x
+
+Overfull \hbox (68.3338pt too wide) in paragraph at lines 18--18
+\tenrm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-
+
+Overfull \hbox (75.0005pt too wide) in paragraph at lines 18--18
+\tenrm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 
+[1] )
+(see the transcript file for additional information)
+Output written on paragraph-hyphen-word-length-limit.dvi (1 page, 328 bytes).
+Transcript written on paragraph-hyphen-word-length-limit.log.

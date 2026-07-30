@@ -1,0 +1,22 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**leaders-glue-fill-variants.tex
+(./leaders-glue-fill-variants.tex
+Loose \hbox (badness 100) detected at line 7
+ 
+
+\hbox(3.0+0.0)x60.0, glue set 1.0 []
+
+
+Tight \hbox (badness 12) detected at line 8
+ 
+
+\hbox(3.0+0.0)x20.0, glue set - 0.5 []
+
+
+Loose \hbox (badness 100) detected at line 9
+ 
+
+\hbox(3.0+0.0)x50.0, glue set 1.0 []
+
+[1] )
+Output written on leaders-glue-fill-variants.dvi (1 page, 336 bytes).

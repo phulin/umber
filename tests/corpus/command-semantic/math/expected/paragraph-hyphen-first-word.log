@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**paragraph-hyphen-first-word.tex
+(./paragraph-hyphen-first-word.tex
+Overfull \hbox (14.88899pt too wide) in paragraph at lines 17--17
+[]\tenrm abcdefgh 
+
+\hbox(6.94444+1.94444)x24.0 []
+
+[1] )
+Output written on paragraph-hyphen-first-word.dvi (1 page, 188 bytes).

@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**paragraph-hyphen-implicit-kern.tex
+(./paragraph-hyphen-implicit-kern.tex
+Underfull \hbox (badness 1436) in paragraph at lines 17--17
+[]\tenrm x avail-
+
+\hbox(6.94444+0.0)x36.0, glue set 2.4333 []
+
+[1] )
+Output written on paragraph-hyphen-implicit-kern.dvi (1 page, 212 bytes).

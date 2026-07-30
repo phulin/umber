@@ -1,0 +1,14 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./page-break-cost-forced.tex
+Underfull \hbox (badness 10000) detected at line 12
+\tenrm g
+[1]
+Underfull \hbox (badness 10000) detected at line 14
+\tenrm g
+[1]
+Underfull \hbox (badness 10000) detected at line 17
+\tenrm g
+[1] )
+(see the transcript file for additional information)
+Output written on page-break-cost-forced.dvi (3 pages, 288 bytes).
+Transcript written on page-break-cost-forced.log.

@@ -1,0 +1,17 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\font\tenrm=cmr10
+\relax
+\tenrm
+\count0=1
+\baselineskip=0pt
+\lineskip=0pt
+\setbox0=\vbox{%
+  \halign{#\cr
+    A\cr
+    \noalign{\hrule height2pt}
+    B\cr}%
+  \everycr{\noalign{\hrule height1pt}}%
+  \halign{#\cr C\cr D\cr}%
+}
+\shipout\copy0
+\end

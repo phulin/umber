@@ -1,0 +1,8 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./paragraph-hyphen-implicit-kern.tex
+Underfull \hbox (badness 1436) in paragraph at lines 17--17
+[]\tenrm x avail-
+[1] )
+(see the transcript file for additional information)
+Output written on paragraph-hyphen-implicit-kern.dvi (1 page, 212 bytes).
+Transcript written on paragraph-hyphen-implicit-kern.log.

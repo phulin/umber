@@ -799,14 +799,26 @@ The hand-authored distribution contract fixtures under
 strict manifest round trips and identical ordered acquisition jobs and typed
 misses without network or TeX tooling.
 
-The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
-`tests/corpus/math`, and `tests/corpus/align` commit TeX source files plus
-`.expected.dvi` reference fixtures. The default `umber` cargo tests run every
-`.tex` case in those areas against the committed DVI fixtures without invoking
-live reference tools. `tests/corpus/leaders` retired the same way
-(`umber2-alfh.3`): its six cases now live as `command-semantic/page-output`'s
-`leaders-*` minifixtures, which gained oracle-compared terminal, log, and
-effects channels the ad hoc area never had.
+The DVI corpora under `tests/corpus/math` and `tests/corpus/align` commit TeX
+source files plus `.expected.dvi` reference fixtures. The default `umber` cargo
+tests run every `.tex` case in those areas against the committed DVI fixtures
+without invoking live reference tools.
+
+Three areas have retired into the minifixture system under `umber2-alfh.3`,
+because a `.expected.dvi` fixture compares one channel against Umber's own
+prior output while a minifixture compares every channel against the pinned
+oracle: `tests/corpus/leaders`' six cases became
+`command-semantic/page-output`'s `leaders-*` cases, and `tests/corpus/dvi` and
+`tests/corpus/page`'s thirty-two became thirty-one cases (one source was
+byte-identical in both areas) spread across `page-output`, `math`, and
+`alignments` by what each actually exercises rather than by which area it sat
+in.
+
+`tests/corpus/canonical-dvi` is what survives of that retirement: two sources
+whose `.expected.dvi` pairs back the canonical-divergence regression tests in
+`crates/umber/tests/it/e2e_conformance.rs`. It is a static copy, deliberately
+outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
+pin a specific past divergence rather than tracking the reference engine.
 
 DVI regeneration runs the live reference engine through `tools/refexec`,
 copies the pinned local CM TFMs and area support files, uses INITEX for the math

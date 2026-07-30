@@ -785,18 +785,6 @@ fn assert_log_case_matches_committed_fixture(
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_corpus_matches_committed_dvi() {
-    assert_dvi_area_matches_committed_fixture("dvi");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_page_corpus_matches_committed_dvi() {
-    assert_dvi_area_matches_committed_fixture("page");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_math_corpus_matches_committed_dvi() {
     assert_dvi_area_matches_committed_fixture("math");
 }
@@ -810,7 +798,10 @@ fn run_align_corpus_matches_committed_dvi() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side command execution.
 fn removed_html_font_directory_names_the_typed_replacement() {
-    let setup = dvi::DviCaseSetup::new("dvi", "boxes_rules");
+    // Any small committed source will do: this asserts an argument-parsing
+    // rejection that never reaches the engine. `dvi`/`page` were retired
+    // into the minifixture corpus, so it names a surviving area.
+    let setup = dvi::DviCaseSetup::new("math", "accents");
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .current_dir(setup.run_dir())
         .args([

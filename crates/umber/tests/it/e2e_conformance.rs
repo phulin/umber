@@ -546,11 +546,11 @@ fn e2e_conformance_story_canonical() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
 fn canonical_ligature_group_boundaries_match_reference_dvi() {
-    let setup = test_support::dvi::DviCaseSetup::new("dvi", "ligature_group_boundaries");
+    let setup = test_support::dvi::DviCaseSetup::new("canonical-dvi", "ligature_group_boundaries");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
     let expected = fs::read(
         test_support::corpus_root()
-            .join("dvi")
+            .join("canonical-dvi")
             .join("ligature_group_boundaries.expected.dvi"),
     )
     .expect("reference DVI");
@@ -563,11 +563,11 @@ fn canonical_ligature_group_boundaries_match_reference_dvi() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Host-side committed fixture loading.
 fn canonical_rule_space_factor_reset_matches_reference_dvi() {
-    let setup = test_support::dvi::DviCaseSetup::new("dvi", "rule_space_factor_reset");
+    let setup = test_support::dvi::DviCaseSetup::new("canonical-dvi", "rule_space_factor_reset");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
     let expected = fs::read(
         test_support::corpus_root()
-            .join("dvi")
+            .join("canonical-dvi")
             .join("rule_space_factor_reset.expected.dvi"),
     )
     .expect("reference DVI");

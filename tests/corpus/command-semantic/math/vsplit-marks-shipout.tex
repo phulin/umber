@@ -1,0 +1,18 @@
+\catcode`\{=1 \catcode`\}=2
+\font\tenrm=cmr10
+\relax
+\tenrm
+\maxdepth=4pt
+\baselineskip=12pt
+\lineskip=1pt
+\lineskiplimit=0pt
+\count0=1
+\showboxbreadth=100
+\showboxdepth=100
+\splittopskip=10pt
+\lineskip=0pt
+\lineskiplimit=0pt
+\setbox10=\vbox{\hbox{A}\mark{M1}\penalty0\hbox{B}\mark{M2}\penalty0\hbox{C}}
+\setbox11=\vsplit10 to 8pt
+\shipout\vbox{\hbox{\splitfirstmark/\splitbotmark}\copy11\copy10}
+\end

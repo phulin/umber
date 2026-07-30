@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
-dvi_areas=(dvi page math align)
+dvi_areas=(math align)
 pdf_area=pdf
 e2e_area=e2e
 bib_area=bib

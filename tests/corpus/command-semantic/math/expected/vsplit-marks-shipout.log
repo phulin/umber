@@ -1,0 +1,12 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**vsplit-marks-shipout.tex
+(./vsplit-marks-shipout.tex
+Underfull \vbox (badness 10000) detected at line 16
+
+\vbox(8.0+0.0)x7.50002
+.\hbox(6.83331+0.0)x7.50002
+..\tenrm A
+.\mark{M1}
+
+[1] )
+Output written on vsplit-marks-shipout.dvi (1 page, 212 bytes).

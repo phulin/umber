@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./display-halign-nested.tex
+Underfull \hbox (badness 10000) in paragraph at lines 18--18
+[]\tenrm before
+
+Underfull \hbox (badness 10000) in paragraph at lines 18--18
+\tenrm after
+[1] )
+(see the transcript file for additional information)
+Output written on display-halign-nested.dvi (1 page, 216 bytes).
+Transcript written on display-halign-nested.log.

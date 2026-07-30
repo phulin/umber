@@ -1,0 +1,20 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\$=3
+\font\tenrm=cmr10
+\relax
+\tenrm
+\count0=1
+\hsize=80pt
+\vsize=200pt
+\parindent=0pt
+\baselineskip=0pt
+\lineskip=0pt
+\topskip=0pt
+\predisplaypenalty=0
+\postdisplaypenalty=0
+\abovedisplayskip=5pt
+\belowdisplayskip=7pt
+\abovedisplayshortskip=2pt
+\belowdisplayshortskip=3pt
+\setbox0=\vbox{before $$\halign{#\hfil\cr A\cr BB\cr}$$ after\par}
+\shipout\copy0
+\end

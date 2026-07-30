@@ -1,0 +1,8 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./paragraph-boundary-full-word.tex
+Underfull \hbox (badness 10000) in paragraph at lines 6--6
+[]\tenrm Supercalifragilistic
+[1] )
+(see the transcript file for additional information)
+Output written on paragraph-boundary-full-word.dvi (1 page, 200 bytes).
+Transcript written on paragraph-boundary-full-word.log.

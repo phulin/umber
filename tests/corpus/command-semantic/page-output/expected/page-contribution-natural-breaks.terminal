@@ -1,0 +1,17 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./page-contribution-natural-breaks.tex
+Underfull \hbox (badness 10000) in paragraph at lines 15--15
+[]\tenrm Alpha
+
+Underfull \hbox (badness 10000) in paragraph at lines 16--16
+[]\tenrm Beta
+[1]
+Underfull \hbox (badness 10000) in paragraph at lines 17--17
+[]\tenrm Gamma
+[1]
+Underfull \hbox (badness 10000) in paragraph at lines 18--18
+[]\tenrm Delta
+[1] [1] )
+(see the transcript file for additional information)
+Output written on page-contribution-natural-breaks.dvi (4 pages, 356 bytes).
+Transcript written on page-contribution-natural-breaks.log.

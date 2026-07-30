@@ -583,6 +583,911 @@
       "expectation": {
         "kind": "pass"
       }
+    },
+    {
+      "id": "count-write-and-text",
+      "property_id": "tex82.effects.deferred-write-expansion",
+      "source": "count-write-and-text.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1369,
+          1371
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:84aca043614872a2c3a7dea8593bb985078d9563f1bc9192915e4121119b5655"
+      ],
+      "channels": {
+        "events": 256,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.24",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./count-write-and-text.tex [7",
+            "actual": "(./count-write-and-text.texship count 7"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.24",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./count-write-and-text.tex [7",
+            "actual": "(./count-write-and-text.texship count 7"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0007\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006q��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0007\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006q��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "custom-output-headline",
+      "property_id": "tex82.output.selection-and-default",
+      "source": "custom-output-headline.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1024,
+          1025
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:fb39f97e3f39bdc30f30b842ca50faec7e57f26db891923fcd50587b0f7ee4f8",
+        "artifact:135e18ff351e374676ca21dc7ca83dfe03050fd417eef2c810dd4eafabe892e7"
+      ],
+      "channels": {
+        "events": 723,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "output-default-empty",
+      "property_id": "tex82.output.selection-and-default",
+      "source": "output-default-empty.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1024,
+          1025
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "artifact:e87e8d99ae78eee01aaeeb5d2a32adc31c234a03be44c81215ec64d77366c4ba"
+      ],
+      "channels": {
+        "events": 345,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "leaders-negative-kern-degenerate",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "leaders-negative-kern-degenerate.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          618,
+          626,
+          627
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "artifact:25ec412046f84d881f937baf679e38abf015bd36d018b0e63b50bf66d33961fe"
+      ],
+      "channels": {
+        "events": 1589,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0001\u0000\u0000�",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0001\u0000\u0000�"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "leaders-shipout-widths",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "leaders-shipout-widths.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          618,
+          626,
+          627,
+          628
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:100",
+        "command:leader_ship:101",
+        "command:leader_ship:102",
+        "artifact:eb632e1b4794375e2d8a1173db3a853eb90eb442e3b6f3be68139fddcb9e0f53"
+      ],
+      "channels": {
+        "events": 1041,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000���\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000��\u0004\u0000\u0000��\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000�����\u0002\u0000\u0005��\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000��\u0006\u0000\u0000��\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000���\u0004\u0000\u0000��\u0000�W��\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000��\u0007�W��\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000���\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000��\u0004\u0000\u0000��\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000����\u0001\u0000\u0000�\u0000\u0004\u0000\u0000\u0000\u0004\u0000\u0000�����\u0002\u0000\u0005��\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000��\u0006\u0000\u0000��\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0002\u0000\u0000\u0000\u0006\u0000\u0000���\u0004\u0000\u0000��\u0000�W��\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000��\u0007�W��\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0004\u0000\u0000\u0000\u0007\u0000\u0000����\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "leaders-write-special-payload",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "leaders-write-special-payload.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          626,
+          627,
+          1374
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:100",
+        "artifact:0e0537f15b678bc8b72d6db0af8f879e4a9f599c83991bc17233f4d42b34aee9"
+      ],
+      "channels": {
+        "events": 395,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special��\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0001\u0000\u0000\u0000\u0004\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000�\u0002�������",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special��\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0001\u0000\u0000\u0000\u0004\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000�\u0002�������"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "leaders-glue-fill-variants",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "leaders-glue-fill-variants.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          618,
+          626,
+          627
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:100",
+        "command:leader_ship:101",
+        "command:leader_ship:102",
+        "artifact:1d9909c5a6f1fb7de1cfca0ad0ff89092b77a05e04754ea61fdaec455bf10a40"
+      ],
+      "channels": {
+        "events": 1376,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./leaders-glue-fill-variants.tex",
+            "actual": "(./leaders-glue-fill-variants.tex [1] )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./leaders-glue-fill-variants.tex",
+            "actual": "(./leaders-glue-fill-variants.tex [1] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000���\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000��\b\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000�����\u0001\u0000\u0005��\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000��\u0006\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000�����\u0000�W��\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000��\t�W��\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\t\u0000\u0000\u0000<\u0000\u0000\u0000\u0002\u0000\u0001�\u0000\u0000\u0001&\u0002�������",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000���\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000��\b\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\b\u0000\u0000�����\u0001\u0000\u0005��\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000��\u0006\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\u0006\u0000\u0000�����\u0000�W��\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000��\t�W��\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0003\u0000\u0000\u0000\t\u0000\u0000����\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\t\u0000\u0000\u0000<\u0000\u0000\u0000\u0002\u0000\u0001�\u0000\u0000\u0001&\u0002�������"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "leaders-vertical-fil-rule",
+      "property_id": "tex82.shipout.vlist-traversal",
+      "source": "leaders-vertical-fil-rule.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          629,
+          634,
+          635
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:100",
+        "command:leader_ship:101",
+        "command:leader_ship:102",
+        "command:leader_ship:100",
+        "command:leader_ship:100",
+        "artifact:f3d982dc387b562098bb01e65ceae74a0fa6a539d7bce9b5456cf40357c3453b"
+      ],
+      "channels": {
+        "events": 1371,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0005\u0000\u0000��\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000��\u0006\u0000\u0000��\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\b\u0000\u0000�\b\u0000\u0005��\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000��\u0006\u0000\u0000��\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0011\u0000\u0000�\u0007�W��\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0018\u0000\u0000�(\u0000\u0000�\u0000(\u0000\u0000\u0000\u0006\u0000\u0000���#\u0000\u0000�*\u0000\u0000�\u0000\u0007\u0000\u0000\u0000(\u0000\u0000���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000*\u0000\u0000\u0000K\u0000\u0000\u0000\u0002\u0000\u0001�\u0000\u0000\u0001\u0002������",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0005\u0000\u0000��\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000��\u0006\u0000\u0000��\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0006\u0000\u0000\u0000\u0003\u0000\u0000����\b\u0000\u0000�\b\u0000\u0005��\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000��\u0006\u0000\u0000��\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0004\u0000\u0000����\u0011\u0000\u0000�\u0007�W��\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0000\u0007\u0000\u0000\u0000\u0002\u0000\u0000����\u0018\u0000\u0000�(\u0000\u0000�\u0000(\u0000\u0000\u0000\u0006\u0000\u0000���#\u0000\u0000�*\u0000\u0000�\u0000\u0007\u0000\u0000\u0000(\u0000\u0000���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000*\u0000\u0000\u0000K\u0000\u0000\u0000\u0002\u0000\u0001�\u0000\u0000\u0001\u0002������"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "mark-output-headers",
+      "property_id": "tex82.output.fire-up-packaging",
+      "source": "mark-output-headers.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1014,
+          1016
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:a3f6a341d8d68574405d08f9e1b5b95509553035e034dab725fb11d7ec4af893",
+        "artifact:5f7da4be6b8c383978affcc478906538eee58895adab74cdba4f6c6f0b58218a",
+        "artifact:a379896e7eb1efb788be4272ce0950d7c02c6193690fe14548fbd751bc4dc4db"
+      ],
+      "channels": {
+        "events": 902,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "mark-output-headers-multi-page",
+      "property_id": "tex82.output.fire-up-packaging",
+      "source": "mark-output-headers-multi-page.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1014,
+          1016
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:88dd2364ea76403005168ecbced62e971807181c8d93fbbeb6ed7cbc77ab022d",
+        "artifact:e63e7a54392204a20844134389a294bd839de948eba6b0d6dce13d3a424cccc1",
+        "artifact:ca8d411f2d11cb66c1458c44110fdf428fd72936b91bc3aaac4656e20dd4f531",
+        "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"
+      ],
+      "channels": {
+        "events": 1086,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "multi-page-shipout-count",
+      "property_id": "tex82.shipout.page-output",
+      "source": "multi-page-shipout-count.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          638,
+          640,
+          641
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:48652f7cf7cb0867f2e82a9ec814b24217f5e3dbb91417b520f9793c61e26122",
+        "artifact:fae261fa0faa2e4650d8aa1ead5908b259424f8a02dcca082652359eefd8970b",
+        "artifact:d3a9126a6ac83d9e419dfa7ddc84bd1b95223dd5d1da4b0e2dda97436d48c7a4"
+      ],
+      "channels": {
+        "events": 211,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8�\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "special-in-shipped-hbox",
+      "property_id": "tex82.effects.special-output",
+      "source": "special-in-shipped-hbox.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1368
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:5e2b05c7bc86c47642341d39cbdaa76b1933aaf550f1758c1910a8198ba89899"
+      ],
+      "channels": {
+        "events": 180,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0018umber dvi corpus special�\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "single-glyph",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "single-glyph.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          618,
+          619,
+          622
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:ca42a1158c4b49955fff8b585ff9dfce30825fb1517124a427388592f82222ff"
+      ],
+      "channels": {
+        "events": 121,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "insertion-split-footnote",
+      "property_id": "tex82.output.insertion-distribution",
+      "source": "insertion-split-footnote.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1018,
+          1020,
+          1021
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:6acb533bc920dd088e8106da44f6239addc03a12dbd882e04a1985f542282680",
+        "artifact:329b437e508dbce5854ffb8d4a5665f69794ba2fcf279e7d8cfc9996ead03d3c"
+      ],
+      "channels": {
+        "events": 1581,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "page-state-freeze-single-box",
+      "property_id": "tex82.page.state-and-freeze",
+      "source": "page-state-freeze-single-box.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          980,
+          987,
+          989
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:b8a585e9beb8849a98f34176851c563cef397eb5b2042835ae0bc9540e297d70"
+      ],
+      "channels": {
+        "events": 397,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "page-contribution-natural-breaks",
+      "property_id": "tex82.page.contribution-accounting",
+      "source": "page-contribution-natural-breaks.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          994,
+          996,
+          1004
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:7222ac4997053d4a3fd1cd015882312a4b6448c9791e028d949126cf15428e36",
+        "artifact:4c27ec7bd66d739e6c37767304208fa7980c12ea6cf2991dd0990bee89fcf5f4",
+        "artifact:6b6fc390b71aaa9b3381cab6d826d250dc3cc89926d3c45fc11fb5a935f50660",
+        "artifact:cd668059a52a09348c025a372ca95cf8d08779298246ce04a88b79e86b3b1a97"
+      ],
+      "channels": {
+        "events": 706,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./page-contribution-natural-breaks.tex",
+            "actual": "(./page-contribution-natural-breaks.tex [1] [1] [1] [1] )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./page-contribution-natural-breaks.tex",
+            "actual": "(./page-contribution-natural-breaks.tex [1] [1] [1] [1] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\b\u0000\u0000��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\b\u0000\u0000��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "page-break-cost-forced",
+      "property_id": "tex82.page.break-cost-selection",
+      "source": "page-break-cost-forced.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1005,
+          1006,
+          1007
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "command:leader_ship:99",
+        "artifact:e18c626e659f393a4ec0cddc725d143a6b7e413d39e65d261714c457cf25754d",
+        "artifact:caac2eab45976d9ce272308e5418dbd6468d9f331b71c6d904d75da9a87dca3f",
+        "artifact:ce3032d3702b309c0090bfe27e932c4c894bf9c32fd26cad8ced4d627210c868"
+      ],
+      "channels": {
+        "events": 620,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./page-break-cost-forced.tex",
+            "actual": "(./page-break-cost-forced.tex [1] [1] [1] )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./page-break-cost-forced.tex",
+            "actual": "(./page-break-cost-forced.tex [1] [1] [1] )"
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

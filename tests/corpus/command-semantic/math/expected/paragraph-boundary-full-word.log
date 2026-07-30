@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**paragraph-boundary-full-word.tex
+(./paragraph-boundary-full-word.tex
+Underfull \hbox (badness 10000) in paragraph at lines 6--6
+[]\tenrm Supercalifragilistic
+
+\hbox(6.94444+1.94444)x400.0 []
+
+[1] )
+Output written on paragraph-boundary-full-word.dvi (1 page, 200 bytes).
