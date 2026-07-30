@@ -15,6 +15,7 @@ use crate::observation::{
 };
 
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
+const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
 /// Persistent ownership of live macro-argument activations.
 ///
@@ -361,6 +362,65 @@ impl CommandProcessor<'_> {
         Ok(arguments.finish())
     }
 
+    /// TeX82 §389's `warning_index`, spelled as §395/§396 print it.
+    ///
+    /// Both report the macro whose argument was being matched with
+    /// `sprint_cs(warning_index)`, and that is exactly what the live
+    /// `matching` scanner status carries, so the name is read back from there
+    /// rather than threaded through every argument scanner.
+    fn matching_macro_name(&self) -> String {
+        match self.command.scanner.status() {
+            ScannerStatus::Matching(context) => {
+                let spelling = self.state.resolve(context.macro_name).to_owned();
+                crate::processor::expand::print_esc_text(&self.state, &spelling)
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// TeX82 §396's `<Report a runaway argument and abort>`.
+    ///
+    /// §396 issues this only for `long_state=call` -- a `\long` macro accepts
+    /// the paragraph instead -- which is the same test the caller has already
+    /// made before reaching here.
+    fn report_paragraph_ended_before_complete(&mut self) {
+        let name = self.matching_macro_name();
+        let context = self.command.output_open_context(&self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: RUNAWAY_ARGUMENT_DIAGNOSTIC,
+                message: format!("Paragraph ended before {name} was complete"),
+                help: &[
+                    "I suspect you've forgotten a `}', causing me to apply this",
+                    "control sequence to too much text. How can we recover?",
+                    "My plan is to forget the whole thing and hope for the best.",
+                ],
+                context,
+            });
+    }
+
+    /// TeX82 §395's `<Report an extra right brace and goto continue>`.
+    fn report_extra_right_brace_argument(&mut self) {
+        let name = self.matching_macro_name();
+        let context = self.command.output_open_context(&self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC,
+                message: format!("Argument of {name} has an extra }}"),
+                help: &[
+                    "I've run across a `}' that doesn't seem to match anything.",
+                    "For example, `\\def\\a#1{...}' and `\\a}' would produce",
+                    "this error. If you simply proceed now, the `\\par' that",
+                    "I've just inserted will cause me to report a runaway",
+                    "argument that might be the root of the problem. But if",
+                    "your `}' was spurious, just type `2' and it will go away.",
+                ],
+                context,
+            });
+    }
+
     fn scan_undelimited_argument(
         &mut self,
         flags: MeaningFlags,
@@ -393,15 +453,19 @@ impl CommandProcessor<'_> {
                 // paragraph therefore takes §394's ordinary back_error path
                 // even when this macro was originally declared `\long`.
                 self.back_input(command)?;
-                self.command
-                    .expansion
-                    .pending_diagnostics
-                    .push(EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC);
                 self.insert_macro_argument_recovery_par()?;
+                // §395 ends with `ins_error`, so §82 renders the context with
+                // the inserted `\par` level already on the stack.
+                self.report_extra_right_brace_argument();
                 let par = self
                     .get_token()?
                     .ok_or(CommandError::ParagraphInMacroArgument)?;
                 self.back_input(par)?;
+                // §395's `goto continue` returns to the matching loop, which
+                // immediately reads the `\par` it just inserted and takes
+                // §394's abort. `long_state:=call` above is there precisely so
+                // that §396 reports even for a `\long` macro.
+                self.report_paragraph_ended_before_complete();
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             break command;
@@ -545,6 +609,7 @@ impl CommandProcessor<'_> {
                 // §394 then aborts this match on its inserted frozen `\par`.
                 // That terminator is consumed by the failed expansion, unlike
                 // a user-supplied paragraph which `back_error` must replay.
+                self.report_paragraph_ended_before_complete();
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             // TeX82 §394 reports this through `back_error` while the macro
@@ -553,6 +618,9 @@ impl CommandProcessor<'_> {
             // ahead of that restoration rather than merely returning an
             // error from the scalar matcher.
             self.back_input(command.copy_for_backup())?;
+            // §396 ends with `back_error`, so §82 renders the context with the
+            // replayed `\par` already on the stack.
+            self.report_paragraph_ended_before_complete();
             return Err(CommandError::ParagraphInMacroArgument);
         }
         Ok(())

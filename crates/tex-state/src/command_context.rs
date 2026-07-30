@@ -673,6 +673,12 @@ impl CommandContext<'_> {
         self.universe.intern_active_character(ch).symbol()
     }
 
+    /// The eqtb text of a frozen control sequence, for §262's `print_cs`.
+    #[must_use]
+    pub fn frozen_primitive_name(&self, token: Token) -> Option<&str> {
+        self.universe.frozen_primitive_name(token)
+    }
+
     /// Resolves an engine-owned frozen token without consulting a mutable
     /// control-sequence meaning cell.
     #[must_use]

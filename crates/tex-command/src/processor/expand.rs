@@ -1602,13 +1602,23 @@ pub(crate) fn token_list_string_text(
 /// a printed control word from following letter tokens with one space.  That
 /// delimiter belongs to the rendered definition, not to source input.
 pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
-    let Token::Cs(symbol) = token else {
-        return string_text(state, token);
+    let name = match token {
+        Token::Cs(symbol) => {
+            if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+                return state.resolve(symbol).to_owned();
+            }
+            state.resolve(symbol)
+        }
+        // tex.web gives every frozen equivalent a real eqtb `text()`, so §294
+        // displays one exactly as it displays the ordinary control sequence of
+        // the same name: `frozen_par` is `\par`, not its `\relax`-like
+        // meaning.
+        Token::Frozen(_) => match state.frozen_primitive_name(token) {
+            Some(name) => name,
+            None => return string_text(state, token),
+        },
+        _ => return string_text(state, token),
     };
-    let name = state.resolve(symbol);
-    if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
-        return name.to_owned();
-    }
     let mut text = if name.is_empty() {
         "\\csname\\endcsname".to_owned()
     } else {

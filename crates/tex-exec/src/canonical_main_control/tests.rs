@@ -3931,6 +3931,31 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
 }
 
 #[test]
+fn extra_right_brace_in_an_argument_names_the_macro() {
+    // TeX82 §395: a bare `}` where an argument was expected is backed up, a
+    // `\\par` is inserted, and `ins_error` reports "Argument of \\a has an
+    // extra }" -- `sprint_cs(warning_index)`, the macro whose argument was
+    // being matched, not a placeholder.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\def\a#1{[#1]}\a}\end");
+    run_to_end(&mut control, &mut stores);
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains(
+            "! Argument of \\a has an extra }.\n<inserted text> \n                \\par "
+        ),
+        "{terminal}"
+    );
+    // §395's `long_state:=call` is what makes §396 report next, on the very
+    // `\\par` it just inserted.
+    assert!(
+        terminal.contains("! Paragraph ended before \\a was complete."),
+        "{terminal}"
+    );
+}
+
+#[test]
 fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
     // TeX82 §1225 scans `\\read`'s stream with a plain `scan_int`, not §435's
     // `scan_four_bit_int`, and §482 answers `(n<0)or(n>15)` with `m:=16` --

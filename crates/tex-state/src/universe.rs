@@ -1645,6 +1645,21 @@ impl Universe {
             .map(Token::frozen_primitive)
     }
 
+    /// The eqtb text of a frozen control sequence, for §262's `print_cs`.
+    ///
+    /// tex.web gives every frozen equivalent a real `text()`: `frozen_fi` is
+    /// spelled `fi`, `frozen_par` is `par`, and so on, which is why a token
+    /// list holding one displays as `\fi` rather than as its meaning.
+    #[must_use]
+    pub fn frozen_primitive_name(&self, token: Token) -> Option<&str> {
+        let Token::Frozen(frozen) = token else {
+            return None;
+        };
+        self.primitive_names_by_index
+            .get(usize::from(frozen.primitive_index()?))
+            .map(String::as_str)
+    }
+
     #[must_use]
     pub fn frozen_primitive_meaning(&self, token: Token) -> Option<Meaning> {
         let Token::Frozen(frozen) = token else {
