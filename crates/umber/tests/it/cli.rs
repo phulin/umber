@@ -1,8 +1,9 @@
-use std::{fs, process::Command};
+use std::{collections::BTreeSet, fs, path::PathBuf, process::Command};
 
 use sha2::{Digest, Sha256};
 use test_support::{
-    CorpusCase, assert_matches_fixture, corpus_cases, dvi, normalize, read_binary_fixture,
+    CorpusCase, assert_matches_fixture, corpus_cases, dvi, git_fixture::ClosedCase, normalize,
+    read_binary_fixture,
 };
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
@@ -95,64 +96,133 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
-    let fixture = test_support::repository_root()
-        .join("crates/umber")
-        .join("../../tests/corpus/bib/invocation");
-    let temp_dir = tempfile::tempdir().expect("create bib output directory");
-    let output_path = temp_dir.path().join("result.bbl");
-    let log_path = fixture.join("basic.blg");
-    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .arg("bib")
-        .arg("--nolog")
-        .arg("--output-file")
-        .arg(&output_path)
-        .arg(fixture.join("basic.bcf"))
-        .output()
-        .expect("run native bib command");
-    assert_eq!(output.status.code(), Some(0));
+    let repository = test_support::repository_root_at(
+        &std::env::current_dir().expect("current directory"),
+    )
+    .expect("runtime repository");
+    let area_relative = PathBuf::from("tests/corpus/bib/invocation");
+    let area = repository.join(&area_relative);
+    let mut names = fs::read_dir(&area)
+        .expect("read bibliography invocation cases")
+        .map(|entry| {
+            let entry = entry.expect("read bibliography invocation case");
+            assert!(
+                entry.file_type().expect("case file type").is_dir(),
+                "bibliography invocation area contains a non-case entry: {}",
+                entry.path().display()
+            );
+            entry.file_name().into_string().expect("UTF-8 case name")
+        })
+        .collect::<Vec<_>>();
+    names.sort();
     assert_eq!(
-        output.stdout,
-        fs::read(fixture.join("basic.expected.stdout")).expect("stdout fixture")
-    );
-    assert!(output.stderr.is_empty());
-    assert_eq!(
-        fs::read(&output_path).expect("generated BBL"),
-        fs::read(fixture.join("basic.expected.bbl")).expect("BBL fixture")
-    );
-    assert!(!log_path.exists(), "--nolog must not publish a log");
-
-    let tool_path = temp_dir.path().join("tool.bib");
-    let tool = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .arg("bib")
-        .arg("--tool")
-        .arg("--nolog")
-        .arg("--output-file")
-        .arg(&tool_path)
-        .arg(fixture.join("basic.bib"))
-        .output()
-        .expect("run native bib tool mode");
-    assert_eq!(tool.status.code(), Some(0));
-    assert_eq!(
-        tool.stdout,
-        fs::read(fixture.join("basic.expected.stdout")).expect("stdout fixture")
-    );
-    assert_eq!(
-        fs::read(tool_path).expect("tool output"),
-        fs::read(fixture.join("tool.expected.bib")).expect("tool fixture")
+        names,
+        [
+            "bcf-success",
+            "invalid-output-format",
+            "tool-mode",
+        ]
     );
 
-    let invalid = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .arg("bib")
-        .arg("--output-format=pdf")
-        .arg(fixture.join("basic.bcf"))
-        .output()
-        .expect("run invalid bib invocation");
-    assert_eq!(invalid.status.code(), Some(2));
-    assert!(invalid.stdout.is_empty());
-    assert_eq!(
-        invalid.stderr,
-        fs::read(fixture.join("invalid.expected.stderr")).expect("stderr fixture")
-    );
+    for name in names {
+        let case_relative = area_relative.join(&name);
+        let case = ClosedCase::discover(&case_relative).expect("closed bibliography case");
+        let invocation =
+            BibInvocationCase::parse(&case.read_to_string("invocation.case").expect("metadata"));
+        let temp = tempfile::tempdir().expect("create isolated bibliography output directory");
+        let actual_artifact = invocation
+            .artifact
+            .as_ref()
+            .map(|(name, _)| temp.path().join(name));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
+        command.arg("bib");
+        for argument in &invocation.argv {
+            if argument == "{output}" {
+                command.arg(actual_artifact.as_ref().expect("output placeholder artifact"));
+            } else if invocation.inputs.contains(argument) {
+                command.arg(repository.join(&case_relative).join(argument));
+            } else {
+                command.arg(argument);
+            }
+        }
+        let output = command.output().expect("run native bibliography case");
+        assert_eq!(output.status.code(), Some(invocation.status), "{name}");
+        assert_eq!(
+            output.stdout,
+            invocation.expected_channel(&case, &invocation.stdout),
+            "{name} stdout"
+        );
+        assert_eq!(
+            output.stderr,
+            invocation.expected_channel(&case, &invocation.stderr),
+            "{name} stderr"
+        );
+        if let Some((_, expected)) = &invocation.artifact {
+            assert_eq!(
+                fs::read(actual_artifact.as_ref().expect("artifact path"))
+                    .expect("generated bibliography artifact"),
+                case.read(expected).expect("expected bibliography artifact"),
+                "{name} artifact"
+            );
+        }
+        ClosedCase::discover(&case_relative)
+            .expect("invocation must not publish ambient case outputs");
+    }
+}
+
+struct BibInvocationCase {
+    argv: Vec<String>,
+    status: i32,
+    inputs: BTreeSet<String>,
+    stdout: String,
+    stderr: String,
+    artifact: Option<(String, String)>,
+}
+
+impl BibInvocationCase {
+    fn parse(metadata: &str) -> Self {
+        let mut lines = metadata.lines();
+        assert_eq!(lines.next(), Some("bib-invocation-v1"));
+        let mut argv = Vec::new();
+        let mut status = None;
+        let mut inputs = BTreeSet::new();
+        let mut stdout = None;
+        let mut stderr = None;
+        let mut artifact = None;
+        for line in lines {
+            let (key, value) = line.split_once('=').expect("keyed invocation metadata");
+            match key {
+                "argv" => argv.push(value.to_owned()),
+                "status" => status = Some(value.parse().expect("numeric invocation status")),
+                "input" => assert!(inputs.insert(value.to_owned()), "duplicate input role"),
+                "stdout" => stdout = Some(value.to_owned()),
+                "stderr" => stderr = Some(value.to_owned()),
+                "artifact" if value == "none" => artifact = Some(None),
+                "artifact" => {
+                    let (actual, expected) =
+                        value.split_once(':').expect("artifact actual:expected roles");
+                    artifact = Some(Some((actual.to_owned(), expected.to_owned())));
+                }
+                _ => panic!("unknown invocation metadata field: {line}"),
+            }
+        }
+        Self {
+            argv,
+            status: status.expect("status role"),
+            inputs,
+            stdout: stdout.expect("stdout role"),
+            stderr: stderr.expect("stderr role"),
+            artifact: artifact.expect("artifact role"),
+        }
+    }
+
+    fn expected_channel(&self, case: &ClosedCase, authority: &str) -> Vec<u8> {
+        if authority == "empty" {
+            Vec::new()
+        } else {
+            case.read(authority).expect("declared channel authority")
+        }
+    }
 }
 
 #[test]

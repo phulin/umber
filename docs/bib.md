@@ -69,6 +69,18 @@ compared by typed severity, stable code, order, source location, and rendered
 text after fixing environmental inputs such as clock, locale, and virtual
 path roots.
 
+The native command boundary has three repository-owned invocation cases under
+`tests/corpus/bib/invocation/`: successful BCF processing, tool-mode BibTeX
+transformation, and invalid output-format validation. Each is a self-contained
+Git-closed directory whose `bib-invocation-v1` metadata pins ordered argv,
+status, input roles, stdout/stderr authorities, and the applicable generated
+artifact. The CLI integration test discovers these directories
+deterministically through `test_support::git_fixture::ClosedCase`, writes
+generated artifacts only to an isolated temporary directory, and compares
+every applicable channel byte-for-byte. Shared BCF, BibTeX, and stdout bytes
+are duplicated identically into their owning cases rather than read from an
+area-level authority.
+
 ## Goals
 
 The subsystem must:

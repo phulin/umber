@@ -21,7 +21,10 @@ mismatched transaction roots are preserved and refused. A completed apply and
 a successfully rolled-back apply are both safe to repeat. The reusable specification declares
 case discovery, relative sources and destinations, roles, local metadata,
 shared-input copies, and output mappings without assuming `.tex` or
-`expected.<channel>` names.
+`expected.<channel>` names. Family areas may be normalized nested paths, and a
+shared authority may target either every discovered case or an explicit
+nonempty subset; the latter keeps overlapping scenario groups declarative
+without introducing duplicate flat authorities.
 
 Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
 of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of
