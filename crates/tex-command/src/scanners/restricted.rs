@@ -109,10 +109,12 @@ pub struct RestrictedInteger {
 /// terminal/log sink. Keeping the class and unrecovered `scan_int` value
 /// together prevents consumers from reconstructing either after `cur_val`
 /// has already become zero.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestrictedIntegerRecovery {
     pub class: RestrictedIntegerClass,
     pub scanned: i32,
+    /// TeX82 §82's input display at the point the range error was detected.
+    pub context: String,
 }
 
 impl CommandProcessor<'_> {
@@ -129,10 +131,12 @@ impl CommandProcessor<'_> {
         let accepted = class.accepts(self.command.profile(), scanned.value);
         let recovered = !accepted;
         if recovered {
+            let context = self.command.output_open_context(&self.state);
             self.restricted_integer_recoveries
                 .push(RestrictedIntegerRecovery {
                     class,
                     scanned: scanned.value,
+                    context,
                 });
         }
         Ok(RestrictedInteger {

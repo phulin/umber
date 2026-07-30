@@ -177,6 +177,27 @@ fn transcript_text(universe: &Universe) -> String {
     committed + &pending
 }
 
+fn terminal_only_text(universe: &Universe) -> String {
+    let committed = universe
+        .world()
+        .memory_terminal_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    committed + &pending
+}
+
 fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     universe
@@ -3999,16 +4020,22 @@ fn replay_openout_keeps_four_bit_recovery_before_stream_zero_effect() {
         control.step(&mut universe).expect("openout recovery"),
         ReplayStep::Continue
     );
-    assert!(matches!(
-        universe.world().effect_records(),
-        [
-            EffectRecord::StreamWrite {
-                sink: tex_state::PrintSink::TerminalAndLog,
-                text,
-            },
-            EffectRecord::StreamOpen { slot, .. },
-        ] if text == "\n! Bad number (-1).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
-            && *slot == StreamSlot::new(0)
+    let terminal = terminal_only_text(&universe);
+    assert!(terminal.contains("! Bad number (-1)."), "{terminal}");
+    assert!(terminal.contains("<to be read again>"), "{terminal}");
+    let transcript = transcript_text(&universe);
+    assert!(
+        transcript.contains("Since I expected to read a number between 0 and 15,")
+            && transcript.contains("I changed this one to zero."),
+        "{transcript}"
+    );
+    assert_eq!(universe.world().error_channel().error_count(), 1);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::ErrorMessageIssued
+    );
+    assert!(universe.world().effect_records().iter().any(
+        |effect| matches!(effect, EffectRecord::StreamOpen { slot, .. } if *slot == StreamSlot::new(0))
     ));
 }
 
@@ -4023,23 +4050,22 @@ fn replay_closeout_stream_selector_committed_microfixture() {
     register_source(&mut control, source);
     run_to_end(&mut control, &mut universe);
 
-    let actual = universe
-        .world()
-        .effect_records()
-        .iter()
-        .map(|effect| match effect {
+    let mut records = Vec::new();
+    for effect in universe.world().effect_records() {
+        match effect {
             EffectRecord::StreamOpen { slot, target } => {
-                format!("open:{}:{}", slot.raw(), target.path().display())
+                if target.path().ends_with("recovered.out") {
+                    records.push("diagnostic:-1".to_owned());
+                }
+                records.push(format!("open:{}:{}", slot.raw(), target.path().display()));
             }
-            EffectRecord::StreamClose { slot } => format!("close:{}", slot.raw()),
-            EffectRecord::StreamWrite {
-                sink: tex_state::PrintSink::TerminalAndLog,
-                text,
-            } if text.contains("Bad number (-1)") => "diagnostic:-1".to_owned(),
+            EffectRecord::StreamClose { slot } => records.push(format!("close:{}", slot.raw())),
+            EffectRecord::StreamWrite { .. } => {}
             effect => panic!("unexpected microfixture effect {effect:?}"),
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        }
+    }
+    assert!(terminal_only_text(&universe).contains("Bad number (-1)"));
+    let actual = records.join("\n");
     assert_eq!(format!("{actual}\n"), expected);
 }
 
@@ -8104,6 +8130,19 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
         text.contains("Bad register code (1000)"),
         "out-of-range class is diagnosed: {text}"
     );
+    assert!(
+        text.contains("<to be read again>"),
+        "§82 prints the live scanner context: {text}"
+    );
+    assert_eq!(universe.world().error_channel().error_count(), 1);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::ErrorMessageIssued
+    );
+    assert!(
+        transcript_text(&universe).contains("A register number must be between 0 and 255."),
+        "§433 help goes to the transcript"
+    );
 
     let vbox = universe
         .box_reg(0)
@@ -8120,6 +8159,33 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
         };
         assert_eq!(class, 0, "both recoveries fall back to class 0");
     }
+}
+
+#[test]
+fn openout_and_insert_share_the_restricted_integer_hundred_error_limit() {
+    let mut source = String::new();
+    for _ in 0..50 {
+        source.push_str("\\immediate\\openout-1=x ");
+    }
+    source.push_str("\\setbox0=\\vbox{");
+    for _ in 0..50 {
+        source.push_str("\\insert1000{}");
+    }
+    source.push_str("}\\count0=7\\end");
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source.as_bytes());
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.fatal_error(), Some(FatalError::TooManyErrors));
+    assert_eq!(universe.world().error_channel().error_count(), 100);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+    assert_eq!(universe.count(0), 0);
+    assert!(terminal_only_text(&universe).contains("(That makes 100 errors; please try again.)"));
 }
 
 #[test]
@@ -8607,13 +8673,181 @@ fn code_table_selector_uses_tex82_character_code_recovery() {
     assert_eq!(universe.lccode('\0'), 3);
     assert_eq!(universe.lccode('\u{ff}'), 2);
     assert_eq!(universe.lccode('\u{100}'), 0);
-    let reported = terminal_text(&universe);
-    assert!(
-        reported.contains(
-            "! Bad character code (256).\nA character number must be between 0 and 255.\nI changed this one to zero."
+    let reported = terminal_only_text(&universe);
+    assert_eq!(
+        reported,
+        concat!(
+            "! Bad character code (256).\n",
+            "<to be read again> \n",
+            "                   =\n",
+            "l.4 \\lccode256=\n",
+            "               3\n",
+            "L:3:2",
         ),
-        "{reported}"
+        "TeX82 §§82,311,434 frame restricted-integer help after the exact live input context"
     );
+    assert_eq!(
+        transcript_text(&universe),
+        concat!(
+            "! Bad character code (256).\n",
+            "<to be read again> \n",
+            "                   =\n",
+            "l.4 \\lccode256=\n",
+            "               3\n",
+            "A character number must be between 0 and 255.\n",
+            "I changed this one to zero.\n",
+            "\n",
+            "L:3:2",
+        ),
+        "TeX82 §§82,90,434 pin the transcript message, context, and help bytes"
+    );
+}
+
+#[test]
+fn restricted_integer_error_is_profile_and_observation_invariant() {
+    let format = {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, br"\end");
+        run_to_end(&mut control, &mut universe);
+        universe.dump_format().expect("dump minimal TeX82 format")
+    };
+    let mut baseline = None;
+
+    for loaded in [false, true] {
+        for observed in [false, true] {
+            let mut universe = if loaded {
+                Universe::from_format(tex_state::World::memory(), &format).expect("load format")
+            } else {
+                Universe::new_with_plain_catcodes()
+            };
+            let mut control = if loaded {
+                tex_expand::register_expandable_primitives(&mut universe);
+                crate::register_unexpandable_primitives(&mut universe);
+                CanonicalMainControl::with_profile(CommandProfile::TEX82)
+            } else {
+                CanonicalMainControl::tex82_initex(&mut universe)
+            };
+            register_source(&mut control, br"\lccode256=3\end");
+            let mut observations = ObservationRecorder::default();
+            loop {
+                let step = if observed {
+                    control
+                        .step_with_observer(&mut universe, &mut observations)
+                        .expect("observed restricted recovery")
+                } else {
+                    control
+                        .step(&mut universe)
+                        .expect("unobserved restricted recovery")
+                };
+                if matches!(step, ReplayStep::End | ReplayStep::EndOfInput) {
+                    break;
+                }
+            }
+
+            assert_eq!(
+                universe.lccode('\0'),
+                3,
+                "§434 recovery leaves the scanner at the equals/value input"
+            );
+            assert_eq!(universe.world().error_channel().error_count(), 1);
+            assert_eq!(
+                universe.world().error_channel().history(),
+                tex_state::print::ErrorHistory::ErrorMessageIssued
+            );
+            let result = (terminal_only_text(&universe), transcript_text(&universe));
+            assert_eq!(result.0.matches("Bad character code").count(), 1);
+            assert_eq!(result.1.matches("Bad character code").count(), 1);
+            assert!(result.1.contains("I changed this one to zero."));
+            if let Some(expected) = &baseline {
+                assert_eq!(
+                    &result, expected,
+                    "INITEX/loaded and observed/unobserved paths are byte-identical"
+                );
+            } else {
+                baseline = Some(result);
+            }
+        }
+    }
+}
+
+#[test]
+fn restricted_integer_error_commits_once_after_input_resource_retry() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\lccode256=\input child\end");
+    let mut observations = ObservationRecorder::default();
+
+    let suspended = control
+        .advance_with_observer(&mut universe, &mut observations)
+        .expect("missing expansion input suspends");
+    assert!(matches!(
+        suspended,
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name })
+            if name == "child" || name == "child.tex"
+    ));
+    assert_eq!(universe.world().error_channel().error_count(), 0);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::Spotless
+    );
+    assert!(!terminal_only_text(&universe).contains("Bad character code"));
+
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"3"[..])),
+    );
+    assert!(matches!(
+        control
+            .advance_with_observer(&mut universe, &mut observations)
+            .expect("resource retry commits"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.lccode('\0'), 3);
+    assert_eq!(universe.world().error_channel().error_count(), 1);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::ErrorMessageIssued
+    );
+    assert_eq!(
+        terminal_only_text(&universe)
+            .matches("Bad character code")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_hundredth_restricted_integer_error_terminates_canonical_replay() {
+    let mut source = String::new();
+    for _ in 0..100 {
+        source.push_str("\\lccode256=0 ");
+    }
+    source.push_str("\\count0=7\\end");
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source.as_bytes());
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        control.fatal_error(),
+        Some(FatalError::TooManyErrors),
+        "TeX82 §82's jump_out latches the existing canonical terminal state"
+    );
+    assert_eq!(universe.world().error_channel().error_count(), 100);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+    assert_eq!(
+        universe.count(0),
+        0,
+        "the non-local 100-error exit does not deliver later commands"
+    );
+    assert!(terminal_only_text(&universe).contains("(That makes 100 errors; please try again.)"));
 }
 
 #[test]

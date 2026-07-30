@@ -4975,6 +4975,7 @@ fn restricted_integer_all_five_classes_min_max_and_recovery_matrix() {
                     .then_some(crate::RestrictedIntegerRecovery {
                         class,
                         scanned: source.parse().expect("matrix source is an integer"),
+                        context: String::new(),
                     })
                     .into_iter()
                     .collect::<Vec<_>>(),

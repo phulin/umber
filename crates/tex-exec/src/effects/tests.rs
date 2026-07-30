@@ -762,7 +762,7 @@ fn out_what_retry_prints_captured_tex_context_before_prompt() {
         .expect("terminal is utf-8");
         assert!(
             terminal.contains(
-                "I can't write on file `blocked.tex'.\n<token list> \n             \\end \n...ox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n                                                  \nPlease type another output file name: "
+                "I can't write on file `blocked.tex'.\n<to be read again> \n                   \\end \n...ox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n                                                  \nPlease type another output file name: "
             ),
             "{terminal:?}"
         );
@@ -794,11 +794,13 @@ fn out_what_retry_show_context_includes_nested_token_level_and_obeys_context_lim
             .to_vec(),
     )
     .expect("terminal output is utf-8");
-    assert!(terminal.contains("<token list> "), "{terminal:?}");
+    assert!(terminal.contains("<to be read again> "), "{terminal:?}");
     assert!(terminal.contains("mnopqrstuvwxyz}\\end"), "{terminal:?}");
     assert!(terminal.contains("..."), "{terminal:?}");
     assert!(
-        terminal.find("<token list> ").expect("token-list context")
+        terminal
+            .find("<to be read again> ")
+            .expect("backed-up context")
             < terminal
                 .find("Please type another output file name")
                 .expect("replacement prompt"),

@@ -120,6 +120,7 @@ impl InputState {
                     let label = match tokens.trace {
                         ReplayTrace::MacroParameter { .. } => "<argument> ",
                         ReplayTrace::MacroReplacement => "<macro> ",
+                        ReplayTrace::BackedUp => "<to be read again> ",
                         ReplayTrace::Inserted => "<inserted text> ",
                         ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
                         ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",

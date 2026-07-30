@@ -3747,6 +3747,10 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
     // parameterless macro after collection. Exercise explicit prefixes and
     // both `\globaldefs` overrides through ordinary replay.
     let mut stores = Universe::new_with_plain_catcodes();
+    // `\read-1` first reports §433's out-of-range stream number. Keep this
+    // scope/replay test in scroll mode so §82's error-stop dialog does not
+    // canonically consume the terminal lines intended for the reads.
+    stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
     for line in ["local", "explicit", "forced-global", "forced-local"] {
         stores
             .world_mut()

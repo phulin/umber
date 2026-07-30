@@ -826,6 +826,7 @@ fn etex_mark_class_enquiries_share_extended_register_scan_and_recovery() {
         vec![crate::RestrictedIntegerRecovery {
             class: crate::RestrictedIntegerClass::Register,
             scanned: -1,
+            context: String::new(),
         }]
     );
 }

@@ -20,6 +20,8 @@
 /// `(s:str_number)` and are only ever handed compile-time text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FatalError {
+    /// TeX82 §82's 100th recoverable error, after its terminal notice.
+    TooManyErrors,
     /// TeX82 §93 `fatal_error(s)`: prints `Emergency stop` with `s` as its one
     /// help line. Raised when the job cannot continue at all, as in §71's
     /// `*** (job aborted, no legal \end found)`.
@@ -56,6 +58,7 @@ impl FatalError {
     #[must_use]
     pub const fn diagnostic(self) -> &'static str {
         match self {
+            Self::TooManyErrors => "too-many-errors",
             Self::EmergencyStop { .. } => "emergency-stop",
             Self::CapacityExceeded { .. } => "capacity-exceeded",
             Self::Confusion { .. } => "confusion",
@@ -70,6 +73,7 @@ impl FatalError {
     #[must_use]
     pub fn label(self) -> String {
         match self {
+            Self::TooManyErrors => "too-many-errors".into(),
             Self::EmergencyStop { help } => format!("emergency-stop({help})"),
             Self::CapacityExceeded { resource, amount } => {
                 format!("capacity-exceeded({resource}={amount})")
@@ -84,12 +88,16 @@ impl FatalError {
         crate::DiagnosticRecord {
             severity: FATAL_SEVERITY,
             diagnostic: self.diagnostic(),
-            arguments: vec![crate::DiagnosticArgument::Name(self.argument())],
+            arguments: match self {
+                Self::TooManyErrors => Vec::new(),
+                _ => vec![crate::DiagnosticArgument::Name(self.argument())],
+            },
         }
     }
 
     fn argument(self) -> String {
         match self {
+            Self::TooManyErrors => unreachable!("too-many-errors has no diagnostic argument"),
             Self::EmergencyStop { help } => help.into(),
             Self::CapacityExceeded { resource, amount } => format!("{resource}={amount}"),
             Self::Confusion { site } => site.into(),

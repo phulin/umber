@@ -1067,7 +1067,7 @@ impl CanonicalMainControl {
             );
             scanned
         };
-        report_pending_diagnostics(stores, diagnostics);
+        report_pending_diagnostics(stores, diagnostics)?;
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -1321,7 +1321,7 @@ impl CanonicalMainControl {
                         .map(PendingDiagnostic::Command),
                 );
             }
-            report_pending_diagnostics(stores, diagnostics);
+            report_pending_diagnostics(stores, diagnostics)?;
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
         }
@@ -1499,7 +1499,7 @@ impl CanonicalMainControl {
             );
             scanned
         };
-        report_pending_diagnostics(stores, diagnostics);
+        report_pending_diagnostics(stores, diagnostics)?;
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -2689,7 +2689,7 @@ impl CanonicalMainControl {
             );
             scanned
         };
-        report_pending_diagnostics(stores, diagnostics);
+        report_pending_diagnostics(stores, diagnostics)?;
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -3743,7 +3743,7 @@ enum ScannedStep {
         value: i32,
     },
     DeferredOpenOut {
-        stream: i32,
+        stream: u8,
         file_name: String,
     },
     DeferredCloseOut {
@@ -5945,7 +5945,10 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
-            let stream = processor.scan_integer().map_err(command_error)?.value;
+            let stream = processor
+                .scan_restricted_integer(RestrictedIntegerClass::FourBit)
+                .map_err(command_error)?
+                .value as u8;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let file_name = processor.scan_file_name().map_err(command_error)?;
             Ok(ScannedStep::DeferredOpenOut {
@@ -8052,19 +8055,6 @@ fn apply_pdf_form_request(
     Ok(ReplayStep::Continue)
 }
 
-fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
-    if (0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
-        return StreamSlot::new(value as u8);
-    }
-    stores.world_mut().write_text(
-        PrintSink::TerminalAndLog,
-        &format!(
-            "\n! Bad number ({value}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
-        ),
-    );
-    StreamSlot::new(0)
-}
-
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
 /// §1350's `new_write_whatsit` has already normalized into `0..=17`.
 ///
@@ -8079,6 +8069,13 @@ fn replay_write_sink(value: tex_command::WriteStreamSelector) -> PrintSink {
         tex_command::WriteStreamSelector::Negative => PrintSink::Log,
         tex_command::WriteStreamSelector::AboveRange => PrintSink::TerminalAndLog,
     }
+}
+
+/// Converts a stream number already normalized by its command-owned
+/// restricted scan. Replay never owns range recovery or its diagnostic.
+fn replay_stream_slot(value: i32) -> StreamSlot {
+    debug_assert!((0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value));
+    StreamSlot::new(value as u8)
 }
 
 fn replay_openout_target(name: String) -> String {
@@ -10668,7 +10665,7 @@ fn apply_scanned_step(
                 InputStreamRequest::Open {
                     stream, file_name, ..
                 } => {
-                    let slot = replay_stream_slot(stream, stores);
+                    let slot = replay_stream_slot(stream);
                     let packed_name = file_name.packed();
                     // §1275 closes any stream already open on `n` before it
                     // tries to open the new file, whichever command this is.
@@ -10686,7 +10683,7 @@ fn apply_scanned_step(
                     stores.world_mut().open_in_content(slot, &content)?;
                 }
                 InputStreamRequest::Close { stream, .. } => {
-                    let slot = replay_stream_slot(stream, stores);
+                    let slot = replay_stream_slot(stream);
                     stores.world_mut().close_in(slot);
                 }
                 // TeX82 §482 has already collected the list inside the
@@ -10894,7 +10891,7 @@ fn apply_scanned_step(
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::OpenOut {
-                    slot: replay_stream_slot(stream, stores),
+                    slot: StreamSlot::new(stream),
                     path: file_name,
                 }));
             Ok(ReplayStep::Continue)
@@ -11215,10 +11212,10 @@ fn apply_scanned_step(
                     return Err(ExecError::PdfExtensionInDviMode(name));
                 }
                 ImmediateExtension::OpenOut { stream, file_name } => {
-                    let stream = replay_stream_slot(stream, stores);
-                    stores
-                        .world_mut()
-                        .open_out(stream, replay_openout_target(file_name.packed()));
+                    stores.world_mut().open_out(
+                        StreamSlot::new(stream),
+                        replay_openout_target(file_name.packed()),
+                    );
                 }
                 ImmediateExtension::Write { stream, tokens } => {
                     let sink = replay_write_sink(stream);
@@ -11431,27 +11428,21 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginInsert(construction) => {
-            // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`'s
-            // own range clamp ("Bad register code", recovering as class 0)
-            // and the additional `\insert255` rejection ("box 255 is
-            // special") both run here, now that a `Universe` diagnostic sink
-            // is available. `\vadjust` set `class:=255` directly
+            // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`
+            // has already applied its range clamp and queued the canonical
+            // "Bad register code" report. The additional `\insert255`
+            // rejection ("box 255 is special") runs here. `\vadjust` set
+            // `class:=255` directly
             // (`is_vadjust`), without ever calling `scan_eight_bit_int`, so
             // neither diagnostic applies to it -- 255 is its correct,
             // already-valid sentinel class, not a user-typed `\insert255`.
             let mut class = construction.class;
-            if !construction.is_vadjust {
-                if !(0..=255).contains(&class) {
-                    stores.report_bad_register_code(class, 255);
-                    class = 0;
-                }
-                if class == 255 {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
-                    );
-                    class = 0;
-                }
+            if !construction.is_vadjust && class == 255 {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
+                );
+                class = 0;
             }
             let class = class as u16;
             enter_canonical_group(stores, command.state, GroupKind::Insert);
@@ -13413,7 +13404,7 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// is the same split `report_restricted_integer_recovery` already makes for
 /// §§433-437; steps whose recovery is fully described by the step itself
 /// (`missing_to`, `recovered`, ...) keep carrying it there instead.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
     /// A command-owned diagnostic whose semantic transition completed before
     /// the World-facing executor could render it.
@@ -13444,7 +13435,10 @@ fn printed_command(stores: &Universe, meaning: Meaning) -> String {
 }
 
 /// Prints each report a completed scan owes, in detection order.
-fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDiagnostic>) {
+fn report_pending_diagnostics(
+    stores: &mut Universe,
+    diagnostics: Vec<PendingDiagnostic>,
+) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         match diagnostic {
             PendingDiagnostic::Command(
@@ -13477,7 +13471,12 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
                 report.error();
             }
             PendingDiagnostic::RestrictedInteger(recovery) => {
-                report_restricted_integer_recovery(stores, recovery.class, recovery.scanned);
+                report_restricted_integer_recovery(
+                    stores,
+                    recovery.class,
+                    recovery.scanned,
+                    &recovery.context,
+                )?;
             }
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
@@ -13501,6 +13500,7 @@ fn report_pending_diagnostics(stores: &mut Universe, diagnostics: Vec<PendingDia
             }
         }
     }
+    Ok(())
 }
 
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
@@ -13647,15 +13647,18 @@ fn report_restricted_integer_recovery(
     stores: &mut Universe,
     class: RestrictedIntegerClass,
     scanned: i32,
-) {
-    stores.world_mut().write_text(
-        PrintSink::TerminalAndLog,
-        &format!(
-            "\n! {} ({scanned}).\n{}\nI changed this one to zero.\n",
-            class.message(),
-            class.help(),
-        ),
-    );
+    context: &str,
+) -> Result<(), ExecError> {
+    let mut report = stores.print_err(class.message());
+    report
+        .help(&[class.help(), "I changed this one to zero."])
+        .context(context.to_owned());
+    match report.int_error(scanned) {
+        tex_state::print::ErrorOutcome::Continue => Ok(()),
+        tex_state::print::ErrorOutcome::FatalErrorLimit => {
+            Err(ExecError::Fatal(FatalError::TooManyErrors))
+        }
+    }
 }
 
 /// Converts a command-core failure into its `ExecError` counterpart,

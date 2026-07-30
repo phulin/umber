@@ -877,7 +877,8 @@ pub enum ImmediateExtension {
     /// DVI-mode error without giving the scanner the diagnostic channel.
     PdfExtensionInDviMode(UnexpandablePrimitive),
     OpenOut {
-        stream: i32,
+        /// TeX82 §435's effective stream after `scan_four_bit_int`.
+        stream: u8,
         file_name: ScannedFileName,
     },
     Write {
@@ -2197,7 +2198,9 @@ impl CommandProcessor<'_> {
         };
         match command.meaning() {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
-                let stream = self.scan_integer()?.value;
+                let stream = self
+                    .scan_restricted_integer(RestrictedIntegerClass::FourBit)?
+                    .value as u8;
                 let _ = self.scan_optional_equals()?;
                 let file_name = self.scan_file_name()?;
                 Ok(ImmediateExtension::OpenOut { stream, file_name })
@@ -2617,10 +2620,10 @@ impl CommandProcessor<'_> {
     /// cur_val:=255 else scan_eight_bit_int`, then
     /// `new_save_level(insert_group); scan_left_brace`.
     ///
-    /// The raw integer is carried through unvalidated because
-    /// `scan_eight_bit_int`'s range clamp and the reserved-255 rejection both
-    /// need a `Universe` diagnostic sink; `\vadjust` skips the scan entirely,
-    /// so its fixed 255 is never subject to either.
+    /// `scan_eight_bit_int` owns its range clamp and queues §433's diagnostic
+    /// for the executor's canonical error channel. The effective value is
+    /// carried to replay; `\vadjust` skips the scan entirely, so its fixed
+    /// 255 is never subject to that diagnostic.
     pub fn scan_insert_construction(
         &mut self,
         is_vadjust: bool,
@@ -2628,7 +2631,8 @@ impl CommandProcessor<'_> {
         let class = if is_vadjust {
             255
         } else {
-            self.scan_integer()?.value
+            self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?
+                .value
         };
         self.scan_box_group_opening()?;
         Ok(ScannedInsertConstruction { class, is_vadjust })

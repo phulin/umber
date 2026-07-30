@@ -20,18 +20,13 @@
 //!   §75's `no_print`/`term_only` half of the table is unreachable and
 //!   [`Selector::for_interaction`] yields only `log_only` and
 //!   `term_and_log`.
-//! - **`show_context` is not called.** tex.web §82 shows the input-stack
-//!   context after every error. That needs the live input stack, which is
-//!   not reachable from this layer; the context line is absent rather than
-//!   approximated.
-//! - **`history` is not tracked** (see [`crate::diagnostic`]), so §82's
-//!   `error_message_issued` transition and §1335's "see the transcript file"
-//!   note are absent.
-//! - **`jump_out` is not representable.** §82's 100-error abort and §84's
-//!   `X` option therefore return from `error` instead of terminating the
-//!   job. §71's `fatal_error("End of file on the terminal!")` is the same
-//!   case: §83's dialog is skipped when the terminal cannot answer, rather
-//!   than printing a prompt and then failing to end the job.
+//! - **`show_context` is caller-supplied.** tex.web §82 shows the live input
+//!   stack after every error. The command core captures that display while it
+//!   owns the stack and supplies it through [`ErrorReport::context`].
+//! - **`jump_out` is reported to the caller.** §82's 100-error abort is
+//!   returned as [`ErrorOutcome::FatalErrorLimit`], so the command driver can
+//!   perform its existing non-local terminal transition. §84's `X` option and
+//!   §71's terminal EOF still cannot leave the process from this state layer.
 //! - **`deletions_allowed` is effectively false** and §87's `I` insertion is
 //!   unavailable, because §84's digit and `I` options both drive the input
 //!   stack. Both fall to §84's `othercases do_nothing`, which is exactly
@@ -258,6 +253,7 @@ pub struct ErrorReport<'a> {
     printer: Printer<'a>,
     help: Vec<String>,
     err_help: Option<String>,
+    context: Option<String>,
 }
 
 /// An error report paused between tex.web's message/help setup and §82's
@@ -266,6 +262,14 @@ pub struct DeferredErrorReport {
     selector: Selector,
     help: Vec<String>,
     err_help: Option<String>,
+    context: Option<String>,
+}
+
+/// The control-flow consequence of completing tex.web §82's `error`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorOutcome {
+    Continue,
+    FatalErrorLimit,
 }
 
 impl<'a> ErrorReport<'a> {
@@ -278,6 +282,7 @@ impl<'a> ErrorReport<'a> {
             printer,
             help: Vec::new(),
             err_help: None,
+            context: None,
         }
     }
 
@@ -343,6 +348,12 @@ impl<'a> ErrorReport<'a> {
         self
     }
 
+    /// Supplies tex.web §82's already-rendered `show_context` display.
+    pub fn context(&mut self, rendered: String) -> &mut Self {
+        self.context = Some(rendered);
+        self
+    }
+
     /// Releases the live [`Universe`] borrow while retaining the report state
     /// needed by §82's `error`.
     #[must_use = "a deferred error report must be resumed and completed"]
@@ -351,20 +362,27 @@ impl<'a> ErrorReport<'a> {
             selector: self.printer.selector(),
             help: self.help,
             err_help: self.err_help,
+            context: self.context,
         }
     }
 
     /// tex.web §91's `int_error`.
-    pub fn int_error(mut self, value: i32) {
+    pub fn int_error(mut self, value: i32) -> ErrorOutcome {
         self.print(" (").print_int(value).print_char(')');
-        self.error();
+        self.error()
     }
 
     /// tex.web §82's `error`.
-    pub fn error(mut self) {
+    pub fn error(mut self) -> ErrorOutcome {
+        self.printer
+            .universe
+            .world_mut()
+            .error_channel_mut()
+            .record_error_history();
         self.printer.print_char('.');
-        // §82's `show_context` is not modeled; see the module documentation.
-        //
+        if let Some(context) = self.context.take() {
+            self.printer.print(&context);
+        }
         // A terminal that cannot answer takes the scrolled tail rather than
         // §83's dialog: §75's `error_stop_mode` presumes an interactive
         // terminal, and §71's response to one at end of file is `fatal_error`,
@@ -373,14 +391,26 @@ impl<'a> ErrorReport<'a> {
             && self.printer.universe.world().terminal_line_available()
         {
             self.users_advice();
-            return;
+            return ErrorOutcome::Continue;
         }
-        self.printer
+        let error_count = self
+            .printer
             .universe
             .world_mut()
             .error_channel_mut()
             .record_scrolled_error();
+        if error_count == 100 {
+            self.printer
+                .print_nl("(That makes 100 errors; please try again.)");
+            self.printer
+                .universe
+                .world_mut()
+                .error_channel_mut()
+                .record_fatal_history();
+            return ErrorOutcome::FatalErrorLimit;
+        }
         self.help_on_transcript();
+        ErrorOutcome::Continue
     }
 
     /// tex.web §90's `<Put help message on the transcript file>`.
@@ -526,13 +556,45 @@ impl<'a> ErrorReport<'a> {
 pub struct ErrorChannel {
     error_count: i32,
     long_help_seen: bool,
+    history: ErrorHistory,
+}
+
+/// tex.web §76's ordered `history` severities.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ErrorHistory {
+    #[default]
+    Spotless,
+    WarningIssued,
+    ErrorMessageIssued,
+    FatalErrorStop,
 }
 
 impl ErrorChannel {
-    /// tex.web §82's `incr(error_count)`. §82's 100-error `jump_out` is not
-    /// representable here; see the module documentation.
-    pub const fn record_scrolled_error(&mut self) {
+    /// tex.web §82's `incr(error_count)`, returning the incremented count so
+    /// the report owner can perform the 100-error terminal transition.
+    pub const fn record_scrolled_error(&mut self) -> i32 {
         self.error_count = self.error_count.saturating_add(1);
+        self.error_count
+    }
+
+    /// tex.web §82's `history:=error_message_issued` monotonic transition.
+    pub const fn record_error_history(&mut self) {
+        if matches!(
+            self.history,
+            ErrorHistory::Spotless | ErrorHistory::WarningIssued
+        ) {
+            self.history = ErrorHistory::ErrorMessageIssued;
+        }
+    }
+
+    /// tex.web §82's 100-error `history:=fatal_error_stop`.
+    pub const fn record_fatal_history(&mut self) {
+        self.history = ErrorHistory::FatalErrorStop;
+    }
+
+    #[must_use]
+    pub const fn history(&self) -> ErrorHistory {
+        self.history
     }
 
     /// tex.web §86's `error_count:=0`, also §1054's paragraph reset.
@@ -575,6 +637,7 @@ impl Universe {
             printer: Printer::new(self, selector),
             help: Vec::new(),
             err_help: None,
+            context: None,
         }
     }
 
@@ -584,6 +647,7 @@ impl Universe {
             printer: Printer::new(self, deferred.selector),
             help: deferred.help,
             err_help: deferred.err_help,
+            context: deferred.context,
         }
     }
 
