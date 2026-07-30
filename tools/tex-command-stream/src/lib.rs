@@ -2079,7 +2079,7 @@ mod tests {
     }
 
     #[test]
-    fn readline_retirement_keeps_the_surrounding_file_active() {
+    fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
         let root = LiveSource {
             name: "root.tex".into(),
             source: SourceId::new(7),
@@ -2090,14 +2090,14 @@ mod tests {
             CommandObservation::Input(InputRecord {
                 transition: InputTransition::Push,
                 reason: CommandInputReason::Source,
-                source_name: Some(tex_command::SourceNameClass::Terminal),
+                source_name: Some(tex_command::SourceNameClass::ReadStream(1)),
                 level: 9,
                 position: 0,
             }),
             CommandObservation::Input(InputRecord {
                 transition: InputTransition::Retire,
                 reason: CommandInputReason::Source,
-                source_name: Some(tex_command::SourceNameClass::Terminal),
+                source_name: Some(tex_command::SourceNameClass::ReadStream(1)),
                 level: 9,
                 position: 0,
             }),
@@ -2113,7 +2113,7 @@ mod tests {
             Event::Input(InputEvent {
                 transition: tex_oracle::InputTransition::Retire,
                 reason: InputReason::Source,
-                name: "terminal".into(),
+                name: "read_stream".into(),
             })
         );
         assert!(
@@ -2121,6 +2121,25 @@ mod tests {
             "retiring the nested readline level must not pop its outer file"
         );
         assert_eq!(translator.sources.len(), 2);
+
+        let terminal = translate_input(
+            InputRecord {
+                transition: InputTransition::Retire,
+                reason: CommandInputReason::Source,
+                source_name: Some(tex_command::SourceNameClass::Terminal),
+                level: 10,
+                position: 0,
+            },
+            "root.tex",
+        );
+        assert_eq!(
+            terminal,
+            Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Retire,
+                reason: InputReason::Source,
+                name: "terminal".into(),
+            })
+        );
     }
 
     #[test]

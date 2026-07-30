@@ -2156,11 +2156,11 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
 }
 
 #[test]
-fn readline_retirement_stays_terminal_while_ordinary_read_names_the_stream() {
-    // TeX82 §§328 and 483 plus e-TeX's `\readline` change: ordinary `\read`
-    // assigns `name=m+1`, but verbatim `\readline` consumes bytes directly
-    // from the freshly opened `name=0` level. Both controls read actual data
-    // while stream 1 remains open, so EOF fallback cannot explain the result.
+fn read_and_readline_retire_with_the_open_stream_name() {
+    // TeX82 §483 assigns `name=m+1` before acquiring the line. e-TeX's
+    // `\readline` branch changes token construction only, so both controls
+    // retain the open stream's source name. Closed-stream terminal fallback
+    // remains covered separately below.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -2201,9 +2201,9 @@ fn readline_retirement_stays_terminal_while_ordinary_read_names_the_stream() {
         retirements,
         [
             crate::SourceNameClass::ReadStream(slot.raw()),
-            crate::SourceNameClass::Terminal,
+            crate::SourceNameClass::ReadStream(slot.raw()),
         ],
-        "`\\read` and `\\readline` must not share one source-name class"
+        "`\\read` and `\\readline` share §483's open-stream source name"
     );
     assert!(fuel.burned() <= 64);
     assert!(!universe.command_context().read_stream_at_eof(slot));

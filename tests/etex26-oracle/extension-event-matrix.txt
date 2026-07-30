@@ -13,6 +13,8 @@ token_list|scantokens construction|extensions.tex|pseudo_start balanced-text com
 input|everyeof push|extensions.tex|natural pseudo-file EOF insertion|"transition":"push","reason":"token_list","name":"every_eof"|absent
 input|everyeof retirement|extensions.tex|everyeof token-list retirement|"transition":"retire","reason":"token_list","name":"every_eof"|absent
 mutation|readline token construction|extensions.tex|read_toks definition commit|"value":"readlinecopy"|absent
+input|readline initial pseudo-source|extensions.tex|read_toks begin_file_reading before stream selection|"transition":"push","reason":"source","name":"terminal"|shared
+input|readline open-stream retirement|extensions.tex|read_toks name=m+1 before readline construction|"transition":"retire","reason":"source","name":"read_stream"|shared
 scanner|numexpr result|extensions.tex|scan_expr committed integer result|"scanner":"expression_integer","result":{"type":"integer","value":14}|absent
 scanner|dimexpr result|extensions.tex|scan_expr committed dimension result|"scanner":"expression_dimension","result":{"type":"scaled","value":196608}|absent
 scanner|glueexpr result|extensions.tex|scan_expr committed glue result|"scanner":"expression_glue","result":{"type":"glue"|absent

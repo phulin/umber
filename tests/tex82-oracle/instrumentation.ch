@@ -371,7 +371,8 @@ endcases;
 write(umber_trace_file,'","name":');
 if reason=0 then
   if name>17 then umber_trace_string(name)
-  else write(umber_trace_file,'"terminal"')
+  else if name=0 then write(umber_trace_file,'"terminal"')
+  else write(umber_trace_file,'"', 'r','e','a','d','_','s','t','r','e','a','m','"')
 else umber_trace_input_name(t);
 write_ln(umber_trace_file,'}}}');
 end;
