@@ -3,12 +3,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use test_support::{corpus_cases, corpus_root, pdf::normalize_structure};
 
 use super::umber_bin;
+use crate::cohort_transaction::CohortCase;
+use crate::layout_migration::{Mode, run_staged_cohort};
 
 const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025)";
 const RENDERER_VERSION: &str = "pdftoppm version 25.08.0";
@@ -20,9 +22,31 @@ pub(super) fn regenerate_area() -> Result<()> {
     if cases.is_empty() {
         bail!("no .tex cases found for area pdf");
     }
+    let repository = test_support::repository_root();
+    let candidates =
+        TempDir::new_in(&repository).context("create repository-local PDF candidate cohort")?;
+    let mut plan = Vec::new();
     for case in cases {
-        regenerate_case(case.name())?;
+        let candidate = candidates.path().join(case.name());
+        copy_case(
+            case.source_path()
+                .parent()
+                .context("PDF source has no case root")?,
+            &candidate,
+        )?;
+        regenerate_case_into(case.name(), &candidate)?;
+        plan.push(CohortCase {
+            staged: candidate
+                .strip_prefix(&repository)
+                .context("PDF candidate escaped repository")?
+                .to_string_lossy()
+                .into_owned(),
+            destination: format!("tests/corpus/pdf/{}", case.name()),
+            authorities: vec![format!("tests/corpus/pdf/{}", case.name())],
+        });
     }
+    run_staged_cohort(&repository, &plan, Mode::Plan)?;
+    run_staged_cohort(&repository, &plan, Mode::Apply)?;
     Ok(())
 }
 
@@ -67,6 +91,11 @@ pub(super) fn check_raster_attestations() -> Result<()> {
 }
 
 pub(super) fn regenerate_case(case: &str) -> Result<()> {
+    let case_root = corpus_root().join("pdf").join(case);
+    regenerate_case_into(case, &case_root)
+}
+
+fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
     let case_root = corpus_root().join("pdf").join(case);
     let source = case_root.join("source.tex");
     if !source.is_file() {
@@ -139,17 +168,17 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
         bail!("extracted PDF text differs for pdf/{case}");
     }
 
-    write_fixture(case, "ref.pdf", &reference_bytes)?;
-    write_fixture(case, "umber.pdf", &umber_bytes)?;
+    write_fixture(output_root, "ref.pdf", &reference_bytes)?;
+    write_fixture(output_root, "umber.pdf", &umber_bytes)?;
     if font_case {
-        write_fixture(case, "ref.structure", reference_structure.as_bytes())?;
-        write_fixture(case, "umber.structure", umber_structure.as_bytes())?;
+        write_fixture(output_root, "ref.structure", reference_structure.as_bytes())?;
+        write_fixture(output_root, "umber.structure", umber_structure.as_bytes())?;
     } else {
-        write_fixture(case, "structure", reference_structure.as_bytes())?;
+        write_fixture(output_root, "structure", reference_structure.as_bytes())?;
     }
-    write_fixture(case, "pgm", &reference_pgm)?;
+    write_fixture(output_root, "pgm", &reference_pgm)?;
     let attestation = if font_case {
-        write_fixture(case, "extract", &reference_text)?;
+        write_fixture(output_root, "extract", &reference_text)?;
         format!(
             "pdf-render-v2\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison max-gray-delta 2\nextractor {EXTRACTOR_VERSION}\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
             RENDERER_ARGS.join(" "),
@@ -167,7 +196,21 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
             digest(&reference_pgm),
         )
     };
-    write_fixture(case, "render", attestation.as_bytes())
+    write_fixture(output_root, "render", attestation.as_bytes())
+}
+
+fn copy_case(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        ensure!(
+            entry.file_type()?.is_file(),
+            "PDF case contains non-file {}",
+            entry.path().display()
+        );
+        fs::copy(entry.path(), destination.join(entry.file_name()))?;
+    }
+    Ok(())
 }
 
 fn stage_case_resources(case_root: &Path, directory: &Path) -> Result<()> {
@@ -264,11 +307,8 @@ fn pixels_within(left: &[u8], right: &[u8], delta: u8) -> bool {
             .all(|(left, right)| left.abs_diff(*right) <= delta)
 }
 
-fn write_fixture(case: &str, kind: &str, bytes: &[u8]) -> Result<()> {
-    let path = corpus_root()
-        .join("pdf")
-        .join(case)
-        .join(format!("expected.{kind}"));
+fn write_fixture(case_root: &Path, kind: &str, bytes: &[u8]) -> Result<()> {
+    let path = case_root.join(format!("expected.{kind}"));
     if fs::read(&path).ok().as_deref() == Some(bytes) {
         eprintln!("fixture unchanged: {}", path.display());
         return Ok(());
