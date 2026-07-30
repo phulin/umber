@@ -15,5 +15,8 @@ tex-oracle = { path = "../../crates/tex-oracle" }
 tex-out = { path = "../../crates/tex-out" }
 tex-state = { path = "../../crates/tex-state" }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

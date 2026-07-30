@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::canonical_names;
@@ -406,16 +406,18 @@ const USAGE: &str = "expected --repository <path>, --max-divergences <n>, \
 /// grouped report can always be checked against the list it summarizes.
 pub fn run_cli() -> Result<ComparisonReport, RunnerError> {
     let mut arguments = env::args_os().skip(1);
-    let mut repository = test_support::repository_root();
+    let mut repository = None;
     let mut options = RunOptions::default();
     while let Some(argument) = arguments.next() {
         if argument == "--repository" {
-            repository = arguments
-                .next()
-                .ok_or_else(|| {
-                    RunnerError::Usage("--repository requires a directory argument".into())
-                })?
-                .into();
+            repository = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| {
+                        RunnerError::Usage("--repository requires a directory argument".into())
+                    })?
+                    .into(),
+            );
         } else if argument == "--max-divergences" {
             options.max_divergences = positive_argument(&mut arguments, "--max-divergences")?;
         } else if argument == "--realign-window" {
@@ -434,7 +436,22 @@ pub fn run_cli() -> Result<ComparisonReport, RunnerError> {
             )));
         }
     }
+    let repository = resolve_cli_repository(repository)?;
     run_repository(repository, options)
+}
+
+fn resolve_cli_repository(repository: Option<PathBuf>) -> Result<PathBuf, RunnerError> {
+    let requested = match repository {
+        Some(repository) => repository,
+        None => env::current_dir()
+            .map_err(|error| RunnerError::Suite(format!("determine current directory: {error}")))?,
+    };
+    test_support::repository_root_at(&requested).map_err(|error| {
+        RunnerError::Suite(format!(
+            "resolve repository root {}: {error:#}",
+            requested.display()
+        ))
+    })
 }
 
 fn positive_argument(

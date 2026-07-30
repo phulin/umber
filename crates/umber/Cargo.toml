@@ -13,7 +13,7 @@ bench = false
 [features]
 default = []
 shadow = ["tex-state/shadow"]
-profiling-runner = []
+profiling-runner = ["dep:test-support"]
 profiling = [
   "tex-exec/profiling",
   "tex-expand/profiling",
@@ -28,6 +28,7 @@ hayro-syntax.workspace = true
 md-5.workspace = true
 png.workspace = true
 sha2.workspace = true
+test-support = { path = "../test-support", optional = true }
 tex-arith = { path = "../tex-arith" }
 tex-command = { path = "../tex-command" }
 tex-exec = { path = "../tex-exec" }

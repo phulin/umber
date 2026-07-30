@@ -64,7 +64,7 @@ struct Options {
 
 impl Options {
     fn parse() -> Result<Option<Self>, String> {
-        let mut repo_root = test_support::repository_root();
+        let mut repo_root = None;
         let mut iterations = DEFAULT_ITERATIONS;
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
@@ -78,7 +78,7 @@ impl Options {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--repo-root" => {
-                    repo_root = PathBuf::from(next_value(&mut args, "--repo-root")?);
+                    repo_root = Some(PathBuf::from(next_value(&mut args, "--repo-root")?));
                 }
                 "--iterations" => {
                     iterations = parse_positive_count(
@@ -125,6 +125,16 @@ impl Options {
                 }
             }
         }
+        let repo_root = match repo_root {
+            Some(repo_root) => repo_root,
+            None => {
+                let current = env::current_dir()
+                    .map_err(|error| format!("determine current directory: {error}"))?;
+                test_support::repository_root_at(&current).map_err(|error| {
+                    format!("resolve repository root {}: {error:#}", current.display())
+                })?
+            }
+        };
         let repo_root = repo_root
             .canonicalize()
             .map_err(|error| format!("resolve repository root {}: {error}", repo_root.display()))?;

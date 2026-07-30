@@ -6,6 +6,9 @@ mod e2e_conformance;
 mod effectful_replay;
 #[path = "it/font_catalog.rs"]
 mod font_catalog;
+#[cfg(feature = "profiling-runner")]
+#[path = "it/gentle_profile_cli.rs"]
+mod gentle_profile_cli;
 #[path = "it/pdf_parity.rs"]
 mod pdf_parity;
 #[path = "it/replay_identity.rs"]
