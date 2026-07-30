@@ -176,9 +176,7 @@ impl CommandProcessor<'_> {
                 .tokens(result.replacement_text.token_list())
                 .iter()
                 .copied()
-                .map(|token| {
-                    self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                })
+                .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
                 .collect()
         };
         observe!(

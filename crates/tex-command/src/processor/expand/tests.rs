@@ -645,7 +645,9 @@ fn etex_detokenize_the_toks_microfixture_matches_fresh_and_loaded_formats() {
                 ),
             ))
             .expect("microfixture registers");
-        command.open_registered_source(source).expect("source opens");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
         let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
@@ -686,15 +688,19 @@ fn etex_detokenize_the_toks_microfixture_matches_fresh_and_loaded_formats() {
                 ("complete", "expanded_scan_toks"),
             ]
         );
-        assert!(token_lists[0]
-            .tokens
-            .iter()
-            .all(|token| matches!(token, ObservedToken::Character { .. })));
+        assert!(
+            token_lists[0]
+                .tokens
+                .iter()
+                .all(|token| matches!(token, ObservedToken::Character { .. }))
+        );
         assert_eq!(token_lists[0].tokens, token_lists[1].tokens);
-        assert!(!recorder.0.iter().any(|record| matches!(
-            record,
-            CommandObservation::Recovery(_)
-        )));
+        assert!(
+            !recorder
+                .0
+                .iter()
+                .any(|record| matches!(record, CommandObservation::Recovery(_)))
+        );
     }
 }
 
