@@ -435,6 +435,8 @@ pub enum InputReason {
     EveryJob,
     /// §307 `every_cr_text=13`.
     EveryCr,
+    /// e-TeX §22.307 `every_eof_text`.
+    EveryEof,
     /// §307 `mark_text=14`.
     Mark,
     /// §307 `write_text=15`.

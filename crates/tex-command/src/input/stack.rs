@@ -62,7 +62,6 @@ pub(crate) enum InputRetirementAction {
     /// which `get_next` reports as `cur_cmd:=cur_chr:=0` rather than by
     /// resuming the enclosing level.
     ReadLineEnded,
-    ScantokensClosed,
     VTemplateRetained,
     VTemplatePopped,
 }
@@ -338,7 +337,6 @@ impl CommandState {
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
-            RetirementBehavior::CloseScantokens => InputRetirementAction::ScantokensClosed,
             // tex.web §357: a v-template that has already reported its frozen
             // `end_template` boundary is an ordinary depleted token list, so
             // the next `get_next` that reaches it runs `end_token_list`.
@@ -387,7 +385,6 @@ impl CommandState {
         self.finish_macro_body_retirement(&cursor.behavior);
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
-            RetirementBehavior::CloseScantokens => InputRetirementAction::ScantokensClosed,
             RetirementBehavior::Pop
             | RetirementBehavior::RetainExhaustedVTemplate
             | RetirementBehavior::AwaitingVTemplateRetirement => {

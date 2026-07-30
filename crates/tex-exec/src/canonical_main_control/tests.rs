@@ -32,6 +32,34 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
+    // e-TeX 2.6 etex.ch §24.362 inserts a non-null \everyeof token list
+    // before retiring the pseudo-file, including while \edef is defining.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\everyeof={\noexpand}\edef\x{\scantokens{\begingroup}\endgroup}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert!(
+        stores
+            .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
+            .is_some(),
+        "the source assignment must remain present"
+    );
+    assert!(observations.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Input(record)
+            if record.transition == InputTransition::Push
+                && record.reason == InputReason::EveryEof
+    )));
+}
+
+#[test]
 fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline() {
     // TeX82 §§262 and 1370: `token_show` prints character tokens through
     // `print`, whose stream selector recognizes `newlinechar` before the

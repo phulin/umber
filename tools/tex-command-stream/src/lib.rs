@@ -1597,6 +1597,7 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
         | CommandInputReason::EveryVBox
         | CommandInputReason::EveryJob
         | CommandInputReason::EveryCr
+        | CommandInputReason::EveryEof
         | CommandInputReason::Mark
         | CommandInputReason::Write
         | CommandInputReason::UmberReplay(_) => InputReason::TokenList,

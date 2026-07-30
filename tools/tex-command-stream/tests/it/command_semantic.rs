@@ -1065,6 +1065,7 @@ fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec<Str
                     | InputReason::EveryVBox
                     | InputReason::EveryJob
                     | InputReason::EveryCr
+                    | InputReason::EveryEof
                     | InputReason::Mark
                     | InputReason::UmberReplay(_) => "token-list",
                     InputReason::Write => "write",

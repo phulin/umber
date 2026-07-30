@@ -38,6 +38,9 @@ pub(crate) struct SourceLevel {
     /// and not on [`InputLevel`].
     pub(crate) name_class: SourceNameClass,
     pub(crate) retirement: SourceRetirement,
+    /// e-TeX §24.362's once-only token list, pushed above this source when
+    /// natural EOF is first observed and before `end_file_reading`.
+    pub(crate) every_eof: Option<tex_state::TracedTokenList>,
 }
 
 /// What exhausting a source level does, per tex.web §360.
@@ -170,7 +173,6 @@ pub(crate) enum RetirementBehavior {
     /// conservation and §1131's `do_endv` still expects to find it, but
     /// §357's `end_token_list` pops it as soon as `get_next` reaches it.
     AwaitingVTemplateRetirement,
-    CloseScantokens,
 }
 
 /// Non-semantic explanation for why a token payload is being replayed.
@@ -232,6 +234,8 @@ pub(crate) enum StoredReplayReason {
     EveryJob,
     /// §307 `every_cr_text=13`.
     EveryCr,
+    /// e-TeX §22.307's `every_eof_text`.
+    EveryEof,
     /// §307 `mark_text=14`.
     Mark,
     /// §307 `write_text=15`.
@@ -243,7 +247,6 @@ pub(crate) enum StoredReplayReason {
 /// TeX82 §307's `inserted` token type (which is [`ReplayTrace::Inserted`]).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TransientReplayReason {
-    Scantokens,
     ExpandedTokenList,
 }
 

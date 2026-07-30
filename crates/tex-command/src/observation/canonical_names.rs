@@ -237,6 +237,7 @@ pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
         InputReason::EveryVBox => "every_vbox",
         InputReason::EveryJob => "every_job",
         InputReason::EveryCr => "every_cr",
+        InputReason::EveryEof => "every_eof",
         InputReason::Mark => "mark",
         InputReason::Write => "write",
         InputReason::UmberReplay(UmberReplayKind::Discretionary) => "umber:discretionary",

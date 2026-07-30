@@ -13,7 +13,6 @@ use crate::input::{
 };
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
-    TransientReplayReason,
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{
@@ -878,7 +877,12 @@ impl CommandState {
             .find(|registered| registered.id == source)
             .cloned()
             .ok_or(UnknownRegisteredSource(source))?;
-        self.push_source_level(registered, name_class, crate::input::SourceRetirement::Pop);
+        self.push_source_level(
+            registered,
+            name_class,
+            crate::input::SourceRetirement::Pop,
+            None,
+        );
         Ok(())
     }
 
@@ -907,6 +911,7 @@ impl CommandState {
             registered,
             name_class,
             crate::input::SourceRetirement::EndReadLine,
+            None,
         );
         if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {
             level.cursor.pending_acquired_line = true;
@@ -920,21 +925,6 @@ impl CommandState {
         registration: SourceRegistration,
         every_eof: Option<TracedTokenList>,
     ) -> Result<InputLevelId, SourceRegistrationError> {
-        // etex.ch §24.362 begins the `every_eof` token list only when
-        // `every_eof<>null`. A null parameter closes the pseudo-file directly;
-        // representing it with an empty level would publish a spurious
-        // recovery retirement after the source closes.
-        if let Some(every_eof) = every_eof {
-            self.push_token_level(
-                TokenPayload::Stored {
-                    tokens: every_eof.token_list(),
-                    origins: every_eof.origin_list(),
-                },
-                TokenBehavior::Ordinary,
-                RetirementBehavior::CloseScantokens,
-                ReplayTrace::Transient(TransientReplayReason::Scantokens),
-            );
-        }
         let source = self.register_source(registration)?;
         let registered = self
             .input
@@ -947,6 +937,27 @@ impl CommandState {
             registered,
             SourceNameClass::File,
             crate::input::SourceRetirement::Pop,
+            every_eof,
+        ))
+    }
+
+    /// Pushes e-TeX §24.362's `\everyeof` above its exhausted pseudo-file.
+    pub(crate) fn begin_pending_every_eof(&mut self, source: InputLevelId) -> Option<InputLevelId> {
+        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+            return None;
+        };
+        if level.identity != source {
+            return None;
+        }
+        let every_eof = level.every_eof.take()?;
+        Some(self.push_token_level(
+            TokenPayload::Stored {
+                tokens: every_eof.token_list(),
+                origins: every_eof.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(StoredReplayReason::EveryEof),
         ))
     }
 
@@ -955,6 +966,7 @@ impl CommandState {
         registered: RegisteredSource,
         name_class: SourceNameClass,
         retirement: crate::input::SourceRetirement,
+        every_eof: Option<TracedTokenList>,
     ) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
@@ -963,6 +975,7 @@ impl CommandState {
             cursor: SourceCursor::new(registered),
             name_class,
             retirement,
+            every_eof,
         }));
         identity
     }

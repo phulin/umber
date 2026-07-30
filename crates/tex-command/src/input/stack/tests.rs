@@ -92,8 +92,8 @@ fn retirement_validates_exact_level_identity_before_mutating() {
     let second = state.push_token_level(
         transient_payload(&[]),
         TokenBehavior::Ordinary,
-        RetirementBehavior::CloseScantokens,
-        ReplayTrace::Transient(TransientReplayReason::Scantokens),
+        RetirementBehavior::Pop,
+        ReplayTrace::Stored(StoredReplayReason::EveryEof),
     );
 
     assert_eq!(
@@ -109,7 +109,7 @@ fn retirement_validates_exact_level_identity_before_mutating() {
             .retire_exhausted_input(second)
             .expect("current level retires")
             .action,
-        InputRetirementAction::ScantokensClosed
+        InputRetirementAction::TokenListPopped
     );
 }
 
@@ -828,10 +828,10 @@ fn input_level_retirement_covers_source_token_parameter_and_reference_actions() 
         ),
         (
             TokenBehavior::Recovery,
-            RetirementBehavior::CloseScantokens,
-            ReplayTrace::Transient(TransientReplayReason::Scantokens),
-            InputRetirementAction::ScantokensClosed,
-            InputRetirementReason::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(StoredReplayReason::EveryEof),
+            InputRetirementAction::TokenListPopped,
+            InputRetirementReason::TokenList(StoredReplayReason::EveryEof),
         ),
     ] {
         let mut state = CommandState::default();

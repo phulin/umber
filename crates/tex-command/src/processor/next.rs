@@ -1244,6 +1244,20 @@ impl CommandProcessor<'_> {
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => continue,
                         SourceTokenizationStep::End => {
+                            // e-TeX 2.6 etex.ch §24.362 inserts a non-null
+                            // `\everyeof` above the still-live source. Its
+                            // token-list level must therefore push and retire
+                            // before §329 retires the pseudo-file.
+                            if let Some(level) = self.command.begin_pending_every_eof(identity) {
+                                self.observe(CommandObservation::Input(InputRecord {
+                                    transition: InputTransition::Push,
+                                    reason: InputReason::EveryEof,
+                                    source_name: None,
+                                    level: level.0,
+                                    position: 0,
+                                }));
+                                continue;
+                            }
                             // TeX82 §343 checks outer validity immediately
                             // after `end_file_reading`, before `get_next`
                             // resumes the caller's input level.  In
@@ -1384,7 +1398,6 @@ impl CommandProcessor<'_> {
             }
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
-            | InputRetirementAction::ScantokensClosed
             | InputRetirementAction::VTemplatePopped => {
                 let previous_align_state = self.command.alignment.align_state;
                 if self.command.alignment.finish_u_template(identity) {
@@ -1914,6 +1927,7 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
         Stored::EveryVBox => InputReason::EveryVBox,
         Stored::EveryJob => InputReason::EveryJob,
         Stored::EveryCr => InputReason::EveryCr,
+        Stored::EveryEof => InputReason::EveryEof,
         Stored::Mark => InputReason::Mark,
         Stored::Write => InputReason::Write,
         Stored::Discretionary => InputReason::UmberReplay(UmberReplayKind::Discretionary),

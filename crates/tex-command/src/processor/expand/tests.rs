@@ -467,13 +467,45 @@ fn etex_scantokens_defined_empty_everyeof_pushes_and_retires_before_close() {
                 event,
                 CommandObservation::Input(crate::InputRecord {
                     transition: InputTransition::Retire,
-                    reason: crate::InputReason::Recovery,
+                    reason: crate::InputReason::EveryEof,
                     ..
                 })
             ))
             .count(),
         1,
         "the present empty everyeof level retires before pseudo_close resumes Z"
+    );
+    let every_eof_push = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Input(crate::InputRecord {
+                    transition: InputTransition::Push,
+                    reason: crate::InputReason::EveryEof,
+                    ..
+                })
+            )
+        })
+        .expect("present empty everyeof pushes");
+    let source_retirement = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Input(crate::InputRecord {
+                    transition: InputTransition::Retire,
+                    reason: crate::InputReason::Source,
+                    ..
+                })
+            )
+        })
+        .expect("pseudo-file retires");
+    assert!(
+        every_eof_push < source_retirement,
+        "etex.ch §24.362 begins everyeof before §329 retires the pseudo-file"
     );
 }
 
