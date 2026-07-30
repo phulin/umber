@@ -2,6 +2,11 @@
 
 Read the repository-level `AGENTS.md` before editing here. This crate contains host-side utilities for tests and fixture comparison; it is not part of the TeX engine runtime.
 
+`git_fixture` validates small repository-owned cases against the selected
+runtime Git checkout. Its `case.inventory` schema closes both the tracked and
+on-disk file sets and forbids alternate-checkout, target, symlink, and
+non-regular authority.
+
 ## Crate Role
 
 `test-support` owns shared helpers used by workspace tests, especially committed corpus fixture assertions, normalized diagnostic/log comparison, DVI fixture setup/comparison, and small parsers used by regeneration tooling to cross-check reference tool output. It may depend on ordinary host libraries such as `anyhow` and diffing utilities because it runs only in tests and host tools.
