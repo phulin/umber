@@ -32,6 +32,36 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn meaning_mutation_value_projects_protected_macro_storage_marker() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let empty = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::PROTECTED, empty, empty));
+
+    let (value, tokens) = meaning_mutation_value(
+        Meaning::Macro {
+            definition,
+            flags: MeaningFlags::PROTECTED,
+        },
+        &stores,
+    );
+
+    assert_eq!(value, "macro definition");
+    assert_eq!(
+        tokens.as_deref(),
+        Some(
+            [
+                tex_command::ObservedToken::Character {
+                    character: '\u{1}',
+                    catcode: Catcode::Comment,
+                },
+                tex_command::ObservedToken::MacroEndMatch,
+            ]
+            .as_slice()
+        )
+    );
+}
+
+#[test]
 fn hbox_group_type_respects_box_context_and_vertical_mode() {
     // TeX82 §1083: a register-bound hbox uses hbox_group (e-TeX code 2),
     // even in vertical mode. The neighboring bare hbox is append-like and

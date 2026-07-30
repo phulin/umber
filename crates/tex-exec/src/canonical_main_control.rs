@@ -8961,11 +8961,12 @@ fn meaning_mutation_value(
     stores: &Universe,
 ) -> (String, Option<Vec<ObservedToken>>) {
     match meaning {
-        Meaning::Macro { definition, .. } => {
+        Meaning::Macro { definition, flags } => {
             let macro_meaning = stores.macro_definition(definition);
             (
                 "macro definition".into(),
-                Some(observed_macro_body(
+                Some(observed_stored_macro_body(
+                    flags,
                     macro_meaning.parameter_text(),
                     macro_meaning.replacement_text(),
                     stores,

@@ -5028,6 +5028,64 @@ fn ordinary_definitions_do_not_observe_or_store_protected_marker() {
     }
 }
 
+/// TeX82 §1221 copies both halves of a meaning, and e-TeX change section [49]
+/// makes `protected_token` the leading token of a protected macro body.
+/// Therefore a `\let` mutation must project the marker just like the original
+/// definition mutation, without synthesizing it from the target's spelling.
+#[test]
+fn let_observes_the_protected_marker_in_the_copied_macro_meaning() {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        tex_command::install_tex82_expandable_primitives(&mut universe);
+        tex_command::install_etex_expandable_primitives(&mut universe);
+        crate::install_unexpandable_primitives(&mut universe);
+        crate::install_etex_unexpandable_primitives(&mut universe);
+        let mut control = CanonicalMainControl::prepared_initex(profile);
+        register_source(&mut control, br"\protected\def\p{}\let\q=\p\end");
+        let mut observations = ObservationRecorder::default();
+
+        while let ReplayStep::Continue = control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("protected definition and let execute")
+        {}
+
+        let mutation = observations
+            .0
+            .iter()
+            .find_map(|event| match event {
+                CommandObservation::Mutation(mutation)
+                    if mutation.target == "meaning" && mutation.key.as_deref() == Some("q") =>
+                {
+                    Some(mutation)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "let mutation is observed for {profile:?}: {:#?}",
+                    observations.0
+                )
+            });
+        assert_eq!(
+            mutation.tokens.as_deref(),
+            Some(
+                [
+                    ObservedToken::Character {
+                        character: '\u{1}',
+                        catcode: tex_state::token::Catcode::Comment,
+                    },
+                    ObservedToken::MacroEndMatch,
+                ]
+                .as_slice()
+            )
+        );
+        assert!(matches!(
+            universe.meaning(universe.symbol("q").expect("q is interned")),
+            Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED)
+        ));
+    }
+}
+
 #[test]
 fn canonical_toksdef_projects_its_committed_named_register_meaning() {
     let mut universe = Universe::new_with_plain_catcodes();
