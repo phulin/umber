@@ -1161,7 +1161,7 @@ mod tests {
             // `\shipout` that already ran speculatively before the retry
             // was discovered leaves its committed marker behind and prints
             // a second one on the replay that actually commits.
-            Some(&b"once (child.tex) [0] [0]"[..]),
+            Some(&b"(job.tex once (child.tex) [0] [0]"[..]),
             "aggregate rollback must not repeat an already committed write \
              (umber2-0t8z: it currently does, for `commit_effects`-driven \
              output specifically)"
@@ -1480,9 +1480,10 @@ mod tests {
 
         // TeX82 §1280 separates the two messages with one space, because
         // the first left `term_offset` nonzero. §537/§362 additionally
-        // bracket `\input child` in parens around its own message, naming it
-        // as opened (`child.tex`) the way §537's `a_make_name_string` does.
-        assert_eq!(run.terminal_text, "once (child.tex child)");
+        // bracket the root and `\input child` in parens around their own
+        // messages, each named as opened the way §537's `a_make_name_string`
+        // does: the startup input opening supplies `(job.tex`.
+        assert_eq!(run.terminal_text, "(job.tex once (child.tex child)");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));

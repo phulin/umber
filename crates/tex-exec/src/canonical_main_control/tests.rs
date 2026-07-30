@@ -960,7 +960,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         // test's claim is the diagnosis, not the transcript rendering.
         let terminal = terminal_text(&stores);
         assert!(
-            terminal.starts_with("! Extra \\forcedendv.\n"),
+            terminal.starts_with("\n! Extra \\forcedendv.\n"),
             "mode {mode:?}: {terminal}"
         );
         assert_eq!(

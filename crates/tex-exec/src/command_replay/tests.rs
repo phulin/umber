@@ -4587,7 +4587,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     // pins those bytes rather than this control-flow test.
     let terminal = terminal_text(&universe);
     assert!(
-        terminal.starts_with("! Missing } inserted.\n"),
+        terminal.starts_with("\n! Missing } inserted.\n"),
         "{terminal}"
     );
     observations.0.clear();
@@ -8810,19 +8810,28 @@ fn code_table_selector_uses_tex82_character_code_recovery() {
     assert_eq!(
         reported,
         concat!(
-            "! Bad character code (256).\n",
+            // §82's `print_err` opens with `print_nl`, which the command
+            // layer's error path emits as part of the same write.
+            "\n! Bad character code (256).\n",
             "<to be read again> \n",
             "                   =\n",
             "l.4 \\lccode256=\n",
             "               3\n",
-            "L:3:2",
+            "L:3:2\n",
+            // §1335's end-of-job note, which this branch implements and the
+            // pinned oracle prints in 74 of the corpus's committed
+            // terminals. It is terminal-only, so the transcript assertion
+            // below does not grow it.
+            "(see the transcript file for additional information)",
         ),
         "TeX82 §§82,311,434 frame restricted-integer help after the exact live input context"
     );
     assert_eq!(
         transcript_text(&universe),
         concat!(
-            "! Bad character code (256).\n",
+            // §82's `print_err` leads with `print_nl`; see the terminal
+            // assertion above.
+            "\n! Bad character code (256).\n",
             "<to be read again> \n",
             "                   =\n",
             "l.4 \\lccode256=\n",
