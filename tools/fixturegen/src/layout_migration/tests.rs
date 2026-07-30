@@ -81,6 +81,7 @@ fn declarative_non_tex_nonconventional_names_apply_and_repeat() {
 #[derive(Clone, Copy)]
 enum Failure {
     Write(usize),
+    WriteCommittedMarker,
     Rename(usize),
     RenameFrom(usize),
     Remove(usize),
@@ -125,6 +126,11 @@ impl MigrationFs for InjectedFs {
     }
 
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        if matches!(self.failure, Failure::WriteCommittedMarker)
+            && path.file_name().is_some_and(|name| name == "committed")
+        {
+            bail!("injected committed-marker write failure");
+        }
         if let Failure::Write(at) = self.failure {
             Self::fail(&self.writes, at)?;
         }
@@ -235,6 +241,49 @@ fn install_failure_after_prior_swap_rolls_back_everything() {
 }
 
 #[test]
+fn committed_marker_write_failure_is_pre_commit_and_rolls_back_every_authority() {
+    let temp = fixture();
+    let error = run_with_fs(
+        temp.path(),
+        SPEC,
+        Mode::Apply,
+        &InjectedFs::new(Failure::WriteCommittedMarker),
+    )
+    .expect_err("committed-marker write failure");
+    let message = format!("{error:#}");
+    assert!(message.contains("injected committed-marker write failure"));
+    assert!(message.contains("every authority was restored"));
+
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/first.src")).expect("first source"),
+        b"first"
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/first.oracle-log")).expect("first output"),
+        b"log"
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/second.src")).expect("second source"),
+        b"second"
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/odd metadata")).expect("metadata"),
+        b"meta"
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/common.data")).expect("shared input"),
+        b"common"
+    );
+    assert!(!temp.path().join("sample/first").exists());
+    assert!(!temp.path().join("sample/second").exists());
+    assert!(transaction_roots(temp.path()).is_empty());
+
+    run(temp.path(), SPEC, Mode::Apply).expect("clean retry");
+    assert!(temp.path().join("sample/first/program.input").is_file());
+    assert!(temp.path().join("sample/second/program.input").is_file());
+}
+
+#[test]
 fn restoration_failure_reports_both_errors_and_preserves_backups() {
     let temp = fixture();
     let error = run_with_fs(
@@ -277,6 +326,12 @@ fn zero_progress_post_commit_gc_failure_keeps_new_authority_and_retry_succeeds()
     assert!(message.contains("retained owned transaction="));
     assert!(!temp.path().join("sample/first.src").exists());
     assert!(temp.path().join("sample/first").is_dir());
+    let retained = transaction_roots(temp.path());
+    assert_eq!(retained.len(), 1);
+    assert!(
+        retained[0].join("committed").is_file(),
+        "a successful marker write must cross into GC-only recovery"
+    );
     run(temp.path(), SPEC, Mode::Apply).expect("retry");
     assert!(transaction_roots(temp.path()).is_empty());
 }
