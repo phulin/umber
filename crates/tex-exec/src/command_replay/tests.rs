@@ -899,6 +899,46 @@ fn canonical_character_run_under_nullfont_never_reaches_the_lookahead() {
     );
 }
 
+/// TeX82 §581 wraps `char_warning` in §245's shared diagnostic scope, so
+/// `\tracingonline<=0` sends the warning only to the transcript. Positive
+/// `\tracingonline` restores terminal visibility, while non-positive
+/// `\tracinglostchars` suppresses the warning entirely.
+#[test]
+fn canonical_missing_character_uses_the_shared_diagnostic_channel() {
+    let run = |tracing_online: i32, tracing_lost_chars: i32| {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(
+            &mut control,
+            format!(
+                "\\tracingonline={tracing_online}\\tracinglostchars={tracing_lost_chars}\\setbox0=\\hbox{{Z}}\\end"
+            )
+            .as_bytes(),
+        );
+        run_to_end(&mut control, &mut universe);
+        (terminal_only_text(&universe), transcript_text(&universe))
+    };
+
+    let warning = "Missing character: There is no Z in font nullfont!\n";
+    for tracing_online in [0, -1] {
+        let (terminal, transcript) = run(tracing_online, 1);
+        assert!(
+            !terminal.contains(warning),
+            "\\tracingonline={tracing_online}"
+        );
+        assert!(
+            transcript.contains(warning),
+            "\\tracingonline={tracing_online}"
+        );
+    }
+    let (terminal, transcript) = run(1, 1);
+    assert!(terminal.contains(warning));
+    assert!(transcript.contains(warning));
+    let (terminal, transcript) = run(1, 0);
+    assert!(!terminal.contains(warning));
+    assert!(!transcript.contains(warning));
+}
+
 /// TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
 /// `prefixed_command`'s ordinary assignment forms; §1242 routes them to
 /// `alter_page_so_far` (§1245) and `alter_integer` (§1246). Neither had a

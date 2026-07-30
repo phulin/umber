@@ -8,7 +8,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, PrintSink, Universe};
+use tex_state::{ExpansionState, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use super::paragraph::{
@@ -1647,14 +1647,15 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
     if stores.int_param(IntParam::new(36)) <= 0 {
         return;
     }
-    let text = format!(
-        "Missing character: There is no {} in font {}!\n",
-        ch.escape_default(),
-        stores.font_name(font)
-    );
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, &text);
+    let font_name = stores.font_name(font).to_owned();
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("Missing character: There is no ")
+        .print_char(ch)
+        .print(" in font ")
+        .print(&font_name)
+        .print_char('!');
+    diagnostic.end(false);
 }
 
 fn execute_accent(

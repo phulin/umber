@@ -13807,14 +13807,15 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
     if stores.int_param(IntParam::new(36)) <= 0 {
         return;
     }
-    let text = format!(
-        "Missing character: There is no {} in font {}!\\n",
-        ch.escape_default(),
-        stores.font_name(font)
-    );
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, &text);
+    let font_name = stores.font_name(font).to_owned();
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("Missing character: There is no ")
+        .print_char(ch)
+        .print(" in font ")
+        .print(&font_name)
+        .print_char('!');
+    diagnostic.end(false);
 }
 
 /// TeX82 §1095 `new_graf`: command control has already made any required
