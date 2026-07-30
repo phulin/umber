@@ -320,6 +320,23 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
             ..
         })
     )));
+    let generated = recorder
+        .0
+        .iter()
+        .find_map(|observation| match observation {
+            CommandObservation::GeneratedSource(record) => Some(record),
+            _ => None,
+        })
+        .expect("scantokens backing is observable before its source push");
+    assert_eq!(generated.name, "^^R");
+    assert_eq!(generated.source.bytes.as_ref(), b"a\nb\n");
+}
+
+#[test]
+fn etex_scantokens_pseudo_source_name_tracks_tracing() {
+    assert_eq!(scantokens_source_name(0), "^^R");
+    assert_eq!(scantokens_source_name(-1), "^^R");
+    assert_eq!(scantokens_source_name(1), "^^S");
 }
 
 #[test]

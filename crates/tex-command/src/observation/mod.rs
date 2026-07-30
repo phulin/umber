@@ -610,6 +610,17 @@ pub struct OpenedSourceSnapshot {
     pub bytes: Arc<[u8]>,
 }
 
+/// Detached backing context for a command-owned generated source.
+///
+/// This is not a semantic transition. It precedes the corresponding
+/// [`InputRecord`] so buffered and live observers can resolve later command
+/// provenance without reacquiring mutable command state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GeneratedSourceRecord {
+    pub name: String,
+    pub source: OpenedSourceSnapshot,
+}
+
 /// Finalized dimensions from one canonical packing or shipout commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GeometryRecord {
@@ -648,6 +659,7 @@ pub struct DiagnosticRecord {
 pub enum CommandObservation {
     Command(CommandDeliveryRecord),
     Input(InputRecord),
+    GeneratedSource(GeneratedSourceRecord),
     Recovery(RecoveryRecord),
     ScannerStatus(ScannerStatusRecord),
     Macro(MacroRecord),

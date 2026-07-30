@@ -1045,6 +1045,21 @@ impl CommandState {
         Some((backing.id, backing.source_descriptor()))
     }
 
+    /// Captures the active source's immutable identity and bytes for detached
+    /// observation without exposing the registered-source store.
+    pub(crate) fn active_source_snapshot(
+        &self,
+    ) -> Option<crate::observation::OpenedSourceSnapshot> {
+        let Some(InputLevel::Source(level)) = self.input.levels.last() else {
+            return None;
+        };
+        let backing = level.cursor.current_backing();
+        Some(crate::observation::OpenedSourceSnapshot {
+            id: backing.id,
+            bytes: std::sync::Arc::clone(&backing.bytes),
+        })
+    }
+
     /// Retires the active normalized line so the next physical line may load.
     pub fn finish_source_line(&mut self) {
         if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {

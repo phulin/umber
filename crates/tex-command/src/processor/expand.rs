@@ -672,6 +672,21 @@ impl CommandProcessor<'_> {
                 every_eof,
             )
             .map_err(|_| CommandError::input_invariant())?;
+        let source = self
+            .command
+            .active_source_snapshot()
+            .ok_or(CommandError::input_invariant())?;
+        // e-TeX 2.6 etex.ch §53a assigns `name=19` while
+        // `\tracingscantokens>0`, and `name=18` otherwise. TeX82 §48's
+        // initial character strings render those names as `^^S` and `^^R`.
+        let source_name =
+            scantokens_source_name(self.state.int_param(IntParam::TRACING_SCAN_TOKENS));
+        self.observe(CommandObservation::GeneratedSource(
+            crate::GeneratedSourceRecord {
+                name: source_name.to_owned(),
+                source,
+            },
+        ));
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Source,
@@ -1111,6 +1126,12 @@ impl CommandProcessor<'_> {
             replacement_origins,
         )
     }
+}
+
+/// e-TeX 2.6 etex.ch §53a's two pseudo-file names, rendered through TeX82
+/// §48's initial character strings.
+fn scantokens_source_name(tracing_scantokens: i32) -> &'static str {
+    if tracing_scantokens > 0 { "^^S" } else { "^^R" }
 }
 
 pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {

@@ -1227,6 +1227,14 @@ impl CommandObserver for Recorder {
         ) {
             return;
         }
+        if let CommandObservation::GeneratedSource(record) = &observation {
+            self.activate_source(
+                record.name.clone(),
+                record.source.id,
+                Arc::clone(&record.source.bytes),
+            );
+            return;
+        }
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
@@ -1330,6 +1338,9 @@ fn translate_observation(
                 record.level, record.position
             );
             ObservedEvent::new(translate_input(record, source), context)
+        }
+        CommandObservation::GeneratedSource(_) => {
+            unreachable!("generated source context is consumed before semantic translation")
         }
         CommandObservation::Recovery(record) => {
             ObservedEvent::new(translate_recovery(record), format!("source={source}"))
