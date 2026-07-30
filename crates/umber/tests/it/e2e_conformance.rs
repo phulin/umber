@@ -712,7 +712,7 @@ fn compare_trip_phase(
     )
     .expect("write geometry events");
     let label = format!("{fixture_name}-{phase}");
-    write_trip_triage_artifact(
+    let report = write_trip_triage_artifact(
         &target_dir(root).join("conformance-triage"),
         TripTriageInput {
             label: &label,
@@ -744,6 +744,198 @@ fn compare_trip_phase(
         },
     )
     .expect("write bounded TRIP triage artifact");
+    assert_trip_channels_match(report);
+}
+
+#[allow(clippy::disallowed_methods)] // Failure reporting reads the bounded triage artifact.
+fn assert_trip_channels_match(report: Option<PathBuf>) {
+    if let Some(path) = report {
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|error| format!("unable to read triage report: {error}"));
+        panic!(
+            "TRIP compared-channel mismatch; report: {}\n{}",
+            path.display(),
+            content
+        );
+    }
+}
+
+#[test]
+fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
+    fn mismatch_panics(
+        root: &Path,
+        expected: TripTriageChannels<'_>,
+        actual: TripTriageChannels<'_>,
+    ) -> String {
+        let report = write_trip_triage_artifact(
+            root,
+            TripTriageInput {
+                label: "negative-control",
+                phase: "bounded",
+                expected_source: TripTriageSource {
+                    name: "expected",
+                    identity: "expected-id",
+                },
+                actual_source: TripTriageSource {
+                    name: "actual",
+                    identity: "actual-id",
+                },
+                expected,
+                actual,
+            },
+        )
+        .expect("write negative-control report");
+        let panic = std::panic::catch_unwind(|| assert_trip_channels_match(report))
+            .expect_err("channel mismatch must fail");
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|message| (*message).to_owned()))
+            .expect("panic carries a string")
+    }
+
+    let temp = tempfile::tempdir().expect("negative-control directory");
+    let base = TripTriageChannels {
+        initialization_events: None,
+        command_events: None,
+        geometry_events: None,
+        transcript: b"transcript",
+        log: b"log",
+        dvi: None,
+    };
+    for (channel, expected, actual) in [
+        (
+            "command_events",
+            TripTriageChannels {
+                command_events: Some(b""),
+                ..base
+            },
+            base,
+        ),
+        (
+            "geometry_events",
+            TripTriageChannels {
+                geometry_events: Some(b""),
+                ..base
+            },
+            base,
+        ),
+        (
+            "transcript",
+            base,
+            TripTriageChannels {
+                transcript: b"mutated transcript",
+                ..base
+            },
+        ),
+        (
+            "log",
+            base,
+            TripTriageChannels {
+                log: b"mutated log",
+                ..base
+            },
+        ),
+    ] {
+        let message = mismatch_panics(temp.path(), expected, actual);
+        assert!(message.contains("TRIP compared-channel mismatch"), "{message}");
+        assert!(message.contains("report:"), "{message}");
+        assert!(
+            message.contains(&format!("earliest.channel: {channel}")),
+            "{message}"
+        );
+    }
+}
+
+fn assert_format_image_contract(format: &[u8], engine: EngineMode) {
+    let mut host_world = World::memory();
+    host_world
+        .set_memory_file("host-only-capability.tex", b"host-only".to_vec())
+        .expect("stage host-only capability");
+    let mut loaded =
+        Universe::from_format(host_world, format).expect("load format into supplied host world");
+    let pristine =
+        Universe::from_format(World::memory(), format).expect("load format into pristine world");
+
+    assert_eq!(
+        loaded.dump_format().expect("redump loaded format"),
+        pristine.dump_format().expect("redump pristine format"),
+        "host capabilities must not enter the format image"
+    );
+    assert_eq!(
+        loaded.provenance_stats(),
+        pristine.provenance_stats(),
+        "diagnostic provenance must not survive format loading"
+    );
+    assert_eq!(
+        loaded.macro_invocation_provenance_stats().invocations(),
+        0,
+        "macro invocation provenance must not survive format loading"
+    );
+    assert!(
+        loaded.world().effect_records().is_empty(),
+        "host effects must not survive format loading"
+    );
+    assert_eq!(
+        loaded.env_journal_bytes(),
+        pristine.env_journal_bytes(),
+        "format loading must reconstruct only the schema's baseline environment journal"
+    );
+
+    let before_runtime_state = loaded.dump_format().expect("format before runtime state");
+    let _checkpoint = loaded.snapshot();
+    loaded.testing_clear_state_hash_caches();
+    assert_eq!(
+        loaded.dump_format().expect("format after runtime state"),
+        before_runtime_state,
+        "checkpoints and runtime caches must not enter the format image"
+    );
+
+    let relax = loaded.intern("relax");
+    let live_relax = loaded.meaning(relax);
+    assert_eq!(
+        loaded.primitive_meaning("relax"),
+        None,
+        "primitive registry is runtime state and must not be serialized"
+    );
+    let mut fresh = Universe::new();
+    engine.prepare_initex(&mut fresh);
+    let expected_relax = fresh
+        .primitive_meaning("relax")
+        .expect("fresh engine registers relax");
+    engine.install_after_format(&mut loaded);
+    assert_eq!(
+        loaded.meaning(relax),
+        live_relax,
+        "registry reconstruction must preserve the format's live meaning"
+    );
+    assert_eq!(
+        loaded.primitive_meaning("relax"),
+        Some(expected_relax),
+        "format loading must reconstruct the selected engine registry"
+    );
+    let frozen_relax = loaded
+        .primitive_token("relax")
+        .expect("reconstructed primitive token");
+    assert_eq!(
+        loaded.frozen_primitive_meaning(frozen_relax),
+        Some(expected_relax),
+        "reconstructed frozen meaning must match fresh engine setup"
+    );
+}
+
+#[test]
+fn format_image_contract_excludes_runtime_state_and_rebuilds_registry() {
+    let mut source = Universe::new();
+    EngineMode::Tex82.prepare_initex(&mut source);
+    source
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "host effect excluded");
+    let _checkpoint = source.snapshot();
+    source.testing_clear_state_hash_caches();
+    let format = source.dump_format().expect("bounded format image");
+
+    assert_format_image_contract(&format, EngineMode::Tex82);
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side oracle and triage artifact boundary.
@@ -901,6 +1093,7 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         None,
     );
     let format = format.unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
+    assert_format_image_contract(&format, engine);
     let mut failure = None;
     let loaded = run_file_in_process_captured(
         &input,
