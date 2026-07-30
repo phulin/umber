@@ -1,4 +1,7 @@
-use crate::{CanonicalValue, EffectKind, Event, InputReason, InputTransition, ObservationStream};
+use crate::{
+    CanonicalValue, DiagnosticSeverity, EffectKind, Event, InputReason, InputTransition,
+    ObservationStream,
+};
 
 /// Schema-v1 observer profiles with explicitly bounded stable event sets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,7 +26,7 @@ impl Tex82ObserverProfile {
 fn validate_trip(stream: &ObservationStream) -> Result<(), String> {
     let events = &stream.events;
     if events.len() < 2 {
-        return Err("TRIP observer stream must end with stop and terminate events".into());
+        return Err("TRIP observer stream must end with a terminal outcome and termination".into());
     }
     let termination = &events[events.len() - 1].semantic;
     if !matches!(
@@ -35,15 +38,22 @@ fn validate_trip(stream: &ObservationStream) -> Result<(), String> {
     ) {
         return Err("TRIP observer stream must end with engine termination".into());
     }
-    let stop = &events[events.len() - 2].semantic;
-    if !matches!(
-        stop,
+    let outcome = &events[events.len() - 2].semantic;
+    let orderly_stop = matches!(
+        outcome,
         Event::Input(input)
             if input.transition == InputTransition::Stop
                 && input.reason == InputReason::Source
                 && input.name == "terminal"
-    ) {
-        return Err("TRIP observer termination must be preceded by terminal input stop".into());
+    );
+    let fatal_stop = matches!(
+        outcome,
+        Event::Diagnostic(diagnostic) if diagnostic.severity == DiagnosticSeverity::Fatal
+    );
+    if !orderly_stop && !fatal_stop {
+        return Err(
+            "TRIP observer termination must follow terminal input stop or fatal history".into(),
+        );
     }
 
     let shipouts = events[..events.len() - 2]
@@ -67,8 +77,9 @@ fn validate_trip(stream: &ObservationStream) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
-        Normalizer, ObservationHeader, ObservationStream, SCHEMA_VERSION,
+        CanonicalValue, DiagnosticEvent, DiagnosticSeverity, EffectEvent, EffectKind, Event,
+        InputEvent, InputReason, InputTransition, Normalizer, ObservationHeader, ObservationStream,
+        SCHEMA_VERSION,
     };
 
     use super::Tex82ObserverProfile;
@@ -107,6 +118,19 @@ mod tests {
                 transition: InputTransition::Stop,
                 reason: InputReason::Source,
                 name: "terminal".into(),
+            }),
+            terminate(),
+        ]);
+        assert_eq!(Tex82ObserverProfile::Trip.validate(&stream), Ok(()));
+    }
+
+    #[test]
+    fn trip_profile_accepts_fatal_history_immediately_before_termination() {
+        let stream = stream(vec![
+            Event::Diagnostic(DiagnosticEvent {
+                severity: DiagnosticSeverity::Fatal,
+                diagnostic: "too-many-errors".into(),
+                arguments: Vec::new(),
             }),
             terminate(),
         ]);

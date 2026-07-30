@@ -459,13 +459,13 @@ impl<'a> CanonicalEngineSession<'a> {
                 CanonicalStepResult::Progress(step) => {
                     self.publish_completed_boundaries(checkpoints)?;
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                        // TeX82 §§1332, 1335: source exhaustion and an
-                        // effective stop both leave `main_control` for the
-                        // single `close_files_and_terminate` boundary. An
-                        // effective `\end` already publishes this effect with
-                        // its final-cleanup records; EndOfInput has no scanned
-                        // command to own it, so the retained session publishes
-                        // the lifecycle event after the committed source stop.
+                        // TeX82 §§81, 93, 1332, 1335: source exhaustion and
+                        // scanned or fatal stops all converge at the one
+                        // `close_files_and_terminate` boundary. Main control
+                        // publishes both forms of `End`; EndOfInput has no
+                        // scanned command to own the boundary, so the retained
+                        // session publishes it after the committed source
+                        // stop. Fuel and resource failures reach neither path.
                         if matches!(step, MainControlStep::EndOfInput) {
                             observer.committed(engine_termination_observation());
                         }
@@ -940,7 +940,71 @@ mod tests {
                     .any(|event| matches!(event, CommandObservation::Effect(_))),
                 "loaded={loaded}: committed effects are observed"
             );
+            assert!(matches!(
+                observations.0.last(),
+                Some(CommandObservation::Effect(effect)) if effect.kind == "terminate"
+            ));
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    ))
+                    .count(),
+                1,
+                "loaded={loaded}: the retained session owns one terminal observation"
+            );
         }
+    }
+
+    #[test]
+    fn fatal_completion_terminates_once_after_diagnostic_with_fatal_history() {
+        let mut source = String::from("\\setbox0=\\vbox{");
+        for _ in 0..100 {
+            source.push_str("\\insert255{}");
+        }
+        source.push_str("}\\end");
+        let (mut stores, _) = prepared_session(b"");
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .set_fuel_limit(100_000)
+            .expect("bounded fatal microfixture fuel");
+        session
+            .register_authored_root("fatal.tex", Arc::from(source.into_bytes()))
+            .expect("root registers");
+        let mut observations = ObservationRecorder::default();
+
+        session
+            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+            .expect("TeX fatal stop reaches engine termination");
+
+        assert_eq!(
+            session.control.fatal_error(),
+            Some(tex_command::FatalError::TooManyErrors)
+        );
+        assert_eq!(
+            session.stores().world().error_channel().history(),
+            tex_state::print::ErrorHistory::FatalErrorStop
+        );
+        assert!(matches!(
+            observations.0.as_slice(),
+            [.., CommandObservation::Diagnostic(_), CommandObservation::Effect(effect)]
+                if effect.kind == "terminate"
+        ));
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                ))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1604,19 +1668,23 @@ mod tests {
                 .register_authored_root("cycle.tex", root)
                 .expect("root registers");
             session.set_fuel_limit(19).expect("valid tiny limit");
+            let mut observations = ObservationRecorder::default();
             let error = if observed {
                 session
-                    .run_with_observer(
-                        &mut WorldHost,
-                        &mut Vec::new(),
-                        &mut ObservationRecorder::default(),
-                    )
+                    .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
                     .expect_err("observed cyclic run exhausts fuel")
             } else {
                 session
                     .run(&mut WorldHost, &mut Vec::new())
                     .expect_err("cyclic run exhausts fuel")
             };
+            assert!(
+                !observations.0.iter().any(|event| matches!(
+                    event,
+                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                )),
+                "fuel exhaustion is an aborted outcome, not engine completion"
+            );
             let burned = session.fuel_burned();
             (error, burned)
         }

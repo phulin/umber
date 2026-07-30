@@ -1109,6 +1109,12 @@ impl LiveSessionTranslator {
             {
                 Some(&event.event)
             }
+            Event::Diagnostic(diagnostic)
+                if diagnostic.severity == DiagnosticSeverity::Fatal
+                    && !event.context.contains("terminal_outcome=failure") =>
+            {
+                Some(&event.event)
+            }
             _ => None,
         });
         let stable = encode_observed_stream(&header, stable_events)?;

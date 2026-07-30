@@ -4498,7 +4498,7 @@ fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
 }
 
 #[test]
-fn succumbing_commits_a_fatal_diagnostic_observation() {
+fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, &spanning_alignment_source(r"\i"));
@@ -4516,10 +4516,13 @@ fn succumbing_commits_a_fatal_diagnostic_observation() {
 
     let fatal = FatalError::confusion("256 spans");
     assert_eq!(control.fatal_error(), Some(fatal));
-    assert_eq!(
-        observations.0.last(),
-        Some(&CommandObservation::Diagnostic(fatal.record())),
-    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [.., CommandObservation::Diagnostic(record), CommandObservation::Effect(effect)]
+            if *record == fatal.record()
+                && effect.kind == "terminate"
+                && effect.detail == "engine\0"
+    ));
 }
 
 #[test]

@@ -408,7 +408,7 @@
         "count:0=0"
       ],
       "channels": {
-        "events": 6908,
+        "events": 6909,
         "status": "fatal:confusion(256 spans)",
         "terminal": {
           "kind": "xfail",

@@ -338,8 +338,14 @@ to print, where TeX82 reports "No pages of output." instead.
 
 Once `its_all_over` is true, §1335's `final_cleanup` unwinds every input
 level main control has abandoned -- the root file at end of text, an
-unfinished macro body, a live token list -- without reading any of them, and
-the job-termination effect belongs to that step alone.
+unfinished macro body, a live token list -- without reading any of them.
+Normal stop, fatal §93 `succumb`, and terminal exhaustion then converge at
+§1332's `end_of_TEX` label. Canonical main control publishes the following
+`close_files_and_terminate` observation after either a scanned stop's cleanup
+records or a fatal diagnostic. Terminal exhaustion has no scanned command, so
+the retained session publishes the same boundary after its source-stop record.
+Every completed outcome therefore publishes it once; a resource suspension or
+exhausted command-fuel budget publishes no termination.
 
 Canonical `\shipout` replay likewise crosses the executor only as a completed
 box. The artifact kernel receives an already-published detached input summary;

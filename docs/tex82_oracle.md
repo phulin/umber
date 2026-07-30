@@ -261,9 +261,12 @@ The focused command profile deliberately serializes complete canonical command
 and token values. The official full TRIP workload instead uses the separately
 built `umber-tex82-oracle-trip-profile` executable. Its schema-v1 stable
 observations are only ordered DVI `shipout` effects (page numbers), followed by
-the terminal-input `stop` and engine `terminate` effects. This bounded profile
-does not serialize command, control-sequence, token-list, macro, scanner,
-mutation, diagnostic, or textual-effect payloads. Validate it with
+the terminal-input `stop` and engine `terminate` effects. A run that reaches
+TeX82 §93 `succumb` instead retains its fatal diagnostic immediately before
+the same engine termination, preserving the terminal reason and
+`fatal_error_stop` history without fabricating an input stop. This bounded
+profile does not serialize command, control-sequence, token-list, macro,
+scanner, mutation, diagnostic, or textual-effect payloads. Validate it with
 `tex-oracle-validate --tex82-trip-profile`; that validator checks canonical
 JSONL and only the declared stable observations and final ordering.
 

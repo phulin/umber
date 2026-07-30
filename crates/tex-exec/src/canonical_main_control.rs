@@ -2648,6 +2648,7 @@ impl CanonicalMainControl {
                     pending.flush_into(observer);
                     let step = self.succumb(fatal);
                     observer.committed(CommandObservation::Diagnostic(fatal.record()));
+                    observer.committed(CommandObservation::Effect(engine_termination_effect()));
                     return Ok(CanonicalStepResult::Progress(step));
                 }
                 if !snapshot.can_rollback(stores) {
@@ -9085,14 +9086,18 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         // TeX82 §1335's `final_cleanup` and §1333's
         // `close_files_and_terminate` run once `its_all_over` has returned
         // true, so the job-termination effect belongs to that step and to no
-        // other.
-        ScannedStep::End { .. } => Some(EffectRecord {
-            kind: "terminate",
-            detail: "engine\0".into(),
-            source: None,
-            tokens: None,
-        }),
+        // other normal command.
+        ScannedStep::End { .. } => Some(engine_termination_effect()),
         _ => None,
+    }
+}
+
+fn engine_termination_effect() -> EffectRecord {
+    EffectRecord {
+        kind: "terminate",
+        detail: "engine\0".into(),
+        source: None,
+        tokens: None,
     }
 }
 
