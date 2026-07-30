@@ -144,6 +144,43 @@ impl CommandProcessor<'_> {
             self.command.restore_scanner_status(prior);
         }
         let result = result?;
+        let completed_tokens = if !self.is_observed() {
+            Vec::new()
+        } else if matches!(
+            mode,
+            ScanToksMode::GeneralText {
+                purpose: "detokenize"
+            }
+        ) {
+            crate::processor::expand::token_list_string_text(
+                &mut self.state,
+                result.replacement_text.token_list(),
+            )
+            .chars()
+            .map(|ch| {
+                self.observed_token(TracedTokenWord::pack(
+                    Token::Char {
+                        ch,
+                        cat: if ch == ' ' {
+                            Catcode::Space
+                        } else {
+                            Catcode::Other
+                        },
+                    },
+                    OriginId::UNKNOWN,
+                ))
+            })
+            .collect()
+        } else {
+            self.state
+                .tokens(result.replacement_text.token_list())
+                .iter()
+                .copied()
+                .map(|token| {
+                    self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                })
+                .collect()
+        };
         observe!(
             self,
             CommandObservation::TokenList(TokenListRecord {
@@ -162,14 +199,7 @@ impl CommandProcessor<'_> {
                         "macro_replacement"
                     }
                 },
-                tokens: self
-                    .state
-                    .tokens(result.replacement_text.token_list())
-                    .iter()
-                    .copied()
-                    .map(|token| self
-                        .observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
-                    .collect(),
+                tokens: completed_tokens,
             }),
         );
         Ok(result)
@@ -415,6 +445,13 @@ impl CommandProcessor<'_> {
                         Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
                     ) {
                         self.append_unexpanded(&mut output)?;
+                        continue;
+                    }
+                    if matches!(
+                        command.meaning(),
+                        Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize)
+                    ) {
+                        self.append_detokenize(&mut output)?;
                         continue;
                     }
                     if matches!(command.meaning(), Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
@@ -693,6 +730,60 @@ impl CommandProcessor<'_> {
             .cumulative_expansions
             .saturating_add(1);
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
+        if !observed.is_empty() {
+            observe!(
+                self,
+                CommandObservation::TokenList(TokenListRecord {
+                    transition: "splice",
+                    purpose: "the_toks",
+                    tokens: observed,
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    /// e-TeX 2.6 etex.ch §53a returns `\detokenize` through `the_toks`.
+    ///
+    /// Inside §477's expanded collector the converted list is therefore
+    /// attached directly, just like §478's ordinary `\the` result. It must
+    /// not become a §470 `conv_toks` inserted input level whose characters
+    /// are fetched again one by one.
+    fn append_detokenize(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
+        let scanned = self.scan_toks(ScanToksMode::GeneralText {
+            purpose: "detokenize",
+        })?;
+        let text = crate::processor::expand::token_list_string_text(
+            &mut self.state,
+            scanned.replacement_text.token_list(),
+        );
+        let tokens = text
+            .chars()
+            .map(|ch| {
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch,
+                        cat: if ch == ' ' {
+                            Catcode::Space
+                        } else {
+                            Catcode::Other
+                        },
+                    },
+                    OriginId::UNKNOWN,
+                )
+            })
+            .collect::<Vec<_>>();
+        let observed = tokens
+            .iter()
+            .copied()
+            .map(|token| self.observed_token(token))
+            .collect::<Vec<_>>();
+        output.extend(tokens);
+        self.command.expansion.cumulative_expansions = self
+            .command
+            .expansion
+            .cumulative_expansions
+            .saturating_add(1);
         if !observed.is_empty() {
             observe!(
                 self,

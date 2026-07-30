@@ -622,6 +622,82 @@ fn etex_detokenize_observes_live_escape_and_control_sequence_kinds() {
     assert_eq!(rendered(&mut processor), "~!@!csname!endcsname ");
 }
 
+#[test]
+fn etex_detokenize_the_toks_microfixture_matches_fresh_and_loaded_formats() {
+    // e-TeX 2.6 etex.ch §§[25.386], [27.465]: a numbered mark enquiry is
+    // still unexpanded general text here, while detokenize's converted
+    // character list is returned through `the_toks` and joins the enclosing
+    // expanded collector directly. The format round trip is a negative
+    // control for primitive-table reconstruction.
+    let mut fresh = Universe::new_with_plain_catcodes();
+    crate::primitives::install_etex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent e-TeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_etex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(
+                    include_bytes!("../fixtures/etex-detokenize-the-toks.tex").as_slice(),
+                ),
+            ))
+            .expect("microfixture registers");
+        command.open_registered_source(source).expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let result = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor
+                .scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })
+                .expect("expanded collection succeeds")
+        };
+
+        let rendered = universe
+            .tokens(result.replacement_text.token_list())
+            .iter()
+            .map(|token| match token {
+                Token::Char { ch, .. } => *ch,
+                _ => panic!("detokenize must return only character tokens"),
+            })
+            .collect::<String>();
+        assert_eq!(rendered, "\\splitfirstmarks 0");
+        let token_lists = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::TokenList(record) => Some(record),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            token_lists
+                .iter()
+                .map(|record| (record.transition, record.purpose))
+                .collect::<Vec<_>>(),
+            [
+                ("complete", "detokenize"),
+                ("splice", "the_toks"),
+                ("complete", "expanded_scan_toks"),
+            ]
+        );
+        assert!(token_lists[0]
+            .tokens
+            .iter()
+            .all(|token| matches!(token, ObservedToken::Character { .. })));
+        assert_eq!(token_lists[0].tokens, token_lists[1].tokens);
+        assert!(!recorder.0.iter().any(|record| matches!(
+            record,
+            CommandObservation::Recovery(_)
+        )));
+    }
+}
+
 fn rendered(processor: &mut CommandProcessor<'_>) -> String {
     let mut text = String::new();
     while let Some(command) = processor.get_x_token().expect("conversion expands") {
