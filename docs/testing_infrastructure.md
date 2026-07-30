@@ -36,6 +36,17 @@ Generated-input stabilization uses the hermetic shared fixtures under
 the wasm-bindgen browser suite runs the same bytes and compares binary output,
 generated files, pass counts, and typed fixed-point failures with the native
 surface.
+
+The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,align,tex_exec,tex_exec_io,expand}`
+use one closed Git directory per case. Each directory owns its named `.tex`
+source, every exact local support input, and each applicable
+`expected.<channel>` output. `tools/fixturegen --migrate-layout --plan` is the
+read-only deterministic migration inventory; `--apply` stages, verifies, and
+atomically installs whole directories. Repeating either mode over the migrated
+tree returns the same case/byte/SHA-256 report. The routine `test-support` gate
+also equates those directory trees with Git's regular tracked-file inventory,
+so ignored, untracked, symlinked, nonlocal, target-backed, missing, and extra
+authorities fail rather than escaping discovery.
 The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.
@@ -825,7 +836,7 @@ outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
 
 DVI regeneration runs the live reference engine through `tools/refexec`,
-copies the pinned local CM TFMs and area support files, uses INITEX for the math
+copies the pinned local CM TFMs and case-local support files, uses INITEX for the math
 corpus, and rewrites raw reference DVI only when the existing
 preamble-comment-only comparison detects a change.
 

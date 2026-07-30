@@ -65,9 +65,16 @@ mod imp {
     }
 
     pub fn fixture_path(area: &str, case: &str, kind: &str) -> PathBuf {
-        corpus_root()
-            .join(area)
-            .join(format!("{case}.expected.{kind}"))
+        if crate::is_directory_case_area(area) {
+            corpus_root()
+                .join(area)
+                .join(case)
+                .join(format!("expected.{kind}"))
+        } else {
+            corpus_root()
+                .join(area)
+                .join(format!("{case}.expected.{kind}"))
+        }
     }
 
     pub fn read_fixture(area: &str, case: &str, kind: &str) -> String {
@@ -798,7 +805,9 @@ mod imp {
 }
 
 pub use compile_fail::{CompileFailDependency, assert_compile_fail};
-pub use corpus::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
+pub use corpus::{
+    CorpusCase, copy_case_support_files, corpus_area, corpus_cases, is_directory_case_area,
+};
 pub use imp::{
     assert_matches_fixture, corpus_root, corpus_root_at, fixture_path, normalize, pl,
     read_binary_fixture, read_fixture, repository_root, repository_root_at,

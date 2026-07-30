@@ -666,7 +666,7 @@ fn run_recovered_diagnostic_after_tfm_load_exits_successfully() {
 fn run_exec_corpus_matches_committed_diagnostics() {
     // The excluded cases are excluded for a harness reason, not an engine
     // one: this test compares `umber run`'s *terminal* (stdout) capture
-    // against `tests/corpus/exec/*.expected.log`, but that fixture is
+    // against each `tests/corpus/exec/<case>/expected.log`, but that fixture is
     // generated from the reference engine's *log* (transcript) file
     // (`fixturegen` reruns pdftex and captures its `.log`, independent of
     // `\tracingonline`). The two channels agree byte-for-byte for most

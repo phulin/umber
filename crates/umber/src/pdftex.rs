@@ -673,7 +673,7 @@ mod tests {
             )
             .expect("seed extension font fixture");
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_form_state.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_form_state/pdf_form_state.tex"),
             &mut stores,
         )
         .expect("execute pinned form-state fixture");
@@ -703,7 +703,9 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let error = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_form_diagnostics.tex"),
+            include_str!(
+                "../../../tests/corpus/tex_exec/pdf_form_diagnostics/pdf_form_diagnostics.tex"
+            ),
             &mut stores,
         )
         .expect_err("void form fixture must fail");
@@ -2232,7 +2234,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_image_config.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_image_config/pdf_image_config.tex"),
             &mut stores,
         )
         .expect("pdfTeX image configuration assignments");
@@ -2271,7 +2273,7 @@ mod tests {
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_font_config.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_font_config/pdf_font_config.tex"),
             &mut stores,
         )
         .expect("pdfTeX font configuration assignments and diagnostics");
@@ -2317,7 +2319,9 @@ mod tests {
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_microtype_effects.tex"),
+            include_str!(
+                "../../../tests/corpus/tex_exec/pdf_microtype_effects/pdf_microtype_effects.tex"
+            ),
             &mut stores,
         )
         .expect("pdfTeX microtype effect fixture");
@@ -2351,7 +2355,7 @@ mod tests {
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_font_codes.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_font_codes/pdf_font_codes.tex"),
             &mut stores,
         )
         .expect("pdfTeX font-code fixture");
@@ -2398,7 +2402,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_output_policy.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_output_policy/pdf_output_policy.tex"),
             &mut stores,
         )
         .expect("Umber recovers from the pinned range cases");
@@ -2622,7 +2626,9 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_metadata_config.tex"),
+            include_str!(
+                "../../../tests/corpus/tex_exec/pdf_metadata_config/pdf_metadata_config.tex"
+            ),
             &mut stores,
         )
         .expect("pdfTeX metadata configuration assignments");
@@ -2828,7 +2834,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_compatibility_controls.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_compatibility_controls/pdf_compatibility_controls.tex"),
             &mut stores,
         )
         .expect("execute mode/error compatibility fixture");
@@ -2866,7 +2872,9 @@ mod tests {
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_move_chars_warning.tex"),
+            include_str!(
+                "../../../tests/corpus/tex_exec/pdf_move_chars_warning/pdf_move_chars_warning.tex"
+            ),
             &mut stores,
         )
         .expect("execute obsolete pdfmovechars fixture");
@@ -2903,7 +2911,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            include_str!("../../../tests/corpus/tex_exec/pdf_ignored_dimen_effects.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_ignored_dimen_effects/pdf_ignored_dimen_effects.tex"),
             &mut stores,
         )
         .expect("execute live ignored-dimension fixture");

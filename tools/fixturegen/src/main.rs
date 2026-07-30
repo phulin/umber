@@ -2,12 +2,15 @@
 
 mod classic_bibtex;
 mod fonts;
+mod layout_migration;
 mod pdf;
 
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use refexec::{RefTex, RunOpts, RunOutput};
@@ -43,9 +46,7 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
-        Some("--classic-bibtex-differential") => {
-            classic_bibtex::run(&repo_root(), args.collect())
-        }
+        Some("--classic-bibtex-differential") => classic_bibtex::run(&repo_root(), args.collect()),
         Some("--check-pdf-raster") => {
             ensure_no_extra_args(args)?;
             pdf::check_raster_attestations()
@@ -54,6 +55,18 @@ fn run() -> Result<()> {
             let area = args.next().context("missing area after --area")?;
             ensure_no_extra_args(args)?;
             regenerate_area(&area)
+        }
+        Some("--migrate-layout") => {
+            let mode = match args.next().as_deref() {
+                Some("--plan") => layout_migration::Mode::Plan,
+                Some("--apply") => layout_migration::Mode::Apply,
+                _ => bail!("--migrate-layout requires --plan or --apply"),
+            };
+            ensure_no_extra_args(args)?;
+            let report =
+                layout_migration::run(&corpus_root(), layout_migration::EXECUTION_FAMILIES, mode)?;
+            print!("{report}");
+            Ok(())
         }
         Some("--case") => {
             let first = args.next().context("missing case after --case")?;
@@ -82,7 +95,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }
@@ -203,7 +216,10 @@ fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Resu
 
 fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
     let area = "etex_exec";
-    let support = corpus_root().join(area).join(format!("{case}.txt"));
+    let support = corpus_root()
+        .join(area)
+        .join(case)
+        .join(format!("{case}.txt"));
     let mut opts = RunOpts::default();
     if support.exists() {
         opts.extra_inputs.push(support);
@@ -469,17 +485,107 @@ fn write_text_fixture(area: &str, case: &str, kind: &str, actual: &str) -> Resul
         eprintln!("fixture unchanged: {}", display_repo_path(&path));
         return Ok(());
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create fixture directory {}", parent.display()))?;
+    if test_support::is_directory_case_area(area) {
+        atomically_replace_case_output(area, case, &path, actual.as_bytes())?;
+    } else {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create fixture directory {}", parent.display())
+            })?;
+        }
+        fs::write(&path, actual).with_context(|| format!("failed to write {}", path.display()))?;
     }
-    fs::write(&path, actual).with_context(|| format!("failed to write {}", path.display()))?;
     eprintln!("fixture updated: {}", display_repo_path(&path));
     Ok(())
 }
 
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn atomically_replace_case_output(
+    area: &str,
+    case: &str,
+    output: &Path,
+    bytes: &[u8],
+) -> Result<()> {
+    let current = corpus_root().join(area).join(case);
+    let parent = current.parent().context("case directory has no parent")?;
+    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let suffix = format!("{}.{}.{}", std::process::id(), sequence, case);
+    let staged = parent.join(format!(".fixturegen-stage-{suffix}"));
+    let backup = parent.join(format!(".fixturegen-backup-{suffix}"));
+    fs::create_dir(&staged).with_context(|| format!("create {}", staged.display()))?;
+    let result = (|| {
+        for entry in
+            fs::read_dir(&current).with_context(|| format!("read {}", current.display()))?
+        {
+            let entry = entry.context("read case entry")?;
+            let kind = entry.file_type().context("read case entry type")?;
+            if !kind.is_file() || kind.is_symlink() {
+                bail!("case contains non-regular entry {}", entry.path().display());
+            }
+            fs::copy(entry.path(), staged.join(entry.file_name()))
+                .with_context(|| format!("stage {}", entry.path().display()))?;
+        }
+        let output_name = output
+            .file_name()
+            .context("fixture output has no file name")?;
+        fs::write(staged.join(output_name), bytes)
+            .with_context(|| format!("write staged {}", output.display()))?;
+        install_staged_case(&staged, &current, &backup, |from, to| fs::rename(from, to))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staged);
+    }
+    if result.is_ok() {
+        fs::remove_dir_all(&backup)
+            .with_context(|| format!("remove recoverable backup {}", backup.display()))?;
+    }
+    result
+}
+
+fn install_staged_case(
+    staged: &Path,
+    current: &Path,
+    backup: &Path,
+    mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+) -> Result<()> {
+    rename(current, backup).with_context(|| {
+        format!(
+            "move current case to recoverable backup {}",
+            backup.display()
+        )
+    })?;
+    if let Err(install_error) = rename(staged, current) {
+        return match rename(backup, current) {
+            Ok(()) => Err(install_error).with_context(|| {
+                format!(
+                    "install staged case {}; restored original from {}",
+                    staged.display(),
+                    backup.display()
+                )
+            }),
+            Err(rollback_error) => bail!(
+                "install staged case {} failed: {}; rollback {} -> {} also failed: {}",
+                staged.display(),
+                install_error,
+                backup.display(),
+                current.display(),
+                rollback_error
+            ),
+        };
+    }
+    Ok(())
+}
+
 fn source_path(area: &str, case: &str) -> PathBuf {
-    corpus_root().join(area).join(format!("{case}.tex"))
+    if test_support::is_directory_case_area(area) {
+        corpus_root()
+            .join(area)
+            .join(case)
+            .join(format!("{case}.tex"))
+    } else {
+        corpus_root().join(area).join(format!("{case}.tex"))
+    }
 }
 
 fn repo_root() -> PathBuf {
@@ -667,4 +773,60 @@ fn dvi_special_payloads(dvi: &[u8]) -> Vec<Vec<u8>> {
         index += 1;
     }
     payloads
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::fs;
+    use std::io;
+
+    use super::install_staged_case;
+
+    #[test]
+    fn whole_case_swap_leaves_a_recoverable_backup() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let current = temp.path().join("case");
+        let staged = temp.path().join("stage");
+        let backup = temp.path().join("backup");
+        fs::create_dir(&current).expect("create current");
+        fs::create_dir(&staged).expect("create staged");
+        fs::write(current.join("expected.log"), b"old").expect("write old");
+        fs::write(staged.join("expected.log"), b"new").expect("write new");
+
+        install_staged_case(&staged, &current, &backup, |from, to| fs::rename(from, to))
+            .expect("install staged case");
+
+        assert_eq!(
+            fs::read(current.join("expected.log")).expect("new output"),
+            b"new"
+        );
+        assert_eq!(
+            fs::read(backup.join("expected.log")).expect("backup output"),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn swap_reports_install_and_rollback_failures_together() {
+        let calls = Cell::new(0);
+        let error = install_staged_case(
+            std::path::Path::new("stage"),
+            std::path::Path::new("case"),
+            std::path::Path::new("backup"),
+            |_, _| {
+                let call = calls.get();
+                calls.set(call + 1);
+                match call {
+                    0 => Ok(()),
+                    1 => Err(io::Error::other("install exploded")),
+                    _ => Err(io::Error::other("rollback exploded")),
+                }
+            },
+        )
+        .expect_err("dual failure");
+        let message = format!("{error:#}");
+        assert!(message.contains("install exploded"), "{message}");
+        assert!(message.contains("rollback exploded"), "{message}");
+    }
 }

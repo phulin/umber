@@ -4067,8 +4067,9 @@ fn replay_openout_keeps_four_bit_recovery_before_stream_zero_effect() {
 
 #[test]
 fn replay_closeout_stream_selector_committed_microfixture() {
-    let source =
-        include_bytes!("../../../../tests/corpus/tex_exec_io/closeout_stream_selectors.tex");
+    let source = include_bytes!(
+        "../../../../tests/corpus/tex_exec_io/closeout_stream_selectors/closeout_stream_selectors.tex"
+    );
     let expected =
         test_support::read_fixture("tex_exec_io", "closeout_stream_selectors", "effects");
     let mut universe = Universe::new_with_plain_catcodes();
@@ -8879,7 +8880,7 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
 #[test]
 fn code_table_selector_uses_tex82_character_code_recovery() {
     let reference =
-        include_str!("../../../../tests/corpus/tex_exec/lccode_selector_recovery.expected.ref");
+        include_str!("../../../../tests/corpus/tex_exec/lccode_selector_recovery/expected.ref");
     assert!(
         reference.contains("Bad character code (256)") && reference.contains("L:3:2"),
         "the bounded TeX82 oracle must pin selector recovery and both boundaries: {reference}"
@@ -8888,7 +8889,9 @@ fn code_table_selector_uses_tex82_character_code_recovery() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
-        include_bytes!("../../../../tests/corpus/tex_exec/lccode_selector_recovery.tex"),
+        include_bytes!(
+            "../../../../tests/corpus/tex_exec/lccode_selector_recovery/lccode_selector_recovery.tex"
+        ),
     );
 
     run_to_end(&mut control, &mut universe);
@@ -9084,7 +9087,8 @@ fn the_hundredth_restricted_integer_error_terminates_canonical_replay() {
 
 #[test]
 fn canonical_prefixed_command_skips_relax_and_preserves_group_scope() {
-    let source = include_bytes!("../../../../tests/corpus/tex_exec/prefixed_macro.tex");
+    let source =
+        include_bytes!("../../../../tests/corpus/tex_exec/prefixed_macro/prefixed_macro.tex");
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, source);

@@ -173,7 +173,7 @@ fn last_box_cases_match_reference_micro_suite() {
     assert!(last_box.contains("You can't use `\\lastbox' in math mode"));
 
     let stores = run_umber_exec_with_box_expandables(include_str!(
-        "../../../../tests/corpus/tex_exec/last_box.tex"
+        "../../../../tests/corpus/tex_exec/last_box/last_box.tex"
     ));
     assert_eq!(
         stores
@@ -253,7 +253,9 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
         "reference hskip recovery changed:\n{reference}"
     );
 
-    let source = include_str!("../../../../tests/corpus/tex_exec/hskip_penalty_recovery.tex");
+    let source = include_str!(
+        "../../../../tests/corpus/tex_exec/hskip_penalty_recovery/hskip_penalty_recovery.tex"
+    );
     let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));

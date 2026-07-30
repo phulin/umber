@@ -7675,7 +7675,7 @@ mod tests {
         let before = stores.pdf_last_position();
         let error = try_run_in(
             &mut stores,
-            include_str!("../../../tests/corpus/tex_exec/pdf_form_traversal_diagnostics.tex"),
+            include_str!("../../../tests/corpus/tex_exec/pdf_form_traversal_diagnostics/pdf_form_traversal_diagnostics.tex"),
         )
         .expect_err("malformed form traversal must fail transactionally");
         assert_eq!(

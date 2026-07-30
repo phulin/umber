@@ -1504,6 +1504,7 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
 fn read_io_source(stem: &str) -> String {
     let path = corpus_root()
         .join("tex_exec_io")
+        .join(stem)
         .join(format!("{stem}.tex"));
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))

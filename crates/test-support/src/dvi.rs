@@ -102,7 +102,7 @@ mod imp {
     use tempfile::TempDir;
 
     use super::{DviComparison, compare_dvi_bytes};
-    use crate::{copy_area_support_files, corpus_root};
+    use crate::{copy_case_support_files, corpus_root};
 
     const PINNED_CM_TFMS: &[&str] = &["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"];
 
@@ -120,7 +120,10 @@ mod imp {
 
         fn try_new(area: &str, case: &str) -> Result<Self> {
             let temp_dir = tempfile::tempdir().context("failed to create DVI fixture temp dir")?;
-            let source = corpus_root().join(area).join(format!("{case}.tex"));
+            let source = corpus_root()
+                .join(area)
+                .join(case)
+                .join(format!("{case}.tex"));
             let source_path = temp_dir.path().join(format!("{case}.tex"));
             fs::copy(&source, &source_path).with_context(|| {
                 format!(
@@ -131,7 +134,7 @@ mod imp {
             })?;
 
             let mut extra_inputs = copy_pinned_cm_tfms(temp_dir.path())?;
-            extra_inputs.extend(copy_area_support_files(area, temp_dir.path()));
+            extra_inputs.extend(copy_case_support_files(area, case, temp_dir.path()));
             extra_inputs.sort();
 
             Ok(Self {

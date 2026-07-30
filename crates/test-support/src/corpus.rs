@@ -49,30 +49,59 @@ mod imp {
             let path = entry
                 .with_context(|| format!("failed to read corpus entry in {}", area_path.display()))?
                 .path();
-            if path.extension().and_then(OsStr::to_str) != Some("tex") {
-                continue;
-            }
-            let name = path
-                .file_stem()
-                .and_then(OsStr::to_str)
-                .with_context(|| format!("corpus case has invalid stem: {}", path.display()))?
-                .to_owned();
+            let (name, source_path) = if is_directory_case_area(area) {
+                if !path.is_dir() {
+                    anyhow::bail!(
+                        "directory-case corpus area contains non-directory entry: {}",
+                        path.display()
+                    );
+                }
+                let name = path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .with_context(|| format!("corpus case has invalid name: {}", path.display()))?
+                    .to_owned();
+                let source = path.join(format!("{name}.tex"));
+                if !source.is_file() {
+                    anyhow::bail!("corpus case lacks regular source {}", source.display());
+                }
+                (name, source)
+            } else {
+                if path.extension().and_then(OsStr::to_str) != Some("tex") {
+                    continue;
+                }
+                let name = path
+                    .file_stem()
+                    .and_then(OsStr::to_str)
+                    .with_context(|| format!("corpus case has invalid stem: {}", path.display()))?
+                    .to_owned();
+                (name, path)
+            };
             cases.push(CorpusCase {
                 area: area.to_owned(),
                 name,
-                source_path: path,
+                source_path,
             });
         }
         cases.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(cases)
     }
 
-    pub fn copy_area_support_files(area: &str, destination: &Path) -> Vec<PathBuf> {
-        copy_area_support_files_inner(area, destination).unwrap_or_else(|error| panic!("{error:#}"))
+    pub fn copy_case_support_files(area: &str, case: &str, destination: &Path) -> Vec<PathBuf> {
+        copy_case_support_files_inner(area, case, destination)
+            .unwrap_or_else(|error| panic!("{error:#}"))
     }
 
-    fn copy_area_support_files_inner(area: &str, destination: &Path) -> Result<Vec<PathBuf>> {
-        let area_path = corpus_area(area);
+    fn copy_case_support_files_inner(
+        area: &str,
+        case: &str,
+        destination: &Path,
+    ) -> Result<Vec<PathBuf>> {
+        let area_path = if is_directory_case_area(area) {
+            corpus_area(area).join(case)
+        } else {
+            corpus_area(area)
+        };
         let mut copied = Vec::new();
         for entry in fs::read_dir(&area_path)
             .with_context(|| format!("failed to read corpus area {}", area_path.display()))?
@@ -107,8 +136,24 @@ mod imp {
         let Some(name) = path.file_name().and_then(OsStr::to_str) else {
             return false;
         };
-        !name.contains(".expected.")
+        !name.contains(".expected.") && !name.starts_with("expected.")
+    }
+
+    pub fn is_directory_case_area(area: &str) -> bool {
+        matches!(
+            area,
+            "exec"
+                | "etex_exec"
+                | "typeset"
+                | "math"
+                | "align"
+                | "tex_exec"
+                | "tex_exec_io"
+                | "expand"
+        )
     }
 }
 
-pub use imp::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
+pub use imp::{
+    CorpusCase, copy_case_support_files, corpus_area, corpus_cases, is_directory_case_area,
+};

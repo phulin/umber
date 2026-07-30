@@ -4,6 +4,15 @@
 
 `tools/fixturegen` is the script-owned fixture regeneration tool used by `scripts/regen-fixtures.sh` for text/native fixtures, pinned pdfTeX/Poppler PDF parity fixtures, and the explicit live font check. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 
+`fixturegen --migrate-layout --plan` deterministically inventories the
+declarative execution-family specifications in `layout_migration.rs`, reports
+each case's file/byte census and domain-separated SHA-256, and performs no
+writes. `--apply` stages and byte-verifies each whole case directory before an
+atomic rename, consumes the old flat authorities only after installation, and
+is idempotent. The specification type is intentionally reusable by later
+fixture-family migrations; shared and case-owned extra inputs are explicit
+rather than inferred from file extensions.
+
 Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
 of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of
 legal `.bst` programs, stages each case without host lookup, and compares
