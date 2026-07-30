@@ -1605,15 +1605,27 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
         | CommandInputReason::Write
         | CommandInputReason::UmberReplay(_) => InputReason::TokenList,
     };
+    let name = if record.transition == InputTransition::Push
+        && record.reason == CommandInputReason::Source
+    {
+        record
+            .source_name
+            .map(canonical_names::source_name_class_name)
+            .map_or_else(|| active_source.into(), Into::into)
+    } else {
+        canonical_names::input_level_name(record.reason)
+            .map_or_else(|| active_source.into(), Into::into)
+    };
     Event::Input(InputEvent {
         transition,
         reason,
         // TeX82's `end_file_reading` observer carries only the lifecycle
         // transition.  The harness attaches the source identity while the
         // source frame is still active, before it removes that frame from
-        // its parallel trace stack.
-        name: canonical_names::input_level_name(record.reason)
-            .map_or_else(|| active_source.into(), Into::into),
+        // its parallel trace stack. Conversely, `begin_file_reading` is
+        // observed before that stack activates the child, so a source push
+        // keeps the canonical name carried by the event itself.
+        name,
     })
 }
 
@@ -2025,6 +2037,28 @@ mod tests {
     }
     fn observed(value: &str) -> ObservedEvent {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
+    }
+
+    #[test]
+    fn source_push_uses_its_inherited_name_before_the_child_becomes_active() {
+        let event = translate_input(
+            InputRecord {
+                transition: InputTransition::Push,
+                reason: CommandInputReason::Source,
+                source_name: Some(tex_command::SourceNameClass::Terminal),
+                level: 7,
+                position: 0,
+            },
+            "parent.tex",
+        );
+        assert_eq!(
+            event,
+            Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Push,
+                reason: tex_oracle::InputReason::Source,
+                name: "terminal".into(),
+            })
+        );
     }
 
     #[test]

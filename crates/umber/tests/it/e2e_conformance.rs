@@ -89,7 +89,33 @@ impl LiveCapture {
             self.root.clone(),
             self.registered_inputs.clone(),
         );
-        translator.translate_captured(self.observations.clone());
+        let mut observations = Vec::with_capacity(self.observations.len());
+        for observation in self.observations.iter().cloned() {
+            // TeX82 §537 observes `begin_file_reading` before assigning the
+            // opened file's name. The production command boundary publishes
+            // the successful capability hand-off as an effect; reconstruct
+            // the reference observer's immediately preceding source push at
+            // this detached full-document trace boundary.
+            if matches!(
+                observation,
+                tex_command::CommandObservation::Effect(tex_command::EffectRecord {
+                    kind: "input",
+                    ..
+                })
+            ) {
+                observations.push(tex_command::CommandObservation::Input(
+                    tex_command::InputRecord {
+                        transition: tex_command::InputTransition::Push,
+                        reason: tex_command::InputReason::Source,
+                        source_name: Some(tex_command::SourceNameClass::Terminal),
+                        level: 0,
+                        position: 0,
+                    },
+                ));
+            }
+            observations.push(observation);
+        }
+        translator.translate_captured(observations);
         translator
             .finish(header, self.outcome.clone())
             .expect("live observations translate")
