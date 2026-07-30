@@ -81,10 +81,16 @@ assert_source_manifest_drift_is_actionable \
   initex-eight-bit \
   tex82-oracle-manifest.txt \
   d8bd0fa161d2fa1b0d9634198fff5b8f20c9e9986b7be363134686965751cff8 \
-  845ad8acfa69254ba120f1a9f666e2a80a2dd991e5b7f0215d2d2b1c9dc1a266
+  454d2078536ed714aa288ae46f12c0edd14b70649cab723788077cb06dcf32d9
 assert_source_manifest_drift_is_actionable \
   etex26 \
   compatibility+extended-eight-bit \
   etex26-oracle-manifest.txt \
   abb05cc5bef25608574fc309a2f3253c19816c3ac8dfb4b3c94721479eb82a1e \
-  77b06296b862f298afd78ca6f5dac2a0a9e8dc27f095bebf03bf214ab07041f9
+  6fe33cb32ee042016c3bd1ac0076eb4752c769078ff0e09e9676ab37ff3b19a6
+assert_source_manifest_drift_is_actionable \
+  pdftex14027 \
+  initex-etex-eight-bit \
+  pdftex14027-oracle-manifest.txt \
+  446cf937040f198f4c4c19d75a33685700d438c18f86f4d30c22a0b2b80bd139 \
+  9841528765723d64c32f9f6e7d59c64cf6029c9b90ef9e50e40c4e53d551ca58
