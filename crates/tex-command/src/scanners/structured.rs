@@ -28,7 +28,7 @@ use crate::scanners::RestrictedIntegerClass;
 use crate::{
     AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, CurrentCommand,
     InternalValue,
-    processor::{meaning_text, render_the_value, string_text},
+    processor::{meaning_text, print_cs_text, render_the_value, string_text},
 };
 
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
@@ -2429,7 +2429,10 @@ impl CommandProcessor<'_> {
             | InternalValue::MuGlue(_)) => {
                 render_the_value(value).expect("non-token values render")
             }
-            InternalValue::Font(symbol) => string_text(&self.state, Token::Cs(symbol)),
+            // TeX82 §§262/1297: `the_toks` turns an `ident_val` into a
+            // control-sequence token, then `token_show` uses `print_cs`.
+            // Its control-word delimiter therefore precedes §1293's period.
+            InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
             InternalValue::Tokens { tokens, .. } => self
                 .state
                 .tokens(tokens)

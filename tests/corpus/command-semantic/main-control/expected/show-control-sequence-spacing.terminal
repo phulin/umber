@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./show-control-sequence-spacing.tex
+> \rip .
+<recently read> \font 
+                      
+l.3 \showthe\font
+                 
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on show-control-sequence-spacing.log.

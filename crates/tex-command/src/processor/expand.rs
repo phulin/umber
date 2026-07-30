@@ -1246,6 +1246,29 @@ pub(crate) fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -
     }
 }
 
+/// TeX82 §262's `print_cs`, including its delimiter after a control word.
+///
+/// This is distinct from §263's `sprint_cs` spelling used by `\show` before
+/// `=` and from §213's `\string`: named control words and `null_cs` append a
+/// space, while active characters and single nonletter control symbols do not.
+pub(crate) fn print_cs_text(
+    state: &mut tex_state::CommandContext<'_>,
+    symbol: tex_state::interner::Symbol,
+) -> String {
+    let name = state.resolve(symbol);
+    if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+        return name.to_owned();
+    }
+
+    let mut text = string_text(state, Token::Cs(symbol));
+    let mut characters = name.chars();
+    match (characters.next(), characters.next()) {
+        (Some(character), None) if state.catcode(character) != Catcode::Letter => {}
+        _ => text.push(' '),
+    }
+    text
+}
+
 pub(crate) fn meaning_text(
     state: &tex_state::CommandContext<'_>,
     command: &CurrentCommand,

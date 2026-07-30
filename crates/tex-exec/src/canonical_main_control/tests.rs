@@ -4254,6 +4254,8 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
 
 #[test]
 fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
+    // TeX82 §§262/1297: the font identifier becomes a token shown through
+    // `print_cs`, whose control-word delimiter precedes the display period.
     let mut stores = Universe::new_with_plain_catcodes();
     let nullfont = stores.intern("nullfont");
     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
@@ -4266,7 +4268,7 @@ fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     let output = terminal_text(&stores);
     assert!(output.contains("> 17."), "{output}");
     assert!(output.contains("> 1.0pt plus 2.0fil."), "{output}");
-    assert!(output.contains("> \\nullfont."), "{output}");
+    assert!(output.contains("> \\nullfont ."), "{output}");
     assert!(output.contains("> abc."), "{output}");
 }
 

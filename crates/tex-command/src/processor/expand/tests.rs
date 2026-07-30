@@ -2226,6 +2226,42 @@ fn meaning_macro_token_list_distinguishes_words_symbols_spaces_and_active_chars(
 }
 
 #[test]
+fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
+    // TeX82 §§262–263: `print_cs` and `sprint_cs` share spelling, but only
+    // `print_cs` appends a delimiter after a named control word. Meaning does
+    // not affect that spelling partition.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let primitive = universe.intern("relax").symbol();
+    let macro_name = universe.intern("macro").symbol();
+    let undefined = universe.intern("undefined").symbol();
+    let active = universe.intern_active_character('~').symbol();
+    let symbol = universe.intern("!").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    universe.set_meaning(primitive, Meaning::Relax);
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+
+    for (symbol, expected) in [
+        (primitive, "\\relax "),
+        (macro_name, "\\macro "),
+        (undefined, "\\undefined "),
+        (active, "~"),
+        (symbol, "\\!"),
+    ] {
+        assert_eq!(
+            print_cs_text(&mut universe.command_context(), symbol),
+            expected
+        );
+    }
+}
+
+#[test]
 fn character_command_renderer_covers_tex82_print_cmd_chr_table() {
     for (cat, ch, expected) in [
         (Catcode::BeginGroup, '{', "begin-group character {"),

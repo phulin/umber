@@ -9196,6 +9196,8 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
 
 #[test]
 fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
+    // TeX82 §§262/1297: each font identifier reaches `token_show`, so each
+    // named control word keeps `print_cs`'s delimiter before the period.
     let mut universe = Universe::new_with_plain_catcodes();
     let nullfont = universe.intern("nullfont");
     universe.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
@@ -9207,7 +9209,7 @@ fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
     run_to_end(&mut control, &mut universe);
 
     let text = terminal_text(&universe);
-    assert_eq!(text.matches("> \\nullfont.").count(), 3, "{text}");
+    assert_eq!(text.matches("> \\nullfont .").count(), 3, "{text}");
     assert!(text.contains("\\nullfont"), "{text}");
 }
 
@@ -9264,7 +9266,7 @@ fn canonical_reloaded_font_uses_the_latest_identifier() {
     };
     assert_eq!(first_font, second_font);
     assert_eq!(universe.font_identifier_symbol(first_font), Some(second));
-    assert!(terminal_text(&universe).contains("> \\second."));
+    assert!(terminal_text(&universe).contains("> \\second ."));
 }
 
 #[test]
