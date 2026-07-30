@@ -401,10 +401,13 @@ pub enum ScannedPackingSpec {
 /// `class:=255` unconditionally (`if cur_cmd=vadjust then cur_val:=255`)
 /// without ever calling `scan_eight_bit_int`, so `is_vadjust` tells replay to
 /// skip both diagnostics for that already-valid sentinel class.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedInsertConstruction {
     pub class: i32,
     pub is_vadjust: bool,
+    /// TeX82 §1099 calls §82's `error` before `scan_left_brace`, so preserve
+    /// the live input display at the point the reserved class is detected.
+    pub reserved_class_context: Option<String>,
 }
 
 /// The completed command-owned operand of a TeX82 §1073 box-shift prefix
@@ -2628,14 +2631,21 @@ impl CommandProcessor<'_> {
         &mut self,
         is_vadjust: bool,
     ) -> Result<ScannedInsertConstruction, CommandError> {
-        let class = if is_vadjust {
-            255
+        let (class, reserved_class_context) = if is_vadjust {
+            (255, None)
         } else {
-            self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?
-                .value
+            let class = self
+                .scan_restricted_integer(RestrictedIntegerClass::EightBit)?
+                .value;
+            let context = (class == 255).then(|| self.command.output_open_context(&self.state));
+            (class, context)
         };
         self.scan_box_group_opening()?;
-        Ok(ScannedInsertConstruction { class, is_vadjust })
+        Ok(ScannedInsertConstruction {
+            class,
+            is_vadjust,
+            reserved_class_context,
+        })
     }
 
     /// Scans TeX82 §1073's box-shift prefix (`\raise`, `\lower`, `\moveleft`,

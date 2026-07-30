@@ -8134,7 +8134,7 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
         text.contains("<to be read again>"),
         "§82 prints the live scanner context: {text}"
     );
-    assert_eq!(universe.world().error_channel().error_count(), 1);
+    assert_eq!(universe.world().error_channel().error_count(), 2);
     assert_eq!(
         universe.world().error_channel().history(),
         tex_state::print::ErrorHistory::ErrorMessageIssued
@@ -8159,6 +8159,85 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
         };
         assert_eq!(class, 0, "both recoveries fall back to class 0");
     }
+}
+
+#[test]
+fn insert255_uses_canonical_error_reporting_in_every_interaction_mode() {
+    let cases = [
+        ("\\batchmode", false),
+        ("\\nonstopmode", true),
+        ("\\scrollmode", true),
+        ("\\errorstopmode", true),
+    ];
+    for (mode, writes_terminal) in cases {
+        let source = format!("{mode}\\setbox0=\\vbox{{\\insert255{{}}}}\\count0=7\\end");
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_source(&mut control, source.as_bytes());
+        run_to_end(&mut control, &mut universe);
+
+        let terminal = terminal_only_text(&universe);
+        let transcript = transcript_text(&universe);
+        assert_eq!(
+            terminal.contains("You can't \\insert255."),
+            writes_terminal,
+            "{mode}: {terminal}"
+        );
+        assert!(
+            !terminal.contains("I'm changing to \\insert0; box 255 is special."),
+            "§90 help is transcript-only outside §83's interactive dialog"
+        );
+        assert!(
+            transcript.contains("You can't \\insert255."),
+            "{mode}: {transcript}"
+        );
+        assert!(
+            transcript.contains("I'm changing to \\insert0; box 255 is special."),
+            "{mode}: {transcript}"
+        );
+        assert!(
+            transcript.contains("<to be read again>"),
+            "§82 preserves the pre-brace live context: {mode}: {transcript}"
+        );
+        assert_eq!(universe.world().error_channel().error_count(), 1);
+        assert_eq!(
+            universe.world().error_channel().history(),
+            tex_state::print::ErrorHistory::ErrorMessageIssued
+        );
+        assert_eq!(
+            universe.count(0),
+            7,
+            "§1099 zero recovery continues after the insertion body"
+        );
+    }
+}
+
+#[test]
+fn the_hundredth_insert255_error_terminates_before_opening_its_group() {
+    let mut source = String::from("\\setbox0=\\vbox{");
+    for _ in 0..100 {
+        source.push_str("\\insert255{}");
+    }
+    source.push_str("}\\count0=7\\end");
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source.as_bytes());
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.fatal_error(), Some(FatalError::TooManyErrors));
+    assert_eq!(universe.world().error_channel().error_count(), 100);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+    assert_eq!(universe.count(0), 0);
+    assert_eq!(
+        universe.innermost_group_kind(),
+        Some(tex_state::GroupKind::VBox),
+        "§82's non-local exit occurs before §1099 opens the insertion group"
+    );
+    assert!(terminal_only_text(&universe).contains("(That makes 100 errors; please try again.)"));
 }
 
 #[test]

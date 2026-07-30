@@ -11438,10 +11438,17 @@ fn apply_scanned_step(
             // already-valid sentinel class, not a user-typed `\insert255`.
             let mut class = construction.class;
             if !construction.is_vadjust && class == 255 {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
-                );
+                let mut report = stores.print_err("You can't ");
+                report
+                    .print_esc("insert")
+                    .print_int(255)
+                    .help(&["I'm changing to \\insert0; box 255 is special."]);
+                if let Some(context) = construction.reserved_class_context {
+                    report.context(context);
+                }
+                if report.error() == tex_state::print::ErrorOutcome::FatalErrorLimit {
+                    return Err(ExecError::Fatal(FatalError::TooManyErrors));
+                }
                 class = 0;
             }
             let class = class as u16;
