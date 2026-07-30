@@ -315,7 +315,7 @@ regen_dvi_case() {
   [[ -f "$source" ]] || die "missing DVI source: tests/corpus/${area}/${case}.tex"
 
   build_refexec_once
-  tmp_root="$(mktemp -d "${repo_root}/.classic-bibtex-candidates.XXXXXX")"
+  tmp_root="$(mktemp -d)"
   case_dir="${tmp_root}/${area}-${case}"
   mkdir -p "$case_dir"
   dvi_extra_inputs=()
@@ -1154,7 +1154,7 @@ regen_bibtex_area() {
     "$fixturegen_bin" --classic-bibtex-differential \
       --reference "$executable" --texmfcnf "${source_dir}/texk/kpathsea"
 
-  tmp_root="$(mktemp -d)"
+  tmp_root="$(mktemp -d "${repo_root}/.classic-bibtex-candidates.XXXXXX")"
   candidate_root="${tmp_root}/candidate"
   mkdir -p "$candidate_root"
   cp -R "${repo_root}/tests/corpus/bibtex/cases/." "$candidate_root/"

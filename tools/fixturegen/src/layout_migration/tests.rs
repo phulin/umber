@@ -1,12 +1,15 @@
 use std::cell::Cell;
+use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Result, bail};
 
 use super::{
     CaseFile, CaseOwnedFile, FamilySpec, FileRole, MigrationFs, Mode, RealFs, SelectedSharedFile,
-    SharedFile, run, run_with_fs,
+    SharedFile, run, run_staged_cohort, run_with_fs,
 };
+use crate::cohort_transaction::CohortCase;
 
 const FILES: &[CaseFile] = &[
     CaseFile {
@@ -152,12 +155,16 @@ fn classic_regenerator_hands_one_complete_nine_case_cohort_to_fixturegen() {
         .collect::<Vec<_>>();
     assert_eq!(cases.len(), 9);
     let candidate = body.find("candidate_root=").expect("candidate staging");
+    let repository_local_staging = body
+        .find(r#"mktemp -d "${repo_root}/.classic-bibtex-candidates.XXXXXX""#)
+        .expect("repository-local candidate staging");
     let generation = body
         .find("\"$executable\" smoke")
         .expect("first reference generation");
     let commit = body
         .find("--cohort-transaction --apply")
         .expect("cohort commit");
+    assert!(repository_local_staging < candidate);
     assert!(candidate < generation && generation < commit);
     let before_commit = &body[..commit];
     assert!(
@@ -165,6 +172,123 @@ fn classic_regenerator_hands_one_complete_nine_case_cohort_to_fixturegen() {
             .contains("mv \"$candidate_root\" \"${repo_root}/tests/corpus/bibtex/cases\""),
         "generation failure must not mutate fixture authority"
     );
+}
+
+#[test]
+fn classic_regenerator_executes_repository_relative_candidate_planning() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/regen-fixtures.sh");
+    let body = std::fs::read_to_string(script).expect("script");
+    let function = body
+        .split_once("regen_bibtex_area() {")
+        .expect("classic function")
+        .1
+        .split_once("\n}\n")
+        .expect("classic function end")
+        .0;
+    let allocation = function
+        .lines()
+        .find(|line| line.contains("mktemp -d"))
+        .expect("candidate allocation");
+    let repo = tempfile::tempdir().expect("repository");
+    Command::new("git")
+        .arg("init")
+        .arg("-q")
+        .arg(repo.path())
+        .status()
+        .expect("git init");
+    Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["config", "user.email", "fixture@example.test"])
+        .status()
+        .expect("email");
+    Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["config", "user.name", "Fixture Test"])
+        .status()
+        .expect("name");
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            r#"
+set -euo pipefail
+repo_root="$1"
+{allocation}
+candidate_root="${{tmp_root}}/candidate"
+mkdir -p "$candidate_root"
+printf '%s\n' "${{candidate_root#${{repo_root}}/}}"
+"#
+        ))
+        .arg("classic-regenerator-test")
+        .arg(repo.path())
+        .output()
+        .expect("execute classic staging plan");
+    assert!(
+        output.status.success(),
+        "classic staging plan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let staged_root = String::from_utf8(output.stdout)
+        .expect("UTF-8 staging path")
+        .trim()
+        .to_owned();
+    assert!(!staged_root.starts_with('/'));
+    assert!(staged_root.starts_with(".classic-bibtex-candidates."));
+    let names = [
+        "apalike",
+        "elsarticle-article",
+        "elsarticle-book",
+        "elsarticle-month",
+        "elsarticle-names",
+        "ieeetran",
+        "plain",
+        "smoke",
+        "xampl",
+    ];
+    for name in names {
+        let authority = repo.path().join(format!("authority/{name}"));
+        fs::create_dir_all(&authority).expect("authority");
+        fs::write(authority.join("old.txt"), b"old").expect("old payload");
+        let staged = repo.path().join(format!("{staged_root}/candidate/{name}"));
+        fs::create_dir_all(&staged).expect("staged case");
+        fs::write(
+            staged.join("case.inventory"),
+            "closed-case-v1\npayload.txt\n",
+        )
+        .expect("inventory");
+        fs::write(staged.join("payload.txt"), name).expect("candidate payload");
+    }
+    Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["add", "authority"])
+        .status()
+        .expect("add");
+    Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["commit", "-qm", "fixture"])
+        .status()
+        .expect("commit");
+    let cases = names
+        .into_iter()
+        .map(|name| CohortCase {
+            staged: format!("{staged_root}/candidate/{name}"),
+            destination: format!("cases/{name}"),
+            authorities: vec![format!("authority/{name}")],
+        })
+        .collect::<Vec<_>>();
+    fs::create_dir(repo.path().join("cases")).expect("destination parent");
+    run_staged_cohort(repo.path(), &cases, Mode::Plan).expect("cohort plan");
+    run_staged_cohort(repo.path(), &cases, Mode::Apply).expect("cohort apply");
+    for name in names {
+        assert_eq!(
+            fs::read(repo.path().join(format!("cases/{name}/payload.txt")))
+                .expect("installed payload"),
+            name.as_bytes()
+        );
+    }
 }
 
 #[derive(Clone, Copy)]
