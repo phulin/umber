@@ -823,7 +823,16 @@ impl CommandProcessor<'_> {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
                 Meaning::CharToken { ch, .. } => name.push(ch),
                 _ => {
-                    self.back_error(command, MISSING_ENDCSNAME_DIAGNOSTIC)?;
+                    let name = print_esc_text(&self.state, "endcsname");
+                    self.back_error_reporting(
+                        command,
+                        MISSING_ENDCSNAME_DIAGNOSTIC,
+                        format!("Missing {name} inserted"),
+                        &[
+                            "The control sequence marked <to be read again> should",
+                            "not appear between \\csname and \\endcsname.",
+                        ],
+                    )?;
                     break;
                 }
             }

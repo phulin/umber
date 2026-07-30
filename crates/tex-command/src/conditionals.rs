@@ -847,7 +847,7 @@ impl CommandProcessor<'_> {
         loop {
             let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
             if delimiter == ConditionalDelimiter::Or {
-                self.record_extra_delimiter();
+                self.record_extra_delimiter(delimiter);
                 continue;
             }
             return self.common_ending(condition, delimiter);
@@ -898,7 +898,7 @@ impl CommandProcessor<'_> {
             _ => return Err(CommandError::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
-            self.record_extra_delimiter();
+            self.record_extra_delimiter(delimiter);
             return Ok(());
         };
         if self
@@ -916,7 +916,7 @@ impl CommandProcessor<'_> {
             return Ok(());
         }
         if !frame.limit.accepts_delimiter(delimiter) {
-            self.record_extra_delimiter();
+            self.record_extra_delimiter(delimiter);
             return Ok(());
         }
         self.skip_to_fi_after_delimiter(frame, delimiter)
@@ -952,7 +952,26 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn record_extra_delimiter(&mut self) {
+    fn record_extra_delimiter(&mut self, delimiter: ConditionalDelimiter) {
+        // §510's `print_cmd_chr(fi_or_else,cur_chr)` names the delimiter that
+        // matched nothing, so the message ends in the escaped primitive.
+        let name = crate::processor::expand::print_esc_text(
+            &self.state,
+            match delimiter {
+                ConditionalDelimiter::Or => "or",
+                ConditionalDelimiter::Else => "else",
+                ConditionalDelimiter::Fi => "fi",
+            },
+        );
+        let context = self.command.output_open_context(&self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: EXTRA_DELIMITER_DIAGNOSTIC,
+                message: format!("Extra {name}"),
+                help: &["I'm ignoring this; it doesn't match any \\if."],
+                context,
+            });
         self.command
             .expansion
             .pending_diagnostics

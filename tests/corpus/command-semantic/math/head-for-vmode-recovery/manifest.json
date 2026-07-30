@@ -42,18 +42,18 @@
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 57,
-            "expected": "! Missing # inserted in alignment preamble.",
-            "actual": "! Missing } inserted."
+            "line": 68,
+            "expected": "! Missing \\cr inserted.",
+            "actual": "! You can't use `\\end' in internal vertical mode."
           }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 112,
-            "expected": "! Missing # inserted in alignment preamble.",
-            "actual": "! Missing } inserted."
+            "line": 133,
+            "expected": "! Missing \\cr inserted.",
+            "actual": "! You can't use `\\end' in internal vertical mode."
           }
         },
         "dvi": { "kind": "empty" },

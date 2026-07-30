@@ -1049,6 +1049,26 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// The plain-`error` sibling of [`Self::back_error_reporting`], for a
+    /// §82 call that backs nothing up.
+    pub(crate) fn report_recoverable(
+        &mut self,
+        diagnostic: u64,
+        message: String,
+        help: &'static [&'static str],
+    ) {
+        self.command.expansion.pending_diagnostics.push(diagnostic);
+        let context = self.command.output_open_context(&self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: diagnostic,
+                message,
+                help,
+                context,
+            });
+    }
+
     /// Canonical backing operation used by `\\noexpand` for one replayed
     /// command. The treatment belongs to the backed-up level, not the token
     /// or the returned command.

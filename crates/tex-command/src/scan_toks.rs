@@ -397,6 +397,9 @@ impl CommandProcessor<'_> {
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
             // token recovery.
+            // §476's text is already rendered by
+            // `report_macro_parameter_diagnostic` below; this records only
+            // the recovery identity.
             self.back_error(follower, NONCONSECUTIVE_PARAMETER_DIAGNOSTIC)?;
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber);
             malformed_parameter = true;
@@ -425,7 +428,7 @@ impl CommandProcessor<'_> {
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
-        let mut pending_parameter = None;
+        let mut pending_parameter: Option<(_, u8, Option<Symbol>)> = None;
         let collector_status = self.command.scanner.status().clone();
         loop {
             let delivered;
@@ -535,6 +538,8 @@ impl CommandProcessor<'_> {
                     );
                     continue;
                 }
+                // §479's text is already rendered by
+                // `report_macro_parameter_diagnostic` below.
                 self.back_error(delivered, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)?;
                 self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },

@@ -2991,7 +2991,16 @@ impl CommandProcessor<'_> {
                             previous_align_state: None,
                         },),
                     );
-                    self.back_error(command, MISSING_PARAMETER_DIAGNOSTIC)?;
+                    self.back_error_reporting(
+                        command,
+                        MISSING_PARAMETER_DIAGNOSTIC,
+                        "Missing # inserted in alignment preamble".to_owned(),
+                        &[
+                            "There should be exactly one # between &'s, when an",
+                            "\\halign or \\valign is being set up. In this case you had",
+                            "none, so I've put one in; maybe that will work.",
+                        ],
+                    )?;
                     break;
                 }
                 if !matches!(
@@ -3063,10 +3072,15 @@ impl CommandProcessor<'_> {
                             previous_align_state: None,
                         },),
                     );
-                    self.command
-                        .expansion
-                        .pending_diagnostics
-                        .push(EXTRA_PARAMETER_DIAGNOSTIC);
+                    self.report_recoverable(
+                        EXTRA_PARAMETER_DIAGNOSTIC,
+                        "Only one # is allowed per tab".to_owned(),
+                        &[
+                            "There should be exactly one # between &'s, when an",
+                            "\\halign or \\valign is being set up. In this case you had",
+                            "more than one, so I'm ignoring all but the first.",
+                        ],
+                    );
                     continue;
                 }
                 v_template.push(command.spelling());
