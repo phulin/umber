@@ -381,6 +381,145 @@ fn unexpanded_observes_the_completed_raw_balanced_text_before_its_direct_splice(
         })
         .expect("raw balanced text is observed at the_toks attachment");
     assert!(unexpanded < splice && splice < enclosing);
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|event| matches!(event, CommandObservation::ScannerStatus(_)))
+            .count(),
+        2,
+        "only the enclosing TeX82 scan_toks entry and exit are observed"
+    );
+}
+
+#[test]
+fn unexpanded_general_text_recovers_runaway_input_and_restores_outer_scanner_state() {
+    // e-TeX 2.6 etex.ch §53a saves scanner_status, warning_index, and
+    // def_ref, installs its own absorbing collection, and restores all three
+    // after raw get_token collection and §23 runaway recovery.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"{runaway"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let outer = ScannerStatus::Defining(DefinitionContext {
+        target: None,
+        builder: TokenBuilderId(91),
+        warning: ScannerWarning(37),
+    });
+    command.begin_scanner_status(outer.clone());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let scanned = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor
+            .scan_toks(ScanToksMode::GeneralText {
+                purpose: "unexpanded",
+            })
+            .expect("runaway general text recovers with an inserted right brace")
+    };
+
+    assert_eq!(command.scanner.status(), &outer);
+    assert_eq!(command.scanner.warning(), Some(ScannerWarning(37)));
+    assert_eq!(
+        universe.tokens(scanned.replacement_text.token_list()),
+        &[
+            Token::Char {
+                ch: 'r',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'u',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'n',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'w',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'y',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+        ]
+    );
+    assert!(recorder.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Diagnostic(record)
+            if record.diagnostic == "outer_validity_eof"
+    )));
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|event| matches!(event, CommandObservation::ScannerStatus(_))),
+        "the recursive general-text scope is not a TeX82 scan_toks observation"
+    );
+}
+
+#[test]
+fn general_text_failure_restores_the_complete_outer_scanner_state() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let outer = ScannerStatus::Defining(DefinitionContext {
+        target: None,
+        builder: TokenBuilderId(83),
+        warning: ScannerWarning(29),
+    });
+    command.begin_scanner_status(outer.clone());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::new(1).expect("finite test fuel");
+    let result = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(fuel.fuel_mut())
+        .scan_toks(ScanToksMode::GeneralText {
+            purpose: "unexpanded",
+        });
+
+    assert!(result.is_err(), "the deliberately exhausted scan fails");
+    assert_eq!(command.scanner.status(), &outer);
+    assert_eq!(command.scanner.warning(), Some(ScannerWarning(29)));
+    assert!(fuel.burned() <= 1);
 }
 
 #[test]

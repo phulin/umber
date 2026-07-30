@@ -259,8 +259,10 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
     );
     let mut capabilities = CommandHostCapabilities::default();
     let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
+    let mut recorder = Recorder::default();
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_fuel(fuel.fuel_mut());
+        .with_fuel(fuel.fuel_mut())
+        .with_observer(&mut recorder);
     let mut output = Vec::new();
     while let Some(delivery) = processor.get_x_token().expect("scantokens expands") {
         output.push(delivery.spelling().semantic_token());
@@ -290,6 +292,25 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
         "\\everyeof must replay after the pseudo-file's final line"
     );
     assert!(fuel.burned() <= 64);
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|event| matches!(event, CommandObservation::ScannerStatus(_))),
+        "e-TeX §53a scan_general_text does not publish TeX82 scan_toks status observations"
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|event| matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "complete" && record.purpose == "scantokens"
+            ))
+            .count(),
+        1
+    );
 }
 
 #[test]

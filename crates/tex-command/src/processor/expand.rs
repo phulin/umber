@@ -643,8 +643,9 @@ impl CommandProcessor<'_> {
 
     /// e-TeX 2.6 etex.ch §53a `pseudo_start`.
     fn expand_scantokens(&mut self) -> Result<(), CommandError> {
-        let scanned =
-            self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: false })?;
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
+            purpose: "scantokens",
+        })?;
         let mut text =
             token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
         let newline = self.state.int_param(IntParam::NEWLINE_CHAR);
@@ -688,8 +689,9 @@ impl CommandProcessor<'_> {
     /// projects the resulting string to category-10 spaces and category-12
     /// other characters.
     fn expand_detokenize(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let scanned =
-            self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: false })?;
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
+            purpose: "detokenize",
+        })?;
         let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
         self.push_rendered_text(&text, opener.origin());
         Ok(())

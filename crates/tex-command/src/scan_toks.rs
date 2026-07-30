@@ -21,7 +21,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
 use tex_state::CommandLineSource;
 
-use crate::input::{SharedTokenBuffer, TokenPayload};
+use crate::input::TokenPayload;
 use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
@@ -36,6 +36,14 @@ pub(crate) enum ScanToksMode {
     /// that brace up for `scan_toks`. Every other caller enters §473 directly
     /// and must use `General`, whose absorbing transition precedes the brace.
     GeneralAfterOpening { expanded: bool, primary: OriginId },
+    /// e-TeX 2.6 etex.ch §53a's recursive `scan_general_text`.
+    ///
+    /// It has the same absorbing-state recovery semantics as TeX82
+    /// `scan_toks(false, false)`, but is a distinct canonical observation
+    /// seam: its caller publishes the extension-specific token-list purpose,
+    /// and the reference instrumentation does not publish the internal
+    /// scanner-status scope.
+    GeneralText { purpose: &'static str },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
@@ -100,13 +108,13 @@ impl CommandProcessor<'_> {
             self.command.transient.next_builder_identity.wrapping_add(1);
         let warning = ScannerWarning(builder.0);
         let status = match mode {
-            ScanToksMode::General { .. } | ScanToksMode::GeneralAfterOpening { .. } => {
-                ScannerStatus::Absorbing(AbsorbingContext {
-                    owner: None,
-                    builder,
-                    warning,
-                })
-            }
+            ScanToksMode::General { .. }
+            | ScanToksMode::GeneralAfterOpening { .. }
+            | ScanToksMode::GeneralText { .. } => ScannerStatus::Absorbing(AbsorbingContext {
+                owner: None,
+                builder,
+                warning,
+            }),
             ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. } => {
                 ScannerStatus::Defining(DefinitionContext {
                     target: match mode {
@@ -119,12 +127,19 @@ impl CommandProcessor<'_> {
             }
         };
         let prior = self.command.begin_scanner_status(status.clone());
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        let observe_status = !matches!(mode, ScanToksMode::GeneralText { .. });
+        if observe_status {
+            self.observe_scanner_status_transition(
+                prior.status().clone(),
+                self.command.scanner.status().clone(),
+            );
+        }
         let result = self.scan_toks_inner(mode);
-        self.restore_scanner_status_with_observation(status, prior);
+        if observe_status {
+            self.restore_scanner_status_with_observation(status, prior);
+        } else {
+            self.command.restore_scanner_status(prior);
+        }
         let result = result?;
         observe!(
             self,
@@ -138,6 +153,7 @@ impl CommandProcessor<'_> {
                     | ScanToksMode::GeneralAfterOpening {
                         expanded: false, ..
                     } => "scan_toks",
+                    ScanToksMode::GeneralText { purpose } => purpose,
                     ScanToksMode::MacroDefinition { .. }
                     | ScanToksMode::MacroDefinitionFor { .. } => {
                         "macro_replacement"
@@ -177,6 +193,10 @@ impl CommandProcessor<'_> {
                     }
                     self.observe_expanded_delivery(&opening);
                     (expanded, Vec::new(), None, None, primary, false)
+                }
+                ScanToksMode::GeneralText { .. } => {
+                    let primary = self.scan_left_brace(true)?.origin();
+                    (false, Vec::new(), None, None, primary, false)
                 }
                 ScanToksMode::MacroDefinition { expanded } => {
                     let parameters = self.scan_parameter_text()?;
@@ -654,7 +674,10 @@ impl CommandProcessor<'_> {
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
     fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
-        let raw = self.scan_unexpanded_general_text()?;
+        let scanned = self.scan_toks(ScanToksMode::GeneralText {
+            purpose: "unexpanded",
+        })?;
+        let raw = self.traced_words(scanned.replacement_text);
         let observed = raw
             .iter()
             .copied()
@@ -681,34 +704,32 @@ impl CommandProcessor<'_> {
     }
 
     pub(crate) fn expand_unexpanded(&mut self) -> Result<(), CommandError> {
-        let raw = self.scan_unexpanded_general_text()?;
-        let first = raw.first().map(|token| token.semantic_token());
-        self.insert_expansion_list(TokenPayload::Transient(SharedTokenBuffer::new(raw)), first);
+        let scanned = self.scan_toks(ScanToksMode::GeneralText {
+            purpose: "unexpanded",
+        })?;
+        let first = self
+            .state
+            .tokens(scanned.replacement_text.token_list())
+            .first()
+            .copied();
+        self.insert_expansion_list(
+            TokenPayload::Stored {
+                tokens: scanned.replacement_text.token_list(),
+                origins: scanned.replacement_text.origin_list(),
+            },
+            first,
+        );
         Ok(())
     }
 
-    fn scan_unexpanded_general_text(&mut self) -> Result<Vec<TracedTokenWord>, CommandError> {
-        // e-TeX 2.6 etex.ch [27.465] routes `\unexpanded` through
-        // `scan_general_text`: its opening brace is fetched by §403's
-        // expanded nonblank/non-relax loop, even though the balanced text
-        // after that brace is copied raw. This distinction is what makes
-        // `\unexpanded\expandafter{...}` legal.
-        let _ = self.scan_left_brace(true)?;
-        let raw = self.collect_replacement(false, None)?;
-        let observed = raw
+    fn traced_words(&self, list: TracedTokenList) -> Vec<TracedTokenWord> {
+        self.state
+            .tokens(list.token_list())
             .iter()
             .copied()
-            .map(|token| self.observed_token(token))
-            .collect::<Vec<_>>();
-        observe!(
-            self,
-            CommandObservation::TokenList(TokenListRecord {
-                transition: "complete",
-                purpose: "unexpanded",
-                tokens: observed.clone(),
-            }),
-        );
-        Ok(raw)
+            .zip(self.state.origin_list(list.origin_list()).iter().copied())
+            .map(|(token, origin)| TracedTokenWord::pack(token, origin))
+            .collect()
     }
 }
 
