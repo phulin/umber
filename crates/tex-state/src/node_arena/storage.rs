@@ -92,7 +92,9 @@ impl SidecarNeeds {
                     (*ch as u32) <= u8::MAX as u32,
                     "ligature glyph exceeds TFM byte domain"
                 );
-                assert!(!orig.is_empty(), "ligature source must not be empty");
+                // TeX82 §§1034-1036 can form a ligature from a deleted left
+                // boundary while retaining the first real character. Such a
+                // ligature has an empty source list by construction.
                 assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
                 assert_eq!(
                     orig.len(),

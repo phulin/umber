@@ -158,6 +158,7 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).get_mut(index).map(mutate)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -165,6 +166,7 @@ impl ModeList {
         mutate(Arc::make_mut(&mut self.nodes))
     }
 
+    #[cfg(test)]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -191,27 +193,9 @@ impl ModeList {
         }
     }
 
-    pub(crate) fn replace_pending_suffix(&mut self, start: usize, nodes: Vec<Node>) {
-        let target = Arc::make_mut(&mut self.nodes);
-        target.truncate(start);
-        target.extend(nodes);
-    }
-
-    pub(crate) fn begin_pending_hchars(
-        &mut self,
-        font: FontId,
-        ch: char,
-        origin: OriginId,
-        retain_source: bool,
-    ) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
         debug_assert!(self.pending_hchars.is_none());
-        self.pending_hchars = Some(PendingHRun::new(
-            font,
-            ch,
-            origin,
-            self.nodes.len(),
-            retain_source,
-        ));
+        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -456,6 +440,7 @@ impl ModeListMutation<'_> {
         self.list.with_last_node_mut(mutate)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -464,6 +449,7 @@ impl ModeListMutation<'_> {
         self.list.with_reconstitution_target(mutate)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -478,20 +464,8 @@ impl ModeListMutation<'_> {
             .push_reconstituted(insertion, first, second, third);
     }
 
-    pub(crate) fn replace_pending_suffix(&mut self, start: usize, nodes: Vec<Node>) {
-        self.record_nodes();
-        self.list.replace_pending_suffix(start, nodes);
-    }
-
-    pub(crate) fn begin_pending_hchars(
-        &mut self,
-        font: FontId,
-        ch: char,
-        origin: OriginId,
-        retain_source: bool,
-    ) {
-        self.list
-            .begin_pending_hchars(font, ch, origin, retain_source);
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+        self.list.begin_pending_hchars(font, ch, origin);
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
@@ -793,22 +767,12 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(
-        font: FontId,
-        ch: char,
-        origin: OriginId,
-        insertion_index: usize,
-        retain_source: bool,
-    ) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, insertion_index: usize) -> Self {
         Self {
             first: PendingHChar { font, ch, origin },
             current: PendingHRunChar::new(font, ch, origin),
             insertion_index,
-            source: if retain_source {
-                vec![PendingHChar { font, ch, origin }]
-            } else {
-                Vec::new()
-            },
+            source: vec![PendingHChar { font, ch, origin }],
             script: tex_shape::character_script(ch),
         }
     }

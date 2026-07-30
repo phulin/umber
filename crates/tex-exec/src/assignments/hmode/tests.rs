@@ -427,7 +427,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     ));
     let mut nest = ModeNest::new();
     nest.current_list_mutation()
-        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
 
     flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
 
@@ -581,7 +581,7 @@ fn right_boundary_kern_prevents_a_following_italic_correction() {
     ));
     let mut nest = ModeNest::new();
     nest.current_list_mutation()
-        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
 
     append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");
 
@@ -624,7 +624,7 @@ fn batched_tfm_run_records_an_absolute_insertion_index() {
         vec![Scaled::from_raw(0); 7],
         FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
     ));
-    let mut emitted = vec![
+    let emitted = [
         Node::Kern {
             amount: Scaled::from_raw(1),
             kind: KernKind::Explicit,
@@ -638,14 +638,11 @@ fn batched_tfm_run_records_an_absolute_insertion_index() {
 
     assert!(append_tfm_hchar(
         &mut pending,
-        &mut emitted,
         &mut stores,
-        TfmRunContext {
-            font,
-            insert_hyphen_discs: false,
-        },
+        font,
         'A',
         OriginId::UNKNOWN,
+        emitted.len(),
     ));
 
     assert_eq!(pending.expect("pending TFM run").insertion_index, 2);
@@ -981,29 +978,208 @@ fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
         vec![Scaled::from_raw(0); 7],
         metrics,
     ));
-    let source = [
-        PendingHChar {
-            font,
-            ch: '1',
-            origin: OriginId::UNKNOWN,
-        },
-        PendingHChar {
-            font,
-            ch: '1',
-            origin: OriginId::UNKNOWN,
-        },
-    ];
-
-    let nodes = reconstitute_full_ligature_machine(&stores, &source, false, true);
+    let mut nest = ModeNest::new();
+    append_pending_hchar(
+        &mut nest.current_list_mutation(),
+        &mut stores,
+        Mode::Horizontal,
+        font,
+        false,
+        '1',
+        OriginId::UNKNOWN,
+    );
+    append_pending_hchar(
+        &mut nest.current_list_mutation(),
+        &mut stores,
+        Mode::Horizontal,
+        font,
+        false,
+        '1',
+        OriginId::UNKNOWN,
+    );
+    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores)
+        .expect("public flush completes");
+    let nodes = nest.current_list().nodes();
 
     assert!(matches!(
-        nodes.as_slice(),
+        nodes,
         [
             Node::Lig { ch: '5', orig, .. },
             Node::Kern { amount, kind: KernKind::Font },
             Node::Char { ch: '1', .. },
         ] if orig == &['1'] && *amount == boundary_kern
     ));
+}
+
+fn ligature_test_font(
+    programs: &[(u8, u8, tex_fonts::LigatureCommand)],
+    left_boundary: Option<(u8, tex_fonts::LigatureCommand)>,
+    right_boundary: Option<(u8, tex_fonts::LigatureCommand)>,
+) -> (Universe, FontId) {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
+
+    let mut characters = vec![None; 256];
+    for code in b'A'..=b'Z' {
+        characters[usize::from(code)] = Some(CharMetrics {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            italic_correction: Scaled::from_raw(0),
+            tag: CharTag::None,
+        });
+    }
+    let mut instructions = Vec::new();
+    let boundary_start = left_boundary.map(|(right, command)| {
+        let index = instructions.len() as u16;
+        instructions.push(LigKernInstruction {
+            skip_byte: 128,
+            next_char: right,
+            command: Some(LigKernCommand::Ligature(command)),
+        });
+        index
+    });
+    for &(left, right, command) in programs {
+        let index = instructions.len() as u16;
+        characters[usize::from(left)]
+            .as_mut()
+            .expect("program character")
+            .tag = CharTag::LigKern {
+            program_index: u8::try_from(index).expect("short test program"),
+            start_index: index,
+        };
+        instructions.push(LigKernInstruction {
+            skip_byte: 128,
+            next_char: right,
+            command: Some(LigKernCommand::Ligature(command)),
+        });
+    }
+    let boundary_char = right_boundary.map(|(left, command)| {
+        let index = instructions.len() as u16;
+        characters[usize::from(left)]
+            .as_mut()
+            .expect("right-boundary character")
+            .tag = CharTag::LigKern {
+            program_index: u8::try_from(index).expect("short test program"),
+            start_index: index,
+        };
+        instructions.push(LigKernInstruction {
+            skip_byte: 128,
+            next_char: 255,
+            command: Some(LigKernCommand::Ligature(command)),
+        });
+        255
+    });
+    let metrics = FontMetrics::new(
+        characters,
+        instructions,
+        boundary_char,
+        boundary_start,
+        Vec::new(),
+    );
+    metrics.validate().expect("synthetic ligature program");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "ligature-machine",
+        "ligature-machine.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    (stores, font)
+}
+
+fn ligature_command(op_byte: u8, replacement: u8) -> tex_fonts::LigatureCommand {
+    tex_fonts::LigatureCommand {
+        replacement,
+        delete_current: op_byte & 2 == 0,
+        delete_next: op_byte & 1 == 0,
+        pass_over: op_byte >> 2,
+    }
+}
+
+fn node_characters(nodes: &[Node]) -> Vec<char> {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, .. } | Node::Lig { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn complete_ligature_machine_covers_retain_delete_and_pass_over_operations() {
+    // TeX82 §§1034-1036 name these eight useful op-byte shapes explicitly.
+    for (op_byte, expected) in [
+        (0, "C"),
+        (1, "CB"),
+        (2, "AC"),
+        (3, "ACB"),
+        (5, "CB"),
+        (6, "AC"),
+        (7, "ACB"),
+        (11, "ACB"),
+    ] {
+        let (mut stores, font) =
+            ligature_test_font(&[(b'A', b'B', ligature_command(op_byte, b'C'))], None, None);
+        let source = ['A', 'B'].map(|ch| PendingHChar {
+            font,
+            ch,
+            origin: OriginId::UNKNOWN,
+        });
+        let nodes = run_tfm_ligature_machine(&mut stores, &source, true, true, false);
+        assert_eq!(
+            node_characters(&nodes).iter().collect::<String>(),
+            expected,
+            "op byte {op_byte}"
+        );
+    }
+}
+
+#[test]
+fn generated_ligature_pair_reenters_the_program() {
+    let (mut stores, font) = ligature_test_font(
+        &[
+            (b'A', b'B', ligature_command(0, b'C')),
+            (b'C', b'D', ligature_command(0, b'E')),
+        ],
+        None,
+        None,
+    );
+    let source = ['A', 'B', 'D'].map(|ch| PendingHChar {
+        font,
+        ch,
+        origin: OriginId::UNKNOWN,
+    });
+
+    let nodes = run_tfm_ligature_machine(&mut stores, &source, true, true, false);
+
+    assert_eq!(node_characters(&nodes), ['E']);
+    assert!(matches!(&nodes[0], Node::Lig { orig, .. } if orig == &['A', 'B', 'D']));
+}
+
+#[test]
+fn complete_ligature_machine_processes_both_boundaries() {
+    for (left_boundary, right_boundary) in [
+        (Some((b'A', ligature_command(0, b'L'))), None),
+        (None, Some((b'A', ligature_command(0, b'R')))),
+    ] {
+        let (mut stores, font) = ligature_test_font(&[], left_boundary, right_boundary);
+        let source = [PendingHChar {
+            font,
+            ch: 'A',
+            origin: OriginId::UNKNOWN,
+        }];
+        let nodes = run_tfm_ligature_machine(&mut stores, &source, false, false, false);
+        assert_eq!(
+            node_characters(&nodes),
+            [if left_boundary.is_some() { 'L' } else { 'R' }]
+        );
+    }
 }
 
 #[test]

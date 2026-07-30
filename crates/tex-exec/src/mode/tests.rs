@@ -328,7 +328,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         list.set_hyphen_language(9);
         list.set_prev_depth(Scaled::from_raw(11));
         list.set_prev_graf(12);
-        list.begin_pending_hchars(FontId::testing_new(2), 'x', OriginId::UNKNOWN, true);
+        list.begin_pending_hchars(FontId::testing_new(2), 'x', OriginId::UNKNOWN);
         list.set_align_state(align_state());
         list.set_incomplete_fraction(IncompleteFraction {
             numerator: NodeListId::testing_epoch(3, 1),
