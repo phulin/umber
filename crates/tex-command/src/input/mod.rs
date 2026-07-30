@@ -50,22 +50,24 @@ pub(crate) struct InputState {
 
 impl InputState {
     pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
-        const ERROR_LINE: usize = 79;
-        const HALF_ERROR_LINE: usize = 50;
-
-        fn clipped(label: &str, before: &str, after: &str) -> String {
+        fn clipped(
+            label: &str,
+            before: &str,
+            after: &str,
+            widths: tex_state::print::ErrorContextWidths,
+        ) -> String {
             let mut left = format!("{label}{before}");
             let len = left.chars().count();
-            if len > HALF_ERROR_LINE {
+            if len > widths.half_error_line() {
                 left = format!(
                     "...{}",
                     left.chars()
-                        .skip(len - (HALF_ERROR_LINE - 3))
+                        .skip(len - (widths.half_error_line() - 3))
                         .collect::<String>()
                 );
             }
             let indent = left.chars().count();
-            let available = ERROR_LINE.saturating_sub(indent);
+            let available = widths.error_line().saturating_sub(indent);
             let right = if after.chars().count() > available {
                 format!(
                     "{}...",
@@ -114,6 +116,7 @@ impl InputState {
                         &format!("l.{} ", line.physical.number()),
                         &String::from_utf8_lossy(&bytes[start..cursor]),
                         &String::from_utf8_lossy(&bytes[cursor..end]),
+                        stores.error_context_widths(),
                     ));
                 }
                 InputLevel::Tokens(tokens) => {
@@ -186,7 +189,12 @@ impl InputState {
                             )
                         }
                     };
-                    contexts.push(clipped(label, &before, &after));
+                    contexts.push(clipped(
+                        label,
+                        &before,
+                        &after,
+                        stores.error_context_widths(),
+                    ));
                 }
             }
         }

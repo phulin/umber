@@ -364,6 +364,32 @@ fn canonical_character_definitions_scan_scope_and_recovery() {
 }
 
 #[test]
+fn restricted_mathchar_context_uses_driver_selected_pseudoprint_widths() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_error_context_widths(
+        tex_state::print::ErrorContextWidths::new(64, 32).expect("TRIP widths are valid"),
+    );
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    let mut source = b"\n".repeat(25);
+    source.extend_from_slice(
+        br#"  \nonstopmode\lccode256-0\mathchardef\a="8000\def\a{ SCALED 3~2769}"#,
+    );
+    register_source(&mut control, &source);
+    run_to_end(&mut control, &mut universe);
+
+    let transcript = transcript_text(&universe);
+    assert!(
+        transcript.contains("\\mathchardef\\a=\"8000\\def\\a{ SC..."),
+        "TeX82 §§79/82 crop the §436 context to the process-selected 64-column line: {transcript}"
+    );
+    assert!(
+        transcript
+            .contains("! Bad mathchar (32768).\n<to be read again> \n                   \\def \n"),
+        "the restricted-scan report preserves the earliest input transition: {transcript}"
+    );
+}
+
+#[test]
 fn canonical_character_definition_recovers_a_non_control_sequence_target() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

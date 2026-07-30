@@ -1183,6 +1183,9 @@ pub struct Universe {
     stores: Stores,
     world: World,
     interaction_mode: InteractionMode,
+    /// Process-selected §79 context layout; excluded from formats, snapshots,
+    /// and semantic hashes.
+    error_context_widths: crate::print::ErrorContextWidths,
     input_summary: InputSummary,
     /// One-shot runtime marker set only when a format image starts a fresh job.
     pending_every_job: bool,
@@ -1354,6 +1357,7 @@ impl Clone for Universe {
             stores,
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
+            error_context_widths: self.error_context_widths,
             input_summary: self.input_summary.clone(),
             pending_every_job: self.pending_every_job,
             editor_content_hash: self.editor_content_hash,
@@ -1484,6 +1488,20 @@ impl Universe {
         }
     }
 
+    /// Selects the process-level TeX82 §79 pseudoprint widths.
+    ///
+    /// This is driver configuration, like Web2C's `error_line` and
+    /// `half_error_line` bound variables; it is deliberately not dumped in a
+    /// format or rolled back with engine state.
+    pub fn set_error_context_widths(&mut self, widths: crate::print::ErrorContextWidths) {
+        self.error_context_widths = widths;
+    }
+
+    #[must_use]
+    pub(crate) const fn error_context_widths(&self) -> crate::print::ErrorContextWidths {
+        self.error_context_widths
+    }
+
     /// Creates an isolated TeX timeline backed by an explicit effect world.
     #[must_use]
     pub fn with_world(world: World) -> Self {
@@ -1513,6 +1531,7 @@ impl Universe {
             stores,
             world,
             interaction_mode: InteractionMode::default(),
+            error_context_widths: crate::print::ErrorContextWidths::default(),
             input_summary,
             pending_every_job: false,
             editor_content_hash: None,
@@ -2427,6 +2446,7 @@ impl Universe {
             stores,
             world,
             interaction_mode: mode,
+            error_context_widths: crate::print::ErrorContextWidths::default(),
             input_summary,
             pending_every_job: true,
             editor_content_hash: None,

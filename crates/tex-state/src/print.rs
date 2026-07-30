@@ -33,6 +33,48 @@
 //!   what tex.web does when `deletions_allowed` is false: §85's menu is
 //!   printed and the prompt repeats.
 
+/// Driver-selected widths for TeX82 §79's pseudoprinted error context.
+///
+/// Web2C exposes the WEB constants as process configuration. They are
+/// operational output policy: formats and engine snapshots do not own them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ErrorContextWidths {
+    error_line: usize,
+    half_error_line: usize,
+}
+
+impl ErrorContextWidths {
+    /// TeX82 §3 requires `half_error_line` to be between 30 and
+    /// `error_line - 15`.
+    #[must_use]
+    pub const fn new(error_line: usize, half_error_line: usize) -> Option<Self> {
+        if half_error_line >= 30 && half_error_line <= error_line.saturating_sub(15) {
+            Some(Self {
+                error_line,
+                half_error_line,
+            })
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub const fn error_line(self) -> usize {
+        self.error_line
+    }
+
+    #[must_use]
+    pub const fn half_error_line(self) -> usize {
+        self.half_error_line
+    }
+}
+
+impl Default for ErrorContextWidths {
+    fn default() -> Self {
+        Self::new(79, 50).expect("Web2C context widths are valid")
+    }
+}
+
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
 use crate::scaled::Scaled;

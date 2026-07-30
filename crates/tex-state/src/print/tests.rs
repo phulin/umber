@@ -1,9 +1,23 @@
 //! Direct tests for tex.web §54's selector, §73's `print_err`, and §82's
 //! `error`.
 
-use super::{ErrorChannel, ErrorHistory, ErrorOutcome, Printer, Selector};
+use super::{ErrorChannel, ErrorContextWidths, ErrorHistory, ErrorOutcome, Printer, Selector};
 use crate::universe::{InteractionMode, Universe};
 use crate::world::PrintSink;
+
+#[test]
+fn error_context_widths_enforce_tex82_section_3_bounds() {
+    assert_eq!(
+        ErrorContextWidths::new(64, 32),
+        Some(ErrorContextWidths {
+            error_line: 64,
+            half_error_line: 32,
+        })
+    );
+    assert_eq!(ErrorContextWidths::new(64, 29), None);
+    assert_eq!(ErrorContextWidths::new(46, 32), None);
+    assert_eq!(ErrorContextWidths::new(64, usize::MAX), None);
+}
 
 fn terminal_text(universe: &Universe) -> String {
     universe

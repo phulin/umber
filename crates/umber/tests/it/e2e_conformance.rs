@@ -251,6 +251,12 @@ fn run_file_in_process_captured(
     // before execution; it is initial session state, not TeX input and not a
     // value owned by the dumped format.
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    // The canonical TRIP environment's texmf.cnf selects 64/32 for TeX82
+    // §79's process-level pseudoprint widths. This is driver configuration,
+    // not fixture syntax or dumped-format state.
+    stores.set_error_context_widths(
+        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths"),
+    );
     let content = stores
         .world_mut()
         .read_file(&path)

@@ -31,6 +31,12 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Reads the process-selected TeX82 §79 pseudoprint widths.
+    #[must_use]
+    pub fn error_context_widths(&self) -> crate::print::ErrorContextWidths {
+        self.universe.error_context_widths()
+    }
+
     /// Reads TeX82 §960's live `trie_not_ready` state.
     #[must_use]
     pub fn hyphenation_patterns_open(&self) -> bool {
