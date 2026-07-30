@@ -30,6 +30,7 @@ fonts="${repo_root}/third_party/fonts"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
 all_documents=(plain story gentle)
 selected=()
+test_publication=()
 
 usage() {
   cat <<'EOF'
@@ -67,6 +68,9 @@ while [[ "$#" -gt 0 ]]; do
     --document)
       [[ "$#" -ge 2 ]] || { printf 'build-tex82-document-traces: --document requires a name\n' >&2; exit 2; }
       selected+=("$2"); shift ;;
+    --test-publish-candidate)
+      [[ "$#" -ge 3 ]] || exit 2
+      test_publication=("$2" "$3"); shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'build-tex82-document-traces: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -77,6 +81,19 @@ fail() {
   printf 'build-tex82-document-traces: %s\n' "$*" >&2
   exit 1
 }
+
+publish_candidate() {
+  local candidate="$1" published="$2"
+  mkdir -p "${published%/*}" ||
+    fail "could not create the staged publication directory"
+  mv "$candidate" "$published" ||
+    fail "could not stage the document trace candidate"
+}
+
+if [[ "${#test_publication[@]}" -ne 0 ]]; then
+  publish_candidate "${test_publication[@]}"
+  exit 0
+fi
 
 # A prerequisite this script cannot supply is absent, so no trace was
 # generated. Reported as its own status rather than as success: the caller's
@@ -229,8 +246,7 @@ build_document() {
     published="${fixture_root}/${name}"
   fi
   rm -rf "$published"
-  mkdir -p "$fixture_root"
-  mv "$candidate" "$published"
+  publish_candidate "$candidate" "$published"
   mkdir -p "${published}/fonts"
   cp "${fonts}"/*.tfm "${published}/fonts/"
   rm -rf "$clean_dir" "$instrumented_dir" "$template_dir"
