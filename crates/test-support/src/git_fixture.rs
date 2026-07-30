@@ -15,6 +15,9 @@ const SCHEMA: &str = "closed-case-v1";
 /// A validated closed fixture case.
 #[derive(Debug)]
 pub struct ClosedCase {
+    repository: PathBuf,
+    case_relative: PathBuf,
+    has_inventory: bool,
     root: PathBuf,
     payloads: BTreeSet<String>,
 }
@@ -89,7 +92,13 @@ impl ClosedCase {
             "closed fixture filesystem inventory mismatch: declared={declared:?}, present={present:?}"
         );
 
-        Ok(Self { root, payloads })
+        Ok(Self {
+            repository,
+            case_relative,
+            has_inventory,
+            root,
+            payloads,
+        })
     }
 
     /// Reads a declared payload after validation.
@@ -115,7 +124,17 @@ impl ClosedCase {
             self.payloads.contains(name),
             "undeclared closed fixture payload: {name}"
         );
-        let path = self.root.join(path);
+        let current = Self::discover_inner(
+            &self.repository,
+            &self.case_relative,
+            self.has_inventory,
+        )
+        .context("revalidate closed fixture before payload access")?;
+        ensure!(
+            current.root == self.root && current.payloads == self.payloads,
+            "closed fixture authority changed after discovery"
+        );
+        let path = current.root.join(path);
         let metadata = fs::symlink_metadata(&path)
             .with_context(|| format!("inspect fixture payload {}", path.display()))?;
         ensure!(

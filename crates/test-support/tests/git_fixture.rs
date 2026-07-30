@@ -86,6 +86,43 @@ fn payload_roles_reject_a_symlink_substituted_after_discovery() {
     assert!(format!("{error:#}").contains("not a regular file"));
 }
 
+#[cfg(unix)]
+#[test]
+fn payload_access_rejects_case_root_and_intermediate_symlinks_substituted_after_discovery() {
+    use std::os::unix::fs::symlink;
+
+    for replaced in ["tests/corpus/example/only", "tests/corpus/example"] {
+        let temp = fixture();
+        let case = ClosedCase::discover_at(temp.path(), "tests/corpus/example/only").expect("case");
+        let original = temp.path().join(replaced);
+        let ambient = tempfile::tempdir().expect("ambient authority");
+        let ambient_case = ambient.path().join("only");
+        fs::create_dir_all(&ambient_case).expect("ambient case");
+        fs::write(
+            ambient_case.join("case.inventory"),
+            "closed-case-v1\ninput.txt\n",
+        )
+        .expect("ambient inventory");
+        fs::write(ambient_case.join("input.txt"), "ambient bytes\n").expect("ambient payload");
+
+        fs::remove_dir_all(&original).expect("remove discovered ancestry");
+        let target = if replaced.ends_with("/only") {
+            ambient_case
+        } else {
+            ambient.path().to_owned()
+        };
+        symlink(target, &original).expect("replace discovered ancestry with symlink");
+
+        let error = case
+            .payload_path("input.txt")
+            .expect_err("post-discovery ancestry symlink accepted");
+        assert!(
+            format!("{error:#}").contains("ancestry contains a symlink"),
+            "unexpected error: {error:#}"
+        );
+    }
+}
+
 #[test]
 fn reports_missing_and_non_directory_ancestry() {
     let temp = fixture();

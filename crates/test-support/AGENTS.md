@@ -12,8 +12,9 @@ Unmanifested minifixtures use the same validator with Git itself as the exact
 inventory. Family inventory tests own only enumeration and census.
 Metadata roles resolve through
 `ClosedCase::payload_path`, which accepts only declared single-filename
-payloads and rechecks the selected entry's regular-file type before returning
-its local path.
+payloads and revalidates the no-follow ancestry, selected-checkout identity,
+tracked/declared/filesystem inventories, and selected entry's regular-file
+type before every access.
 
 ## Crate Role
 
