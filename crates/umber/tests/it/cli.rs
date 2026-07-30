@@ -165,6 +165,7 @@ struct BibInvocationCase {
     argv: Vec<BibArgument>,
     status: i32,
     inputs: BTreeMap<String, String>,
+    staged: BTreeMap<String, String>,
     stdout: String,
     stderr: String,
     outputs: BTreeMap<String, BibOutput>,
@@ -195,6 +196,7 @@ impl BibInvocationCase {
         let mut argv = Vec::new();
         let mut status = None;
         let mut inputs = BTreeMap::new();
+        let mut staged = BTreeMap::new();
         let mut stdout = None;
         let mut stderr = None;
         let mut outputs = BTreeMap::new();
@@ -237,6 +239,15 @@ impl BibInvocationCase {
                         return Err(format!("duplicate input role: {role}"));
                     }
                 }
+                "stage" => {
+                    let (name, payload) = value
+                        .split_once(':')
+                        .ok_or_else(|| format!("stage must bind name:payload: {value:?}"))?;
+                    let name = checked_role("stage", name)?;
+                    if staged.insert(name.clone(), payload.to_owned()).is_some() {
+                        return Err(format!("duplicate staged dependency: {name}"));
+                    }
+                }
                 "stdout" => {
                     if stdout.is_some() {
                         return Err("duplicate stdout role".into());
@@ -277,10 +288,55 @@ impl BibInvocationCase {
         if argv.is_empty() {
             return Err("invocation argv is empty".into());
         }
+        let input_roles = inputs.keys().cloned().collect::<BTreeSet<_>>();
+        let output_roles = outputs.keys().cloned().collect::<BTreeSet<_>>();
+        if let Some(role) = input_roles.intersection(&output_roles).next() {
+            return Err(format!("role is declared as both input and output: {role}"));
+        }
+        let mut input_uses = BTreeMap::<&str, usize>::new();
+        let mut output_uses = BTreeMap::<&str, usize>::new();
+        for argument in &argv {
+            match argument {
+                BibArgument::Literal(_) => {}
+                BibArgument::Input(role) => {
+                    if !input_roles.contains(role) {
+                        if output_roles.contains(role) {
+                            return Err(format!("output role used as input argument: {role}"));
+                        }
+                        return Err(format!("undeclared input argument role: {role}"));
+                    }
+                    *input_uses.entry(role).or_default() += 1;
+                }
+                BibArgument::Output(role) => {
+                    if !output_roles.contains(role) {
+                        if input_roles.contains(role) {
+                            return Err(format!("input role used as output argument: {role}"));
+                        }
+                        return Err(format!("undeclared output argument role: {role}"));
+                    }
+                    *output_uses.entry(role).or_default() += 1;
+                }
+            }
+        }
+        for role in &input_roles {
+            if input_uses.get(role.as_str()).copied() != Some(1) {
+                return Err(format!(
+                    "input role must occur exactly once in argv: {role}"
+                ));
+            }
+        }
+        for role in &output_roles {
+            if output_uses.get(role.as_str()).copied() != Some(1) {
+                return Err(format!(
+                    "output role must occur exactly once in argv: {role}"
+                ));
+            }
+        }
         Ok(Self {
             argv,
             status: status.ok_or("missing status role")?,
             inputs,
+            staged,
             stdout: stdout.ok_or("missing stdout role")?,
             stderr: stderr.ok_or("missing stderr role")?,
             outputs,
@@ -310,6 +366,17 @@ impl BibInvocationCase {
                     .map_err(|error| format!("invalid input role {role:?}: {error:#}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let staged_bytes = self
+            .staged
+            .iter()
+            .map(|(name, payload)| {
+                case.read(payload)
+                    .map(|bytes| (name.clone(), payload.clone(), bytes))
+                    .map_err(|error| {
+                        format!("invalid staged dependency {name:?} ({payload:?}): {error:#}")
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for (channel, role) in [("stdout", &self.stdout), ("stderr", &self.stderr)] {
             if role != "empty" {
                 case.payload_path(role)
@@ -320,6 +387,16 @@ impl BibInvocationCase {
         for (role, payload, _) in &input_bytes {
             let path = safe_artifact_path(workspace, payload)?;
             input_paths.insert(role.clone(), path);
+        }
+        let mut staged_paths = BTreeMap::new();
+        for (_, payload, _) in &staged_bytes {
+            let path = safe_artifact_path(workspace, payload)?;
+            if input_paths.values().any(|input| input == &path) {
+                return Err(format!(
+                    "staged payload collides with input role: {payload}"
+                ));
+            }
+            staged_paths.insert(payload.clone(), path);
         }
         let mut output_paths = BTreeMap::new();
         for (role, output) in &self.outputs {
@@ -340,7 +417,6 @@ impl BibInvocationCase {
             }
             output_paths.insert(role.clone(), safe_artifact_path(workspace, &output.actual)?);
         }
-        let mut output_uses = BTreeSet::new();
         let argv = self
             .argv
             .iter()
@@ -350,26 +426,25 @@ impl BibInvocationCase {
                     .get(role)
                     .map(|path| path.to_string_lossy().into_owned())
                     .ok_or_else(|| format!("undeclared input argument role: {role}")),
-                BibArgument::Output(role) => {
-                    if !output_uses.insert(role) {
-                        return Err(format!("duplicate output argument role: {role}"));
-                    }
-                    output_paths
-                        .get(role)
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .ok_or_else(|| format!("undeclared output argument role: {role}"))
-                }
+                BibArgument::Output(role) => output_paths
+                    .get(role)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .ok_or_else(|| format!("undeclared output argument role: {role}")),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if output_uses.len() != output_paths.len() {
-            return Err("declared output role is absent from argv".into());
-        }
         if self.outputs.len() > 1 {
             return Err("bibliography invocation supports at most one output role".into());
         }
         for (role, payload, bytes) in input_bytes {
             fs::write(input_paths.get(&role).expect("validated input path"), bytes)
                 .map_err(|error| format!("stage isolated input {payload:?}: {error}"))?;
+        }
+        for (_, payload, bytes) in staged_bytes {
+            fs::write(
+                staged_paths.get(&payload).expect("validated staged path"),
+                bytes,
+            )
+            .map_err(|error| format!("stage isolated dependency {payload:?}: {error}"))?;
         }
         let artifact = self.outputs.iter().next().map(|(role, output)| {
             (
@@ -430,35 +505,66 @@ fn bibliography_typed_arguments_reject_path_authority_and_undeclared_roles() {
         );
     }
 
-    let case = ClosedCase::discover("tests/corpus/bib/invocation/bcf-success")
-        .expect("closed bibliography case");
-    let invocation = BibInvocationCase::parse(
-        "bib-invocation-v2\n\
+    assert!(
+        BibInvocationCase::parse(
+            "bib-invocation-v2\n\
          arg=input:ambient\n\
          status=0\n\
          stdout=empty\n\
          stderr=empty\n",
-    )
-    .expect("syntactically valid undeclared role");
-    let workspace = tempfile::tempdir().expect("isolated workspace");
-    assert!(
-        invocation.resolve(&case, workspace.path()).is_err(),
-        "undeclared input role accepted"
+        )
+        .is_err()
     );
 }
 
 #[test]
-fn bibliography_typed_arguments_reject_duplicate_and_conflicting_outputs() {
-    for outputs in [
-        "output=result:one.bbl:expected.bbl\noutput=result:two.bbl:expected.bbl\n",
-        "output=first:result.bbl:expected.bbl\noutput=second:result.bbl:expected.bbl\n",
+fn bibliography_typed_roles_have_one_global_namespace_and_exact_cardinality() {
+    for (name, body) in [
+        (
+            "duplicate input definition",
+            "arg=input:source\ninput=source:basic.bcf\ninput=source:basic.bcf\n",
+        ),
+        (
+            "duplicate output definition",
+            "arg=output:result\noutput=result:one.bbl:expected.bbl\noutput=result:two.bbl:expected.bbl\n",
+        ),
+        (
+            "cross-kind definition",
+            "arg=input:shared\narg=output:shared\ninput=shared:basic.bcf\noutput=shared:result.bbl:expected.bbl\n",
+        ),
+        (
+            "repeated input use",
+            "arg=input:source\narg=input:source\ninput=source:basic.bcf\n",
+        ),
+        (
+            "repeated output use",
+            "arg=output:result\narg=output:result\noutput=result:result.bbl:expected.bbl\n",
+        ),
+        (
+            "unused input",
+            "arg=literal:ordinary\ninput=source:basic.bcf\n",
+        ),
+        (
+            "unused output",
+            "arg=literal:ordinary\noutput=result:result.bbl:expected.bbl\n",
+        ),
+        (
+            "output used as input",
+            "arg=input:result\noutput=result:result.bbl:expected.bbl\n",
+        ),
+        (
+            "input used as output",
+            "arg=output:source\ninput=source:basic.bcf\n",
+        ),
+        (
+            "conflicting output artifact",
+            "arg=output:first\narg=output:second\noutput=first:result.bbl:expected.bbl\noutput=second:result.bbl:expected.bbl\n",
+        ),
     ] {
-        let metadata = format!(
-            "bib-invocation-v2\narg=literal:ordinary\nstatus=0\nstdout=empty\nstderr=empty\n{outputs}"
-        );
+        let metadata = format!("bib-invocation-v2\n{body}status=0\nstdout=empty\nstderr=empty\n");
         assert!(
             BibInvocationCase::parse(&metadata).is_err(),
-            "duplicate/conflicting output accepted"
+            "{name} accepted"
         );
     }
 }
