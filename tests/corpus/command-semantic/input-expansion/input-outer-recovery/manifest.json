@@ -43,12 +43,20 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 3, "expected": "Runaway definition?", "actual": "! Too many }'s." }
+          "mismatch": {
+            "line": 3,
+            "expected": "Runaway definition?",
+            "actual": "! Forbidden control sequence found while scanning definition of \\a."
+          }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 4, "expected": "Runaway definition?", "actual": "! Too many }'s." }
+          "mismatch": {
+            "line": 4,
+            "expected": "Runaway definition?",
+            "actual": "! Forbidden control sequence found while scanning definition of \\a."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }

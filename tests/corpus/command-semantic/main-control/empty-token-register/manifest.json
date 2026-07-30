@@ -31,7 +31,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": { "line": 8, "expected": "? )", "actual": ")" }
+          "mismatch": { "line": 8, "expected": "? )", "actual": "! File ended while scanning text of ." }
         },
         "log": {
           "kind": "xfail",

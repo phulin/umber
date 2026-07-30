@@ -37,6 +37,10 @@ use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 /// §500 inserting frozen `\relax` in the middle of a condition.
 const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
 
+/// TeX82 §338's `File ended` / `Forbidden control sequence found` while
+/// scanning a definition, use, preamble or text.
+const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
+
 use super::alignment::AlignmentDeliveryState;
 use super::alignment::CELL_ALIGN_STATE;
 
@@ -1844,6 +1848,43 @@ impl CommandProcessor<'_> {
         // level and only then `error`. The context therefore renders with the
         // frozen recovery token already on the stack, which is what puts the
         // `<inserted text>` line above the source line.
+        // §338's `<Tell the user what has run away and try to recover>`, the
+        // sibling branch of §336's incomplete-conditional report. `runaway`'s
+        // own heading and partial list are still owed (umber2-2iil); this is
+        // the `error` §338 ends with.
+        if let Some((kind, warning_index)) = match &status {
+            ScannerStatus::Defining(context) => Some(("definition", context.target)),
+            ScannerStatus::Matching(context) => Some(("use", Some(context.macro_name))),
+            ScannerStatus::Aligning(_) => Some(("preamble", None)),
+            ScannerStatus::Absorbing(context) => Some(("text", context.owner)),
+            ScannerStatus::Normal | ScannerStatus::Skipping(_) => None,
+        } {
+            // §338 chooses its opening on `cur_cs`: a forbidden `\outer`
+            // control sequence rather than the file simply running out.
+            let opening = if at_file_end {
+                "File ended"
+            } else {
+                "Forbidden control sequence found"
+            };
+            let name = warning_index.map_or_else(String::new, |symbol| {
+                let spelling = self.state.resolve(symbol).to_owned();
+                super::expand::print_esc_text(&self.state, &spelling)
+            });
+            let context = self.command.output_open_context(&self.state);
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: RUNAWAY_SCAN_DIAGNOSTIC,
+                    message: format!("{opening} while scanning {kind} of {name}"),
+                    help: &[
+                        "I suspect you have forgotten a `}', causing me",
+                        "to read past where you wanted me to stop.",
+                        "I'll try to recover; but if the error is serious,",
+                        "you'd better type `E' or `X' now and fix your file.",
+                    ],
+                    context,
+                });
+        }
         if let ScannerStatus::Skipping(skipping) = &status {
             let name =
                 super::expand::print_esc_text(&self.state, skipping.conditional.canonical_name());
