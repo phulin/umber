@@ -1652,12 +1652,19 @@ impl CommandProcessor<'_> {
 
     /// Renders the recoverable `prepare_mag` outcome used by §457.
     fn prepare_mag_error(&mut self, diagnostic: PrepareMagDiagnostic) {
+        // TeX82 §82 calls `show_context` from every `error`, including the
+        // §288 `prepare_mag` diagnostics. Capture it before opening the
+        // report so a §325 one-token backup remains visible as
+        // `<to be read again>`.
+        let context = self.command.output_open_context(&self.state);
         match diagnostic {
             PrepareMagDiagnostic::IllegalMagnification { attempted } => {
                 let mut report = self
                     .state
                     .print_err("Illegal magnification has been changed to 1000");
-                report.help(&["The magnification ratio must be between 1 and 32768."]);
+                report
+                    .help(&["The magnification ratio must be between 1 and 32768."])
+                    .context(context);
                 report.int_error(attempted);
             }
             PrepareMagDiagnostic::IncompatibleMagnification {
@@ -1667,10 +1674,12 @@ impl CommandProcessor<'_> {
                 let mut report = self.state.print_err(&format!(
                     "Incompatible magnification ({attempted}); the previous value will be retained ({retained})"
                 ));
-                report.help(&[
-                    "I can handle only one magnification ratio per job. So I've",
-                    "reverted to the magnification you used earlier on this run.",
-                ]);
+                report
+                    .help(&[
+                        "I can handle only one magnification ratio per job. So I've",
+                        "reverted to the magnification you used earlier on this run.",
+                    ])
+                    .context(context);
                 report.error();
             }
         }

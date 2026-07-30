@@ -299,6 +299,32 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
 }
 
 #[test]
+fn font_size_recovery_carries_the_backed_up_error_context() {
+    // TeX82 §§82, 1258: `scan_int` leaves its lookahead under §325
+    // `back_input`; the deferred stomach-side `int_error` must display that
+    // exact command-owned stack state.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("oversized").symbol();
+    let mut tokens = vec![Token::Cs(target)];
+    tokens.extend(text_tokens("=cmr10 scaled 32769="));
+    push(&mut command, tokens);
+
+    let request = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_font_definition(false)
+        .expect("font definition scans");
+    let FontSizeRecovery::IllegalMagnification { value, context } =
+        request.size_recovery.expect("illegal scale recovers")
+    else {
+        panic!("expected illegal magnification recovery");
+    };
+    assert_eq!(value, 32_769);
+    assert_eq!(context, "\n<to be read again> \n                   =");
+}
+
+#[test]
 fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

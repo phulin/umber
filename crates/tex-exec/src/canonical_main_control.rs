@@ -10635,7 +10635,7 @@ fn apply_scanned_step(
             // continue with the replaced value; §1257 then loads the font
             // normally. The replacement is the scanner's, the report this
             // seam's.
-            if let Some(recovery) = request.size_recovery {
+            if let Some(recovery) = &request.size_recovery {
                 report_font_size_recovery(stores, recovery);
             }
             let resource =
@@ -13511,21 +13511,25 @@ fn report_pending_diagnostics(
 }
 
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
-fn report_font_size_recovery(stores: &mut Universe, recovery: tex_command::FontSizeRecovery) {
+fn report_font_size_recovery(stores: &mut Universe, recovery: &tex_command::FontSizeRecovery) {
     match recovery {
-        tex_command::FontSizeRecovery::ImproperAtSize(size) => {
+        tex_command::FontSizeRecovery::ImproperAtSize { size, context } => {
             let mut report = stores.print_err("Improper `at' size (");
-            report.print_scaled(size).print("pt), replaced by 10pt");
-            report.help(&[
-                "I can only handle fonts at positive sizes that are",
-                "less than 2048pt, so I've changed what you said to 10pt.",
-            ]);
+            report.print_scaled(*size).print("pt), replaced by 10pt");
+            report
+                .help(&[
+                    "I can only handle fonts at positive sizes that are",
+                    "less than 2048pt, so I've changed what you said to 10pt.",
+                ])
+                .context(context.clone());
             report.error();
         }
-        tex_command::FontSizeRecovery::IllegalMagnification(value) => {
+        tex_command::FontSizeRecovery::IllegalMagnification { value, context } => {
             let mut report = stores.print_err("Illegal magnification has been changed to 1000");
-            report.help(&["The magnification ratio must be between 1 and 32768."]);
-            report.int_error(value);
+            report
+                .help(&["The magnification ratio must be between 1 and 32768."])
+                .context(context.clone());
+            report.int_error(*value);
         }
     }
 }

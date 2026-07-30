@@ -5499,7 +5499,7 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
     let mut illegal = Universe::new();
     illegal.set_mag_global(40_000);
     assert_eq!(
-        scan_with(&mut illegal, scanner_tokens("1truept"), |processor| {
+        scan_with(&mut illegal, scanner_tokens("1truept="), |processor| {
             processor
                 .scan_dimension()
                 .expect("illegal mag recovers")
@@ -5510,16 +5510,20 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
     );
     let illegal_text = diagnostic_text(&illegal);
     assert!(illegal_text.contains("! Illegal magnification has been changed to 1000 (40000)."));
+    assert!(
+        illegal_text.contains("<to be read again> 1truept\n                          ="),
+        "{illegal_text}"
+    );
     assert!(illegal_text.contains("The magnification ratio must be between 1 and 32768."));
 
     let mut incompatible = Universe::new();
     incompatible.set_mag_global(1200);
-    let _ = scan_with(&mut incompatible, scanner_tokens("1truept"), |processor| {
+    let _ = scan_with(&mut incompatible, scanner_tokens("1truept="), |processor| {
         processor.scan_dimension().expect("first mag prepares")
     });
     incompatible.set_mag_global(2000);
     assert_eq!(
-        scan_with(&mut incompatible, scanner_tokens("1truept"), |processor| {
+        scan_with(&mut incompatible, scanner_tokens("1truept="), |processor| {
             processor
                 .scan_dimension()
                 .expect("incompatible mag recovers")
@@ -5532,6 +5536,10 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
     assert!(incompatible_text.contains(
         "! Incompatible magnification (2000); the previous value will be retained (1200)."
     ));
+    assert!(
+        incompatible_text.contains("<to be read again> 1truept\n                          ="),
+        "{incompatible_text}"
+    );
     assert!(
         incompatible_text.contains("reverted to the magnification you used earlier on this run.")
     );

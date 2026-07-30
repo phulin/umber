@@ -132,14 +132,14 @@ pub struct FontLoadRequest {
 }
 
 /// tex.web §1258's and §1259's illegal-size recoveries.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum FontSizeRecovery {
     /// §1259: ``Improper `at' size (<s>pt), replaced by 10pt``, for a stated
     /// `at` size outside `0 < s < 2048pt`.
-    ImproperAtSize(Scaled),
+    ImproperAtSize { size: Scaled, context: String },
     /// §1258: `Illegal magnification has been changed to 1000`, reported
     /// through §91's `int_error`, for a `scaled` factor outside `1..=32768`.
-    IllegalMagnification(i32),
+    IllegalMagnification { value: i32, context: String },
 }
 
 /// Immutable, command-owned identity of one pdfTeX `\\pdfximage` lookup.
@@ -1962,7 +1962,10 @@ impl CommandProcessor<'_> {
                 if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
                     requested
                 } else {
-                    size_recovery = Some(FontSizeRecovery::ImproperAtSize(requested));
+                    size_recovery = Some(FontSizeRecovery::ImproperAtSize {
+                        size: requested,
+                        context: self.command.output_open_context(&self.state),
+                    });
                     Scaled::from_raw(10 * Scaled::UNITY)
                 },
             )
@@ -1972,7 +1975,10 @@ impl CommandProcessor<'_> {
             FontSizeSpec::Scale(if (1..=32_768).contains(&requested) {
                 requested
             } else {
-                size_recovery = Some(FontSizeRecovery::IllegalMagnification(requested));
+                size_recovery = Some(FontSizeRecovery::IllegalMagnification {
+                    value: requested,
+                    context: self.command.output_open_context(&self.state),
+                });
                 1000
             })
         } else {
