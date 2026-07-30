@@ -3201,56 +3201,6 @@ mod tests {
     }
 
     #[test]
-    fn output_entry_retires_a_depleted_backup_before_its_push() {
-        // TeX82 §1025 enters `output_text` only after the contributing
-        // command. If that command came from a one-token §325 backup, the
-        // depleted backup must retire before the selected output is pushed.
-        let mut command = CommandState::default();
-        command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
-                spelling: right_brace(),
-                source_provenance: None,
-            }])),
-            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
-            RetirementBehavior::Pop,
-            ReplayTrace::BackedUp,
-        );
-        let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
-
-        processor
-            .get_next()
-            .expect("backup token delivers")
-            .expect("backup is live");
-        processor
-            .retire_completed_right_brace_backup()
-            .expect("completed box closer retires");
-        processor
-            .begin_selected_output_routine()
-            .expect("output input begins");
-
-        assert!(
-            matches!(
-                recorder.0.as_slice(),
-                [
-                    CommandObservation::Command(_),
-                    CommandObservation::Input(retirement),
-                    CommandObservation::Input(output),
-                ] if retirement.transition == InputTransition::Retire
-                    && retirement.reason == InputReason::Backup
-                    && output.transition == InputTransition::Push
-                    && output.reason == InputReason::OutputRoutine
-            ),
-            "output must not hide a depleted backup: {:?}",
-            recorder.0
-        );
-    }
-
-    #[test]
     fn main_control_delivery_surfaces_top_level_delimiters_and_backup_replays_them() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(17);

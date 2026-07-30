@@ -5789,6 +5789,146 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
     );
 }
 
+fn box_closer_output_step(
+    control: &mut CommandReplayControl,
+    universe: &mut Universe,
+) -> Vec<CommandObservation> {
+    for _ in 0..32 {
+        let observations = step_observations(control, universe, "box-closing page contribution");
+        let closes_box = observations.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(command)
+                    if command.boundary == CommandDeliveryBoundary::Raw
+                        && command.command == "right_brace"
+            )
+        });
+        let selects_output = observations.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(input)
+                    if input.transition == InputTransition::Push
+                        && input.reason == InputReason::OutputRoutine
+            ) || matches!(
+                observation,
+                CommandObservation::Effect(effect) if effect.kind == "shipout"
+            )
+        });
+        if closes_box && selects_output {
+            return observations;
+        }
+    }
+    panic!("box closer did not select page output within the bounded execution");
+}
+
+#[test]
+fn box_closer_retires_its_backup_only_when_user_output_is_entered() {
+    // TeX82 §§1025 and 1085: closing the output group returns its forced
+    // penalty to the outer page, synchronously freezes that page, then
+    // retires the consumed §325 backup immediately before output_text.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\maxdeadcycles=2\output={\box255\penalty-10000}\topskip=0pt\vsize=1pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+
+    let observations = box_closer_output_step(&mut control, &mut universe);
+    let retirement = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(input)
+                    if input.transition == InputTransition::Retire
+                        && input.reason == InputReason::Backup
+            )
+        })
+        .expect("the consumed box-closer backup retires");
+    let output = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(input)
+                    if input.transition == InputTransition::Push
+                        && input.reason == InputReason::OutputRoutine
+            )
+        })
+        .expect("user output_text is pushed");
+    assert!(
+        observations.iter().any(|observation| matches!(
+            observation,
+                CommandObservation::Command(command)
+                    if command.boundary == CommandDeliveryBoundary::Raw
+                    && command.command == "right_brace"
+        )),
+        "the real box-closing execution branch must own the transition: {observations:?}"
+    );
+    assert!(
+        retirement < output,
+        "backup retirement must immediately precede user output entry: {observations:?}"
+    );
+}
+
+fn assert_default_output_defers_box_closer_backup(source: &[u8]) {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+
+    let output = box_closer_output_step(&mut control, &mut universe);
+    assert!(
+        output.iter().any(|observation| matches!(
+            observation,
+                CommandObservation::Command(command)
+                    if command.boundary == CommandDeliveryBoundary::Raw
+                    && command.command == "right_brace"
+        )),
+        "default output must be selected by the real box closer: {output:?}"
+    );
+    assert!(
+        !output.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Retire
+                    && input.reason == InputReason::Backup
+        )),
+        "§1024 default output must leave the depleted backup for canonical fetch: {output:?}"
+    );
+
+    let mut next = ObservationRecorder::default();
+    control
+        .step_with_observer(&mut universe, &mut next)
+        .expect("post-output canonical fetch");
+    assert!(
+        matches!(
+            next.0.first(),
+            Some(CommandObservation::Input(input))
+                if input.transition == InputTransition::Retire
+                    && input.reason == InputReason::Backup
+        ),
+        "the next canonical fetch owns backup retirement: {:?}",
+        next.0
+    );
+}
+
+#[test]
+fn null_output_does_not_retire_box_closer_backup_before_default_shipout() {
+    // TeX82 §1025's null-output branch ships directly and never pushes
+    // output_text, so ordinary canonical fetch retains §325 retirement.
+    assert_default_output_defers_box_closer_backup(
+        br"\output={\global\output={}\box255\penalty-10000}\topskip=0pt\vsize=1pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+}
+
+#[test]
+fn dead_cycle_fallback_does_not_retire_box_closer_backup_before_default_shipout() {
+    // TeX82 §1024's dead-cycle escape also bypasses §1025 output_text.
+    assert_default_output_defers_box_closer_backup(
+        br"\maxdeadcycles=1\output={\box255\penalty-10000}\topskip=0pt\vsize=1pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+}
+
 #[test]
 fn output_group_waits_for_nested_box_body_before_closing() {
     // TeX82 §1016 starts the braced \output list inside an already-open

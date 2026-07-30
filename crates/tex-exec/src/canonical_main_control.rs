@@ -1858,19 +1858,6 @@ impl CanonicalMainControl {
     /// is buffered rather than observed directly, so an observed step can
     /// flush it after that step's own mutation and effect records.
     fn fire_pending_page_output(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        if stores.page_fire_up().is_some() && !self.boxes.output_routine_active {
-            let mut processor = command_processor(
-                &mut self.command,
-                &mut self.runtime,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                stores,
-            );
-            processor
-                .retire_completed_right_brace_backup()
-                .map_err(command_error)?;
-        }
         while !self.boxes.output_routine_active {
             let Some(fire_up) = stores.page_fire_up() else {
                 break;
@@ -1907,6 +1894,9 @@ impl CanonicalMainControl {
                         &mut self.operation_observations,
                         stores,
                     );
+                    processor
+                        .retire_completed_right_brace_backup()
+                        .map_err(command_error)?;
                     let opened = processor.begin_selected_output_routine();
                     let opened = opened.map_err(command_error);
                     if enclosing.is_some() {
