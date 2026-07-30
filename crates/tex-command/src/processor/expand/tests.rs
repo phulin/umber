@@ -1089,11 +1089,17 @@ fn empty_mark_enquiries_match_fresh_and_loaded_etex_formats() {
         let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        // e-TeX's sparse-array pointer is non-null even when the referenced
-        // token list is empty. The class-four enquiry is the absent control.
+        // e-TeX's sparse-array and class-zero `cur_mark` pointers are non-null
+        // even when the referenced token list is empty. The class-four
+        // enquiry is the absent control.
         universe.set_page_mark_class(PageMark::SplitFirst, 3, TokenListId::EMPTY);
+        universe.set_page_mark(PageMark::First, TokenListId::EMPTY);
         assert_eq!(
             universe.page_mark_class_value(PageMark::SplitFirst, 3),
+            Some(TokenListId::EMPTY)
+        );
+        assert_eq!(
+            universe.page_mark_class_value(PageMark::First, 0),
             Some(TokenListId::EMPTY)
         );
         let output = {
@@ -1123,7 +1129,7 @@ fn empty_mark_enquiries_match_fresh_and_loaded_etex_formats() {
                     })
                 ))
                 .count(),
-            2
+            6
         );
         assert!(recorder.0.iter().any(|event| matches!(
             event,

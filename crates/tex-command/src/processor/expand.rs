@@ -969,8 +969,7 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        let tokens = self.state.page_mark(page_mark(primitive));
-        if tokens != TokenListId::EMPTY {
+        if let Some(tokens) = self.state.page_mark_value(page_mark(primitive)) {
             self.push_mark_text(tokens);
         }
         Ok(())
@@ -980,6 +979,8 @@ impl CommandProcessor<'_> {
         // e-TeX 2.6 `etex.ch` [26.1178] uses the same
         // `scan_register_num` as numbered marks and sparse registers.
         let class = self.scan_extended_register_index()?;
+        // e-TeX 2.6 etex.ch [25.386] makes class zero an exact alias for
+        // TeX82's `cur_mark`, including its null-versus-empty pointer state.
         let tokens = self
             .state
             .page_mark_class_value(page_mark(primitive), class);

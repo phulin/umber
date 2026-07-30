@@ -490,6 +490,11 @@ impl CommandContext<'_> {
         self.universe.page_mark(mark)
     }
 
+    #[must_use]
+    pub fn page_mark_value(&self, mark: PageMark) -> Option<TokenListId> {
+        self.universe.page_mark_value(mark)
+    }
+
     /// Reads one e-TeX mark-class slot for expandable mark retrieval.
     #[must_use]
     pub fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {

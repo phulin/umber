@@ -100,6 +100,7 @@ struct PageStateHashScalars {
     bot_mark: TokenListId,
     split_first_mark: TokenListId,
     split_bot_mark: TokenListId,
+    mark_present: [bool; 5],
 }
 
 /// Discardable semantic-root key that does not retain mutable page buffers.
@@ -166,6 +167,7 @@ impl PageBuilderState {
                 bot_mark: self.bot_mark,
                 split_first_mark: self.split_first_mark,
                 split_bot_mark: self.split_bot_mark,
+                mark_present: self.mark_present,
             },
             contribution: Arc::clone(&self.contribution),
             current_page_len: self.current_page.len,
@@ -234,13 +236,14 @@ impl PageBuilderState {
                     }
                     None => projection.bool(false),
                 }
-                for mark in [
+                for (present, mark) in self.mark_present.into_iter().zip([
                     self.top_mark,
                     self.first_mark,
                     self.bot_mark,
                     self.split_first_mark,
                     self.split_bot_mark,
-                ] {
+                ]) {
+                    projection.bool(present);
                     hash_tokens(mark, projection);
                 }
             },

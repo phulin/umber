@@ -337,6 +337,7 @@ pub(crate) struct PageBuilderState {
     bot_mark: TokenListId,
     split_first_mark: TokenListId,
     split_bot_mark: TokenListId,
+    mark_present: [bool; 5],
     mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
 }
 
@@ -397,6 +398,7 @@ impl Default for PageBuilderState {
             bot_mark: TokenListId::EMPTY,
             split_first_mark: TokenListId::EMPTY,
             split_bot_mark: TokenListId::EMPTY,
+            mark_present: [false; 5],
             mark_classes: Arc::new(BTreeMap::new()),
         }
     }
@@ -640,6 +642,10 @@ impl PageBuilderState {
         }
     }
 
+    pub(crate) fn mark_value(&self, mark: PageMark) -> Option<TokenListId> {
+        self.mark_present[usize::from(mark.index())].then(|| self.mark(mark))
+    }
+
     pub(crate) fn set_mark(&mut self, mark: PageMark, value: TokenListId) {
         match mark {
             PageMark::Top => self.top_mark = value,
@@ -647,6 +653,18 @@ impl PageBuilderState {
             PageMark::Bot => self.bot_mark = value,
             PageMark::SplitFirst => self.split_first_mark = value,
             PageMark::SplitBot => self.split_bot_mark = value,
+        }
+        self.mark_present[usize::from(mark.index())] = true;
+    }
+
+    pub(crate) fn clear_mark(&mut self, mark: PageMark) {
+        self.mark_present[usize::from(mark.index())] = false;
+        match mark {
+            PageMark::Top => self.top_mark = TokenListId::EMPTY,
+            PageMark::First => self.first_mark = TokenListId::EMPTY,
+            PageMark::Bot => self.bot_mark = TokenListId::EMPTY,
+            PageMark::SplitFirst => self.split_first_mark = TokenListId::EMPTY,
+            PageMark::SplitBot => self.split_bot_mark = TokenListId::EMPTY,
         }
     }
 
@@ -657,8 +675,7 @@ impl PageBuilderState {
 
     pub(crate) fn mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
         if class == 0 {
-            let value = self.mark(mark);
-            return (value != TokenListId::EMPTY).then_some(value);
+            return self.mark_value(mark);
         }
         self.mark_classes
             .get(&class)
@@ -683,7 +700,7 @@ impl PageBuilderState {
 
     pub(crate) fn clear_mark_class(&mut self, mark: PageMark, class: u16) {
         if class == 0 {
-            self.set_mark(mark, TokenListId::EMPTY);
+            self.clear_mark(mark);
             return;
         }
         let classes = Arc::make_mut(&mut self.mark_classes);
