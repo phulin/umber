@@ -526,13 +526,25 @@
       "projection": {
         "kind": "observations",
         "kinds": [
+          "scanner-status",
+          "input",
           "macro",
           "token-list"
         ]
       },
       "expected": [
+        "scanner-status:normal>defining",
+        "input:push:terminal",
+        "input:retire:terminal",
+        "scanner-status:defining>normal",
         "token-list:complete:read:char:letter:82",
-        "macro:activate:readvalue:0:"
+        "input:push:macro",
+        "macro:activate:readvalue:0:",
+        "input:retire:macro",
+        "input:backup:backup",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
       ],
       "expectation": {
         "kind": "pass"

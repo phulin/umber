@@ -7,9 +7,9 @@ use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
-    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor,
-    SourceLevel, SourceNameClass, SourceRegistration, SourceRegistrationError,
-    SourceTokenizationStep,
+    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, RegisteredSourceKind,
+    SourceCharacter, SourceCursor, SourceLevel, SourceNameClass, SourceRegistration,
+    SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
@@ -894,12 +894,11 @@ impl CommandState {
     /// spelling, and `^^` notation all apply -- and differs only in what its
     /// exhaustion means (§360's `cur_tok=0`), which is why the difference is
     /// carried as its retirement and nothing else.
-    pub(crate) fn open_read_line(
-        &mut self,
-        registration: SourceRegistration,
-        name_class: SourceNameClass,
-    ) -> Result<InputLevelId, SourceRegistrationError> {
-        let source = self.register_source(registration)?;
+    pub(crate) fn begin_read_line(&mut self) -> Result<InputLevelId, SourceRegistrationError> {
+        let source = self.register_source(SourceRegistration::new(
+            RegisteredSourceKind::ReadLine,
+            &b""[..],
+        ))?;
         let registered = self
             .input
             .registered_sources
@@ -909,14 +908,43 @@ impl CommandState {
             .expect("a source registered above is present");
         let identity = self.push_source_level(
             registered,
-            name_class,
+            SourceNameClass::Terminal,
             crate::input::SourceRetirement::EndReadLine,
             None,
         );
-        if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {
-            level.cursor.pending_acquired_line = true;
-        }
         Ok(identity)
+    }
+
+    /// Installs the immutable bytes acquired for an already-active §483
+    /// `begin_file_reading` level.
+    pub(crate) fn finish_read_line(
+        &mut self,
+        level: InputLevelId,
+        name_class: SourceNameClass,
+        bytes: impl Into<std::sync::Arc<[u8]>>,
+    ) -> Result<(), SourceRegistrationError> {
+        let source = self.register_source(SourceRegistration::new(
+            RegisteredSourceKind::ReadLine,
+            bytes,
+        ))?;
+        let registered = self
+            .input
+            .registered_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .cloned()
+            .expect("a source registered above is present");
+        let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
+            unreachable!("begin_read_line keeps its source level active during acquisition");
+        };
+        assert_eq!(
+            active.identity, level,
+            "begin_read_line keeps the exact source level active during acquisition"
+        );
+        active.name_class = name_class;
+        active.cursor.backing = registered;
+        active.cursor.pending_acquired_line = true;
+        Ok(())
     }
 
     /// Opens e-TeX 2.6 etex.ch §53a's generated `\scantokens` pseudo-file.

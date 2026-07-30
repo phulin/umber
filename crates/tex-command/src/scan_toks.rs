@@ -18,11 +18,14 @@ use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
-use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
+use crate::{CommandError, CommandProcessor};
 use tex_state::CommandLineSource;
 
 use crate::input::TokenPayload;
-use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
+use crate::observation::{
+    CommandObservation, DiagnosticRecord, InputReason, InputRecord, InputTransition,
+    TokenListRecord,
+};
 
 /// The two canonical `scan_toks` collection forms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -877,18 +880,27 @@ impl CommandProcessor<'_> {
         prompted: &mut bool,
         tokens: &mut Vec<TracedTokenWord>,
     ) -> Result<(), CommandError> {
-        let (line, file_ended) = self.acquire_read_line(slot, target, prompted)?;
-        // §483: `begin_file_reading; name:=m+1; ... state:=new_line`.
+        // §483 calls `begin_file_reading` before §484-§486 acquire the line.
+        // §328 establishes that new level with `name:=0`; the selected
+        // stream classification is installed only after acquisition chooses
+        // the stream rather than §484's terminal fallback.
         let level = self
             .command
-            .open_read_line(
-                SourceRegistration::new(RegisteredSourceKind::Generated, line.into_bytes()),
-                // §483's `name:=m+1`, where §482 already mapped every stream
-                // outside `0..=15` to `m:=16`.
-                crate::input::SourceNameClass::ReadStream(
-                    slot.map_or(16, tex_state::world::StreamSlot::raw),
-                ),
-            )
+            .begin_read_line()
+            .map_err(|_| CommandError::input_invariant())?;
+        observe!(
+            self,
+            CommandObservation::Input(InputRecord {
+                transition: InputTransition::Push,
+                reason: InputReason::Source,
+                source_name: Some(crate::input::SourceNameClass::Terminal),
+                level: level.0,
+                position: 0,
+            }),
+        );
+        let (line, file_ended, name_class) = self.acquire_read_line(slot, target, prompted)?;
+        self.command
+            .finish_read_line(level, name_class, line.into_bytes())
             .map_err(|_| CommandError::input_invariant())?;
         if raw_catcodes {
             self.collect_read_line_verbatim(level, tokens)?;
@@ -946,9 +958,7 @@ impl CommandProcessor<'_> {
             };
             tokens.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
         }
-        self.command
-            .retire_exhausted_input(level)
-            .map_err(|_| CommandError::input_invariant())?;
+        self.retire_read_line_level(level)?;
         Ok(())
     }
 
@@ -964,14 +974,18 @@ impl CommandProcessor<'_> {
         slot: Option<tex_state::world::StreamSlot>,
         target: tex_state::interner::Symbol,
         prompted: &mut bool,
-    ) -> Result<(String, bool), CommandError> {
+    ) -> Result<(String, bool, crate::input::SourceNameClass), CommandError> {
         // §483: `if read_open[m]=closed then <terminal> else <the file>`.
         if let Some(slot) = slot
             && !self.state.read_stream_at_eof(slot)
             && let Some(line) = self.state.input_ln(CommandLineSource::Stream(slot))
         {
             let ended = self.state.read_stream_at_eof(slot);
-            return Ok((line, ended));
+            return Ok((
+                line,
+                ended,
+                crate::input::SourceNameClass::ReadStream(slot.raw()),
+            ));
         }
         // §484: `if interaction>nonstop_mode then if n<0 then
         // prompt_input("") else begin wake_up_terminal; print_ln; sprint_cs(r);
@@ -989,7 +1003,7 @@ impl CommandProcessor<'_> {
             .state
             .input_ln(CommandLineSource::Terminal { prompt: &prompt })
             .ok_or_else(CommandError::input_invariant)?;
-        Ok((line, false))
+        Ok((line, false, crate::input::SourceNameClass::Terminal))
     }
 }
 

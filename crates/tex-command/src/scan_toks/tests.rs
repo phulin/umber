@@ -2066,11 +2066,16 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
                     .with_fuel(fuel.fuel_mut());
             let line = processor
                 .command
-                .open_read_line(
-                    SourceRegistration::new(RegisteredSourceKind::Generated, vec![0xff]),
-                    crate::input::SourceNameClass::ReadStream(1),
-                )
+                .begin_read_line()
                 .expect("readline pseudo-file opens");
+            processor
+                .command
+                .finish_read_line(
+                    line,
+                    crate::input::SourceNameClass::ReadStream(1),
+                    vec![0xff],
+                )
+                .expect("readline bytes install");
             let mut tokens = Vec::new();
             processor
                 .collect_read_line_verbatim(line, &mut tokens)
@@ -2169,14 +2174,70 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
                 .expect("terminal input registers");
         }
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        let target = processor.state.intern_control_sequence("line");
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let target = processor.state.intern_control_sequence("line");
+            let list = processor
+                .read_toks(stream, target, false)
+                .expect("terminal read collects");
+            assert_eq!(read_text(&processor, &list), "{first second} ", "{stream}");
+        }
 
-        let list = processor
-            .read_toks(stream, target, false)
-            .expect("terminal read collects");
-
-        assert_eq!(read_text(&processor, &list), "{first second} ", "{stream}");
+        let defining = recorder
+            .0
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    CommandObservation::ScannerStatus(record)
+                        if record.from == "normal" && record.to == "defining"
+                )
+            })
+            .expect("§482 enters defining status");
+        let push = recorder
+            .0
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Push
+                            && record.reason == crate::InputReason::Source
+                            && record.source_name == Some(crate::SourceNameClass::Terminal)
+                )
+            })
+            .expect("§483 begins a terminal source level");
+        let retire = recorder
+            .0
+            .iter()
+            .rposition(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Retire
+                            && record.reason == crate::InputReason::Source
+                            && record.source_name == Some(crate::SourceNameClass::Terminal)
+                )
+            })
+            .expect("§483 ends the terminal source level");
+        let normal = recorder
+            .0
+            .iter()
+            .rposition(|event| {
+                matches!(
+                    event,
+                    CommandObservation::ScannerStatus(record)
+                        if record.from == "defining" && record.to == "normal"
+                )
+            })
+            .expect("§482 restores normal status");
+        assert!(
+            defining < push && push < retire && retire < normal,
+            "§§482-484 keep the terminal level inside defining status"
+        );
     }
 }
 

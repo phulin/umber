@@ -112,6 +112,24 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Retires the exact one-line source opened by TeX82 §483.
+    ///
+    /// e-TeX `\readline` consumes bytes directly instead of calling
+    /// `get_token`, so it must still cross the ordinary retirement boundary
+    /// that publishes §483's matching `end_file_reading` transition.
+    pub(crate) fn retire_read_line_level(
+        &mut self,
+        level: InputLevelId,
+    ) -> Result<(), CommandError> {
+        match self.retire_and_restart(level)? {
+            RetirementRestart::Stop if std::mem::take(&mut self.read_line_ended) => Ok(()),
+            RetirementRestart::Continue
+            | RetirementRestart::Completed
+            | RetirementRestart::Stop
+            | RetirementRestart::EndV(_) => Err(CommandError::input_invariant()),
+        }
+    }
+
     pub(crate) fn retire_exhausted_through(
         &mut self,
         level: InputLevelId,
