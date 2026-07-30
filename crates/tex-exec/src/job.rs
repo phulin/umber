@@ -79,28 +79,60 @@ pub struct DviJobOutput {
     pub byte_len: u64,
 }
 
-/// tex.web §61's `format_ident`: printed right after the banner both on the
-/// terminal (§61's `if format_ident=0 then wterm_ln(' (no format preloaded)')
-/// else begin slow_print(format_ident); print_ln end`) and, with the clock
-/// appended, on the log (§536's `open_log_file`).
+/// A job started from a dumped format: web2c's `dump_name` (the `-fmt=`
+/// argument) plus the `\year`/`\month`/`\day` that were current when
+/// tex.web §1328's `store_fmt_file` built the dumped `format_ident`.
 ///
-/// INITEX sets `format_ident:=" (INITEX)"` while its own tables are still
-/// loading, so by the time §61 runs, `format_ident` is never really `0` for
-/// an INITEX job -- the only kind [`begin_job`] currently frames
-/// (`tools/tex-command-stream`'s `SessionProfile::Initex`/`EtexInitex` both
-/// pass `initex: true`; no caller currently reaches the `false` branch at
-/// all). A loaded-format job's `format_ident` would instead be `"
-/// (preloaded format=" name " " year "." month "." day ")"` (§1336's
-/// `store_fmt_file`), which this module has no format name or dump date to
-/// spell -- guessing one would look correct and be silently wrong. Rather
-/// than refuse outright, an unreached `initex: false` call reports tex.web's
-/// *other* honest branch instead: `format_ident=0`'s `" (no format
-/// preloaded)"`, true of a job that has loaded no format at all.
-fn format_ident(initex: bool) -> &'static str {
-    if initex {
-        " (INITEX)"
-    } else {
-        " (no format preloaded)"
+/// Both are carried because a real run prints *different* text from them on
+/// the two sinks; see [`terminal_format_ident`] and [`log_format_ident`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreloadedFormat {
+    /// web2c's `dump_name`, e.g. `etex-loaded` for `-fmt=etex-loaded`.
+    pub name: String,
+    /// `\year`, `\month`, `\day` at the moment the format was dumped.
+    pub year: i32,
+    pub month: i32,
+    pub day: i32,
+}
+
+/// tex.web §61's `format_ident` as it reaches the *terminal*.
+///
+/// web2c replaces §61's stock `if format_ident=0 then wterm_ln(' (no format
+/// preloaded)')` with `wterm_ln(' (preloaded format=',dump_name,')')`
+/// (`texk/web2c/tex.ch`, `@x [5.61]`). That branch is the one a
+/// loaded-format run actually takes: web2c prints the banner *before* it
+/// reads the format file, so `format_ident` is still `0` here and the name
+/// comes from the command line rather than from the dump. It therefore
+/// carries **no dump date** -- which is exactly what the pinned pdfTeX
+/// 1.40.27 oracle emits.
+///
+/// INITEX is the other way round: §1337 sets `format_ident:=" (INITEX)"`
+/// while its own tables are still loading, so by the time §61 runs the
+/// `else` arm's `slow_print(format_ident)` has something to print.
+fn terminal_format_ident(format: Option<&PreloadedFormat>, initex: bool) -> String {
+    match (format, initex) {
+        (Some(format), _) => format!(" (preloaded format={})", format.name),
+        (None, true) => " (INITEX)".to_owned(),
+        // Unreached in practice: a job is either INITEX or started from a
+        // format. tex.web's own remaining honest branch for neither.
+        (None, false) => " (no format preloaded)".to_owned(),
+    }
+}
+
+/// tex.web §61's `format_ident` as it reaches the *log*.
+///
+/// §536's `open_log_file` does `slow_print(format_ident)`, and by then the
+/// format file *has* been read, so this is the dumped string §1328 built:
+/// `" (preloaded format=" name " " year "." month "." day ")"`. Hence the
+/// dump date appears on the log and not on the terminal.
+fn log_format_ident(format: Option<&PreloadedFormat>, initex: bool) -> String {
+    match (format, initex) {
+        (Some(format), _) => format!(
+            " (preloaded format={} {}.{}.{})",
+            format.name, format.year, format.month, format.day
+        ),
+        (None, true) => " (INITEX)".to_owned(),
+        (None, false) => " (no format preloaded)".to_owned(),
     }
 }
 
@@ -147,6 +179,7 @@ pub(crate) fn begin_job(
     stores: &mut Universe,
     capabilities: &mut CommandHostCapabilities,
     initex: bool,
+    format: Option<&PreloadedFormat>,
     etex: bool,
     first_line: &str,
 ) {
@@ -163,16 +196,29 @@ pub(crate) fn begin_job(
     // terminating `print_ln`, no clock (the clock is §536's log-only
     // addition). Whatever prints next (etex.ch's notice below, or §537's `(`
     // for the root file) starts its own fresh line.
-    let terminal_banner = format!("{BANNER}{}\n", format_ident(initex));
+    // The banner itself goes out through §54's `wterm`/`wlog`, which do not
+    // advance `term_offset`/`file_offset`; it is longer than
+    // `max_print_line` and must stay one unbroken line.
+    let terminal_banner = format!("{BANNER}{}\n", terminal_format_ident(format, initex));
     stores
         .world_mut()
-        .write_text(PrintSink::Terminal, &terminal_banner);
+        .write_text_unmetered(PrintSink::Terminal, &terminal_banner);
 
     // §536 `open_log_file`: the log's banner additionally carries
     // `format_ident` and the clock, with no trailing newline yet -- §534's
-    // `print_nl("**")` below supplies it.
-    let log_banner = format!("{BANNER}{}{}", format_ident(initex), clock_suffix(stores));
-    stores.world_mut().write_text(PrintSink::Log, &log_banner);
+    // `print_nl("**")` below supplies it. Only `wlog(banner)` is unmetered;
+    // §536 prints the identity and clock through `slow_print`/`print_int`,
+    // so those do advance `file_offset` and are what makes the following
+    // `print_nl("**")` break the line.
+    stores
+        .world_mut()
+        .write_text_unmetered(PrintSink::Log, BANNER);
+    let log_identity = format!(
+        "{}{}",
+        log_format_ident(format, initex),
+        clock_suffix(stores)
+    );
+    stores.world_mut().write_text(PrintSink::Log, &log_identity);
 
     if etex {
         // etex.ch's patch at tex.web §1337 (`init_prim`'s caller, run once

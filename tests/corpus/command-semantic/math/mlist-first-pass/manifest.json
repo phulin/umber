@@ -39,41 +39,15 @@
         "command:math_comp:18",
         "command:math_comp:18",
         "command:math_comp:19",
-        "artifact:4150443b19bd34071fe7b93d1c32d06eceb5a9ab735e3db10a1312030b0b3d51"
+        "artifact:a62fceb80fde6bcc91c73893255241eaf6c4e879268e2ca8d1cee0570c28cb53"
       ],
       "channels": {
         "events": 80,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 4,
-            "expected": "<to be read again> ",
-            "actual": ""
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 5,
-            "expected": "<to be read again> ",
-            "actual": "A left brace was mandatory here, so I've put one in."
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

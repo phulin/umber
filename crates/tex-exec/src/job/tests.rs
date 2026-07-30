@@ -78,6 +78,7 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         &mut stores,
         &mut capabilities,
         true,
+        None,
         false,
         "show-box.tex",
     );
@@ -112,6 +113,7 @@ fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star
         &mut stores,
         &mut capabilities,
         true,
+        None,
         true,
         "etex.tex",
     );
@@ -137,6 +139,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         &mut stores,
         &mut capabilities,
         true,
+        None,
         false,
         "a.tex",
     );
@@ -145,6 +148,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         &mut stores,
         &mut capabilities,
         true,
+        None,
         false,
         "a.tex",
     );
@@ -207,7 +211,14 @@ fn open_paren_breaks_the_line_when_the_name_would_overflow_max_print_line() {
         }],
     );
 
-    assert_eq!(terminal_text(&stores), format!("\n({long_name}"));
+    // §537 breaks *before* the name because it cannot fit on the rest of the
+    // line, and §58 then breaks again the instant `(` plus the name reaches
+    // `max_print_line`: 78 of the 80 characters share the line with the open
+    // paren and the last two start the next.
+    assert_eq!(
+        terminal_text(&stores),
+        format!("\n({}\n{}", "x".repeat(78), "x".repeat(2))
+    );
 }
 
 #[test]
@@ -389,4 +400,52 @@ fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
 
     assert!(!terminal_text(&stores).contains("Transcript written on"));
     assert!(!log_text(&stores).contains("Transcript written on"));
+}
+
+/// A loaded-format job prints the format's identity on both sinks, but not
+/// the same text: web2c's replacement for §61 prints `dump_name` on the
+/// terminal (no dump date, because the banner precedes reading the format
+/// file), while §536's `slow_print(format_ident)` prints §1328's dumped
+/// string, which carries the date. Both spellings are what the pinned pdfTeX
+/// 1.40.27 oracle emits for `-fmt=etex-loaded`.
+#[test]
+fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal() {
+    let clock = JobClock {
+        time: 13 * 60 + 36,
+        second: 7,
+        day: 9,
+        month: 7,
+        year: 2026,
+    };
+    let mut stores = Universe::with_world(World::memory_with_clock(clock));
+    let mut job = JobFraming::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let format = PreloadedFormat {
+        name: "etex-loaded".to_owned(),
+        year: 2026,
+        month: 7,
+        day: 9,
+    };
+
+    begin_job(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        false,
+        Some(&format),
+        true,
+        "etex-loaded-state-reset.tex",
+    );
+
+    assert_eq!(
+        terminal_text(&stores),
+        format!("{BANNER} (preloaded format=etex-loaded)\nentering extended mode\n")
+    );
+    assert_eq!(
+        log_text(&stores),
+        format!(
+            "{BANNER} (preloaded format=etex-loaded 2026.7.9)  9 JUL 2026 13:36\n\
+             entering extended mode\n**etex-loaded-state-reset.tex\n"
+        )
+    );
 }

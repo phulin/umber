@@ -975,12 +975,15 @@ impl CommandProcessor<'_> {
             // rejected token consequently remains the first token seen by
             // the optional-equals/value scan.
             self.back_input(command)?;
+            let context = self.command.output_open_context(&self.state);
             let mut report = self.state.print_err("Missing control sequence inserted");
-            report.help(&[
-                "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
-                "I've inserted an inaccessible control sequence so that your",
-                "definition will be completed without mixing me up too badly.",
-            ]);
+            report
+                .help(&[
+                    "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+                    "I've inserted an inaccessible control sequence so that your",
+                    "definition will be completed without mixing me up too badly.",
+                ])
+                .context(context);
             report.error();
             self.state.intern_control_sequence("inaccessible")
         };
@@ -2393,6 +2396,25 @@ impl CommandProcessor<'_> {
         })
     }
 
+    /// TeX82 §296's `print_meaning` as `\\show` reaches it.
+    ///
+    /// A macro's meaning is `print_cmd_chr`, then `print_char(":")`, then
+    /// `print_ln`, then `token_show` of the body -- so `\\show\\cs` puts the
+    /// replacement text on its own line. `\\meaning` and `\\showthe` share
+    /// `print_meaning` but run it under §471's `new_string` selector, where
+    /// §57's `print_ln` does nothing, which is why only this caller breaks
+    /// the line.
+    fn shown_meaning_text(
+        state: &tex_state::CommandContext<'_>,
+        command: &crate::CurrentCommand,
+    ) -> String {
+        let text = meaning_text(state, command);
+        text.split_once("macro:").map_or_else(
+            || text.clone(),
+            |(prefix, rest)| format!("{prefix}macro:\n{rest}"),
+        )
+    }
+
     /// TeX82 §46's raw `\\show` operand scan.
     pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
         let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
@@ -2405,10 +2427,10 @@ impl CommandProcessor<'_> {
             } => format!(
                 "> {}={}",
                 string_text(&self.state, token),
-                meaning_text(&self.state, &command)
+                Self::shown_meaning_text(&self.state, &command)
             ),
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
-                format!("> {}", meaning_text(&self.state, &command))
+                format!("> {}", Self::shown_meaning_text(&self.state, &command))
             }
         };
         Ok(ScannedDisplayDiagnostic {
@@ -3414,9 +3436,16 @@ impl CommandProcessor<'_> {
             let bytes = registration.shared_bytes();
             // §537's `a_make_name_string`: tex.web records the name it
             // actually opened on the level, and later prints exactly that
-            // as the transcript's `(name` -- so it is the attempted name
-            // that resolved, not the name the user typed.
-            let registration = registration.with_name(attempted_name.as_str());
+            // as the transcript's `(name` -- so it is the resolved name,
+            // not the name the user typed. Only the host knows what
+            // resolving did: web2c's kpathsea answers a bare `child.tex`
+            // found beside the job with `./child.tex`, and prints the `./`.
+            // A host that reports a resolved name keeps it; one that does
+            // not falls back to the name that matched.
+            let registration = match registration.name() {
+                Some(_) => registration,
+                None => registration.with_name(attempted_name.as_str()),
+            };
             let source = self
                 .command
                 .register_source(registration)

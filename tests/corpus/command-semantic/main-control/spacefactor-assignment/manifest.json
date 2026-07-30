@@ -69,11 +69,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.4 \\spacefactor",
-            "actual": "Sorry, but I'm not programmed to handle this case;"
-          }
+          "mismatch": { "line": 4, "expected": "l.4 \\spacefactor", "actual": "! Missing { inserted." }
         },
         "log": {
           "kind": "xfail",
@@ -84,12 +80,8 @@
             "actual": "Sorry, but I'm not programmed to handle this case;"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

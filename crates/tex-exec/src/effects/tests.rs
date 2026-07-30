@@ -821,8 +821,14 @@ fn out_what_retry_show_context_includes_nested_token_level_and_obeys_context_lim
     );
 }
 
+/// tex.web §310's `bottom_line`: `show_context` stops at the first level
+/// that is a real file (`name>17`), so a `\input` chain contributes exactly
+/// one `l.N` pair no matter how deeply nested it is, and `\errorcontextlines`
+/// never applies to the enclosing files. Confirmed against pdfTeX, which
+/// prints only the innermost file's line for an error inside a doubly
+/// `\input`ed source.
 #[test]
-fn out_what_retry_show_context_traverses_nested_sources_with_limit() {
+fn out_what_retry_show_context_stops_at_the_innermost_open_file() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
     stores.world_mut().deny_memory_output("blocked.tex");
@@ -833,7 +839,7 @@ fn out_what_retry_show_context_traverses_nested_sources_with_limit() {
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\errorcontextlines=0 \input middle ROOT-CONTEXT\end",
+        br"\errorcontextlines=5 \input middle ROOT-CONTEXT\end",
     );
     register_input(&mut control, "middle.tex", br"\input leaf MIDDLE-CONTEXT");
     register_input(
@@ -854,12 +860,13 @@ fn out_what_retry_show_context_traverses_nested_sources_with_limit() {
     let leaf = terminal
         .find("LEAF-CONTEXT")
         .expect("current nested source");
-    let omitted = terminal[leaf..].find("\n...").expect("omission marker") + leaf;
-    let root = terminal.find("ROOT-CONTEXT").expect("bottom root source");
-    assert!(leaf < omitted && omitted < root, "{terminal:?}");
     assert!(!terminal.contains("MIDDLE-CONTEXT"), "{terminal:?}");
+    assert!(!terminal.contains("ROOT-CONTEXT"), "{terminal:?}");
+    // Nothing was elided either: §310 never reached the enclosing files, so
+    // there are no intermediate levels for `\errorcontextlines` to count.
+    assert!(!terminal.contains("\n..."), "{terminal:?}");
     assert!(
-        root < terminal
+        leaf < terminal
             .find("Please type another output file name")
             .expect("replacement prompt"),
         "{terminal:?}"

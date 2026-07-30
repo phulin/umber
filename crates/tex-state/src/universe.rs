@@ -1210,6 +1210,37 @@ pub struct Universe {
     pure_memo: crate::pure_memo::PureMemoRuntime,
     geometry_observations: Vec<GeometryObservation>,
     geometry_observation_enabled: bool,
+    /// tex.web's `line` and `pack_begin_line`, the two globals §660/§675's
+    /// box diagnostics report positions from. Both are diagnostic-only --
+    /// tex.web dumps neither into a format and neither is readable as an
+    /// internal quantity -- so, like [`Self::error_context_widths`], they
+    /// stay out of formats, snapshots, and semantic hashes.
+    diagnostic_position: DiagnosticPosition,
+}
+
+/// tex.web's `line`, `pack_begin_line`, and the `mode_line` stack §804 reads
+/// `pack_begin_line` from.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct DiagnosticPosition {
+    /// The line number of the innermost open file, or 0 when input is not
+    /// coming from a file.
+    line: i32,
+    /// §661's `pack_begin_line`: 0 outside line breaking and alignment,
+    /// §804's positive `mode_line` while `post_line_break` packs a
+    /// paragraph's lines, §768's negative `mode_line` while `fin_align`
+    /// packs an alignment's rows.
+    pack_begin_line: i32,
+    /// §1025's `output_active`, which §663 and §675 report in place of a
+    /// line number: a box packed by the output routine has no meaningful
+    /// source position.
+    output_active: bool,
+    /// §1091's `mode_line` for each open horizontal-mode nest level, which is
+    /// the line the paragraph started on. §804 reads the innermost when it
+    /// breaks that paragraph. tex.web keeps one per nest level; this is that
+    /// per-level value for the levels that have one, which is what makes a
+    /// paragraph inside a box inside a paragraph report its own start line
+    /// rather than the outer paragraph's.
+    paragraph_start_lines: Vec<i32>,
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
@@ -1375,6 +1406,7 @@ impl Clone for Universe {
             pure_memo: self.pure_memo.clone(),
             geometry_observations: self.geometry_observations.clone(),
             geometry_observation_enabled: self.geometry_observation_enabled,
+            diagnostic_position: DiagnosticPosition::default(),
         }
     }
 }
@@ -1549,6 +1581,7 @@ impl Universe {
             pure_memo: crate::pure_memo::PureMemoRuntime::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
+            diagnostic_position: DiagnosticPosition::default(),
         }
     }
 
@@ -2464,6 +2497,7 @@ impl Universe {
             pure_memo: crate::pure_memo::PureMemoRuntime::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
+            diagnostic_position: DiagnosticPosition::default(),
         })
     }
 
@@ -3167,6 +3201,57 @@ impl Universe {
         self.stores.assert_live_input_summary(&self.world, &summary);
         self.input_summary = summary;
         self.dependencies.mark_changed(DependencyKey::InputStack);
+    }
+
+    /// tex.web's `line`: the innermost open file's current line number, or 0
+    /// when input is not coming from a file.
+    ///
+    /// The driver publishes this as input advances, the way tex.web's
+    /// `get_next` maintains the global. §660/§675's box diagnostics are the
+    /// consumers; `\inputlineno` reads the live input stack instead, because
+    /// it is scanned where that stack is in hand.
+    #[must_use]
+    pub const fn current_input_line(&self) -> i32 {
+        self.diagnostic_position.line
+    }
+
+    pub const fn set_current_input_line(&mut self, line: i32) {
+        self.diagnostic_position.line = line;
+    }
+
+    /// tex.web §661's `pack_begin_line`.
+    #[must_use]
+    pub const fn pack_begin_line(&self) -> i32 {
+        self.diagnostic_position.pack_begin_line
+    }
+
+    /// §804's and §768's assignments, both of which restore 0 when the
+    /// packing they scope is finished.
+    pub const fn set_pack_begin_line(&mut self, line: i32) {
+        self.diagnostic_position.pack_begin_line = line;
+    }
+
+    /// §1091's `new_graf`: records the line the paragraph now starting began
+    /// on.
+    pub fn push_paragraph_start_line(&mut self, line: i32) {
+        self.diagnostic_position.paragraph_start_lines.push(line);
+    }
+
+    /// §804's `pack_begin_line:=mode_line`: removes and returns the innermost
+    /// open paragraph's start line as that paragraph is broken.
+    pub fn pop_paragraph_start_line(&mut self) -> Option<i32> {
+        self.diagnostic_position.paragraph_start_lines.pop()
+    }
+
+    /// tex.web §1025's `output_active`.
+    #[must_use]
+    pub const fn output_routine_is_active(&self) -> bool {
+        self.diagnostic_position.output_active
+    }
+
+    /// §1025's `output_active:=true` and §1026's restore.
+    pub const fn set_output_routine_active(&mut self, active: bool) {
+        self.diagnostic_position.output_active = active;
     }
 
     /// Returns the lexer-owned input stack state restored by the last rollback.
@@ -8158,6 +8243,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::AlignmentUTemplate => 8,
         TokenListReplayKind::ScantokensEveryEof => 9,
         TokenListReplayKind::AlignmentVTemplate => 14,
+        TokenListReplayKind::BackedUp => 15,
     });
 }
 

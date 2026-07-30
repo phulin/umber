@@ -1,6 +1,5 @@
 use tex_state::math::{LimitType, MathStyle, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::{PrintSink, Universe};
 
 pub(super) fn noad_kind_for_constructor(primitive: UnexpandablePrimitive) -> NoadKind {
     match primitive {
@@ -26,8 +25,14 @@ pub(super) fn style_for_primitive(primitive: UnexpandablePrimitive) -> MathStyle
     }
 }
 
-pub(super) fn report_math_error(stores: &mut Universe, text: &str) {
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, &format!("\n! {text}.\n"));
-}
+/// tex.web §1064's `off_save` help, shared by every group it can repair.
+///
+/// `off_save` prints one `help5` regardless of which terminator it inserted,
+/// so `Missing }`, `Missing \endgroup` and `Missing \right.` all carry it.
+pub(super) const OFF_SAVE_HELP: [&str; 5] = [
+    "I've inserted something that you may have forgotten.",
+    "(See the <inserted text> above.)",
+    "With luck, this will get me unwedged. But if you",
+    "really didn't forget anything, try typing `2' now; then",
+    "my insertion and my current dilemma will both disappear.",
+];

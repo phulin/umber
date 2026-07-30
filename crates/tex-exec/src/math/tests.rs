@@ -39,7 +39,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
     assert_eq!(stores.count(0), 7);
     let fallback = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
     assert_ne!(
-        consume_display_alignment_closer(&mut input, &mut stores, fallback)
+        consume_display_alignment_closer(&mut input, &mut stores, &mut execution, fallback)
             .expect("double math shift closes"),
         fallback
     );
@@ -58,7 +58,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
 
     let mut missing = InputStack::new(MemoryInput::new("q"));
     assert_eq!(
-        consume_display_alignment_closer(&mut missing, &mut stores, fallback)
+        consume_display_alignment_closer(&mut missing, &mut stores, &mut execution, fallback)
             .expect("missing closer recovers"),
         fallback
     );

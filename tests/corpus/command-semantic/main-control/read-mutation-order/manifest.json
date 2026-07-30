@@ -32,11 +32,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./read-mutation-order.tex )",
-            "actual": "(./read-mutation-order.tex"
-          }
+          "mismatch": { "line": 2, "expected": "(./read-mutation-order.tex )", "actual": "(./read-mutation-order.tex" }
         },
         "log": {
           "kind": "xfail",
@@ -47,12 +43,8 @@
             "actual": "(./read-mutation-order.tex"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

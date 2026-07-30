@@ -127,6 +127,17 @@ revalidates the closed case after execution so no ambient output can appear.
 
 Each case also declares a `channels` block accounting for every observable its run produces -- `events`, `status`, `terminal`, `log`, `dvi`, and `effects` -- because a projection asserts one observable and is not coverage of the run. A case with no block fails validation; the only exemption is a case whose run does not complete, and it is granted only to a case already pinned as `xfail`. **The authority rule above governs `expected` (the projection), and the same rule now governs the channel bytes too.** Every applicable fixture-local `expected.<channel>` file holds the pinned instrumented pdfTeX 1.40.27 oracle's own bytes, for `file` and `xfail` alike (`umber2-alfh.1`/`umber2-alfh.7`): a channel where Umber does not yet match those bytes is `xfail` with a `mismatch` pinning the first divergence and a `bug`, never a self-pin against Umber's own output. `StreamDisposition` carries no `authority` field, because there is now exactly one place a committed channel's bytes can have come from; reading a green `file` channel as canonical evidence needs no further check.
 
+A `mismatch` records only _where_ a channel first diverges, which is enough to
+tell that a case is wrong and never enough to tell what to change. To see both
+sides in full, run
+`cargo run -p tex-command-stream --bin command-semantic-channels -- --diff <substring>`:
+it prints each matching case's source and then the oracle's terminal text
+beside Umber's, line-numbered, with differing rows marked and spaces shown as
+`·` (§314's descriptors end in a load-bearing space). `--diff-log` shows the
+transcript instead, which is where §90 puts an error's help lines, so a
+help-routing difference is invisible in the terminal one. Neither writes
+anything, so both are safe against an uncommitted tree.
+
 The `etex-diagnostics/` domain owns bounded e-TeX-only diagnostic command
 microfixtures. Its sessions explicitly install the e-TeX INITEX profile and
 project detached effects, selected unchanged state, and pinned e-TeX/SyncTeX eqtb register selectors.

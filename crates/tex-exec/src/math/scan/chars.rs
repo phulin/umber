@@ -8,7 +8,6 @@ use tex_state::token::{OriginId, Token};
 use crate::{ExecError, ModeNest, push_tokens};
 
 use super::scan_math_field;
-use crate::math::support::report_math_error;
 
 pub(crate) fn append_mathcode_char(
     nest: &mut ModeNest,
@@ -164,14 +163,19 @@ pub(crate) fn attach_script(
     };
     if !matches!(target, MathField::Empty) {
         nest.current_list_mutation().push(node);
-        report_math_error(
-            stores,
-            if superscript {
-                "Double superscript"
-            } else {
-                "Double subscript"
-            },
-        );
+        // §1177's `<Insert a dummy noad to be sub/superscripted>`.
+        let (message, help) = if superscript {
+            (
+                "Double superscript",
+                "I treat `x^1^2' essentially like `x^1{}^2'.",
+            )
+        } else {
+            (
+                "Double subscript",
+                "I treat `x_1_2' essentially like `x_1{}_2'.",
+            )
+        };
+        crate::error_report::report_input_error(input, stores, message, &[help]);
         push_scripted_empty_noad(nest, field, superscript);
     } else {
         *target = field;

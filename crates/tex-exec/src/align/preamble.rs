@@ -44,11 +44,20 @@ pub(crate) fn scan_preamble(
         }
     };
     if !has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing { inserted while scanning alignment preamble.\n",
+        // TeX82 §403's `scan_left_brace`, reached from `scan_spec`: report
+        // with `back_error` and then proceed as if the brace had been there.
+        crate::error_report::back_error(
+            input,
+            stores,
+            TracedTokenWord::pack(opener, tex_state::token::OriginId::UNKNOWN),
+            "Missing { inserted",
+            &[
+                "A left brace was mandatory here, so I've put one in.",
+                "You might want to delete and/or insert some corrections",
+                "so that I will find a matching right brace soon.",
+                "(If you're confused by all this, try typing `I}' now.)",
+            ],
         );
-        crate::push_tokens(input, stores, [opener]);
     }
     // TeX.web `init_align` enters an align_group before scanning the
     // preamble. A second align_group is then installed for the first entry.
@@ -58,7 +67,13 @@ pub(crate) fn scan_preamble(
     input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::Preamble);
 
     let end_template = stores.frozen_end_template_token();
-    let mut scanner = PreambleScanner::new(input, stores, execution);
+    // TeX82 §338's `sprint_cs(warning_index)`: the `\halign` or `\valign`
+    // whose preamble a runaway report names.
+    let warning_index = tex_command::command_token_text(
+        &mut stores.command_context(),
+        tex_expand::semantic_token(context),
+    );
+    let mut scanner = PreambleScanner::new(input, stores, execution, warning_index);
     let mut columns = Vec::new();
     let mut tabskips = vec![scanner.current_tabskip()];
     let mut loop_start = None;
@@ -189,9 +204,17 @@ fn scan_v_template(
             None => unreachable!("preamble EOF is converted to recovery tokens"),
         };
         if is_parameter_token(scanner.stores, token) {
-            scanner.stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Only one # is allowed per tab.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nmore than one, so I'm ignoring all but the first.\n",
+            // TeX82 §784's second `#` in one v-template: a plain `error`, so
+            // the extra parameter token is simply dropped.
+            crate::error_report::report_input_error(
+                scanner.input,
+                scanner.stores,
+                "Only one # is allowed per tab",
+                &[
+                    "There should be exactly one # between &'s, when an",
+                    "\\halign or \\valign is being set up. In this case you had",
+                    "more than one, so I'm ignoring all but the first.",
+                ],
             );
             continue;
         }
@@ -231,6 +254,8 @@ struct PreambleScanner<'a, 'ctx> {
     execution: &'a mut crate::ExecutionContext<'ctx>,
     lookahead: Option<PreambleToken>,
     current_tabskip: GlueId,
+    /// TeX82 §306's `warning_index`, rendered once for §338's runaway report.
+    warning_index: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,6 +270,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
         input: &'a mut InputStack,
         stores: &'a mut Universe,
         execution: &'a mut crate::ExecutionContext<'ctx>,
+        warning_index: String,
     ) -> Self {
         let current_tabskip = stores.glue_param(GlueParam::TAB_SKIP);
         Self {
@@ -253,6 +279,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             stores,
             execution,
             lookahead: None,
+            warning_index,
         }
     }
 
@@ -356,7 +383,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             [TracedTokenWord::pack(right_brace, right_origin), traced],
         );
         self.lookahead = Some(PreambleToken::RecoveryCr);
-        self.report_runaway_preamble();
+        self.report_runaway_preamble(false);
         PreambleToken::Token(Token::Char {
             ch: ' ',
             cat: Catcode::Space,
@@ -378,21 +405,54 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             self.stores,
             [TracedTokenWord::pack(right_brace, origin)],
         );
-        self.report_runaway_preamble();
+        self.report_runaway_preamble(true);
         PreambleToken::RecoveryCr
     }
 
-    fn report_runaway_preamble(&mut self) {
-        self.stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! File ended or forbidden control sequence found while scanning alignment preamble.\nI've inserted \\cr and a closing brace and will continue.\n",
+    /// TeX82 §338's `<Tell the user what has run away and try to recover>`
+    /// with §339's `aligning` case of `scanner_status`.
+    ///
+    /// §338 distinguishes the two ways a preamble can run away by whether
+    /// `cur_cs` survived: an exhausted file has none, an `\outer` macro is
+    /// the control sequence itself. The recovery tokens are already on the
+    /// input stack, so §82's display names them as the report's own levels.
+    fn report_runaway_preamble(&mut self, ended: bool) {
+        let opening = if ended {
+            "File ended"
+        } else {
+            "Forbidden control sequence found"
+        };
+        crate::error_report::report_input_error(
+            self.input,
+            self.stores,
+            &format!(
+                "{opening} while scanning preamble of {}",
+                self.warning_index
+            ),
+            &[
+                "I suspect you have forgotten a `}', causing me",
+                "to read past where you wanted me to stop.",
+                "I'll try to recover; but if the error is serious,",
+                "you'd better type `E' or `X' now and fix your file.",
+            ],
         );
     }
 
+    /// TeX82 §783's u-template scan reaching a tab or `\cr` with no `#`.
+    ///
+    /// §783 uses `back_error`, and the caller has already parked the
+    /// offending token in [`Self::lookahead`] for the v-template scan to
+    /// re-read, which is this scanner's form of §325's `back_input`.
     fn report_missing_parameter(&mut self) {
-        self.stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing # inserted in alignment preamble.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nnone, so I've put one in; maybe that will work.\n",
+        crate::error_report::report_input_error(
+            self.input,
+            self.stores,
+            "Missing # inserted in alignment preamble",
+            &[
+                "There should be exactly one # between &'s, when an",
+                "\\halign or \\valign is being set up. In this case you had",
+                "none, so I've put one in; maybe that will work.",
+            ],
         );
     }
 

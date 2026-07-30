@@ -2760,26 +2760,97 @@ impl World {
     }
 
     /// Buffers routed output as a deferred effect record.
+    /// tex.web §58's `print_char`, over a whole string.
+    ///
+    /// §58 wraps the terminal and the transcript independently: each keeps
+    /// its own offset (`term_offset`, `file_offset`), and each emits a line
+    /// break of its own the moment that offset reaches `max_print_line`.
+    /// A `\write` stream has no offset in §58 at all -- its case is a bare
+    /// `write(write_file[selector],xchr[s])` -- so stream text is never
+    /// wrapped.
+    ///
+    /// The two printable offsets diverge routinely (§71's log-only echo of a
+    /// typed line, §245's `begin_diagnostic` redirect, §90's help lines), so
+    /// one [`PrintSink::TerminalAndLog`] call can legitimately place its
+    /// breaks at different points in the two sinks. The record describes what
+    /// each sink actually received, so a call whose two wrappings differ
+    /// records one write per sink rather than one shared write.
     pub fn write_text(&mut self, sink: PrintSink, text: &str) {
+        let (terminal_offset, log_offset) = {
+            let bufs = self.stream_bufs();
+            (
+                bufs.terminal_partial_line.chars().count(),
+                bufs.log_partial_line.chars().count(),
+            )
+        };
+        match sink {
+            PrintSink::Terminal => {
+                let wrapped = wrap_print_lines(text, terminal_offset);
+                self.record_printable_write(PrintSink::Terminal, wrapped);
+            }
+            PrintSink::Log => {
+                let wrapped = wrap_print_lines(text, log_offset);
+                self.record_printable_write(PrintSink::Log, wrapped);
+            }
+            PrintSink::TerminalAndLog => {
+                let terminal = wrap_print_lines(text, terminal_offset);
+                let log = wrap_print_lines(text, log_offset);
+                if terminal == log {
+                    self.record_printable_write(PrintSink::TerminalAndLog, terminal);
+                } else {
+                    self.record_printable_write(PrintSink::Terminal, terminal);
+                    self.record_printable_write(PrintSink::Log, log);
+                }
+            }
+            PrintSink::Stream(slot) => {
+                self.append_effect(EffectRecord::StreamWrite {
+                    sink,
+                    text: text.to_owned(),
+                });
+                append_partial_line(
+                    &mut self.stream_bufs_mut().partial_lines[slot.index()],
+                    text,
+                );
+            }
+        }
+    }
+
+    /// tex.web §54's `wterm`/`wlog`: a direct write to the terminal or the
+    /// transcript that bypasses §58's print primitives entirely.
+    ///
+    /// The Pascal `write(term_out,...)` and `write(log_file,...)` macros
+    /// touch neither `term_offset` nor `file_offset`, so text sent this way
+    /// neither wraps at `max_print_line` nor counts toward the column a
+    /// later `print_nl` consults. §61's and §536's start-up banners are the
+    /// sites that depend on it: the banner is longer than `max_print_line`
+    /// and is nevertheless one unbroken line in every reference transcript.
+    pub fn write_text_unmetered(&mut self, sink: PrintSink, text: &str) {
+        debug_assert!(
+            !matches!(sink, PrintSink::Stream(_)),
+            "§54's wterm/wlog address the terminal and the transcript only"
+        );
         self.append_effect(EffectRecord::StreamWrite {
             sink,
             text: text.to_owned(),
         });
+    }
+
+    /// Records one already-wrapped write to a printable sink and advances
+    /// that sink's §58 offset.
+    fn record_printable_write(&mut self, sink: PrintSink, text: String) {
+        self.append_effect(EffectRecord::StreamWrite {
+            sink,
+            text: text.clone(),
+        });
+        let bufs = self.stream_bufs_mut();
         match sink {
-            PrintSink::Terminal => {
-                append_partial_line(&mut self.stream_bufs_mut().terminal_partial_line, text)
-            }
-            PrintSink::Log => {
-                append_partial_line(&mut self.stream_bufs_mut().log_partial_line, text)
-            }
+            PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, &text),
+            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &text),
             PrintSink::TerminalAndLog => {
-                append_partial_line(&mut self.stream_bufs_mut().terminal_partial_line, text);
-                append_partial_line(&mut self.stream_bufs_mut().log_partial_line, text);
+                append_partial_line(&mut bufs.terminal_partial_line, &text);
+                append_partial_line(&mut bufs.log_partial_line, &text);
             }
-            PrintSink::Stream(slot) => append_partial_line(
-                &mut self.stream_bufs_mut().partial_lines[slot.index()],
-                text,
-            ),
+            PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
     }
 
@@ -3722,6 +3793,35 @@ struct MemoryBackend {
     artifacts: BTreeMap<ContentHash, Vec<u8>>,
     terminal_output: Vec<u8>,
     log_output: Vec<u8>,
+}
+
+/// tex.web §58's `if term_offset=max_print_line then wterm_cr`, applied to a
+/// whole string starting from `offset`.
+///
+/// Returns `text` with a line break inserted wherever the sink's own column
+/// would have reached [`crate::print::MAX_PRINT_LINE`]. A break the text
+/// already carries resets the column, exactly as §57's `print_ln` does.
+fn wrap_print_lines(text: &str, offset: usize) -> String {
+    let limit = crate::print::MAX_PRINT_LINE;
+    if offset + text.chars().count() < limit && !text.contains('\n') {
+        return text.to_owned();
+    }
+    let mut wrapped = String::with_capacity(text.len() + text.len() / limit + 1);
+    let mut column = offset;
+    for character in text.chars() {
+        if character == '\n' {
+            wrapped.push('\n');
+            column = 0;
+            continue;
+        }
+        wrapped.push(character);
+        column += 1;
+        if column == limit {
+            wrapped.push('\n');
+            column = 0;
+        }
+    }
+    wrapped
 }
 
 fn append_partial_line(buffer: &mut String, text: &str) {

@@ -186,11 +186,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             // Undefined tokens can reach main control without passing through
             // expansion (for example after \noexpand or scanner recovery).
             // TeX diagnoses and consumes them rather than aborting the run.
-            let name = stores.resolve_cs_name(token);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!("\n! Undefined control sequence \\{name}.\n"),
-            );
+            crate::executor::report_undefined_control_sequence(input, stores);
             Ok(DispatchAction::Continue)
         }
         Meaning::CharGiven(ch) => {
@@ -216,9 +212,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
             origin,
         }),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            // tex.web §1135's `cs_error`.
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                "Extra \\endcsname",
+                &["I'm ignoring this, since I wasn't doing a \\csname."],
             );
             Ok(DispatchAction::Continue)
         }
@@ -304,16 +303,23 @@ fn dispatch_character_token(
             assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             if let Err(error) = leave_group_with_origin(input, stores, GroupKind::Simple, origin) {
                 match error {
-                    ExecError::TooManyRightBraces { .. } => stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        "\n! Too many }'s.\nYou've closed more groups than you opened.\nSuch booboos are generally harmless, so keep going.\n",
-                    ),
-                    ExecError::ExtraRightBraceOrForgottenDollar { .. } => stores
-                        .world_mut()
-                        .write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            "\n! Extra }, or forgotten $.\nI've deleted a group-closing symbol because it seems to be\nspurious, as in `$x}$'. But perhaps the } is legitimate and\nyou forgot something else, as in `\\hbox{$x}'.\n",
-                        ),
+                    // tex.web §1068's `bottom_level` case of `handle_right_brace`.
+                    ExecError::TooManyRightBraces { .. } => {
+                        crate::error_report::report_input_error(
+                            input,
+                            stores,
+                            "Too many }'s",
+                            &[
+                                "You've closed more groups than you opened.",
+                                "Such booboos are generally harmless, so keep going.",
+                            ],
+                        );
+                    }
+                    // §1069's `extra_right_brace`, whose message names the
+                    // closer the open group was actually waiting for.
+                    ExecError::ExtraRightBraceOrForgottenDollar { .. } => {
+                        report_extra_right_brace(input, stores, "$");
+                    }
                     error => return Err(error),
                 }
             } else {
@@ -379,6 +385,26 @@ fn dispatch_character_token(
             unreachable!("caller passes a character token")
         }
     }
+}
+
+/// tex.web §1069's `extra_right_brace`.
+///
+/// `expected` is what §1069's `case cur_group of` prints after the message
+/// stem: `\endgroup`, `$`, or `\right`. Only the math-shift case reaches
+/// here; the semi-simple one still leaves main control as a typed error.
+fn report_extra_right_brace(input: &InputStack, stores: &mut Universe, expected: &str) {
+    crate::error_report::report_input_error(
+        input,
+        stores,
+        &format!("Extra }}, or forgotten {expected}"),
+        &[
+            "I've deleted a group-closing symbol because it seems to be",
+            "spurious, as in `$x}$'. But perhaps the } is legitimate and",
+            "you forgot something else, as in `\\hbox{$x}'. In such cases",
+            "the way to recover is to insert both the forgotten and the",
+            "deleted material, e.g., by typing `I$}'.",
+        ],
+    );
 }
 
 fn start_paragraph_before_replaying_character(

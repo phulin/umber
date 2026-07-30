@@ -27,30 +27,10 @@
       "channels": {
         "events": 4,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.1 \\showlists",
-            "actual": ")"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 10,
-            "expected": "l.1 \\showlists",
-            "actual": ""
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -37,8 +37,8 @@ mod tests;
 
 pub use channels::{
     CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, STREAM_CHANNELS,
-    StreamChannel, StreamDisposition, first_line_difference, normalize_log_clock,
-    validate_xfail_disposition,
+    StreamChannel, StreamDisposition, first_line_difference, normalize_channel,
+    normalize_log_clock, validate_xfail_disposition,
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 
@@ -1022,6 +1022,26 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
     Ok(declared)
 }
 
+/// The `-fmt` identity this harness's two loaded profiles run under.
+///
+/// The name matches what `scripts/run-minifixture-oracle.sh` passes the
+/// oracle (`-fmt=etex-loaded`, `-fmt=production`), because that is web2c's
+/// `dump_name` and therefore what the reference engine's own terminal banner
+/// prints. The date is read from the session that was just dumped, exactly as
+/// tex.web §1328's `store_fmt_file` reads `\year`/`\month`/`\day` -- it is not
+/// the *oracle's* dump date, which was whatever day the capture ran, so the
+/// log's copy of it is normalized away before comparison
+/// (`channels::normalize_log_clock`).
+fn dumped_format_identity(name: &str, universe: &Universe) -> tex_exec::PreloadedFormat {
+    use tex_state::env::banks::IntParam;
+    tex_exec::PreloadedFormat {
+        name: name.to_owned(),
+        year: universe.int_param(IntParam::YEAR),
+        month: universe.int_param(IntParam::MONTH),
+        day: universe.int_param(IntParam::DAY),
+    }
+}
+
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let mut universe = Universe::new();
     for line in &case.terminal_lines {
@@ -1068,20 +1088,35 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 .map_err(|error| format!("e-TeX format restore: {error}"))?;
             tex_command::register_tex82_expandable_primitives(&mut universe);
             tex_command::register_etex_expandable_primitives(&mut universe);
-            CanonicalMainControl::with_profile(CommandProfile::ETEX26)
+            let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+            control.set_preloaded_format(dumped_format_identity("etex-loaded", &universe));
+            control
         }
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
-            CanonicalMainControl::new()
+            let mut control = CanonicalMainControl::new();
+            control.set_preloaded_format(dumped_format_identity("production", &universe));
+            control
         }
     };
     for (name, bytes) in &case.inputs {
+        // The same kpathsea `./` the root source carries, for the same
+        // reason: a bare `\input child.tex` resolves beside the job, and
+        // §537's `a_make_name_string` records -- and prints -- the resolved
+        // `./child.tex`. A declared name that already names a directory is
+        // taken as written, since kpathsea would not rewrite one.
+        let resolved = if name.contains('/') {
+            name.clone()
+        } else {
+            format!("./{name}")
+        };
         control.capabilities_mut().register_input(
             name,
             SourceRegistration::new(
                 RegisteredSourceKind::Generated,
                 Arc::<[u8]>::from(bytes.as_bytes()),
-            ),
+            )
+            .with_name(resolved),
         );
     }
     for (name, source) in &case.font_inputs {
@@ -1120,45 +1155,25 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     // carries no interaction mode.
     universe.set_interaction_mode(case.interaction_mode.engine_mode());
 
-    // `EtexLoaded` and `Production` construct `control` past INITEX
-    // (`with_profile`/`new` rather than `tex82_initex`/`prepared_initex`), so
-    // `CanonicalMainControl::begin_job`'s `format_ident` -- which only knows
-    // how to print INITEX's `" (INITEX)"` -- refuses outright rather than
-    // guess a `(preloaded format=...)` name for a format this harness never
-    // actually names or dumps to a file (see `job::format_ident`'s doc
-    // comment). `scripts/run-minifixture-oracle.sh` documents the same gap
-    // from the other side: it cannot reproduce either profile at all, so
-    // there is no oracle output these 5 cases could be framed against
-    // anyway. The honest choice is to leave them exactly as unframed as they
-    // were before this module ran every case as a job, rather than fabricate
-    // a banner neither side can check.
-    let job_framed = matches!(
-        case.profile,
-        SessionProfile::Initex | SessionProfile::EtexInitex
-    );
-    if job_framed {
-        // §534/§536/§61: the start-up banner and the `**` line, which must
-        // precede the root file's own `(` (see `crate::job`'s doc comment on
-        // `begin_job`). `first_line` echoes what the oracle is invoked with
-        // on its command line -- the bare source filename, e.g.
-        // `show-box.tex`.
-        control.begin_job(&mut universe, &case.source);
-    }
-    let root = SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source));
-    let root = if job_framed {
-        // kpathsea resolves a same-directory file through `./`, so pdfTeX's
-        // §537 `a_make_name_string` records (and prints) `./show-box.tex`
-        // rather than the bare name `begin_job` was just given. Matching
-        // that leading `./` is what makes Umber's own `(` line comparable to
-        // the oracle's. An unframed run leaves the root unnamed, exactly as
-        // before this module existed: an unnamed registration queues no
-        // §537 `FileFramingEvent::Open` (see `tex_command::CommandState::
-        // push_source_level`), so it prints no orphan `(` without the
-        // banner that would normally precede it.
-        root.with_name(format!("./{}", case.source))
-    } else {
-        root
-    };
+    // Every profile is framed. `EtexLoaded`/`Production` used to be left
+    // unframed because `begin_job` could only spell INITEX's `" (INITEX)"`
+    // and no oracle could be reproduced to check a fabricated
+    // `(preloaded format=...)` against. Both halves of that are now closed:
+    // the oracle runner does a real `\dump`/`-fmt` roundtrip
+    // (`umber2-alfh.1`), and `job::terminal_format_ident`/`log_format_ident`
+    // spell the two sinks' different renderings from a declared
+    // `PreloadedFormat` rather than guessing one (`umber2-alfh.15`).
+    // §534/§536/§61: the start-up banner and the `**` line, which must
+    // precede the root file's own `(` (see `crate::job`'s doc comment on
+    // `begin_job`). `first_line` echoes what the oracle is invoked with on
+    // its command line -- the bare source filename, e.g. `show-box.tex`.
+    control.begin_job(&mut universe, &case.source);
+    // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
+    // `a_make_name_string` records (and prints) `./show-box.tex` rather than
+    // the bare name `begin_job` was just given. Matching that leading `./` is
+    // what makes Umber's own `(` line comparable to the oracle's.
+    let root = SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source))
+        .with_name(format!("./{}", case.source));
     control
         .register_root_source(root)
         .map_err(|error| format!("source registration: {error:?}"))?;
@@ -1218,18 +1233,14 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                 } else {
                     Vec::new()
                 };
-                // §1333's DVI/transcript report is itself framing (it closes
-                // out the banner `begin_job` printed), so it is gated on
-                // `job_framed` exactly like `begin_job` above -- an unframed
-                // run gets neither end.
-                if job_framed {
-                    let job_name = control.capabilities_mut().job_name().to_owned();
-                    let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
-                        file_name: format!("{job_name}.dvi"),
-                        byte_len: dvi.len() as u64,
-                    });
-                    control.finish_job(&mut universe, dvi_output);
-                }
+                // §1333's DVI/transcript report closes out the banner
+                // `begin_job` printed, so every run gets both ends.
+                let job_name = control.capabilities_mut().job_name().to_owned();
+                let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
+                    file_name: format!("{job_name}.dvi"),
+                    byte_len: dvi.len() as u64,
+                });
+                control.finish_job(&mut universe, dvi_output);
                 return Ok(SemanticRun {
                     observations: recorder.0,
                     counts,

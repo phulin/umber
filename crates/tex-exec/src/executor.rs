@@ -21,6 +21,7 @@ use tex_state::{
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
+use crate::error_report::{back_error, report_input_error};
 use crate::mode::ignored_depth;
 use crate::output;
 use crate::timing::TelemetryTimer;
@@ -28,48 +29,194 @@ use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
 fn report_recoverable_expansion_diagnostics(
+    input: &InputStack,
     execution: &mut crate::ExecutionContext<'_>,
     stores: &mut Universe,
 ) {
     for diagnostic in execution.take_recoverable_diagnostics() {
         match diagnostic {
-            tex_expand::RecoverableExpansionDiagnostic::UndefinedControlSequence {
-                name, ..
-            } => stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!("\n! Undefined control sequence \\{name}.\n"),
-            ),
+            tex_expand::RecoverableExpansionDiagnostic::UndefinedControlSequence { .. } => {
+                report_undefined_control_sequence(input, stores);
+            }
             tex_expand::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
                 macro_name,
                 ..
-            } => stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
-            ),
+            } => {
+                report_macro_does_not_match(input, stores, &macro_name);
+            }
             tex_expand::RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
                 macro_name,
                 ..
-            } => stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!("\n! File ended while scanning use of {macro_name}.\nI've inserted a \\par so the unfinished call can be discarded.\n"),
-            ),
+            } => {
+                // §338's `Tell the user what has run away`: `runaway` first,
+                // then the report. The `\par` that §338 inserts to unwind the
+                // call has already been pushed by the argument scanner.
+                report_runaway(stores, "argument", &[]);
+                report_input_error(
+                    input,
+                    stores,
+                    &format!("File ended while scanning use of {macro_name}"),
+                    RUNAWAY_RECOVERY_HELP,
+                );
+            }
             tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
+                // §428's `Complain that \the can't do this; give zero result`.
                 let token = tex_expand::meaning_text(stores, tex_expand::semantic_token(context));
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    &format!(
-                        "\n! You can't use `{token}' after \\the.\nI'm forgetting what you said and using zero instead.\n"
-                    ),
+                report_input_error(
+                    input,
+                    stores,
+                    &format!("You can't use `{token}' after \\the"),
+                    &["I'm forgetting what you said and using zero instead."],
                 );
             }
             tex_expand::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { .. } => {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+                // §403's `scan_toks`. tex.web reports this with `back_error`;
+                // the general-text scanner has already backed the offending
+                // token up, so §82's context shows it as `<to be read again>`.
+                report_input_error(
+                    input,
+                    stores,
+                    "Missing { inserted",
+                    &[
+                        "A left brace was mandatory here, so I've put one in.",
+                        "You might want to delete and/or insert some corrections",
+                        "so that I will find a matching right brace soon.",
+                        "(If you're confused by all this, try typing `I}' now.)",
+                    ],
                 );
             }
         }
     }
+}
+
+/// §338's and §396's shared advice for a list that ran past its closing brace.
+const RUNAWAY_RECOVERY_HELP: &[&str] = &[
+    "I suspect you have forgotten a `}', causing me",
+    "to read past where you wanted me to stop.",
+    "I'll try to recover; but if the error is serious,",
+    "you'd better type `E' or `X' now and fix your file.",
+];
+
+/// tex.web §370's `Complain about an undefined macro`.
+///
+/// The message deliberately does not name the control sequence: §82's context
+/// display ends with it, which is what the help text means by "the control
+/// sequence at the end of the top line".
+pub(crate) fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
+    report_input_error(
+        input,
+        stores,
+        "Undefined control sequence",
+        &[
+            "The control sequence at the end of the top line",
+            "of your error message was never \\def'ed. If you have",
+            "misspelled it (e.g., `\\hobx'), type `I' and the correct",
+            "spelling (e.g., `I\\hbox'). Otherwise just continue,",
+            "and I'll forget about whatever was undefined.",
+        ],
+    );
+}
+
+/// tex.web §398's `Report an improper use of the macro and abort`.
+fn report_macro_does_not_match(input: &InputStack, stores: &mut Universe, macro_name: &str) {
+    report_input_error(
+        input,
+        stores,
+        &format!("Use of {macro_name} doesn't match its definition"),
+        &[
+            "If you say, e.g., `\\def\\a1{...}', then you must always",
+            "put `1' after `\\a', since control sequence names are",
+            "made up of letters only. The macro here has not been",
+            "followed by the required stuff, so I'm ignoring it.",
+        ],
+    );
+}
+
+/// tex.web §396's `Report a runaway argument and abort`.
+///
+/// The `\par` that ended the argument is `back_error`'d rather than dropped,
+/// so main control sees it once the aborted call has been unwound.
+fn report_paragraph_ended_before_complete(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    macro_name: &str,
+    terminator: TracedTokenWord,
+) {
+    report_runaway(stores, "argument", &[]);
+    back_error(
+        input,
+        stores,
+        terminator,
+        &format!("Paragraph ended before {macro_name} was complete"),
+        &[
+            "I suspect you've forgotten a `}', causing me to apply this",
+            "control sequence to too much text. How can we recover?",
+            "My plan is to forget the whole thing and hope for the best.",
+        ],
+    );
+}
+
+/// tex.web §338's `Tell the user what has run away`, reached from §336's
+/// `check_outer_validity` with `scanner_status=matching`.
+///
+/// §337 backs the `\outer` control sequence up so it can be reread, which is
+/// why §82's context shows it as `<to be read again>`. §338 additionally
+/// pushes a `\par` above it to unwind the call; Umber's argument scanner does
+/// not, so that `<inserted text>` level is still missing here.
+fn report_forbidden_outer_token(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    macro_name: &str,
+    outer: TracedTokenWord,
+) {
+    report_runaway(stores, "argument", &[]);
+    back_error(
+        input,
+        stores,
+        outer,
+        &format!("Forbidden control sequence found while scanning use of {macro_name}"),
+        RUNAWAY_RECOVERY_HELP,
+    );
+}
+
+/// tex.web §306's `runaway`.
+///
+/// `scanner_status` decides the noun: a `definition`, an `argument`, a
+/// `preamble`, or a `text` ran away. §306 prints that noun, a `?`, a
+/// `print_ln`, and then §292's `show_token_list` of everything the aborted
+/// scanner had absorbed, bounded to `error_line - 10` so one runaway cannot
+/// flood the terminal. It runs *before* the `print_err` of its caller (§338,
+/// §396), so the partial text sits above the message rather than inside it,
+/// and the message itself only has to name the macro.
+///
+/// `partial` is that absorbed list. Umber's argument scanner discards the
+/// tokens it had matched when it raises the error, so the argument callers
+/// pass an empty list and print the header alone; a scanner that still holds
+/// its list should pass it.
+fn report_runaway(stores: &mut Universe, kind: &str, partial: &[tex_state::token::Token]) {
+    // §11's `error_line`, mirrored by `show_context`'s copy of the same
+    // compile-time WEB constant.
+    const DISPLAY_LIMIT: usize = 79 - 10;
+
+    let mut display = String::new();
+    let mut rest = partial;
+    while let [token, tail @ ..] = rest {
+        if display.chars().count() >= DISPLAY_LIMIT {
+            break;
+        }
+        tex_expand::append_token_show_text(stores, *token, &mut display);
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        display.push_str("\\ETC.");
+    }
+
+    let mut printer = stores.printer();
+    printer.print_nl("Runaway ");
+    printer.print(kind);
+    printer.print_char('?');
+    printer.print_ln();
+    printer.print(&display);
 }
 
 /// Object-safe host boundary used only by the `\font` assignment.
@@ -147,6 +294,9 @@ pub(crate) struct PendingParagraphMemo {
     pub(crate) break_dependency_ordinals: Vec<u32>,
     pub(crate) prev_graf: Option<i32>,
     pub(crate) continuation: ParagraphContinuation,
+    /// Effect-list length when the region was published, which is where the
+    /// line-breaking half of the paragraph's own effects begins.
+    pub(crate) break_effect_start: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1871,7 +2021,14 @@ where
         #[cfg(feature = "profiling")]
         let mut paragraph_probe_anchor = None;
         abandon_stale_vertical_paragraph_probe(nest, stores, execution);
-        report_recoverable_expansion_diagnostics(execution, stores);
+        // tex.web's `line` global, which §660/§675's box diagnostics and
+        // §1091's `mode_line` report positions from. `CanonicalMainControl`
+        // publishes it around each delivered command; this loop is the
+        // executor's equivalent point.
+        stores.set_current_input_line(input.current_source_frame().map_or(0, |frame| {
+            i32::try_from(frame.line_number()).unwrap_or(i32::MAX)
+        }));
+        report_recoverable_expansion_diagnostics(input, execution, stores);
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
         }
@@ -2036,11 +2193,8 @@ where
             match get_x_token_with_context(input, &mut expansion, execution) {
                 Ok(token) => token,
                 Err(tex_expand::ExpandError::Captured { error, site }) => match *error {
-                    tex_expand::ExpandError::UndefinedControlSequence { name, .. } => {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Undefined control sequence \\{name}.\n"),
-                        );
+                    tex_expand::ExpandError::UndefinedControlSequence { .. } => {
+                        report_undefined_control_sequence(input, stores);
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
@@ -2048,29 +2202,25 @@ where
                             macro_name, ..
                         },
                     ) => {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
-                        );
+                        report_macro_does_not_match(input, stores, &macro_name);
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
                         tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
                             macro_name,
                             context,
-                        }
-                        | tex_expand::args::MacroCallError::ForbiddenOuterToken {
+                        },
+                    ) => {
+                        report_paragraph_ended_before_complete(input, stores, &macro_name, context);
+                        continue;
+                    }
+                    tex_expand::ExpandError::MacroCall(
+                        tex_expand::args::MacroCallError::ForbiddenOuterToken {
                             macro_name,
                             context,
                         },
                     ) => {
-                        crate::push_traced_tokens(input, stores, [context]);
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!(
-                                "\n! Runaway argument while scanning use of {macro_name}.\nThe terminating token will be read again.\n"
-                            ),
-                        );
+                        report_forbidden_outer_token(input, stores, &macro_name, context);
                         continue;
                     }
                     tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
@@ -2087,15 +2237,12 @@ where
                         .into());
                     }
                 },
-                Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
+                Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
                     // In TeX.web main_control, undefined control sequences
                     // report an error and otherwise behave like a consumed
                     // relax token. Scanner-owned expansion errors still
                     // propagate from their scanner call sites.
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Undefined control sequence \\{name}.\n"),
-                    );
+                    report_undefined_control_sequence(input, stores);
                     continue;
                 }
                 Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
@@ -2103,47 +2250,45 @@ where
                     continue;
                 }
                 Err(tex_expand::ExpandError::Lex(tex_lex::LexError::InvalidCharacter {
-                    ch,
                     ..
                 })) => {
-                    // TeX.web's `get_next` reports an invalid-category input
-                    // character and restarts tokenization after consuming it.
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Text line contains an invalid character ({ch}).\n"),
+                    // TeX.web §345's `Decry the invalid character and goto
+                    // restart`: `get_next` reports it and restarts
+                    // tokenization after consuming it. §73's message does not
+                    // name the character; §82's context display shows it.
+                    report_input_error(
+                        input,
+                        stores,
+                        "Text line contains an invalid character",
+                        &[
+                            "A funny symbol that I can't read has just been input.",
+                            "Continue, and I'll forget that it ever happened.",
+                        ],
                     );
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
                     tex_expand::args::MacroCallError::DoesNotMatchDefinition { macro_name, .. },
                 )) => {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
-                    );
+                    report_macro_does_not_match(input, stores, &macro_name);
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
                     tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
                         macro_name,
                         context,
-                    }
-                    | tex_expand::args::MacroCallError::ForbiddenOuterToken {
+                    },
+                )) => {
+                    report_paragraph_ended_before_complete(input, stores, &macro_name, context);
+                    continue;
+                }
+                Err(tex_expand::ExpandError::MacroCall(
+                    tex_expand::args::MacroCallError::ForbiddenOuterToken {
                         macro_name,
                         context,
                     },
                 )) => {
-                    // With scanner_status=matching, TeX.web §336 aborts the
-                    // partial macro call and inserts/replays the token that
-                    // terminated it (normally \par or an outer control
-                    // sequence).
-                    crate::push_traced_tokens(input, stores, [context]);
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!(
-                            "\n! Runaway argument while scanning use of {macro_name}.\nThe terminating token will be read again.\n"
-                        ),
-                    );
+                    report_forbidden_outer_token(input, stores, &macro_name, context);
                     continue;
                 }
                 Err(err) => {
@@ -2173,13 +2318,9 @@ where
             match dispatch_delivered_token_with_context(nest, token, input, stores, execution) {
                 Ok(action) => action,
                 Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                    name,
                     ..
                 })) => {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Undefined control sequence \\{name}.\n"),
-                    );
+                    report_undefined_control_sequence(input, stores);
                     continue;
                 }
                 Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
@@ -2188,14 +2329,7 @@ where
                         tex_expand::ExpandError::UndefinedControlSequence { .. }
                     ) =>
                 {
-                    let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error
-                    else {
-                        unreachable!("guard restricts captured expansion error")
-                    };
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Undefined control sequence \\{name}.\n"),
-                    );
+                    report_undefined_control_sequence(input, stores);
                     continue;
                 }
                 Err(ExecError::UnsupportedAssignmentTarget) => {

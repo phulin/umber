@@ -57,27 +57,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 4,
-            "expected": "*",
-            "actual": "*(Please type a command or say `\\end')"
-          }
+          "mismatch": { "line": 4, "expected": "*", "actual": "*(Please type a command or say `\\end')" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 4,
-            "expected": "A=>B",
-            "actual": "A=>)"
-          }
+          "mismatch": { "line": 4, "expected": "A=>B", "actual": "A=>)" }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

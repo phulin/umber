@@ -26,29 +26,23 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:5e2b05c7bc86c47642341d39cbdaa76b1933aaf550f1758c1910a8198ba89899"
+        "artifact:58fbb52a89457fe20595b3a141a5f88d80a3db9788f1d8ec9c0fd74dd9ab3ee6"
       ],
       "channels": {
         "events": 180,
         "status": "clean",
-        "terminal": {
-          "kind": "file"
-        },
-        "log": {
-          "kind": "file"
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": {
           "kind": "xfail",
           "bug": "umber2-alfh.22",
           "mismatch": {
             "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0018umber dvi corpus special�\u0000K�`y\u0000"
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001bumber normalized dvi banner�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001bumber normalized dvi banner�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0018umber dvi corpus special�\u0000K�`y\u0000"
           }
         },
-        "effects": {
-          "kind": "empty"
-        }
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

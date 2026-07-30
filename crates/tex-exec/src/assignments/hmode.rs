@@ -350,10 +350,19 @@ pub(super) fn execute_hmode_material(
             let mut replace =
                 scan_hlist_group(input, stores, execution, "\\discretionary replace")?;
             if math_mode && !stores.nodes(replace).is_empty() {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Illegal math \\discretionary.\nSorry: The third part of a discretionary break must be\nempty, in math formulas. I had to delete your third part.\n",
-                );
+                // TeX.web §1120 deletes the third list and reports; the
+                // primitive name comes from `print_esc` so `\escapechar`
+                // still governs it.
+                let report_context = crate::diagnostics::show_context(stores, &input.summary());
+                let mut report = stores.print_err("Illegal math ");
+                report
+                    .print_esc("discretionary")
+                    .help(&[
+                        "Sorry: The third part of a discretionary break must be",
+                        "empty, in math formulas. I had to delete your third part.",
+                    ])
+                    .context(report_context);
+                report.error();
                 replace = stores.freeze_node_list(&[]);
             }
             nest.current_list_mutation().push(Node::Disc {
@@ -388,12 +397,14 @@ pub(super) fn execute_hmode_material(
             skip_optional_equals_x(input, stores, execution)?;
             let value = scan_i32(input, stores, execution, context)?;
             if !(1..=32767).contains(&value) {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    &format!(
-                        "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
-                    ),
-                );
+                // TeX.web §1243 rejects the value with §91's `int_error` and
+                // leaves the space factor untouched.
+                let report_context = crate::diagnostics::show_context(stores, &input.summary());
+                let mut report = stores.print_err("Bad space factor");
+                report
+                    .help(&["I allow only values in the range 1..32767 here."])
+                    .context(report_context);
+                report.int_error(value);
             } else {
                 nest.current_list_mutation().set_space_factor(value);
             }
@@ -449,10 +460,16 @@ fn execute_insert(
         });
     }
     if value == 255 {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
-        );
+        // TeX.web §1099 reserves box 255 for the output routine and silently
+        // redirects the insertion to class 0 after reporting.
+        let report_context = crate::diagnostics::show_context(stores, &input.summary());
+        let mut report = stores.print_err("You can't ");
+        report
+            .print_esc("insert")
+            .print_int(255)
+            .help(&["I'm changing to \\insert0; box 255 is special."])
+            .context(report_context);
+        report.error();
         value = 0;
     }
     let opener =

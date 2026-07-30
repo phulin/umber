@@ -27,7 +27,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:84aca043614872a2c3a7dea8593bb985078d9563f1bc9192915e4121119b5655"
+        "artifact:d349b10bd5a0ab95c1fdacb9c2685e9c43db388bdf526367aa1a8fe46de378de"
       ],
       "channels": {
         "events": 257,
@@ -50,18 +50,8 @@
             "actual": "(./count-write-and-text.texship count 7"
           }
         },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0007\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006q��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0007\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006q��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

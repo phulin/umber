@@ -31,27 +31,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 4,
-            "expected": "<to be read again> ",
-            "actual": ")"
-          }
+          "mismatch": { "line": 8, "expected": "? )", "actual": ")" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 5,
-            "expected": "<to be read again> ",
-            "actual": "A left brace was mandatory here, so I've put one in."
-          }
+          "mismatch": { "line": 9, "expected": "? ", "actual": "A left brace was mandatory here, so I've put one in." }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

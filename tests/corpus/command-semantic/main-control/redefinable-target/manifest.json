@@ -27,18 +27,10 @@
       "channels": {
         "events": 86,
         "status": "clean",
-        "terminal": {
-          "kind": "file"
-        },
-        "log": {
-          "kind": "file"
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

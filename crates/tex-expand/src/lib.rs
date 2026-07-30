@@ -2351,6 +2351,44 @@ pub fn back_input<I>(
     back_input_with_kind(input, stores, tokens, TokenListReplayKind::Inserted);
 }
 
+/// tex.web §325's `back_input` without the rewind shortcuts, as §327's
+/// `back_error` needs it.
+///
+/// [`back_input`] may return a token by rewinding the level that delivered it
+/// -- undoing a macro-body advance, or moving a source frame's offset back --
+/// which leaves no new input level behind. That is invisible while the token
+/// is merely re-read, and visible the moment an error displays the stack:
+/// §311 shows a real `backed_up` level as its own `<to be read again>␣` line
+/// *above* the source line, and a rewound token as nothing but a shifted
+/// split point in the source line itself. An error report has to show the
+/// former, so this always pushes the level.
+///
+/// The level is `backed_up`, never `inserted`. §327's `ins_error` reaches its
+/// `inserted` level through [`insert_input`] instead, because the two differ
+/// in more than a descriptor: `undo_alignment_delivery` below cancels the
+/// `align_state` count `get_next` charged for a token it already delivered,
+/// which is right for returning that token and wrong for a repair token TeX
+/// is inserting for the first time. Inserting a `{` or `}` through this
+/// function would silently shift the alignment's brace depth by one.
+pub fn back_error_input<I>(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    tokens: I,
+) where
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    let mut buffer = input.take_transient_token_buffer();
+    for token in tokens {
+        input.undo_alignment_delivery(classify_alignment_token(stores, token).0);
+        buffer.push(token);
+    }
+    if buffer.is_empty() {
+        input.recycle_transient_token_buffer(buffer);
+        return;
+    }
+    input.push_transient_tokens(buffer, TokenListReplayKind::BackedUp);
+}
+
 fn back_input_with_kind<I>(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,

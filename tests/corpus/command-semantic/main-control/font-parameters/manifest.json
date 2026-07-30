@@ -31,11 +31,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "<recently read> \\nullfont ",
-            "actual": " )"
-          }
+          "mismatch": { "line": 4, "expected": "<recently read> \\nullfont ", "actual": " )" }
         },
         "log": {
           "kind": "xfail",
@@ -46,12 +42,8 @@
             "actual": "To increase the number of font parameters, you must"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

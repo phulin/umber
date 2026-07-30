@@ -742,9 +742,11 @@ fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
         .run(&mut input, &mut stores)
         .expect("undefined futurelet token recovers without unwinding alignment");
 
-    assert!(
-        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
-    );
+    // TeX82 §370 puts the offending name in §82's context display, not in
+    // the message text.
+    let text = support::terminal_effect_text(&stores);
+    assert!(text.contains("! Undefined control sequence."));
+    assert!(text.contains("\\missing"));
 }
 
 #[test]
@@ -2393,7 +2395,13 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
         .expect("runaway preamble recovery should resume ordinary execution");
 
     assert_eq!(stores.count(7), 456, "tokens after recovery must execute");
-    assert!(support::terminal_effect_text(&stores).contains("while scanning alignment preamble"));
+    // TeX82 §338 names the runaway by the surviving `cur_cs` and §339 by the
+    // `aligning` scanner status, so an `\outer` macro reports as a forbidden
+    // control sequence rather than as an exhausted file.
+    assert!(
+        support::terminal_effect_text_unbroken(&stores)
+            .contains("Forbidden control sequence found while scanning preamble of \\halign")
+    );
     assert!(
         stats.delivered_tokens < 1_000,
         "recovery must make bounded progress"

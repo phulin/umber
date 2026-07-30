@@ -5,6 +5,8 @@ use tex_state::ids::NodeListId;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
+use crate::pack_report::{PackedDirection, report_pack_diagnostics};
+
 #[must_use]
 pub(crate) fn hpack_params(stores: &Universe) -> HpackParams {
     HpackParams {
@@ -36,6 +38,12 @@ pub(crate) fn hpack(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    report_pack_diagnostics(
+        stores,
+        PackedDirection::Horizontal,
+        &packed.diagnostics,
+        &tex_state::node::Node::HList(packed.node),
+    );
     packed
 }
 
@@ -52,6 +60,12 @@ pub(crate) fn vpack(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    report_pack_diagnostics(
+        stores,
+        PackedDirection::Vertical,
+        &packed.diagnostics,
+        &tex_state::node::Node::VList(packed.node),
+    );
     packed
 }
 
@@ -68,5 +82,11 @@ pub(crate) fn vtop(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    report_pack_diagnostics(
+        stores,
+        PackedDirection::Vertical,
+        &packed.diagnostics,
+        &tex_state::node::Node::VList(packed.node),
+    );
     packed
 }

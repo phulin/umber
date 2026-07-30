@@ -843,6 +843,13 @@ pub(crate) fn publish_prepared_hlist(
         break_dependency_ordinals,
         prev_graf,
         continuation,
+        // The region published above closes its effect range here, but the
+        // paragraph is not finished: `line_break` still runs, and §660-§675's
+        // box diagnostics are effects of packing each line. Mark the boundary
+        // so `publish_finished_lines` can record that second half too --
+        // otherwise a reused paragraph replays what building its hlist
+        // printed and silently drops what breaking it printed.
+        break_effect_start: stores.world().effect_records().len(),
     });
 }
 
@@ -1066,6 +1073,7 @@ fn publish_recorded_region(
             break_dependency_ordinals: Vec::new(),
             prev_graf: None,
             continuation,
+            break_effect_start: stores.world().effect_records().len(),
         });
     }
 }
@@ -1090,6 +1098,20 @@ pub(crate) fn publish_finished_lines(
     );
     let publication_started = start_phase();
     let last_badness = stores.last_badness();
+    // A commit boundary between the two publications would drain the live
+    // effect suffix and leave the mark pointing past its end. That is not a
+    // capture this layer can complete, and dropping the effects silently is
+    // exactly the failure this records against, so refuse the region instead.
+    let break_effects = stores
+        .world()
+        .effect_records()
+        .get(pending.break_effect_start..)
+        .and_then(detach_effects);
+    let Some(break_effects) = break_effects else {
+        // Leaving the region's `lines` unset is what makes it unreusable:
+        // `try_reuse_aligned_paragraph` requires them.
+        return;
+    };
     let display_active_directions = match pending.continuation {
         crate::executor::ParagraphContinuation::End => None,
         crate::executor::ParagraphContinuation::Display => Some(active_directions.into()),
@@ -1101,6 +1123,7 @@ pub(crate) fn publish_finished_lines(
         line_count,
         last_badness,
         display_active_directions,
+        effects: break_effects,
     });
     finish_phase(
         stores,

@@ -82,6 +82,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
 - `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
+- `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
+- `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
+- `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
 - `src/provenance.rs`: Chunked diagnostic origin-record snapshots, origin-list arenas, lazy paragraph resolvers, and rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
 - `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, generation-interned exact paragraph observations, validation telemetry, opaque accepted-generation output provenance, and accepted-history-owned retained node mounts.
@@ -116,6 +119,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.
 - `src/token.rs`: Token and catcode value definitions, constructors, and classification helpers.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
+- `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/token_store.rs`: Immutable hash-consed token-list storage, builders, lookup, and rollback marks.
 - `src/token_store/tests.rs`: Unit tests for token-list interning, builder reuse, lookup, and rollback.
 - `src/universe.rs`: Top-level TeX state timeline, snapshots, effect commits, and capability-specific context facades.

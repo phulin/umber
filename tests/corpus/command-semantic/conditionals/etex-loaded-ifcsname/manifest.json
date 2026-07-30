@@ -33,30 +33,10 @@
       "channels": {
         "events": 181,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.15",
-          "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
-            "actual": "<end of channel>"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.15",
-          "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
-            "actual": "<end of channel>"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -34,7 +34,7 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:88dd2364ea76403005168ecbced62e971807181c8d93fbbeb6ed7cbc77ab022d",
+        "artifact:cc2ddac0a6c0cf1545f0bbc5b7e4b60cb4f100082bd95149f02d29ef47501ee8",
         "artifact:e63e7a54392204a20844134389a294bd839de948eba6b0d6dce13d3a424cccc1",
         "artifact:ca8d411f2d11cb66c1458c44110fdf428fd72936b91bc3aaac4656e20dd4f531",
         "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"
@@ -42,24 +42,10 @@
       "channels": {
         "events": 1084,
         "status": "clean",
-        "terminal": {
-          "kind": "file"
-        },
-        "log": {
-          "kind": "file"
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0007�\u0000��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

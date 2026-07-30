@@ -35,30 +35,10 @@
       "channels": {
         "events": 116,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
-            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": {
-            "line": 5,
-            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
-            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

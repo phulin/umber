@@ -43,41 +43,15 @@
         "mode:math",
         "mode:horizontal",
         "mode:vertical",
-        "artifact:f0c5a5ee57493ab3ab6f501163b9306afc17ffc70d0c7cbda404476d9c0ea78f"
+        "artifact:0db55a33f85d6ed07b7405b467af8c13eb796ab38b9056220f93cff7510b3678"
       ],
       "channels": {
         "events": 88,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "<inserted text> ",
-            "actual": "<inserted text>"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 5,
-            "expected": "<inserted text> ",
-            "actual": "<inserted text>"
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

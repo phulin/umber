@@ -48,30 +48,10 @@
       "channels": {
         "events": 301,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.19",
-          "mismatch": {
-            "line": 4,
-            "expected": "> \\shown=macro:",
-            "actual": "> \\shown=macro:->\\global \\count 9=1."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.19",
-          "mismatch": {
-            "line": 5,
-            "expected": "> \\shown=macro:",
-            "actual": "> \\shown=macro:->\\global \\count 9=1."
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

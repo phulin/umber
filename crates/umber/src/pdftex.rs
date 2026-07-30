@@ -853,7 +853,13 @@ mod tests {
         )
         .expect("level mismatch is recoverable");
         let terminal = stores.world().memory_terminal_output().unwrap_or_default();
-        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        // §58 breaks this warning at `max_print_line`; the subject here is
+        // the diagnostic's content, not its layout.
+        let observed = tex_state::print::without_line_breaks(&format!(
+            "{}{}",
+            String::from_utf8_lossy(terminal),
+            output
+        ));
         assert!(
             observed.contains(
                 "pdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink"
@@ -877,7 +883,9 @@ mod tests {
             )
             .expect("destination duplicate is recoverable");
             assert_eq!(
-                output.matches(WARNING).count(),
+                tex_state::print::without_line_breaks(&output)
+                    .matches(WARNING)
+                    .count(),
                 usize::from(warns),
                 "{output}"
             );
@@ -1005,7 +1013,7 @@ mod tests {
         )
         .expect("misnested thread diagnostic recovers");
         assert!(
-            output.contains(
+            tex_state::print::without_line_breaks(&output).contains(
                 "\\pdfendthread ended up in different nesting level than \\pdfstartthread"
             ),
             "{output}"
@@ -1026,7 +1034,9 @@ mod tests {
             )
             .expect("scan-time duplicate is recoverable");
             assert_eq!(
-                output.matches(WARNING).count(),
+                tex_state::print::without_line_breaks(&output)
+                    .matches(WARNING)
+                    .count(),
                 usize::from(warns),
                 "{output}"
             );

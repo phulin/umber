@@ -60,30 +60,10 @@
       "channels": {
         "events": 1198,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./display-finished-list.tex",
-            "actual": "(./display-finished-list.tex )"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./display-finished-list.tex",
-            "actual": "(./display-finished-list.tex )"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

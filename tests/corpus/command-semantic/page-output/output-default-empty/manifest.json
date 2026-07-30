@@ -26,29 +26,15 @@
         "include_artifact_hashes": true
       },
       "expected": [
-        "artifact:e87e8d99ae78eee01aaeeb5d2a32adc31c234a03be44c81215ec64d77366c4ba"
+        "artifact:7f9c25782d6f7e5aa6e2597f85339c42b677834ea81aa4ea48926acc84e488b7"
       ],
       "channels": {
         "events": 345,
         "status": "clean",
-        "terminal": {
-          "kind": "file"
-        },
-        "log": {
-          "kind": "file"
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

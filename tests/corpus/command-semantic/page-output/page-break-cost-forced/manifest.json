@@ -30,43 +30,17 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:e18c626e659f393a4ec0cddc725d143a6b7e413d39e65d261714c457cf25754d",
-        "artifact:caac2eab45976d9ce272308e5418dbd6468d9f331b71c6d904d75da9a87dca3f",
-        "artifact:ce3032d3702b309c0090bfe27e932c4c894bf9c32fd26cad8ced4d627210c868"
+        "artifact:30bb4867ed9118c8521975cf106552fe5a4f00b479197a1513adb20d3b1831f8",
+        "artifact:97ad124b29a9e2417dc8006d945734ee7a03246f8ecfae6b5d0112578b214eae",
+        "artifact:49fd71f35c3f3711f1fb5a133a1923c8f1939d91b3e2d880b11a95ee6cf1e167"
       ],
       "channels": {
         "events": 620,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./page-break-cost-forced.tex",
-            "actual": "(./page-break-cost-forced.tex [1] [1] [1] )"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./page-break-cost-forced.tex",
-            "actual": "(./page-break-cost-forced.tex [1] [1] [1] )"
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

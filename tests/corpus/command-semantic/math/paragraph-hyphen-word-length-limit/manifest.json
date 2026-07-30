@@ -27,41 +27,15 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:49b25b480804ccc5b540973b9b0702e034cea3d0660867517be582d52aa55869"
+        "artifact:cb32c164aa1b58fac41ebda962a5b1610d55e232e5f6da8f7e517652c8ad6ea3"
       ],
       "channels": {
         "events": 1048,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./paragraph-hyphen-word-length-limit.tex",
-            "actual": "(./paragraph-hyphen-word-length-limit.tex [1] )"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./paragraph-hyphen-word-length-limit.tex",
-            "actual": "(./paragraph-hyphen-word-length-limit.tex [1] )"
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0004N8��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -51,41 +51,15 @@
         "command:leader_ship:102",
         "command:leader_ship:102",
         "command:leader_ship:102",
-        "artifact:91f447759c0bdd4937f378f026d466c88ceb5a9807e09a6035908dd134d86921"
+        "artifact:8b371acd1a6359a60d4ea2b2486221a2afb06fbde83efe8e0089c38b1e8e91ae"
       ],
       "channels": {
         "events": 2988,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./leaders-degenerate.tex",
-            "actual": "(./leaders-degenerate.tex [1] )"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./leaders-degenerate.tex",
-            "actual": "(./leaders-degenerate.tex [1] )"
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0001\u0000\u0000�",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0003\u0000\u0000��\u0000\u0003\u0000\u0000\u0000\u0001\u0000\u0000�"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

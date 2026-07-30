@@ -1484,9 +1484,9 @@ fn dispatch_undefined_control_sequence_reports_and_continues() {
     .expect("undefined control sequence is recoverable");
 
     assert_eq!(action, DispatchAction::Continue);
-    assert!(
-        support::terminal_effect_text(&stores).contains("Undefined control sequence \\undefined")
-    );
+    // tex.web §370's message never names the control sequence; §82's context
+    // display is what ends with it.
+    assert!(support::terminal_effect_text(&stores).contains("! Undefined control sequence."));
 }
 
 #[test]
@@ -1503,7 +1503,9 @@ fn edef_reports_undefined_control_sequence_and_completes_definition() {
         .expect("undefined control sequence in edef is recoverable");
 
     let output = support::terminal_effect_text(&stores);
-    assert!(output.contains("Undefined control sequence \\missing"));
+    // tex.web §370's message names no control sequence; §82's context display
+    // is what identifies it, and that goes to the transcript alone.
+    assert!(output.contains("Undefined control sequence"), "{output}");
     assert!(output.contains("RESULT=ab"));
 }
 
@@ -1707,9 +1709,10 @@ fn main_control_recovers_from_undefined_control_sequence() {
         .expect("undefined command is diagnosed and consumed");
 
     assert_eq!(stores.count(0), 7);
-    assert!(
-        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
-    );
+    // §370 reports the message alone; §82's context is what shows `\missing`.
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("! Undefined control sequence."), "{output}");
+    assert!(output.contains("\\missing"), "{output}");
 }
 
 #[test]
@@ -1727,7 +1730,8 @@ fn register_index_scanner_recovers_from_undefined_control_sequence() {
 
     assert_eq!(stores.count(2), 7);
     let output = support::terminal_effect_text(&stores);
-    assert!(output.contains("Undefined control sequence \\missing"));
+    assert!(output.contains("! Undefined control sequence."), "{output}");
+    assert!(output.contains("\\missing"), "{output}");
     assert!(output.contains("Missing number, treated as zero"));
 }
 
@@ -1745,9 +1749,9 @@ fn recursively_expanded_dimension_scanner_recovers_from_undefined_control_sequen
         .expect("nested dimension scanner uses driver recovery");
 
     assert_eq!(stores.count(2), 7);
-    assert!(
-        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
-    );
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("! Undefined control sequence."), "{output}");
+    assert!(output.contains("\\missing"), "{output}");
 }
 
 #[test]

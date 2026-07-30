@@ -31,30 +31,10 @@
       "channels": {
         "events": 178,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "Overfull \\hbox (5.2778pt too wide) in paragraph at lines 5--5",
-            "actual": "> 7."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 4,
-            "expected": "Overfull \\hbox (5.2778pt too wide) in paragraph at lines 5--5",
-            "actual": "> 7."
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

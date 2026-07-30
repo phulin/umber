@@ -174,6 +174,14 @@ pub enum TokenListReplayKind {
     MacroBody,
     MacroArgument,
     NoExpand,
+    /// tex.web §307's `backed_up`: tokens `back_input` returned to the input.
+    ///
+    /// Distinct from [`Self::Inserted`] only in how §314 describes it --
+    /// `<to be read again>␣` while unread, `<recently read>␣` once consumed,
+    /// against `inserted`'s single `<inserted text>␣`. §327's `ins_error`
+    /// exists precisely to retype a backed-up list as `inserted`, so a level
+    /// TeX distinguishes in every error report cannot be one kind here.
+    BackedUp,
     /// Tokens returned by e-TeX `\unexpanded`; command demand may expand them.
     Unexpanded,
     EveryPar,
@@ -486,6 +494,106 @@ impl InputSummary {
         format!(
             "\n{label}{read}\n{}{remaining}",
             " ".repeat(label.chars().count())
+        )
+    }
+
+    /// tex.web §310's `show_context` display for this replay stack.
+    ///
+    /// The pseudoprint arithmetic itself is
+    /// [`crate::print::render_error_context`]; this is only §312--§314's
+    /// projection of the gullet's frames onto it. The result is owned text
+    /// because §82's report can be deferred past the point where the stack
+    /// that produced it has retired.
+    #[must_use]
+    pub fn show_context(&self, stores: &crate::Universe) -> String {
+        use crate::print::{ErrorContextLevel, token_list_replay_label};
+
+        /// §312's `token_type=backed_up` family, the only levels it omits
+        /// once they have been read to the end.
+        const fn backed_up(kind: TokenListReplayKind) -> bool {
+            matches!(
+                kind,
+                TokenListReplayKind::BackedUp | TokenListReplayKind::NoExpand
+            )
+        }
+
+        fn shown_tokens(stores: &crate::Universe, tokens: &[Token]) -> String {
+            let mut text = String::new();
+            for &token in tokens {
+                crate::token_show::append_token_show_text(stores, token, &mut text);
+            }
+            text
+        }
+
+        // §312's `base_ptr=input_ptr` test. Condition frames are not input
+        // levels in tex.web at all, so they never make the level beneath them
+        // stop counting as the current one.
+        let mut current = true;
+        let mut levels = Vec::new();
+        for frame in self.frames().iter().rev() {
+            let position = usize::from(!current);
+            match frame {
+                InputFrameSummary::Condition { .. } => continue,
+                InputFrameSummary::TokenList {
+                    token_list,
+                    replay_kind,
+                    index,
+                    ..
+                } => {
+                    let tokens = stores.tokens(*token_list);
+                    let split = (*index).min(tokens.len());
+                    let exhausted = split >= tokens.len();
+                    if position != 0 && exhausted && backed_up(*replay_kind) {
+                        // §312 omits a fully-read `backed_up` list that is not
+                        // the current level.
+                        continue;
+                    }
+                    levels.push(ErrorContextLevel::new(
+                        token_list_replay_label(*replay_kind, exhausted),
+                        shown_tokens(stores, &tokens[..split]),
+                        shown_tokens(stores, &tokens[split..]),
+                    ));
+                }
+                InputFrameSummary::TransientTokenList {
+                    tokens,
+                    replay_kind,
+                    ..
+                } => {
+                    let exhausted = tokens.is_empty();
+                    if position != 0 && exhausted && backed_up(*replay_kind) {
+                        continue;
+                    }
+                    let tokens = tokens
+                        .iter()
+                        .map(|word| word.semantic_token())
+                        .collect::<Vec<_>>();
+                    levels.push(ErrorContextLevel::new(
+                        token_list_replay_label(*replay_kind, exhausted),
+                        "",
+                        shown_tokens(stores, &tokens),
+                    ));
+                }
+                InputFrameSummary::Source { source, .. } => {
+                    let line = source.normalized_line().trim_end_matches('\r');
+                    let split = source.line_byte_offset().min(line.len());
+                    let split = (0..=split)
+                        .rev()
+                        .find(|offset| line.is_char_boundary(*offset))
+                        .unwrap_or(0);
+                    let (before, after) = line.split_at(split);
+                    levels.push(ErrorContextLevel::new(
+                        format!("l.{} ", source.line_number()),
+                        before,
+                        after,
+                    ));
+                }
+            }
+            current = false;
+        }
+        crate::print::render_error_context(
+            &levels,
+            stores.error_context_widths(),
+            stores.int_param(crate::env::banks::IntParam::new(54)),
         )
     }
 

@@ -46,10 +46,16 @@
 //! divergence with nothing declared at all -- still requires a human to
 //! decide.
 //!
-//! The `dvi` channel is handled separately in [`classify_dvi`]: its content
-//! is binary, not lines, and its one recurring divergence (the DVI banner
-//! comment, `umber2-alfh.22`) is a byte-level marker check rather than a line
-//! shape.
+//! The `dvi` channel is never classified: its content is binary, so the
+//! line-shape scans below cannot read it, and it no longer has a recurring
+//! shape worth a byte-level rule. It used to have exactly one -- the DVI
+//! preamble banner comment (`umber2-alfh.22`) -- which turned out not to be
+//! a divergence at all but a byte range the repository already held
+//! uncomparable, and is now normalized away by
+//! `channels::normalize_channel`. Every `dvi` divergence that survives that
+//! normalization is a real, individual defect, so it gets the same treatment
+//! as any other unclassifiable shape: the declared bug if one exists, and
+//! otherwise a human.
 
 use similar::{ChangeTag, TextDiff};
 
@@ -87,9 +93,6 @@ pub enum DivergenceClass {
     /// *different* error than the oracle's -- the direction
     /// [`Self::UmberRaisesNoError`] cannot describe.
     UmberRaisesUnexpectedError,
-    /// `dvi`-channel only: `tex-out`'s banner comment differs from the
-    /// reference engine's own.
-    DviBanner,
 }
 
 impl DivergenceClass {
@@ -105,7 +108,6 @@ impl DivergenceClass {
             Self::TerminalPromptOmitted => "umber2-alfh.11",
             Self::UmberRaisesNoError => "umber2-alfh.13",
             Self::UmberRaisesUnexpectedError => "umber2-alfh.26",
-            Self::DviBanner => "umber2-alfh.22",
         }
     }
 }
@@ -150,7 +152,7 @@ pub fn classify_divergence(
     umber: &[u8],
 ) -> Option<DivergenceClass> {
     if channel == StreamChannel::Dvi {
-        return classify_dvi(oracle, umber);
+        return None;
     }
     let oracle_text = String::from_utf8_lossy(oracle);
     let umber_text = String::from_utf8_lossy(umber);
@@ -229,16 +231,6 @@ fn classify_specific_line(oracle_line: &str, paired: Option<&str>) -> Option<Div
         });
     }
     None
-}
-
-/// `dvi` is binary content, not lines, so its one recurring divergence -- the
-/// banner comment `tex_out::model::DEFAULT_BANNER` writes in place of the
-/// reference engine's own -- is decided by a direct byte marker rather than
-/// a line diff. `DviStreamWriter` embeds it verbatim, so a byte substring
-/// check is exact, not a heuristic.
-fn classify_dvi(oracle: &[u8], umber: &[u8]) -> Option<DivergenceClass> {
-    let has = |bytes: &[u8], marker: &[u8]| bytes.windows(marker.len()).any(|w| w == marker);
-    (has(oracle, b"TeX output") && has(umber, b"Umber DVI")).then_some(DivergenceClass::DviBanner)
 }
 
 /// The first line of `text` starting with `prefix`, if any.

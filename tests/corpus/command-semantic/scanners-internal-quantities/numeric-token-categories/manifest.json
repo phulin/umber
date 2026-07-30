@@ -41,11 +41,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.5 \\count2",
-            "actual": "[1.10] )"
-          }
+          "mismatch": { "line": 4, "expected": "l.5 \\count2", "actual": "[1.10] )" }
         },
         "log": {
           "kind": "xfail",
@@ -56,18 +52,8 @@
             "actual": "The control sequence at the end of the top line"
           }
         },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

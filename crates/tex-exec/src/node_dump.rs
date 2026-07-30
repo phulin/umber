@@ -502,6 +502,12 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
     out.push_str("}\n");
 }
 
+/// TeX82 §267's `print_esc(font_id_text(f))`, the control sequence a font is
+/// known by, with pdfTeX's optional expansion and file-name annotations.
+pub(crate) fn font_identifier(stores: &Universe, font: tex_state::ids::FontId) -> String {
+    dump_font(stores, font)
+}
+
 fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
     let loaded = stores.font(font);
     let (identifier_font, expansion_ratio) = match loaded.construction() {
@@ -526,6 +532,12 @@ fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
         let _ = write!(result, "@{}pt)", format_scaled_without_unit(loaded.size()));
     }
     result
+}
+
+/// TeX82 §68's `print_ASCII`, which renders an unprintable character in
+/// `^^` form rather than emitting it raw.
+pub(crate) fn printable_char(ch: char) -> String {
+    dump_char(ch)
 }
 
 fn dump_char(ch: char) -> String {

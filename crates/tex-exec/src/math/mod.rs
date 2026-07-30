@@ -52,14 +52,19 @@ pub(crate) fn insert_dollar_sign(
     let math_shift_origin =
         stores.inserted_origin(InsertedOriginKind::ErrorRecovery, math_shift_token, origin);
     let math_shift = TracedTokenWord::pack(math_shift_token, math_shift_origin);
-    push_traced_tokens(input, stores, [math_shift, traced]);
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        "\n! Missing $ inserted.\n\
-         <inserted text>\n\
-         <to be read again>\n\
-         I've inserted a begin-math/end-math symbol since I think\n\
-         you left one out. Proceed, with fingers crossed.\n",
+    // §1047: `back_input` returns the offending token as its own `backed_up`
+    // level, and `ins_error` then puts the `$` above it as `inserted`, so the
+    // report shows both levels in that order.
+    crate::error_report::back_tokens(input, stores, [traced]);
+    crate::error_report::ins_error(
+        input,
+        stores,
+        [math_shift],
+        "Missing $ inserted",
+        &[
+            "I've inserted a begin-math/end-math symbol since I think",
+            "you left one out. Proceed, with fingers crossed.",
+        ],
     );
 }
 pub(crate) use lower::{finish_inline_math_list_node, finish_math_list_node};
@@ -229,15 +234,16 @@ pub(crate) fn dispatch_math_token_with_context(
                 };
                 let inserted =
                     stores.inserted_origin(InsertedOriginKind::ErrorRecovery, right_brace, origin);
-                input.back_input_alignment_token(traced);
-                crate::insert_traced_tokens(
+                // §1064's `off_save` for `math_group`: `back_input` returns the
+                // math shift as its own `backed_up` level and `ins_list` puts
+                // the `}` that matches the open group above it as `inserted`.
+                crate::error_report::back_tokens(input, stores, [traced]);
+                crate::error_report::ins_error(
                     input,
                     stores,
-                    [TracedTokenWord::pack(right_brace, inserted), traced],
-                );
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Missing } inserted.\nI've inserted something that you may have forgotten.\n",
+                    [TracedTokenWord::pack(right_brace, inserted)],
+                    "Missing } inserted",
+                    &OFF_SAVE_HELP,
                 );
                 Ok(DispatchAction::Continue)
             } else {
@@ -264,9 +270,19 @@ pub(crate) fn dispatch_math_token_with_context(
                 leave_group_with_origin(input, stores, tex_state::GroupKind::Simple, origin)
             {
                 if matches!(error, ExecError::ExtraRightBraceOrForgottenDollar { .. }) {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        "\n! Extra }, or forgotten $.\nI've deleted a group-closing symbol because it seems to be\nspurious, as in `$x}$'. But perhaps the } is legitimate and\nyou forgot something else, as in `\\hbox{$x}'.\n",
+                    // §1069's `extra_right_brace`, whose message names the
+                    // terminator the open group wanted -- `$` here.
+                    crate::error_report::report_input_error(
+                        input,
+                        stores,
+                        "Extra }, or forgotten $",
+                        &[
+                            "I've deleted a group-closing symbol because it seems to be",
+                            "spurious, as in `$x}$'. But perhaps the } is legitimate and",
+                            "you forgot something else, as in `\\hbox{$x}'. In such cases",
+                            "the way to recover is to insert both the forgotten and the",
+                            "deleted material, e.g., by typing `I$}'.",
+                        ],
                     );
                 } else {
                     return Err(error);
@@ -317,9 +333,11 @@ fn finish_math(
     // then retries the math shift (tex.web §1027). TRIP deliberately leaves
     // a `\begingroup` open before a later `$`.
     while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing \\endgroup inserted.\nI've inserted something that you may have forgotten.\n",
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            "Missing \\endgroup inserted",
+            &OFF_SAVE_HELP,
         );
         leave_group_with_origin(input, stores, tex_state::GroupKind::SemiSimple, origin)?;
         execution.paragraph_group_exited(stores);
@@ -331,7 +349,7 @@ fn finish_math(
         // remain synchronized for checkpointing.
         stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     }
-    if close_missing_left_group(nest, stores, execution.command_fuel())? {
+    if close_missing_left_group(nest, input, stores, execution.command_fuel())? {
         return finish_math(nest, input, stores, execution, origin);
     }
     if nest.current_mode() == Mode::Math && nest.current_list().display_eq_no().is_some() {
@@ -339,32 +357,14 @@ fn finish_math(
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
-        match get_x_token_with_context(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-            execution,
-        )? {
-            Some(traced)
-                if matches!(
-                    tex_expand::semantic_token(traced),
-                    Token::Char {
-                        cat: Catcode::MathShift,
-                        ..
-                    }
-                ) => {}
-            Some(traced) => {
-                push_traced_tokens(input, stores, [traced]);
-                report_math_error(stores, "Display math should end with $$");
-            }
-            None => report_math_error(stores, "Display math should end with $$"),
-        }
+        check_second_math_shift(input, stores, execution)?;
     }
     let mut content = finish_current_math_list(nest, stores);
     // TeX82 §1194 checks all three sizes of families 2 and 3 before
     // `fin_mlist`, even when the current mlist is empty. An empty formula (or
     // an empty equation-number script) must not bypass the check merely
     // because conversion would not otherwise consult a math font.
-    if reject_invalid_math_fonts(stores) {
+    if reject_invalid_math_fonts_in_input(input, stores) {
         content = stores.freeze_node_list(&[]);
     }
     let mut level =
@@ -402,13 +402,20 @@ fn finish_math(
     Ok(DispatchAction::Continue)
 }
 
-fn finish_equation_number(
-    nest: &mut ModeNest,
+/// tex.web §1197's ``<Check that another `$' follows>``.
+///
+/// A display closes with two math shifts; the second is mandatory, and §327's
+/// `back_error` returns anything else for the enclosing mode to read again.
+fn check_second_math_shift(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-    origin: OriginId,
-) -> Result<DispatchAction, ExecError> {
+) -> Result<(), ExecError> {
+    const HELP: [&str; 2] = [
+        "The `$' that I just saw supposedly matches a previous `$$'.",
+        "So I shall assume that you typed `$$' both times.",
+    ];
+    const MESSAGE: &str = "Display math should end with $$";
     match get_x_token_with_context(
         input,
         &mut tex_state::ExpansionContext::new(stores),
@@ -423,17 +430,29 @@ fn finish_equation_number(
                 }
             ) => {}
         Some(traced) => {
-            push_traced_tokens(input, stores, [traced]);
-            report_math_error(stores, "Display math should end with $$");
+            crate::error_report::back_error(input, stores, traced, MESSAGE, &HELP);
         }
-        None => report_math_error(stores, "Display math should end with $$"),
+        None => {
+            crate::error_report::report_input_error(input, stores, MESSAGE, &HELP);
+        }
     }
+    Ok(())
+}
+
+fn finish_equation_number(
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    origin: OriginId,
+) -> Result<DispatchAction, ExecError> {
+    check_second_math_shift(input, stores, execution)?;
 
     let mut content = finish_current_math_list(nest, stores);
     // This is §1194's first, equation-number-side check. It precedes
     // `fin_mlist` and is unconditional, just like the display-side check
     // below.
-    let font_failure = reject_invalid_math_fonts(stores);
+    let font_failure = reject_invalid_math_fonts_in_input(input, stores);
     if font_failure {
         content = stores.freeze_node_list(&[]);
     }
@@ -452,7 +471,7 @@ fn finish_equation_number(
 
     // TeX82 §1194 repeats the check for the saved display mlist after boxing
     // the equation number.
-    if reject_invalid_math_fonts(stores) {
+    if reject_invalid_math_fonts_in_input(input, stores) {
         eq_no.display = stores.freeze_node_list(&[]);
     }
     let mut display_level =
@@ -482,20 +501,25 @@ enum MathFontFailure {
 }
 
 impl MathFontFailure {
-    const fn diagnostic(self) -> &'static str {
+    /// §1195's `print_err` text and its `help3` lines.
+    const fn report(self) -> (&'static str, [&'static str; 3]) {
         match self {
-            Self::Symbol => {
-                "\n! Math formula deleted: Insufficient symbol fonts.\n\
-                 Sorry, but I can't typeset math unless \\textfont 2\n\
-                 and \\scriptfont 2 and \\scriptscriptfont 2 have all\n\
-                 the \\fontdimen values needed in math symbol fonts.\n"
-            }
-            Self::Extension => {
-                "\n! Math formula deleted: Insufficient extension fonts.\n\
-                 Sorry, but I can't typeset math unless \\textfont 3\n\
-                 and \\scriptfont 3 and \\scriptscriptfont 3 have all\n\
-                 the \\fontdimen values needed in math extension fonts.\n"
-            }
+            Self::Symbol => (
+                "Math formula deleted: Insufficient symbol fonts",
+                [
+                    "Sorry, but I can't typeset math unless \\textfont 2",
+                    "and \\scriptfont 2 and \\scriptscriptfont 2 have all",
+                    "the \\fontdimen values needed in math symbol fonts.",
+                ],
+            ),
+            Self::Extension => (
+                "Math formula deleted: Insufficient extension fonts",
+                [
+                    "Sorry, but I can't typeset math unless \\textfont 3",
+                    "and \\scriptfont 3 and \\scriptscriptfont 3 have all",
+                    "the \\fontdimen values needed in math extension fonts.",
+                ],
+            ),
         }
     }
 }
@@ -529,13 +553,29 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
     None
 }
 
-pub(crate) fn reject_invalid_math_fonts(stores: &mut Universe) -> bool {
+/// tex.web §1195's `<Check that the necessary fonts for math symbols are
+/// present>`, reporting through §82 with the live input stack's context.
+pub(crate) fn reject_invalid_math_fonts_in_input(
+    input: &InputStack,
+    stores: &mut Universe,
+) -> bool {
     let Some(failure) = math_font_failure(stores) else {
         return false;
     };
-    stores
-        .world_mut()
-        .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
+    let (message, help) = failure.report();
+    crate::error_report::report_input_error(input, stores, message, &help);
+    true
+}
+
+/// [`reject_invalid_math_fonts_in_input`] for the canonical main control,
+/// which owns a `CommandState` rather than an `InputStack` and renders §82's
+/// display from it.
+pub(crate) fn reject_invalid_math_fonts(stores: &mut Universe, context: String) -> bool {
+    let Some(failure) = math_font_failure(stores) else {
+        return false;
+    };
+    let (message, help) = failure.report();
+    crate::error_report::report_error(stores, message, &help, context);
     true
 }
 
@@ -588,9 +628,12 @@ fn dispatch_math_control(
                 Err(ExecError::ExtraConditionalControl { primitive, origin })
             }
             ExpandablePrimitive::EndCsName => {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+                // §1135's `cs_error`.
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    "Extra \\endcsname",
+                    &["I'm ignoring this, since I wasn't doing a \\csname."],
                 );
                 Ok(DispatchAction::Continue)
             }
@@ -720,7 +763,7 @@ fn dispatch_math_primitive(
         UnexpandablePrimitive::Limits
         | UnexpandablePrimitive::NoLimits
         | UnexpandablePrimitive::DisplayLimits => {
-            apply_limit_switch(nest, stores, primitive);
+            apply_limit_switch(nest, input, stores, primitive);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Over
@@ -740,9 +783,16 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => {
             if primitive == UnexpandablePrimitive::Accent {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Please use \\mathaccent for accents in math mode.\nI'm treating this as \\mathaccent.\n",
+                // §1165's `<Complain that the user should have said
+                // \mathaccent>`; scanning then continues as `\mathaccent`.
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    "Please use \\mathaccent for accents in math mode",
+                    &[
+                        "I'm changing \\accent to \\mathaccent here; wish me luck.",
+                        "(Accents are not the same in formulas as they are in text.)",
+                    ],
                 );
             }
             let accent = math_char_from_code(
@@ -930,9 +980,11 @@ fn finish_display_halign(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing \\endgroup inserted.\nI've inserted something that you may have forgotten.\n",
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            "Missing \\endgroup inserted",
+            &OFF_SAVE_HELP,
         );
         leave_group_with_origin(
             input,
@@ -943,9 +995,16 @@ fn finish_display_halign(
         execution.paragraph_group_exited(stores);
     }
     if !nest.current_list().nodes().is_empty() || nest.current_list().display_eq_no().is_some() {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Improper \\halign inside $$'s.\nDisplays can use special alignments (like \\eqalignno)\nonly if nothing but the alignment itself is between $$'s.\nSo I've deleted the formulas that preceded this alignment.\n",
+        // §1206's `<Check for improper alignment in displayed math>`.
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            "Improper \\halign inside $$'s",
+            &[
+                "Displays can use special alignments (like \\eqalignno)",
+                "only if nothing but the alignment itself is between $$'s.",
+                "So I've deleted the formulas that preceded this alignment.",
+            ],
         );
         let _ = nest.current_list_mutation().take_nodes();
         let _ = nest.current_list_mutation().take_display_eq_no();
@@ -962,7 +1021,8 @@ fn finish_display_halign(
     )?;
     let nodes = crate::align::execute_display_halign(context, nest, input, stores, execution)?;
     finish_display_alignment_assignments(input, stores, execution)?;
-    let closing_origin = consume_display_alignment_closer(input, stores, context.origin())?;
+    let closing_origin =
+        consume_display_alignment_closer(input, stores, execution, context.origin())?;
     finish_display_alignment(nest, stores, nodes)?;
     leave_group_with_origin(
         input,
@@ -1041,9 +1101,15 @@ fn finish_display_alignment_assignments(
             meaning,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox)
         ) {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Improper \\setbox.\nSorry, \\setbox is not allowed after \\halign in a display,\nor between \\accent and an accented character.\n",
+            // §1241's `set_box` guard on `set_box_allowed`.
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                "Improper \\setbox",
+                &[
+                    "Sorry, \\setbox is not allowed after \\halign in a display,",
+                    "or between \\accent and an accented character.",
+                ],
             );
             if let Some(next) = get_x_token_with_context(
                 input,
@@ -1072,11 +1138,21 @@ fn finish_display_alignment_assignments(
     }
 }
 
+/// tex.web §1206's `<Finish an alignment in a display>` closing `$$`.
+///
+/// A first token that is not a math shift takes §1206's own `<Pontificate
+/// about improper alignment in display>`; once one has been seen, the second
+/// `$` is §1197's mandatory one.
 fn consume_display_alignment_closer(
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
     fallback_origin: OriginId,
 ) -> Result<OriginId, ExecError> {
+    const HELP: [&str; 2] = [
+        "Displays can use special alignments (like \\eqalignno)",
+        "only if nothing but the alignment itself is between $$'s.",
+    ];
     let closing_origin = match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(
@@ -1090,36 +1166,14 @@ fn consume_display_alignment_closer(
             traced.origin()
         }
         Some(traced) => {
-            insert_traced_tokens(input, stores, [traced]);
-            report_math_error(stores, "Missing $$ inserted");
+            crate::error_report::back_error(input, stores, traced, "Missing $$ inserted", &HELP);
             return Ok(fallback_origin);
         }
         None => {
-            report_math_error(stores, "Missing $$ inserted");
+            crate::error_report::report_input_error(input, stores, "Missing $$ inserted", &HELP);
             return Ok(fallback_origin);
         }
     };
-
-    match input.next_traced_token(stores)? {
-        Some(traced)
-            if matches!(
-                tex_expand::semantic_token(traced),
-                Token::Char {
-                    cat: Catcode::MathShift,
-                    ..
-                }
-            ) =>
-        {
-            Ok(closing_origin)
-        }
-        Some(traced) => {
-            insert_traced_tokens(input, stores, [traced]);
-            report_math_error(stores, "Missing $$ inserted");
-            Ok(closing_origin)
-        }
-        None => {
-            report_math_error(stores, "Missing $$ inserted");
-            Ok(closing_origin)
-        }
-    }
+    check_second_math_shift(input, stores, execution)?;
+    Ok(closing_origin)
 }

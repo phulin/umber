@@ -208,8 +208,10 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
     let context_lines = failed.context().lines().collect::<Vec<_>>();
     assert!(context_lines.len() >= 2);
     let context_lines = &context_lines[context_lines.len() - 2..];
+    // §318 prints the location descriptor before §316 starts measuring, so
+    // §317's `...` lands after it rather than replacing it.
     assert!(
-        context_lines[0].starts_with("..."),
+        context_lines[0].starts_with("l.1 ..."),
         "{:?}",
         failed.context()
     );

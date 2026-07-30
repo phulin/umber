@@ -35,27 +35,17 @@ pub(super) fn execute_font_definition(
             return Err(ExecError::NeedResource(need));
         }
         tex_expand::ResourceLookup::Unavailable => {
-            // TeX.web `new_font` leaves the newly defined selector at
-            // `null_font` after a TFM open failure and continues after the
-            // ordinary recoverable font diagnostic.
+            // TeX.web §1257 leaves the newly defined selector at `null_font`
+            // after a TFM open failure and continues; §561's
+            // `start_font_error_message` names the selector, the file, and
+            // the requested size before the reason.
             let selector = stores.resolve(target).to_owned();
-            let (kind, detail) = if opentype_name.is_some() {
-                (
-                    "OpenType resource not found",
-                    "I wasn't able to resolve the requested OpenType font",
-                )
-            } else {
-                (
-                    "Metric (TFM) file not found",
-                    "I wasn't able to read the size data for this font",
-                )
-            };
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!(
-                    "\n! Font \\{}={} not loadable: {kind}.\n{detail},\nso I will ignore the font specification.\n",
-                    selector, font_name,
-                ),
+            report_font_not_loadable(
+                stores,
+                &selector,
+                &font_name,
+                size_spec,
+                opentype_name.is_some(),
             );
             let meaning = Meaning::Font(tex_state::font::NULL_FONT);
             if apply_globaldefs(prefixes.global, stores) {
@@ -314,14 +304,17 @@ pub(super) fn scan_math_family(
 ) -> Result<u8, ExecError> {
     let family = scan_i32(input, stores, execution, context)?;
     if !(0..=15).contains(&family) {
-        // TeX.web §435's `scan_four_bit_int` reports the bad value and
-        // substitutes family zero so assignment scanning can continue.
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!(
-                "\n! Bad number ({family}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
-            ),
-        );
+        // TeX.web §435's `scan_four_bit_int` reports the bad value with §91's
+        // `int_error` and substitutes family zero so scanning can continue.
+        let context = crate::diagnostics::show_context(stores, &input.summary());
+        let mut report = stores.print_err("Bad number");
+        report
+            .help(&[
+                "Since I expected to read a number between 0 and 15,",
+                "I changed this one to zero.",
+            ])
+            .context(context);
+        report.int_error(family);
         return Ok(0);
     }
     Ok(family as u8)
@@ -338,11 +331,7 @@ pub(super) fn scan_font_selector(
         })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        push_traced_tokens(input, stores, [traced]);
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing font identifier.\nI was looking for a control sequence whose\ncurrent meaning has been defined by \\font.\n",
-        );
+        report_missing_font_identifier(input, stores, traced);
         return Ok(tex_state::font::NULL_FONT);
     };
     match stores.meaning(symbol) {
@@ -357,17 +346,81 @@ pub(super) fn scan_font_selector(
             Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
         }
         _ => {
-            // TeX.web §578's `scan_font_ident` uses `back_error` and
-            // returns `null_font`, leaving the offending token for main
-            // control.
-            push_traced_tokens(input, stores, [traced]);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Missing font identifier.\nI was looking for a control sequence whose\ncurrent meaning has been defined by \\font.\n",
-            );
+            report_missing_font_identifier(input, stores, traced);
             Ok(tex_state::font::NULL_FONT)
         }
     }
+}
+
+/// TeX.web §577's `scan_font_ident` failure: `back_error`, then `null_font`.
+///
+/// Backing the token up is what puts it on §82's `<to be read again>` line and
+/// leaves it for main control to reconsider.
+fn report_missing_font_identifier(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    traced: TracedTokenWord,
+) {
+    crate::error_report::back_error(
+        input,
+        stores,
+        traced,
+        "Missing font identifier",
+        &[
+            "I was looking for a control sequence whose",
+            "current meaning has been defined by \\font.",
+        ],
+    );
+}
+
+/// TeX.web §561's `<Report that the font won't be loaded>`, opened by §560's
+/// `start_font_error_message`.
+///
+/// The size clause is part of the message, not of the help: `at` prints the
+/// scaled dimension and `scaled` the magnification, while a design-size
+/// request prints neither. Umber's OpenType lookup has no TeX82 counterpart,
+/// so it keeps its own reason and first help line and shares the rest.
+fn report_font_not_loadable(
+    stores: &mut Universe,
+    selector: &str,
+    font_name: &str,
+    size_spec: FontSizeSpec,
+    opentype: bool,
+) {
+    let (reason, detail) = if opentype {
+        (
+            " not loadable: OpenType resource not found",
+            "I wasn't able to resolve the requested OpenType font,",
+        )
+    } else {
+        (
+            " not loadable: Metric (TFM) file not found",
+            "I wasn't able to read the size data for this font,",
+        )
+    };
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err("Font ");
+    report.print_esc(selector).print("=").print(font_name);
+    match size_spec {
+        FontSizeSpec::At(size) => {
+            report.print(" at ").print_scaled(size).print("pt");
+        }
+        FontSizeSpec::Scale(scale) => {
+            report.print(" scaled ").print_int(scale);
+        }
+        FontSizeSpec::Design => {}
+    }
+    report
+        .print(reason)
+        .help(&[
+            detail,
+            "so I will ignore the font specification.",
+            "[Wizards can fix TFM files using TFtoPL/PLtoTF.]",
+            "You might try inserting a different font spec;",
+            "e.g., type `I\\font<same font id>=<substitute font name>'.",
+        ])
+        .context(context);
+    report.error();
 }
 
 fn math_font_size_for_primitive(primitive: UnexpandablePrimitive) -> MathFontSize {
@@ -390,13 +443,19 @@ fn scan_font_size_spec(
         let size = if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
             requested
         } else {
-            let rendered = crate::node_dump::format_scaled_for_diagnostics(requested);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!(
-                    "\n! Improper `at' size ({rendered}pt), replaced by 10pt.\nI can only handle fonts at positive sizes that are\nless than 2048pt, so I've changed what you said to 10pt.\n"
-                ),
-            );
+            // TeX.web §1259 folds the rejected dimension into the message
+            // itself, between `print_err` and the help lines.
+            let context = crate::diagnostics::show_context(stores, &input.summary());
+            let mut report = stores.print_err("Improper `at' size (");
+            report
+                .print_scaled(requested)
+                .print("pt), replaced by 10pt")
+                .help(&[
+                    "I can only handle fonts at positive sizes that are",
+                    "less than 2048pt, so I've changed what you said to 10pt.",
+                ])
+                .context(context);
+            report.error();
             Scaled::from_raw(10 * Scaled::UNITY)
         };
         return Ok(FontSizeSpec::At(size));
@@ -406,14 +465,14 @@ fn scan_font_size_spec(
         let scale = if (1..=32_768).contains(&requested) {
             requested
         } else {
-            // TeX.web `new_font` section 1257 reports the bad requested
-            // magnification and continues with the design-size scale 1000.
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!(
-                    "\n! Illegal magnification has been changed to 1000 ({requested}).\nThe magnification ratio must be between 1 and 32768.\n"
-                ),
-            );
+            // TeX.web §1258 reports the bad magnification with §91's
+            // `int_error` and continues at the design-size scale 1000.
+            let context = crate::diagnostics::show_context(stores, &input.summary());
+            let mut report = stores.print_err("Illegal magnification has been changed to 1000");
+            report
+                .help(&["The magnification ratio must be between 1 and 32768."])
+                .context(context);
+            report.int_error(requested);
             1000
         };
         return Ok(FontSizeSpec::Scale(scale));

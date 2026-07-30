@@ -4774,7 +4774,11 @@ fn scanner_syntax_mandatory_brace_relax_expansion_and_inserted_recovery() {
     assert_eq!(align_state, crate::processor::TOP_LEVEL_ALIGN_STATE + 1);
     assert_eq!(
         diagnostic_text(&universe),
-        "! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n\
+        // §403's `back_error` restores the rejected `x` before §82 prints, so
+        // §314 names it on its own `<to be read again>` context line. This
+        // replay stack has no source level, so §313's `l.N` line is absent.
+        "! Missing { inserted.\n<to be read again> \n                   x\n\
+A left brace was mandatory here, so I've put one in.\n\
 You might want to delete and/or insert some corrections\n\
 so that I will find a matching right brace soon.\n\
 (If you're confused by all this, try typing `I}' now.)\n\n"
@@ -5578,9 +5582,14 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
         54_613
     );
     let incompatible_text = diagnostic_text(&incompatible);
-    assert!(incompatible_text.contains(
-        "! Incompatible magnification (2000); the previous value will be retained (1200)."
-    ));
+    // §288 breaks the message with its own `print_nl`, and `int_error`
+    // supplies the retained value.
+    assert!(
+        incompatible_text.contains(
+            "! Incompatible magnification (2000);\n the previous value will be retained (1200)."
+        ),
+        "{incompatible_text}"
+    );
     assert!(
         incompatible_text.contains("<to be read again> 1truept\n                          ="),
         "{incompatible_text}"

@@ -55,11 +55,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.1 \\undefined",
-            "actual": ")"
-          }
+          "mismatch": { "line": 4, "expected": "l.1 \\undefined", "actual": ")" }
         },
         "log": {
           "kind": "xfail",
@@ -70,12 +66,8 @@
             "actual": "The control sequence at the end of the top line"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

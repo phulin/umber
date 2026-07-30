@@ -2,12 +2,19 @@ use tex_lex::{InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
-use tex_state::interner::ControlSequenceKind;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+// tex.web §§49/262's `show_token_list` spellings live in `tex-state`: they
+// need only the interner, the catcode table, and `\escapechar`, and §310's
+// `show_context` must render tokens from a layer beneath the gullet.
+use tex_state::token_show::text_tokens;
+pub use tex_state::token_show::{
+    append_token_selector_text, append_token_show_text, append_token_string_text, string_tokens,
+    token_text,
+};
 use tex_state::{BoxDimension, ExpansionState, PenaltyArrayKind};
 
 use crate::{
@@ -1192,47 +1199,6 @@ where
     }
 }
 
-pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
-    match token {
-        Token::Char { ch, .. } => vec![rendered_char(ch)],
-        Token::Cs(symbol) => {
-            let name = stores.resolve(symbol);
-            let escape = escapechar(stores);
-            let kind = stores.control_sequence_kind(symbol);
-            let capacity = match kind {
-                ControlSequenceKind::ActiveCharacter => name.chars().count(),
-                ControlSequenceKind::Named if name.is_empty() => {
-                    "csname".len() + "endcsname".len() + 2 * usize::from(escape.is_some())
-                }
-                ControlSequenceKind::Named => name.chars().count() + usize::from(escape.is_some()),
-            };
-            let mut out = Vec::with_capacity(capacity);
-            match kind {
-                ControlSequenceKind::ActiveCharacter => {
-                    out.extend(name.chars().map(rendered_char));
-                }
-                ControlSequenceKind::Named if name.is_empty() => {
-                    append_escaped_text(escape, "csname", &mut out);
-                    append_escaped_text(escape, "endcsname", &mut out);
-                }
-                ControlSequenceKind::Named => {
-                    append_escaped_text(escape, name, &mut out);
-                }
-            }
-            out
-        }
-        Token::Param(slot) => text_tokens(&format!("#{slot}")),
-        Token::Frozen(_) => text_tokens("\\endtemplate"),
-    }
-}
-
-fn append_escaped_text(escape: Option<char>, value: &str, out: &mut Vec<Token>) {
-    if let Some(escape) = escape {
-        out.push(rendered_char(escape));
-    }
-    out.extend(value.chars().map(rendered_char));
-}
-
 pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
     match token {
         Token::Char {
@@ -1328,106 +1294,6 @@ fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> Str
     text
 }
 
-/// Appends the form TeX82's `show_token_list` prints for one token.
-///
-/// In `tex.web` section 262, `print_cs` always terminates hash-table control
-/// sequence names with a space. Direct-address single-character names only
-/// receive that space when the character's current catcode is `letter`, and
-/// active characters receive neither an escape nor a trailing space.
-pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
-    if let Token::Char { ch, cat } = token {
-        append_tex_print_char(ch, text);
-        if cat == Catcode::Parameter {
-            append_tex_print_char(ch, text);
-        }
-    } else {
-        text.push_str(&token_text(stores, token));
-    }
-    let Token::Cs(symbol) = token else {
-        return;
-    };
-    if stores.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
-        return;
-    }
-
-    let name = stores.resolve(symbol);
-    let mut chars = name.chars();
-    match (chars.next(), chars.next()) {
-        (Some(ch), None) if stores.catcode(ch) != Catcode::Letter => {}
-        _ => text.push(' '),
-    }
-}
-
-/// Appends the token text TeX builds with `selector = new_string`.
-///
-/// Unlike ordinary diagnostic display, character tokens remain raw; control
-/// sequence spelling and its separator still follow `show_token_list`.
-pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
-    if let Token::Char { ch, cat } = token {
-        text.push(ch);
-        if cat == Catcode::Parameter {
-            text.push(ch);
-        }
-    } else {
-        append_token_show_text(stores, token, text);
-    }
-}
-
-/// Appends one token as TeX82's `show_token_list` prints it through an active
-/// output selector.
-///
-/// Section 262 sends every character through `print`. Section 59's `print`
-/// recognizes the live new-line character before expanding any other
-/// non-printable byte to its canonical `^^` spelling.
-pub fn append_token_selector_text(
-    stores: &impl ExpansionState,
-    token: Token,
-    newlinechar: Option<char>,
-    text: &mut String,
-) {
-    let mut raw = String::new();
-    append_token_string_text(stores, token, &mut raw);
-    for ch in raw.chars() {
-        if Some(ch) == newlinechar {
-            text.push('\n');
-        } else {
-            append_tex_print_char(ch, text);
-        }
-    }
-}
-
-/// Appends TeX82's printable string for a character code.
-///
-/// `show_token_list` calls `print(c)`, not `print_char(c)`. The first 256
-/// TeX strings therefore render non-printable bytes as `^^A`, `^^?`, or
-/// lowercase hexadecimal `^^80` forms (tex.web sections 49 and 262).
-fn append_tex_print_char(ch: char, text: &mut String) {
-    let code = ch as u32;
-    match code {
-        0..=31 => {
-            text.push_str("^^");
-            text.push(char::from_u32(code + 64).expect("ASCII control marker"));
-        }
-        32..=126 => text.push(ch),
-        127 => text.push_str("^^?"),
-        128..=255 => {
-            use std::fmt::Write as _;
-            let _ = write!(text, "^^{code:02x}");
-        }
-        _ => text.push(ch),
-    }
-}
-
-pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
-    string_tokens(stores, token)
-        .into_iter()
-        .filter_map(|token| match token {
-            Token::Char { ch, .. } => Some(ch),
-            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
-        })
-        .collect()
-}
-
 pub fn scan_the_text_with_context(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
@@ -1452,28 +1318,6 @@ pub fn scan_the_text_with_context(
         }
         Dispatch::Continue => String::new(),
     })
-}
-
-fn text_tokens(text: &str) -> Vec<Token> {
-    text.chars().map(rendered_char).collect()
-}
-
-fn rendered_char(ch: char) -> Token {
-    Token::Char {
-        ch,
-        cat: if ch == ' ' {
-            Catcode::Space
-        } else {
-            Catcode::Other
-        },
-    }
-}
-
-fn escapechar(stores: &impl ExpansionState) -> Option<char> {
-    u32::try_from(stores.int_param(IntParam::ESCAPE_CHAR))
-        .ok()
-        .filter(|&value| value < 256)
-        .and_then(char::from_u32)
 }
 
 pub(crate) fn roman_numeral(value: i32) -> String {

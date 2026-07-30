@@ -14,27 +14,43 @@ use tex_state::{PrintSink, Universe};
 use crate::mode::ignored_depth;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
 
+/// TeX82 §510's `<Terminate the current conditional and skip to \fi>` for an
+/// `\or`/`\else`/`\fi` that matches no live `\if`.
 pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) {
-    write_diagnostic(
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
         stores,
-        &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
+        &format!("Extra \\{name}"),
+        &["I'm ignoring this; it doesn't match any \\if."],
+        context,
     );
 }
 
+/// e-TeX's `\interactionmode` case of TeX82 §1243's `alter_integer`.
+///
+/// The parenthesized value is §91's `int_error`, which prints it as part of
+/// the message line rather than as a second report.
 pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
-    write_diagnostic(stores, &format!("\n! Bad interaction mode ({value}).\n"));
-}
-pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
-    let command = tex_command::command_token_text(&mut stores.command_context(), token);
-    let mode = mode_name(mode);
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        &format!(
-            "\n! You can't use `{command}' in {mode}.\nSorry, but I'm not programmed to handle this case;\nI'll just pretend that you didn't ask for it.\nIf you're in the wrong mode, you might be able to\nreturn to the right one by typing `I}}' or `I$' or `I\\par'.\n"
-        ),
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
+        stores,
+        &format!("Bad interaction mode ({value})"),
+        &[
+            "Modes are 0=batch, 1=nonstop, 2=scroll, and",
+            "3=errorstop. Proceed, and I'll ignore this case.",
+        ],
+        context,
     );
 }
 
+/// [`report_illegal_case_with_context`] for a caller whose input stack is the
+/// gullet's rather than the canonical command core's.
+pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
+    let context = show_context(stores, stores.input_summary());
+    report_illegal_case_with_context(stores, token, mode, Some(context));
+}
+
+/// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
 pub(crate) fn report_illegal_case_with_context(
     stores: &mut Universe,
     token: Token,
@@ -162,11 +178,13 @@ pub(crate) fn execute_showthe(
                 Token::Char { ch, cat } => format!("{} character {ch}", catcode_name(cat)),
                 _ => meaning_text(stores, token),
             };
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                &format!(
-                    "\n! You can't use `{rendered}' after \\the.\nI'm forgetting what you said and using zero instead.\n"
-                ),
+            // TeX82 §428's `<Complain that \the can't do this; give zero
+            // result>`. The zero below is §428's `cur_val:=0`, not a guess.
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                &format!("You can't use `{rendered}' after \\the"),
+                &["I'm forgetting what you said and using zero instead."],
             );
             "0".to_owned()
         }
@@ -281,6 +299,7 @@ pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
 pub(crate) fn execute_canonical_showgroups(
     stores: &mut Universe,
     diagnostic: &ShowGroupsDiagnostic,
+    context: String,
 ) {
     {
         let mut output = stores.begin_diagnostic();
@@ -302,7 +321,7 @@ pub(crate) fn execute_canonical_showgroups(
         output.print_nl("### bottom level");
         output.end(true);
     }
-    complete_show(stores, true, None);
+    complete_show(stores, true, Some(context));
 }
 
 pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
@@ -370,7 +389,7 @@ fn if_type_text(if_type: u8) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
+pub(crate) fn execute_showbox(stores: &mut Universe, index: u16, context: String) {
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
@@ -386,7 +405,7 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     // `print_nl(""); print_ln`.
     diagnostic.print_nl(&text);
     diagnostic.end(true);
-    complete_show(stores, true, None);
+    complete_show(stores, true, Some(context));
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -458,22 +477,25 @@ pub(crate) fn execute_message(
     if error {
         write_diagnostic(stores, &format!("\n! {text}.\n"));
     } else {
-        let mut column = diagnostic_print_column(stores);
+        // TeX82 §1279: break before the message when it cannot fit on the
+        // rest of the line, otherwise separate it with a space. The message
+        // itself goes out through §59's `slow_print`, whose per-character
+        // §58 wrapping `World::write_text` now performs for every printable
+        // sink, so this decides only the leading break or space.
+        let column = diagnostic_print_column(stores);
         let mut output = String::new();
-        if column + text.chars().count() > 77 {
+        if column + text.chars().count() > tex_state::print::MAX_PRINT_LINE - 2 {
             output.push('\n');
-            column = 0;
         } else if column > 0 {
             output.push(' ');
-            column += 1;
         }
-        output.push_str(&write_wrapped_message(&text, column));
+        output.push_str(&text);
         write_diagnostic(stores, &output);
     }
     Ok(())
 }
 
-pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
+pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest, context: String) {
     let mut text = String::new();
     let summary = nest.summary();
     for (index, level) in summary.levels().iter().enumerate().rev() {
@@ -553,7 +575,7 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
     diagnostic.print_nl("").print_ln();
     diagnostic.print(&text);
     diagnostic.end(true);
-    complete_show(stores, true, None);
+    complete_show(stores, true, Some(context));
 }
 
 fn push_page_totals(stores: &Universe, text: &mut String) {
@@ -619,17 +641,27 @@ pub(crate) fn report_dimension_diagnostics(
     }
 }
 
+/// TeX82 §1004's `<Update the current page measurements with respect to the
+/// glue or kern specified by node p>`.
 pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) {
-    write_diagnostic(
+    // The page builder runs between commands, so §82's display comes from the
+    // published summary rather than a live stack the caller could hand over.
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
         stores,
-        "\n! Infinite glue shrinkage found on current page.\n\
-The page about to be output contains some infinitely\n\
-shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.\n\
-Such glue doesn't belong there; but you can safely proceed,\n\
-since the offensive shrinkability has been made finite.\n",
+        "Infinite glue shrinkage found on current page",
+        &[
+            "The page about to be output contains some infinitely",
+            "shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.",
+            "Such glue doesn't belong there; but you can safely proceed,",
+            "since the offensive shrinkability has been made finite.",
+        ],
+        context,
     );
 }
 
+/// TeX82 §976's `<Update the current height and depth measurements with
+/// respect to a glue or kern node p>`.
 pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
         write_diagnostic(
@@ -638,25 +670,32 @@ pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
         );
         return;
     }
-    write_diagnostic(
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
         stores,
-        "\n! Infinite glue shrinkage found in box being split.\n\
-The box you are \\vsplitting contains some infinitely\n\
-shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.\n\
-Such glue doesn't belong there; but you can safely proceed,\n\
-since the offensive shrinkability has been made finite.\n",
+        "Infinite glue shrinkage found in box being split",
+        &[
+            "The box you are \\vsplitting contains some infinitely",
+            "shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.",
+            "Such glue doesn't belong there; but you can safely proceed,",
+            "since the offensive shrinkability has been made finite.",
+        ],
+        context,
     );
 }
 
+/// TeX82 §1009's `<Subtract the natural width of the insertion ...>`.
 pub(crate) fn report_insertion_skip_infinite_shrinkage(stores: &mut Universe, class: u16) {
-    write_diagnostic(
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
         stores,
-        &format!(
-            "\n! Infinite glue shrinkage inserted from \\skip{class}.\n\
-The correction glue for page breaking with insertions\n\
-must have finite shrinkability. But you may proceed,\n\
-since the offensive shrinkability has been made finite.\n"
-        ),
+        &format!("Infinite glue shrinkage inserted from \\skip{class}"),
+        &[
+            "The correction glue for page breaking with insertions",
+            "must have finite shrinkability. But you may proceed,",
+            "since the offensive shrinkability has been made finite.",
+        ],
+        context,
     );
 }
 
@@ -820,137 +859,13 @@ pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut
     tex_expand::append_token_show_text(stores, token, text);
 }
 
-/// TeX82 §530's detached `show_context` display.
+/// tex.web §310's `show_context` display for the gullet's replay stack.
 ///
-/// `error_line` and `half_error_line` are compile-time WEB constants (79 and
-/// 50 in TeX82), while `error_context_lines` is the live integer parameter.
-/// This returns owned text because deferred output can fail after the input
-/// stack itself has retired.
+/// The implementation is [`tex_state::InputSummary::show_context`]; the
+/// pseudoprint arithmetic it shares with the canonical command core's own
+/// stack is [`tex_state::print::render_error_context`].
 pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -> String {
-    use tex_state::input::{InputFrameSummary, TokenListReplayKind};
-
-    const ERROR_LINE: usize = 79;
-    const HALF_ERROR_LINE: usize = 50;
-
-    fn label(kind: TokenListReplayKind) -> &'static str {
-        match kind {
-            TokenListReplayKind::MacroBody => "<macro> ",
-            TokenListReplayKind::MacroArgument => "<argument> ",
-            TokenListReplayKind::NoExpand => "<recently read> ",
-            TokenListReplayKind::Unexpanded => "<unexpanded> ",
-            TokenListReplayKind::EveryPar => "<everypar> ",
-            TokenListReplayKind::EveryHBox => "<everyhbox> ",
-            TokenListReplayKind::EveryVBox => "<everyvbox> ",
-            TokenListReplayKind::EveryJob => "<everyjob> ",
-            TokenListReplayKind::EveryCr => "<everycr> ",
-            TokenListReplayKind::Mark => "<mark> ",
-            TokenListReplayKind::OutputRoutine => "<output> ",
-            TokenListReplayKind::Inserted => "<inserted text> ",
-            TokenListReplayKind::ScantokensEveryEof => "<everyeof> ",
-            TokenListReplayKind::AlignmentUTemplate => "<template> ",
-            TokenListReplayKind::AlignmentVTemplate => "<template> ",
-        }
-    }
-
-    fn clipped(label: &str, before: &str, after: &str) -> String {
-        let mut left = format!("{label}{before}");
-        let left_len = left.chars().count();
-        if left_len > HALF_ERROR_LINE {
-            left = format!(
-                "...{}",
-                left.chars()
-                    .skip(left_len - (HALF_ERROR_LINE - 3))
-                    .collect::<String>()
-            );
-        }
-        let indent = left.chars().count();
-        let available = ERROR_LINE.saturating_sub(indent);
-        let after_len = after.chars().count();
-        let right = if after_len > available {
-            let take = available.saturating_sub(3);
-            format!("{}...", after.chars().take(take).collect::<String>())
-        } else {
-            after.to_owned()
-        };
-        format!("\n{left}\n{}{right}", " ".repeat(indent))
-    }
-
-    fn shown_tokens(stores: &Universe, tokens: &[Token]) -> String {
-        let mut text = String::new();
-        for &token in tokens {
-            append_token_show_text(stores, token, &mut text);
-        }
-        text
-    }
-
-    let context_lines = stores
-        .int_param(tex_state::env::banks::IntParam::new(54))
-        .max(0) as usize;
-    let mut contexts = Vec::new();
-    for frame in input.frames().iter().rev() {
-        match frame {
-            InputFrameSummary::Condition { .. } => {}
-            InputFrameSummary::TokenList {
-                token_list,
-                replay_kind,
-                index,
-                ..
-            } => {
-                let tokens = stores.tokens(*token_list);
-                let split = (*index).min(tokens.len());
-                contexts.push(clipped(
-                    label(*replay_kind),
-                    &shown_tokens(stores, &tokens[..split]),
-                    &shown_tokens(stores, &tokens[split..]),
-                ));
-            }
-            InputFrameSummary::TransientTokenList {
-                tokens,
-                replay_kind,
-                ..
-            } => {
-                let tokens = tokens
-                    .iter()
-                    .map(|word| word.semantic_token())
-                    .collect::<Vec<_>>();
-                contexts.push(clipped(
-                    label(*replay_kind),
-                    "",
-                    &shown_tokens(stores, &tokens),
-                ));
-            }
-            InputFrameSummary::Source { source, .. } => {
-                let line = source.normalized_line().trim_end_matches('\r');
-                let split = source.line_byte_offset().min(line.len());
-                let split = (0..=split)
-                    .rev()
-                    .find(|offset| line.is_char_boundary(*offset))
-                    .unwrap_or(0);
-                let (before, after) = line.split_at(split);
-                contexts.push(clipped(
-                    &format!("l.{} ", source.line_number()),
-                    before,
-                    after,
-                ));
-            }
-        }
-    }
-    match contexts.as_slice() {
-        [] => String::new(),
-        [only] => only.clone(),
-        [current, rest @ ..] => {
-            let (bottom, intermediate) = rest.split_last().expect("rest is nonempty");
-            let mut output = current.clone();
-            for context in intermediate.iter().take(context_lines) {
-                output.push_str(context);
-            }
-            if intermediate.len() > context_lines {
-                output.push_str("\n...");
-            }
-            output.push_str(bottom);
-            output
-        }
-    }
+    input.show_context(stores)
 }
 
 fn diagnostic_print_column(stores: &Universe) -> usize {
@@ -960,25 +875,6 @@ fn diagnostic_print_column(stores: &Universe) -> usize {
         .terminal_partial_line()
         .chars()
         .count()
-}
-
-fn write_wrapped_message(text: &str, initial_column: usize) -> String {
-    let mut output = String::new();
-    let mut column = initial_column;
-    for ch in text.chars() {
-        if ch == '\n' {
-            output.push(ch);
-            column = 0;
-            continue;
-        }
-        if column == 79 {
-            output.push('\n');
-            column = 0;
-        }
-        output.push(ch);
-        column += 1;
-    }
-    output
 }
 
 pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> String {
@@ -993,6 +889,12 @@ pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> Stri
     text.chars()
         .map(|ch| if ch == newline { '\n' } else { ch })
         .collect()
+}
+
+/// Writes text to both printable sinks, for a report built as one string
+/// rather than through the print primitives.
+pub(crate) fn write_terminal_and_log(stores: &mut Universe, text: &str) {
+    write_diagnostic(stores, text);
 }
 
 fn write_diagnostic(stores: &mut Universe, text: &str) {

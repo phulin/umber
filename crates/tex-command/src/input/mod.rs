@@ -51,57 +51,104 @@ pub(crate) struct InputState {
     pub(crate) force_eof: bool,
 }
 
-/// Formats TeX82 §§79--82's two pseudoprinted context lines.
-///
-/// The descriptive label has already been printed when §82 crops the
-/// pseudoprinted prefix. It therefore remains intact while only `before` is
-/// replaced by an ellipsis and its fitting suffix.
-fn clipped_context(
-    label: &str,
-    before: &str,
-    after: &str,
-    widths: tex_state::print::ErrorContextWidths,
-) -> String {
-    let label_len = label.chars().count();
-    let before_len = before.chars().count();
-    let (left, indent) = if label_len + before_len > widths.half_error_line() {
-        let suffix_len = widths
-            .half_error_line()
-            .saturating_sub(label_len)
-            .saturating_sub(3);
-        (
-            format!(
-                "{label}...{}",
-                before
-                    .chars()
-                    .skip(before_len.saturating_sub(suffix_len))
-                    .collect::<String>()
-            ),
-            widths.half_error_line(),
-        )
-    } else {
-        (
-            format!("{label}{before}"),
-            label_len.saturating_add(before_len),
-        )
-    };
-    let available = widths.error_line().saturating_sub(indent);
-    let right = if after.chars().count() > available {
-        format!(
-            "{}...",
-            after
-                .chars()
-                .take(available.saturating_sub(3))
-                .collect::<String>()
-        )
-    } else {
-        after.to_owned()
-    };
-    format!("\n{left}\n{}{right}", " ".repeat(indent))
-}
-
 impl InputState {
+    /// tex.web §310's `show_context` display for the canonical input stack.
+    ///
+    /// The two-line pseudoprint arithmetic (§316--§318) and §310's own
+    /// `\errorcontextlines` elision are
+    /// [`tex_state::print::render_error_context`]; this is §312--§314's
+    /// projection of the command core's levels onto it. Every other input
+    /// stack in the engine projects onto the same renderer.
     pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+        tex_state::print::render_error_context(
+            &self.error_context_levels(stores),
+            stores.error_context_widths(),
+            stores.int_param(tex_state::env::banks::IntParam::new(54)),
+        )
+    }
+
+    /// §312's `<Display the current context>`, innermost level first.
+    ///
+    /// §310 stops at the first level that sets `bottom_line` -- a non-token
+    /// level that is either a real file (`name>17`) or the bottom of the
+    /// stack -- so nothing below an `\input`ed file is projected at all.
+    fn error_context_levels(
+        &self,
+        stores: &tex_state::CommandContext<'_>,
+    ) -> Vec<tex_state::print::ErrorContextLevel> {
+        let mut levels = Vec::new();
+        for (index, level) in self.levels.iter().enumerate().rev() {
+            let current = levels.is_empty() && index + 1 == self.levels.len();
+            match level {
+                InputLevel::Source(source) => {
+                    let bottom = index == 0
+                        || matches!(source.name_class, crate::input::SourceNameClass::File);
+                    let Some(rendered) = Self::source_context_level(source, index == 0) else {
+                        // A source level with no live line has nothing to
+                        // pseudoprint, but §310 still stops here.
+                        if bottom {
+                            break;
+                        }
+                        continue;
+                    };
+                    levels.push(rendered);
+                    if bottom {
+                        break;
+                    }
+                }
+                InputLevel::Tokens(tokens) => {
+                    if let Some(rendered) = Self::token_context_level(stores, tokens, current) {
+                        levels.push(rendered);
+                    }
+                }
+            }
+        }
+        levels
+    }
+
+    /// §313's `<Print location of current line>` and `<Pseudoprint the line>`.
+    fn source_context_level(
+        source: &SourceLevel,
+        bottom_of_stack: bool,
+    ) -> Option<tex_state::print::ErrorContextLevel> {
+        use crate::input::SourceNameClass;
+
+        let line = source.cursor.line.as_ref()?;
+        let bytes = &source.cursor.current_backing().bytes;
+        let start = line.physical.content_range().start();
+        let end = line.retained_end;
+        let cursor = line.byte_cursor.clamp(start, end);
+        let (Ok(start), Ok(end), Ok(cursor)) = (
+            usize::try_from(start),
+            usize::try_from(end),
+            usize::try_from(cursor),
+        ) else {
+            return None;
+        };
+        // §313 ends every one of its branches with the same `print_char(" ")`,
+        // including the `<insert> ` arm that already carries a space.
+        let label = match source.name_class {
+            SourceNameClass::Terminal if bottom_of_stack => "<*> ".to_owned(),
+            SourceNameClass::Terminal => "<insert>  ".to_owned(),
+            // §303's stream 16 is the invalid stream number `\read` reads from
+            // the terminal under `read_toks` control, and §313 spells it `*`.
+            SourceNameClass::ReadStream(16) => "<read *> ".to_owned(),
+            SourceNameClass::ReadStream(stream) => format!("<read {stream}> "),
+            SourceNameClass::File => format!("l.{} ", line.physical.number()),
+        };
+        Some(tex_state::print::ErrorContextLevel::new(
+            label,
+            String::from_utf8_lossy(&bytes[start..cursor]),
+            String::from_utf8_lossy(&bytes[cursor..end]),
+        ))
+    }
+
+    /// §314's `<Print type of token list>` and §315's pseudoprint.
+    fn token_context_level(
+        stores: &tex_state::CommandContext<'_>,
+        tokens: &TokenCursor,
+        current: bool,
+    ) -> Option<tex_state::print::ErrorContextLevel> {
         fn token_text(
             stores: &tex_state::CommandContext<'_>,
             tokens: impl Iterator<Item = tex_state::token::Token>,
@@ -111,139 +158,95 @@ impl InputState {
                 .collect()
         }
 
-        let max_intermediate_levels = stores
-            .int_param(tex_state::env::banks::IntParam::new(54))
-            .max(0) as usize;
-        let mut contexts = Vec::new();
-        for level in self.levels.iter().rev() {
-            match level {
-                InputLevel::Source(source) => {
-                    let Some(line) = source.cursor.line.as_ref() else {
-                        continue;
-                    };
-                    let bytes = &source.cursor.current_backing().bytes;
-                    let start = line.physical.content_range().start();
-                    let end = line.retained_end;
-                    let cursor = line.byte_cursor.clamp(start, end);
-                    let (Ok(start), Ok(end), Ok(cursor)) = (
-                        usize::try_from(start),
-                        usize::try_from(end),
-                        usize::try_from(cursor),
-                    ) else {
-                        continue;
-                    };
-                    contexts.push(clipped_context(
-                        &format!("l.{} ", line.physical.number()),
-                        &String::from_utf8_lossy(&bytes[start..cursor]),
-                        &String::from_utf8_lossy(&bytes[cursor..end]),
-                        stores.error_context_widths(),
-                    ));
+        let (before, after) = match &tokens.payload {
+            TokenPayload::Stored { tokens: list, .. } => {
+                let words = stores.tokens(*list);
+                let split = tokens.index.min(words.len());
+                (
+                    token_text(stores, words[..split].iter().copied()),
+                    token_text(stores, words[split..].iter().copied()),
+                )
+            }
+            TokenPayload::Transient(words) => {
+                let split = tokens.index.min(words.len());
+                (
+                    token_text(
+                        stores,
+                        (0..split).filter_map(|index| words.get(index).map(|w| w.semantic_token())),
+                    ),
+                    token_text(
+                        stores,
+                        (split..words.len())
+                            .filter_map(|index| words.get(index).map(|w| w.semantic_token())),
+                    ),
+                )
+            }
+            TokenPayload::BackedUp(words) => {
+                let before = (0..tokens.index)
+                    .filter_map(|index| words.get(index))
+                    .map(|word| word.spelling.semantic_token());
+                let after = (tokens.index..)
+                    .map_while(|index| words.get(index))
+                    .map(|word| word.spelling.semantic_token());
+                (token_text(stores, before), token_text(stores, after))
+            }
+            TokenPayload::ArgumentRange { buffer, range } => {
+                let start = range.start();
+                let end = range.end();
+                let split = start.saturating_add(tokens.index).min(end);
+                (
+                    token_text(
+                        stores,
+                        (start..split)
+                            .filter_map(|index| buffer.get(index).map(|w| w.semantic_token())),
+                    ),
+                    token_text(
+                        stores,
+                        (split..end)
+                            .filter_map(|index| buffer.get(index).map(|w| w.semantic_token())),
+                    ),
+                )
+            }
+        };
+        // §314's `loc=null` test, which only the `backed_up` family consults.
+        let exhausted = after.is_empty();
+        let label = match tokens.trace {
+            ReplayTrace::MacroParameter { .. } => "<argument> ",
+            ReplayTrace::MacroReplacement => "<macro> ",
+            ReplayTrace::BackedUp => {
+                // §312 omits a `backed_up` list that has already been read
+                // through, unless it is the level the error happened on.
+                if exhausted && !current {
+                    return None;
                 }
-                InputLevel::Tokens(tokens) => {
-                    let (before, after, exhausted) = match &tokens.payload {
-                        TokenPayload::Stored { tokens: list, .. } => {
-                            let words = stores.tokens(*list);
-                            let split = tokens.index.min(words.len());
-                            (
-                                token_text(stores, words[..split].iter().copied()),
-                                token_text(stores, words[split..].iter().copied()),
-                                tokens.index >= words.len(),
-                            )
-                        }
-                        TokenPayload::Transient(words) => {
-                            let split = tokens.index.min(words.len());
-                            (
-                                token_text(
-                                    stores,
-                                    (0..split).filter_map(|index| {
-                                        words.get(index).map(|w| w.semantic_token())
-                                    }),
-                                ),
-                                token_text(
-                                    stores,
-                                    (split..words.len()).filter_map(|index| {
-                                        words.get(index).map(|w| w.semantic_token())
-                                    }),
-                                ),
-                                tokens.index >= words.len(),
-                            )
-                        }
-                        TokenPayload::BackedUp(words) => {
-                            let before = (0..tokens.index)
-                                .filter_map(|index| words.get(index))
-                                .map(|word| word.spelling.semantic_token());
-                            let after = (tokens.index..)
-                                .map_while(|index| words.get(index))
-                                .map(|word| word.spelling.semantic_token());
-                            (
-                                token_text(stores, before),
-                                token_text(stores, after),
-                                words.get(tokens.index).is_none(),
-                            )
-                        }
-                        TokenPayload::ArgumentRange { buffer, range } => {
-                            let start = range.start();
-                            let end = range.end();
-                            let split = start.saturating_add(tokens.index).min(end);
-                            (
-                                token_text(
-                                    stores,
-                                    (start..split).filter_map(|index| {
-                                        buffer.get(index).map(|w| w.semantic_token())
-                                    }),
-                                ),
-                                token_text(
-                                    stores,
-                                    (split..end).filter_map(|index| {
-                                        buffer.get(index).map(|w| w.semantic_token())
-                                    }),
-                                ),
-                                start.saturating_add(tokens.index) >= end,
-                            )
-                        }
-                    };
-                    // TeX82 §530 distinguishes the exhausted one-token
-                    // `back_input` level (`loc=null`) from an unread backup.
-                    let label = match tokens.trace {
-                        ReplayTrace::MacroParameter { .. } => "<argument> ",
-                        ReplayTrace::MacroReplacement => "<macro> ",
-                        ReplayTrace::BackedUp if exhausted => "<recently read> ",
-                        ReplayTrace::BackedUp => "<to be read again> ",
-                        ReplayTrace::Inserted => "<inserted text> ",
-                        ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
-                        ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
-                        _ => "<token list> ",
-                    };
-                    contexts.push(clipped_context(
-                        label,
-                        &before,
-                        &after,
-                        stores.error_context_widths(),
-                    ));
+                if exhausted {
+                    "<recently read> "
+                } else {
+                    "<to be read again> "
                 }
             }
-        }
-        match contexts.as_slice() {
-            [] => String::new(),
-            [only] => only.clone(),
-            [current, rest @ ..] => {
-                let (bottom, intermediate) = rest.split_last().expect("rest is nonempty");
-                let mut output = current.clone();
-                for context in intermediate.iter().take(max_intermediate_levels) {
-                    output.push_str(context);
-                }
-                if intermediate.len() > max_intermediate_levels {
-                    output.push_str("\n...");
-                }
-                output.push_str(bottom);
-                output
+            ReplayTrace::Inserted => "<inserted text> ",
+            ReplayTrace::UTemplate | ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
+                "<template> "
             }
-        }
+            ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryMath) => "<everymath> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryDisplay) => "<everydisplay> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
+            ReplayTrace::Stored(StoredReplayReason::EveryEof) => "<everyeof> ",
+            ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
+            ReplayTrace::Stored(StoredReplayReason::Write) => "<write> ",
+            ReplayTrace::Stored(StoredReplayReason::Discretionary) | ReplayTrace::Transient(_) => {
+                "<token list> "
+            }
+        };
+        Some(tex_state::print::ErrorContextLevel::new(
+            label, before, after,
+        ))
     }
 
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.

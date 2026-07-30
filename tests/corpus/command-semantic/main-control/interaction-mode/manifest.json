@@ -33,18 +33,10 @@
       "channels": {
         "events": 80,
         "status": "clean",
-        "terminal": {
-          "kind": "file"
-        },
-        "log": {
-          "kind": "file"
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "xfail",

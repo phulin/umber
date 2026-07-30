@@ -101,7 +101,7 @@ pub(super) fn execute_assignment_to_target(
         }
         Variable::FontDimen(font, number) => {
             let value = scan_scaled(input, stores, execution, context)?;
-            set_font_dimen_recovering(stores, font, number, value)?;
+            set_font_dimen_recovering(input, stores, font, number, value)?;
         }
         Variable::GlueParam(index) => {
             let value = scan_glue_id(input, stores, execution, false, context)?;
@@ -190,6 +190,7 @@ pub(super) fn execute_char_def(
     let meaning = match primitive {
         UnexpandablePrimitive::CharDef => {
             let value = recover_restricted_code(
+                input,
                 stores,
                 value,
                 255,
@@ -201,6 +202,7 @@ pub(super) fn execute_char_def(
         }
         UnexpandablePrimitive::MathCharDef => {
             let value = recover_restricted_code(
+                input,
                 stores,
                 value,
                 32_767,
@@ -219,7 +221,14 @@ pub(super) fn execute_char_def(
     Ok(())
 }
 
+/// TeX.web §434's `scan_char_num` and §436's `scan_fifteen_bit_int`, whose
+/// recoveries differ only in the bound they name.
+///
+/// Each reports through §91's `int_error`, which parenthesizes the offending
+/// value after the message and before §82's `error` closes it, and then
+/// substitutes zero.
 fn recover_restricted_code(
+    input: &mut InputStack,
     stores: &mut Universe,
     value: i32,
     maximum: i32,
@@ -229,9 +238,11 @@ fn recover_restricted_code(
     if (0..=maximum).contains(&value) {
         return value;
     }
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
+    crate::error_report::report_input_error(
+        input,
+        stores,
+        &format!("{message} ({value})"),
+        &[help, "I changed this one to zero."],
     );
     0
 }
@@ -313,7 +324,7 @@ pub(super) fn execute_arithmetic(
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
-            set_font_dimen_recovering(stores, font, number, value)?;
+            set_font_dimen_recovering(input, stores, font, number, value)?;
         }
         Variable::GlueRegister(index) | Variable::GlueParam(index) => {
             let old = stores.glue(read_glue_variable(stores, target));
@@ -344,6 +355,7 @@ pub(super) fn execute_arithmetic(
 }
 
 fn set_font_dimen_recovering(
+    input: &mut InputStack,
     stores: &mut Universe,
     font: tex_state::ids::FontId,
     number: u32,
@@ -352,12 +364,17 @@ fn set_font_dimen_recovering(
     match stores.set_font_dimen(font, number, value) {
         Ok(()) => Ok(()),
         Err(tex_state::FontParameterError::CannotGrow { current_len, .. }) => {
-            let name = stores.font_name(font);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                &format!(
-                    "\n! Font {name} has only {current_len} fontdimen parameters.\nTo increase the number of font parameters, you must\nuse \\fontdimen immediately after the \\font is loaded.\n"
-                ),
+            // TeX.web §579 names the font by `print_esc(font_id_text(f))`,
+            // the control sequence it was loaded under, not by its file name.
+            let name = crate::node_dump::font_identifier(stores, font);
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                &format!("Font {name} has only {current_len} fontdimen parameters"),
+                &[
+                    "To increase the number of font parameters, you must",
+                    "use \\fontdimen immediately after the \\font is loaded.",
+                ],
             );
             Ok(())
         }

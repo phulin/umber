@@ -49,30 +49,10 @@
       "channels": {
         "events": 33,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.18",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./input-start-file.tex (./nested.tex))",
-            "actual": "(./input-start-file.tex (nested.tex))"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.18",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./input-start-file.tex (./nested.tex))",
-            "actual": "(./input-start-file.tex (nested.tex))"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -38,27 +38,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
-            "actual": ""
-          }
+          "mismatch": { "line": 45, "expected": "<*> etex-loaded-glue-component-enquiries.tex", "actual": "<*> " }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
-            "actual": ""
-          }
+          "mismatch": { "line": 89, "expected": "<*> etex-loaded-glue-component-enquiries.tex", "actual": "<*> " }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

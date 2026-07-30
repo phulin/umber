@@ -145,10 +145,16 @@ fn recover_missing_box(
     stores: &mut Universe,
     traced: TracedTokenWord,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
-    crate::push_traced_tokens(input, stores, [traced]);
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        "\n! A <box> was supposed to be here.\nI was expecting to see \\hbox or \\vbox or \\copy or \\box or\nsomething like that. So you might find something missing in\nyour output. But keep trying; you can fix this later.\n",
+    crate::error_report::back_error(
+        input,
+        stores,
+        traced,
+        "A <box> was supposed to be here",
+        &[
+            "I was expecting to see \\hbox or \\vbox or \\copy or \\box or",
+            "something like that. So you might find something missing in",
+            "your output. But keep trying; you can fix this later.",
+        ],
     );
     Ok(None)
 }
@@ -161,18 +167,23 @@ pub(crate) fn take_last_box(
     flush_pending_hchars(nest, stores, fuel)?;
     match nest.current_mode() {
         Mode::Math | Mode::DisplayMath => {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! You can't use `\\lastbox' in math mode.\nSorry; this \\lastbox will be void.\n",
+            report_cannot_take_last_box(
+                stores,
+                "math mode",
+                &["Sorry; this \\lastbox will be void."],
             );
             Ok(None)
         }
         Mode::Vertical
             if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
         {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! You can't use `\\lastbox' in vertical mode.\nSorry...I usually can't take things from the current page.\nThis \\lastbox will therefore be void.\n",
+            report_cannot_take_last_box(
+                stores,
+                "vertical mode",
+                &[
+                    "Sorry...I usually can't take things from the current page.",
+                    "This \\lastbox will therefore be void.",
+                ],
             );
             Ok(None)
         }
@@ -181,6 +192,44 @@ pub(crate) fn take_last_box(
             Ok(nest.current_list_mutation().take_last_box())
         }
     }
+}
+
+/// TeX.web §370's `<Complain about an undefined macro>`.
+///
+/// The offending name is deliberately absent from the message: §82's context
+/// display ends the top line with it, which is what the third help line means
+/// by "the control sequence at the end of the top line".
+fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
+    crate::error_report::report_input_error(
+        input,
+        stores,
+        "Undefined control sequence",
+        &[
+            "The control sequence at the end of the top line",
+            "of your error message was never \\def'ed. If you have",
+            "misspelled it (e.g., `\\hobx'), type `I' and the correct",
+            "spelling (e.g., `I\\hbox'). Otherwise just continue,",
+            "and I'll forget about whatever was undefined.",
+        ],
+    );
+}
+
+/// TeX.web §1080's two `\lastbox` refusals, opened by §72's `you_cant`
+/// (`print_err("You can't use `"); print_cmd_chr; print("' in "); print_mode`).
+///
+/// `take_last_box` is also reached from canonical replay and from page
+/// building, neither of which holds a live `InputStack`, so §82's display
+/// comes from the last published input summary.
+fn report_cannot_take_last_box(stores: &mut Universe, mode: &str, help: &[&str]) {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err("You can't use `");
+    report
+        .print_esc("lastbox")
+        .print("' in ")
+        .print(mode)
+        .help(help)
+        .context(context);
+    report.error();
 }
 
 pub(super) fn scan_box_node(
@@ -202,10 +251,17 @@ pub(super) fn scan_box_node(
     ) {
         // TeX.web §403 `scan_left_brace` backs up the first body token and
         // proceeds with an inserted opening brace.
-        push_traced_tokens(input, stores, [opener]);
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+        crate::error_report::back_error(
+            input,
+            stores,
+            opener,
+            "Missing { inserted",
+            &[
+                "A left brace was mandatory here, so I've put one in.",
+                "You might want to delete and/or insert some corrections",
+                "so that I will find a matching right brace soon.",
+                "(If you're confused by all this, try typing `I}' now.)",
+            ],
         );
     }
     let group_kind = match kind {
@@ -321,11 +377,18 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     }
     let children = stores.freeze_node_list_owned(nodes);
     let packed = plan.finish(children);
+    stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
         width_sp: i64::from(packed.node.width.raw()),
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    crate::pack_report::report_pack_diagnostics(
+        stores,
+        crate::pack_report::PackedDirection::Horizontal,
+        &packed.diagnostics,
+        &tex_state::node::Node::HList(packed.node),
+    );
     packed.node
 }
 
@@ -346,11 +409,8 @@ pub(crate) fn scan_box_group(
                     execution,
                 ) {
                     Ok(token) => token,
-                    Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Undefined control sequence \\{name}.\n"),
-                        );
+                    Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
+                        report_undefined_control_sequence(input, stores);
                         continue;
                     }
                     Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
@@ -386,13 +446,9 @@ pub(crate) fn scan_box_group(
                 match crate::dispatch_delivered_token(nest, token, input, stores, execution) {
                     Ok(action) => action,
                     Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                        name,
                         ..
                     })) => {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Undefined control sequence \\{name}.\n"),
-                        );
+                        report_undefined_control_sequence(input, stores);
                         continue;
                     }
                     Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
@@ -401,14 +457,7 @@ pub(crate) fn scan_box_group(
                             tex_expand::ExpandError::UndefinedControlSequence { .. }
                         ) =>
                     {
-                        let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error
-                        else {
-                            unreachable!("guard restricts captured expansion error")
-                        };
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Undefined control sequence \\{name}.\n"),
-                        );
+                        report_undefined_control_sequence(input, stores);
                         continue;
                     }
                     // Recursive box scanning is still TeX's main-control loop. A

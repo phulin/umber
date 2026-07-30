@@ -28,36 +28,10 @@
       "channels": {
         "events": 453,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.23",
-          "mismatch": {
-            "line": 3,
-            "expected": "Output written on leaders-suppress-numbered-stream-effects.dvi (1 page, 248 byt",
-            "actual": "Output written on leaders-suppress-numbered-stream-effects.dvi (1 page, 248 bytes)."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.23",
-          "mismatch": {
-            "line": 4,
-            "expected": "Output written on leaders-suppress-numbered-stream-effects.dvi (1 page, 248 byt",
-            "actual": "Output written on leaders-suppress-numbered-stream-effects.dvi (1 page, 248 bytes)."
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special��\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0001\u0000\u0000\u0000\u0004\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000�\u0002�������",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special��\u0001\u0000\u0000��\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special����\u0000\u0001\u0000\u0000\u0000\u0001\u0000\u0000�\u000eleader-special���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0001\u0000\u0000\u0000\u0004\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000�\u0002�������"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

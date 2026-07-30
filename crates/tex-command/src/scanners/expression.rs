@@ -339,17 +339,25 @@ impl CommandProcessor<'_> {
     }
 
     fn missing_expression_parenthesis_error(&mut self) {
+        // e-TeX \[26.1576] reaches `back_error`, so the caller has already
+        // restored the rejected token for §314 to name.
+        let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Missing ) inserted for expression");
-        report.help(&["I was expecting to see `+', `-', `*', `/', or `)'. Didn't."]);
+        report
+            .help(&["I was expecting to see `+', `-', `*', `/', or `)'. Didn't."])
+            .context(context);
         report.error();
     }
 
     fn expression_arithmetic_error(&mut self) {
+        let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Arithmetic overflow");
-        report.help(&[
-            "I can't evaluate this expression,",
-            "since the result is out of range.",
-        ]);
+        report
+            .help(&[
+                "I can't evaluate this expression,",
+                "since the result is out of range.",
+            ])
+            .context(context);
         report.error();
     }
 

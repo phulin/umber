@@ -36,11 +36,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}",
-            "actual": " )"
-          }
+          "mismatch": { "line": 4, "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}", "actual": " )" }
         },
         "log": {
           "kind": "xfail",
@@ -51,12 +47,8 @@
             "actual": "user help"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

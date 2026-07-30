@@ -142,6 +142,14 @@ mod imp {
             diagnostic_log(log)
         }
 
+        /// tex.web §660's and §674's report headlines.
+        fn is_box_diagnostic_line(line: &str) -> bool {
+            ["Overfull", "Underfull", "Loose", "Tight"]
+                .iter()
+                .any(|name| line.starts_with(name))
+                && (line.contains("\\hbox (") || line.contains("\\vbox ("))
+        }
+
         fn diagnostic_log(log: &str) -> String {
             let mut lines = Vec::new();
             let mut skip_next_context = false;
@@ -183,6 +191,20 @@ mod imp {
                 // reverified against live pdftex, exactly as umber2-jmq5
                 // asks.
                 if line.starts_with("l.") || line.starts_with("<recently read>") {
+                    skip_next_context = true;
+                    continue;
+                }
+                // umber2-luzd: these corpora run Umber at INITEX defaults
+                // against a reference invoked *without* `-ini`, so the
+                // reference has plain's `\hsize`, `\parfillskip`, and
+                // `\hbadness` and Umber has none of them. Box badness is a
+                // pure function of exactly those, so §660-§675's reports are
+                // not comparable between the two runs and only ever appear on
+                // one side. Strip the headline and the `short_display` line
+                // under it, the same way the `show_context` block above is
+                // stripped, until the corpora run both engines under matched
+                // parameters. Every other line here is parameter-independent.
+                if is_box_diagnostic_line(line) {
                     skip_next_context = true;
                     continue;
                 }

@@ -48,27 +48,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./input-read-toks.tex)",
-            "actual": "(./input-read-toks.tex"
-          }
+          "mismatch": { "line": 2, "expected": "(./input-read-toks.tex)", "actual": "(./input-read-toks.tex" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./input-read-toks.texR",
-            "actual": "(./input-read-toks.tex"
-          }
+          "mismatch": { "line": 3, "expected": "(./input-read-toks.texR", "actual": "(./input-read-toks.tex" }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

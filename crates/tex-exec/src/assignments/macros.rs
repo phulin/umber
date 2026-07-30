@@ -72,16 +72,36 @@ pub(super) fn execute_def(
         };
         execution.record_macro_scan_error(context)?;
         match diagnostic {
-            MacroScanDiagnostic::UndefinedControlSequence { name, .. } => {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    &format!("\n! Undefined control sequence \\{name}.\n"),
+            // TeX.web §370. The offending name is not part of the message:
+            // §82's context display is what shows which control sequence it
+            // was, so the report has to go through the funnel to name it.
+            MacroScanDiagnostic::UndefinedControlSequence { .. } => {
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    "Undefined control sequence",
+                    &[
+                        "The control sequence at the end of the top line",
+                        "of your error message was never \\def'ed. If you have",
+                        "misspelled it (e.g., `\\hobx'), type `I' and the correct",
+                        "spelling (e.g., `I\\hbox'). Otherwise just continue,",
+                        "and I'll forget about whatever was undefined.",
+                    ],
                 );
             }
+            // TeX.web §479 names `warning_index`, which for a macro
+            // definition is the control sequence being defined.
             MacroScanDiagnostic::IllegalParameterNumber { .. } => {
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Illegal parameter number in definition.\n",
+                let name = definition_target_text(stores, target.symbol);
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    &format!("Illegal parameter number in definition of {name}"),
+                    &[
+                        "You meant to type ## instead of #, right?",
+                        "Or maybe a } was forgotten somewhere earlier, and things",
+                        "are all screwed up? I'm going to assume that you meant ##.",
+                    ],
                 );
             }
         }
@@ -102,6 +122,17 @@ pub(super) fn execute_def(
         );
     }
     Ok(())
+}
+
+/// TeX.web §263's `sprint_cs`: an active character prints bare, and every
+/// other control sequence prints escaped and without `print_cs`'s trailing
+/// space, so a following period lands directly against the name.
+fn definition_target_text(stores: &Universe, target: Symbol) -> String {
+    let name = stores.resolve(target).to_owned();
+    match stores.control_sequence_kind(target) {
+        tex_state::interner::ControlSequenceKind::ActiveCharacter => name,
+        tex_state::interner::ControlSequenceKind::Named => format!("\\{name}"),
+    }
 }
 
 pub(super) fn execute_let(

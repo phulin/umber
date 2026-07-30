@@ -14,6 +14,7 @@ use super::support::{
 };
 use crate::assignments::flush_pending_hchars;
 use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
+use crate::error_report::{back_tokens, report_input_error};
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
 use crate::vertical::{
@@ -22,6 +23,30 @@ use crate::vertical::{
 use crate::{
     DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
 };
+
+/// TeX82 §370's `<Complain about an undefined macro>` help.
+const UNDEFINED_CONTROL_SEQUENCE_HELP: &[&str] = &[
+    "The control sequence at the end of the top line",
+    "of your error message was never \\def'ed. If you have",
+    "misspelled it (e.g., `\\hobx'), type `I' and the correct",
+    "spelling (e.g., `I\\hbox'). Otherwise just continue,",
+    "and I'll forget about whatever was undefined.",
+];
+
+/// TeX82 §792's `<If the preamble list has been traversed, check that the row
+/// has ended>`, for a row that ran past the last preamble column.
+fn report_extra_alignment_tab(input: &InputStack, stores: &mut Universe) {
+    report_input_error(
+        input,
+        stores,
+        "Extra alignment tab has been changed to \\cr",
+        &[
+            "You have given more \\span or & marks than there were",
+            "in the preamble to the \\halign or \\valign now in progress.",
+            "So I'll assume that you meant to type \\cr instead.",
+        ],
+    );
+}
 
 pub(crate) fn execute_alignment(
     state: AlignState,
@@ -431,10 +456,7 @@ fn execute_cell(
                     .column_for(next_column)
                     .is_none()
                 {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! Extra alignment tab has been changed to \\cr.\n",
-                    );
+                    report_extra_alignment_tab(input, stores);
                     package_cell(
                         (align_level, kind),
                         span_count,
@@ -469,10 +491,7 @@ fn execute_cell(
                         .column_for(next_column)
                         .is_none();
                 if extra_alignment_tab {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! Extra alignment tab has been changed to \\cr.\n",
-                    );
+                    report_extra_alignment_tab(input, stores);
                 }
                 package_cell(
                     (align_level, kind),
@@ -664,10 +683,14 @@ fn run_cell_body_until_terminator(
                     context: "alignment cell",
                 });
             }
-            Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("\n! Undefined control sequence \\{name}.\n"),
+            Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
+                // §370 names the offending control sequence only through
+                // §82's context display, never in the message text.
+                report_input_error(
+                    input,
+                    stores,
+                    "Undefined control sequence",
+                    UNDEFINED_CONTROL_SEQUENCE_HELP,
                 );
                 continue;
             }
@@ -677,12 +700,11 @@ fn run_cell_body_until_terminator(
                     tex_expand::ExpandError::UndefinedControlSequence { .. }
                 ) =>
             {
-                let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
-                    unreachable!("guard restricts captured expansion error")
-                };
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                report_input_error(
+                    input,
+                    stores,
+                    "Undefined control sequence",
+                    UNDEFINED_CONTROL_SEQUENCE_HELP,
                 );
                 continue;
             }
@@ -709,9 +731,15 @@ fn run_cell_body_until_terminator(
         }
         stats.delivered_tokens += 1;
         if is_noalign(stores, semantic) {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Misplaced \\noalign.\nI expect to see \\noalign only after the \\cr of an alignment.\n",
+            // TeX82 §1129's `no_align_error`.
+            report_input_error(
+                input,
+                stores,
+                "Misplaced \\noalign",
+                &[
+                    "I expect to see \\noalign only after the \\cr of",
+                    "an alignment. Proceed, and I'll ignore this case.",
+                ],
             );
             continue;
         }
@@ -719,9 +747,15 @@ fn run_cell_body_until_terminator(
             if stores.interaction_mode() == InteractionMode::ErrorStop {
                 return Err(ExecError::MisplacedOmit);
             }
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Misplaced \\omit.\nI expect to see \\omit only after the \\cr of an alignment.\n",
+            // TeX82 §1129's `omit_error`.
+            report_input_error(
+                input,
+                stores,
+                "Misplaced \\omit",
+                &[
+                    "I expect to see \\omit only after tab marks or the \\cr of",
+                    "an alignment. Proceed, and I'll ignore this case.",
+                ],
             );
             continue;
         }
@@ -737,16 +771,27 @@ fn run_cell_body_until_terminator(
             && input.alignment_cell_below_base_depth()
             && stores.innermost_group_kind() == Some(tex_state::GroupKind::Align)
         {
-            // TeX.web §1103 does not unsave the align_group. It backs up the
-            // brace and inserts frozen \cr, which may itself need §1102's
+            // TeX82 §1132's `align_group` case of `handle_right_brace` does
+            // not unsave the align_group. It backs the brace up and reaches
+            // `ins_error` with frozen \cr, which may itself need §1127's
             // missing-left-brace recovery before get_next can start v_j.
-            report_missing_cr_inserted(stores);
             let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                 context: "alignment recovery cr",
             })?;
             let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
-            input.back_input_alignment_token(token);
-            insert_traced_tokens(input, stores, [cr, token]);
+            // §325's `back_input` for the delivered brace, whose alignment
+            // depth accounting must be undone before it is read again, and a
+            // separate `inserted` level for TeX's own repair token. Keeping
+            // them apart is what makes §314 label them `<to be read again>`
+            // and `<inserted text>` on their own context lines.
+            back_tokens(input, stores, [token]);
+            insert_traced_tokens(input, stores, [cr]);
+            report_input_error(
+                input,
+                stores,
+                "Missing \\cr inserted",
+                &["I'm guessing that you meant to end an alignment here."],
+            );
             continue;
         }
         if input.alignment_cell_below_base_depth()
@@ -754,13 +799,11 @@ fn run_cell_body_until_terminator(
                 || is_span(stores, semantic)
                 || is_cr(stores, semantic))
         {
-            // TeX.web §1102 align_error: back up the delimiter and put a
-            // left brace before it. Reading that inserted brace brings the
-            // scanner level back to zero; the replayed delimiter then starts
-            // v_j through the ordinary get_next interception path.
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, "\n! Missing { inserted.\n");
+            // TeX82 §1127's `align_error` with `align_state<0`: back up the
+            // delimiter and put a left brace before it. Reading that inserted
+            // brace brings the scanner level back to zero; the replayed
+            // delimiter then starts v_j through the ordinary get_next
+            // interception path.
             let left = Token::Char {
                 ch: '{',
                 cat: tex_state::token::Catcode::BeginGroup,
@@ -770,8 +813,21 @@ fn run_cell_body_until_terminator(
                 left,
                 token.origin(),
             );
-            input.back_input_alignment_token(token);
-            insert_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
+            back_tokens(input, stores, [token]);
+            // The brace is TeX's own repair rather than a token get_next
+            // already counted, so it is inserted without the brace-depth undo
+            // `back_tokens` applies.
+            insert_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin)]);
+            report_input_error(
+                input,
+                stores,
+                "Missing { inserted",
+                &[
+                    "I've put in what seems to be necessary to fix",
+                    "the current column of the current alignment.",
+                    "Try to go on, since this might almost work.",
+                ],
+            );
             continue;
         }
         dispatch_and_drain(nest, token, input, stores, execution, &mut stats)?;
@@ -844,12 +900,14 @@ pub(super) fn dispatch_and_drain(
     let action = match dispatch_delivered_token_with_context(nest, token, input, stores, execution)
     {
         Ok(action) => action,
-        Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-            name, ..
-        })) => {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                &format!("\n! Undefined control sequence \\{name}.\n"),
+        Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence { .. })) => {
+            // §370 names the offending control sequence only through §82's
+            // context display, never in the message text.
+            report_input_error(
+                input,
+                stores,
+                "Undefined control sequence",
+                UNDEFINED_CONTROL_SEQUENCE_HELP,
             );
             return Ok(());
         }
@@ -859,12 +917,11 @@ pub(super) fn dispatch_and_drain(
                 tex_expand::ExpandError::UndefinedControlSequence { .. }
             ) =>
         {
-            let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
-                unreachable!("guard restricts captured expansion error")
-            };
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                &format!("\n! Undefined control sequence \\{name}.\n"),
+            report_input_error(
+                input,
+                stores,
+                "Undefined control sequence",
+                UNDEFINED_CONTROL_SEQUENCE_HELP,
             );
             return Ok(());
         }
@@ -890,12 +947,6 @@ pub(super) fn dispatch_and_drain(
     }
 }
 
-fn report_missing_cr_inserted(stores: &mut Universe) {
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "\n! Missing \\cr inserted.\n");
-}
-
 fn is_alignment_par(stores: &Universe, token: Token) -> bool {
     let Token::Cs(symbol) = token else {
         return false;
@@ -913,10 +964,6 @@ fn recover_alignment_par_token(
     input: &mut InputStack,
     stores: &mut Universe,
 ) {
-    stores.world_mut().write_text(
-        PrintSink::TerminalAndLog,
-        "\n! Missing } inserted.\nI've inserted something that you may have forgotten.\n",
-    );
     let closing = Token::Char {
         ch: '}',
         cat: tex_state::token::Catcode::EndGroup,
@@ -926,10 +973,21 @@ fn recover_alignment_par_token(
         closing,
         context.origin(),
     );
-    input.back_input_alignment_token(context);
-    insert_traced_tokens(
+    // TeX82 §1064's `off_save`: `back_input`, then §1065 builds the token
+    // that matches the open group -- `}` for an align_group -- and `ins_list`
+    // puts it above the backed-up one before `error` displays both levels.
+    back_tokens(input, stores, [context]);
+    insert_traced_tokens(input, stores, [TracedTokenWord::pack(closing, origin)]);
+    report_input_error(
         input,
         stores,
-        [TracedTokenWord::pack(closing, origin), context],
+        "Missing } inserted",
+        &[
+            "I've inserted something that you may have forgotten.",
+            "(See the <inserted text> above.)",
+            "With luck, this will get me unwedged. But if you",
+            "really didn't forget anything, try typing `2' now; then",
+            "my insertion and my current dilemma will both disappear.",
+        ],
     );
 }

@@ -1081,8 +1081,13 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
         let unobserved = run(false);
         let observed = run(true);
         assert_eq!(observed, unobserved, "mode {mode:?}");
+        // §62's `print_nl` adds no newline at offset 0, so the headline opens
+        // the terminal; §82's `show_context` follows it, and §1135's help is
+        // last because §90 defers it to the transcript.
         assert_eq!(
-            unobserved.0, "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            unobserved.0,
+            "! Extra \\endcsname.\nl.1 \\endcsname\n              \\count0=17\n\
+             I'm ignoring this, since I wasn't doing a \\csname.\n\n",
             "mode {mode:?}"
         );
         assert_eq!(unobserved.1, 17, "mode {mode:?}");
@@ -1120,7 +1125,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         // test's claim is the diagnosis, not the transcript rendering.
         let terminal = terminal_text(&stores);
         assert!(
-            terminal.starts_with("\n! Extra \\forcedendv.\n"),
+            terminal.starts_with("! Extra \\forcedendv.\n"),
             "mode {mode:?}: {terminal}"
         );
         assert_eq!(
@@ -1337,20 +1342,20 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         shift: None,
     });
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
 
     stores.enter_group_with_kind_at_line(GroupKind::MathShift, 7);
     modes.push(Mode::Math).expect("test mode push");
     stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
     modes.push(Mode::Math).expect("test mode push");
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
 
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
 
     let output = terminal_text(&stores);
     for expected in [
@@ -4162,7 +4167,11 @@ fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence
     );
     run_to_end(&mut control, &mut stores);
     let output = terminal_text(&stores);
-    assert!(output.contains("> \\shown=macro:->expanded."), "{output}");
+    // §296's `print_meaning` breaks the line after a macro's `:`, so the
+    // replacement text starts its own line under `\show` (but not under
+    // `\meaning`, which runs the same routine at §471's `new_string`
+    // selector, where `print_ln` does nothing).
+    assert!(output.contains("> \\shown=macro:\n->expanded."), "{output}");
     assert!(output.contains("> 17."), "{output}");
     assert!(output.contains("> \\box0="), "{output}");
 }
@@ -4271,6 +4280,8 @@ fn consecutive_shows_and_following_error_preserve_only_canonical_separators() {
     run_to_end(&mut control, &mut stores);
 
     let output = terminal_text(&stores);
+    // §82's `show_context` sits between each report's own line and the
+    // separator, so the separator is what these check, not adjacency.
     assert!(
         output.contains("> \\errorstopmode=\\errorstopmode."),
         "{output:?}"
@@ -4331,7 +4342,7 @@ fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
     let output = terminal_text(&stores);
     assert!(output.contains("> \\undefined=undefined."), "{output}");
     assert!(output.contains("> \\relax=\\relax."), "{output}");
-    assert!(output.contains("> \\macro=macro:->body."), "{output}");
+    assert!(output.contains("> \\macro=macro:\n->body."), "{output}");
 }
 
 #[test]

@@ -33,6 +33,10 @@
 //!   what tex.web does when `deletions_allowed` is false: §85's menu is
 //!   printed and the prompt repeats.
 
+mod error_context;
+
+pub use error_context::{ErrorContextLevel, render_error_context, token_list_replay_label};
+
 /// Driver-selected widths for TeX82 §79's pseudoprinted error context.
 ///
 /// Web2C exposes the WEB constants as process configuration. They are
@@ -83,6 +87,33 @@ use crate::world::PrintSink;
 
 /// tex.web §54's `max_print_line`.
 pub const MAX_PRINT_LINE: usize = 79;
+
+/// Removes the line breaks §58 inserted at [`MAX_PRINT_LINE`], leaving every
+/// break the printer itself asked for.
+///
+/// §58 breaks a line the instant its column reaches the limit, wherever that
+/// lands -- routinely mid-word. A caller comparing a message's *content*
+/// rather than its layout reads printed text through this, so a wording
+/// change that shifts the break point cannot silently turn a substring test
+/// into a false negative. A caller whose subject is the layout reads the
+/// printed bytes directly.
+#[must_use]
+pub fn without_line_breaks(text: &str) -> String {
+    let mut unbroken = String::with_capacity(text.len());
+    let mut column = 0usize;
+    for character in text.chars() {
+        if character == '\n' {
+            if column != MAX_PRINT_LINE {
+                unbroken.push('\n');
+            }
+            column = 0;
+            continue;
+        }
+        unbroken.push(character);
+        column += 1;
+    }
+    unbroken
+}
 
 /// tex.web §54's `selector` values that ordinary printing can hold.
 ///
@@ -340,6 +371,13 @@ impl<'a> ErrorReport<'a> {
         self
     }
 
+    /// tex.web §62's `print_nl`, for a report whose message text spans more
+    /// than one line (§288's `prepare_mag` is one).
+    pub fn print_nl(&mut self, text: &str) -> &mut Self {
+        self.printer.print_nl(text);
+        self
+    }
+
     /// tex.web §65's `print_int`.
     pub fn print_int(&mut self, value: i32) -> &mut Self {
         self.printer.print_int(value);
@@ -490,8 +528,12 @@ impl<'a> ErrorReport<'a> {
             if !self.printer.state().world().terminal_line_available() {
                 return;
             }
-            // §330's `clear_for_error_prompt` flushes pending terminal input,
-            // which Umber's line-oriented terminal source has none of.
+            // §330's `clear_for_error_prompt`. Its `clear_terminal` flushes
+            // pending terminal input, which Umber's line-oriented terminal
+            // source has none of; its closing `print_ln` is unconditional
+            // and is what separates the context display §82 just printed
+            // from the prompt.
+            self.printer.print_ln();
             self.printer.print("? ");
             let Some(line) = self.terminal_input() else {
                 return;

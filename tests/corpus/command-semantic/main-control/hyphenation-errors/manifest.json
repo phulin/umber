@@ -57,11 +57,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.4 \\hyphenation{ab\\relax",
-            "actual": "! Not a letter."
-          }
+          "mismatch": { "line": 4, "expected": "l.4 \\hyphenation{ab\\relax", "actual": "! Not a letter." }
         },
         "log": {
           "kind": "xfail",
@@ -72,12 +68,8 @@
             "actual": "Hyphenation exceptions must contain only letters"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

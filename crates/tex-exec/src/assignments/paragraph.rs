@@ -118,6 +118,9 @@ pub(crate) fn start_canonical_paragraph(
                 build_page_if_outer_vertical(nest, stores)?;
             }
             nest.push(Mode::Horizontal)?;
+            // §1091's `mode_line:=line`, which §804 reports this paragraph's
+            // over/underfull lines from.
+            stores.push_paragraph_start_line(stores.current_input_line());
             if indent {
                 append_indent_box(nest, stores)?;
             }
@@ -197,6 +200,8 @@ fn start_paragraph(
                 build_page_if_outer_vertical(nest, stores)?;
             }
             nest.push(Mode::Horizontal)?;
+            // §1091's `mode_line:=line`.
+            stores.push_paragraph_start_line(stores.current_input_line());
             if indent {
                 append_indent_box(nest, stores)?;
             }
@@ -604,6 +609,12 @@ fn break_current_paragraph(
     let pdf_line_dimensions = pdf_line_dimensions(stores);
     let protrudes_chars = stores.pdf_font_configuration().protrudes_chars();
     let adjusts_spacing = stores.pdf_font_configuration().adjusts_spacing();
+    // §804: `pack_begin_line:=mode_line` for the whole of `post_line_break`,
+    // restored to 0 when the paragraph's lines are packed. This is what makes
+    // §663 say "in paragraph at lines A--B" instead of "detected at line B".
+    let restore_pack_begin_line = stores.pack_begin_line();
+    let paragraph_start_line = stores.pop_paragraph_start_line().unwrap_or(0);
+    stores.set_pack_begin_line(paragraph_start_line);
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
@@ -649,6 +660,7 @@ fn break_current_paragraph(
         }
         line_nodes = broken.nodes;
     }
+    stores.set_pack_begin_line(restore_pack_begin_line);
     nest.current_list_mutation().set_prev_graf(
         params
             .prev_graf
@@ -1184,11 +1196,14 @@ fn assign_prevgraf(
     skip_optional_equals_x(input, stores, execution)?;
     let lines = scan_i32(input, stores, execution, context)?;
     if lines < 0 {
-        // TeX.web §1247 reports the invalid value and leaves the enclosing
-        // vertical list's prev_graf unchanged.
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!("\n! Bad \\prevgraf ({lines}).\nI allow only nonnegative values here.\n"),
+        // TeX.web §1244's `alter_prev_graf` reports the invalid value through
+        // §91's `int_error`, which parenthesizes it before §82's `error`
+        // closes the message, and leaves the enclosing list's prev_graf alone.
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            &format!("Bad \\prevgraf ({lines})"),
+            &["I allow only nonnegative values here."],
         );
         return Ok(());
     }

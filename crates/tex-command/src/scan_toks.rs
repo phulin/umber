@@ -315,8 +315,14 @@ impl CommandProcessor<'_> {
                     // §403's `back_error` is `back_input; error`: the message
                     // and help are prepared above, then the rejected command
                     // is restored before §82 appends the period and help.
+                    // Rendering §310's display only after the backup is what
+                    // makes §314 name the rejected token on its own
+                    // `<to be read again>␣` line.
                     self.back_input(command)?;
-                    self.state.resume_error_report(deferred).error();
+                    let context = self.command.output_open_context(&self.state);
+                    let mut report = self.state.resume_error_report(deferred);
+                    report.context(context);
+                    report.error();
                     // §403 assigns `cur_cmd=left_brace` and increments
                     // `align_state` exactly as raw delivery of that synthetic
                     // brace would have done. The token itself is not pushed:
@@ -589,23 +595,31 @@ impl CommandProcessor<'_> {
                 arguments: Vec::new(),
             }),
         );
+        // §§476/479 reach `error` only after their own `back_error` has
+        // restored the rejected token, which is why §310's display is
+        // rendered here rather than at the scanner's decision point.
+        let context = self.command.output_open_context(&self.state);
         match diagnostic {
             MacroParameterDiagnostic::NonconsecutiveNumber => {
                 let mut report = self
                     .state
                     .print_err("Parameters must be numbered consecutively");
-                report.help(&[
-                    "I've inserted the digit you should have used after the #.",
-                    "Type `1' to delete what you did use.",
-                ]);
+                report
+                    .help(&[
+                        "I've inserted the digit you should have used after the #.",
+                        "Type `1' to delete what you did use.",
+                    ])
+                    .context(context);
                 report.error();
             }
             MacroParameterDiagnostic::TooManyParameters => {
                 let mut report = self.state.print_err("You already have nine parameters");
-                report.help(&[
-                    "I'm going to ignore the # sign you just used,",
-                    "as well as the token that followed it.",
-                ]);
+                report
+                    .help(&[
+                        "I'm going to ignore the # sign you just used,",
+                        "as well as the token that followed it.",
+                    ])
+                    .context(context);
                 report.error();
             }
             MacroParameterDiagnostic::IllegalReplacementNumber { target } => {
@@ -625,11 +639,13 @@ impl CommandProcessor<'_> {
                         report.print(&name);
                     }
                 }
-                report.help(&[
-                    "You meant to type ## instead of #, right?",
-                    "Or maybe a } was forgotten somewhere earlier, and things",
-                    "are all screwed up? I'm going to assume that you meant ##.",
-                ]);
+                report
+                    .help(&[
+                        "You meant to type ## instead of #, right?",
+                        "Or maybe a } was forgotten somewhere earlier, and things",
+                        "are all screwed up? I'm going to assume that you meant ##.",
+                    ])
+                    .context(context);
                 report.error();
             }
         }

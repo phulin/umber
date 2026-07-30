@@ -34,30 +34,10 @@
       "channels": {
         "events": 30,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-johp.349",
-          "mismatch": {
-            "line": 5,
-            "expected": "                       \\count0=23",
-            "actual": "                       \\count0=23? OK, entering \\scrollmode..."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-johp.349",
-          "mismatch": {
-            "line": 6,
-            "expected": "                       \\count0=23",
-            "actual": "                       \\count0=23? s"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

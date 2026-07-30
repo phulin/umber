@@ -204,14 +204,17 @@ fn diagnostic_never_wraps_is_recognized() {
     );
 }
 
+/// The `dvi` channel is deliberately never classified. It once had a single
+/// byte-marker rule for the preamble banner comment, which
+/// `channels::normalize_channel` now neutralizes on both sides, so a `dvi`
+/// divergence that reaches a classifier at all is an individual defect with
+/// no shared shape -- and guessing a bug id for it would misattribute a real
+/// one. The banner bytes below are exactly what that retired rule matched.
 #[test]
-fn dvi_banner_is_recognized_by_byte_marker() {
+fn dvi_is_never_classified_even_for_the_retired_banner_shape() {
     let oracle = b"\x02\x00\x00\x00\x00xxx TeX output 2026.07.09:1336xxx";
     let umber = b"\x02\x00\x00\x00\x00xxx  Umber DVI 1970.01.01:0000xxx";
-    assert_eq!(
-        classify_divergence(StreamChannel::Dvi, oracle, umber),
-        Some(DivergenceClass::DviBanner)
-    );
+    assert_eq!(classify_divergence(StreamChannel::Dvi, oracle, umber), None);
 }
 
 #[test]
@@ -240,7 +243,6 @@ fn every_class_names_a_valid_bug_id() {
         DivergenceClass::TerminalPromptOmitted,
         DivergenceClass::UmberRaisesNoError,
         DivergenceClass::UmberRaisesUnexpectedError,
-        DivergenceClass::DviBanner,
     ] {
         assert!(super::super::valid_bug_id(class.bug()), "{:?}", class);
     }

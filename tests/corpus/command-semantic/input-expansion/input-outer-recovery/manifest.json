@@ -43,27 +43,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 3,
-            "expected": "Runaway definition?",
-            "actual": "! Too many }'s."
-          }
+          "mismatch": { "line": 3, "expected": "Runaway definition?", "actual": "! Too many }'s." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 4,
-            "expected": "Runaway definition?",
-            "actual": "! Too many }'s."
-          }
+          "mismatch": { "line": 4, "expected": "Runaway definition?", "actual": "! Too many }'s." }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

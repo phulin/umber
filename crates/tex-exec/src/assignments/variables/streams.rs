@@ -254,16 +254,29 @@ pub(in crate::assignments) fn execute_pdf_graphics(
         UnexpandablePrimitive::PdfRestore => Node::Whatsit(Whatsit::PdfRestore),
         UnexpandablePrimitive::PdfColorStack => {
             let scanned_id = scan_i32(input, stores, execution, context)?;
+            // pdftex.web's `<Implement \pdfcolorstack>` reports both bad stack
+            // numbers with a plain `error` and falls back to stack zero.
             let id = if scanned_id < 0 {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "Invalid negative color stack number\n",
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    "Invalid negative color stack number",
+                    &[
+                        "I'll use default color stack 0 here.",
+                        "Proceed, with fingers crossed.",
+                    ],
                 );
                 0
             } else if !stores.has_pdf_color_stack(scanned_id as u32) {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("Unknown color stack number {scanned_id}\n"),
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    &format!("Unknown color stack number {scanned_id}"),
+                    &[
+                        "Allocate and initialize a color stack with \\\\pdfcolorstackinit.",
+                        "I'll use default color stack 0 here.",
+                        "Proceed, with fingers crossed.",
+                    ],
                 );
                 0
             } else {
@@ -280,9 +293,16 @@ pub(in crate::assignments) fn execute_pdf_graphics(
             } else if scan_optional_keyword_x(input, stores, execution, "current")? {
                 tex_state::PdfColorStackAction::Current
             } else {
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, "Color stack action is missing\n");
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    "Color stack action is missing",
+                    &[
+                        "The expected actions for \\pdfcolorstack:",
+                        "    set, push, pop, current",
+                        "I'll ignore the color stack command.",
+                    ],
+                );
                 return Ok(());
             };
             Node::Whatsit(Whatsit::PdfColorStack { id, action })
@@ -549,12 +569,16 @@ fn scan_stream_slot(
         value
     } else {
         // TeX.web `scan_four_bit_int` section 435 substitutes stream zero
-        // after reporting an out-of-range open/close stream number.
-        stores.world_mut().write_text(
-            PrintSink::TerminalAndLog,
-            &format!(
-                "\n! Bad number ({value}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
-            ),
+        // after reporting an out-of-range open/close stream number; §91's
+        // `int_error` is what parenthesizes the value into the message.
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            &format!("Bad number ({value})"),
+            &[
+                "Since I expected to read a number between 0 and 15,",
+                "I changed this one to zero.",
+            ],
         );
         0
     };

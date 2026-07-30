@@ -321,9 +321,19 @@ fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecE
     match node {
         tex_state::node_arena::NodeRef::VList(box_node) => add(box_node.height, box_node.depth),
         tex_state::node_arena::NodeRef::HList(_) => {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Insertions can only be added to a vbox.\nTut tut: You're trying to \\insert into a\n\\box register that now contains an \\hbox.\nProceed, and I'll discard its present contents.\n",
+            // TeX.web §993's `ensure_vbox`. The page builder runs between
+            // commands rather than inside a scanner, so §82's display comes
+            // from the last input summary the job published.
+            let context = crate::diagnostics::show_context(stores, stores.input_summary());
+            crate::error_report::report_error(
+                stores,
+                "Insertions can only be added to a vbox",
+                &[
+                    "Tut tut: You're trying to \\insert into a",
+                    "\\box register that now contains an \\hbox.",
+                    "Proceed, and I'll discard its present contents.",
+                ],
+                context,
             );
             stores.clear_box_reg(class);
             Ok(Scaled::from_raw(0))

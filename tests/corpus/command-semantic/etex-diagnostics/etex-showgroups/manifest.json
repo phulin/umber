@@ -38,27 +38,19 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 5,
-            "expected": "l.2 \\showgroups",
-            "actual": "! OK (see the transcript file)."
-          }
+          "mismatch": { "line": 11, "expected": "<to be read again> ", "actual": "! OK (see the transcript file)." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.17",
           "mismatch": {
-            "line": 9,
-            "expected": "l.2 \\showgroups",
-            "actual": ""
+            "line": 21,
+            "expected": "<to be read again> ",
+            "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -28,9 +28,14 @@ pub(super) fn scan_vsplit_node(
         // TeX.web §1082 inserts the keyword conceptually; keyword scanning
         // has already backed up the first nonmatching token, which is the
         // dimension's first token.
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            "Missing `to' inserted",
+            &[
+                "I'm working on `\\vsplit<box number> to <dimen>';",
+                "will look for the <dimen> next.",
+            ],
         );
     }
     let height = scan_scaled(input, stores, execution, context)?;
@@ -55,12 +60,24 @@ pub(crate) fn split_vbox_register(
     };
     let Node::VList(source_box) = source_node else {
         clear_split_marks(stores);
-        // TeX.web §977 leaves an hbox source untouched and returns a void
-        // split result after the recoverable diagnostic.
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! \\vsplit needs a \\vbox.\nThe box you are trying to split is an \\hbox.\nI can't split such a box, so I'll leave it alone.\n",
-        );
+        // TeX.web §978 leaves an hbox source untouched and returns a void
+        // split result after the recoverable error. Both primitive names go
+        // through `print_esc` so `\escapechar` still governs how they render.
+        // `vsplit` reaches here from the page builder as well as from the
+        // scanner, so §82's context comes from the last published input
+        // summary rather than a live stack.
+        let context = crate::diagnostics::show_context(stores, stores.input_summary());
+        let mut report = stores.print_err("");
+        report
+            .print_esc("vsplit")
+            .print(" needs a ")
+            .print_esc("vbox")
+            .help(&[
+                "The box you are trying to split is an \\hbox.",
+                "I can't split such a box, so I'll leave it alone.",
+            ])
+            .context(context);
+        report.error();
         return Ok(None);
     };
 

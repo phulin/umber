@@ -60,8 +60,22 @@ fn nonempty_tokens(stores: &mut Universe) -> tex_state::ids::TokenListId {
     }])
 }
 
+/// The report text as a reader sees it, rejoined across the individual
+/// tex.web §§57-65 print calls that produced it.
+///
+/// One `print_err` report reaches the world as several writes -- `print_esc`,
+/// `print_int`, and each `print` are separate -- so inspecting the records one
+/// at a time splits `\box255 is not void` across three of them.
 fn effects(stores: &Universe) -> String {
-    format!("{:?}", stores.world().effect_records())
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|record| match record {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn push_simple_page(stores: &mut Universe) -> PageFireUp {

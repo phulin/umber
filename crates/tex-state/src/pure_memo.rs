@@ -564,6 +564,12 @@ pub struct RecordedParagraphLines {
     pub line_count: i32,
     pub last_badness: i32,
     pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
+    /// Effects line breaking itself produced -- tex.web §660-§675's
+    /// over/underfull box reports, one per packed line. The region's own
+    /// `effects` close before `line_break` runs, so without these a reused
+    /// paragraph would replay what building its hlist printed and drop what
+    /// breaking it printed.
+    pub effects: Vec<crate::DetachedVirtualEffect>,
 }
 
 impl RecordedParagraphRegion {
@@ -1085,6 +1091,11 @@ impl PureMemoRuntime {
             region.line_count = result.line_count;
             region.line_last_badness = result.last_badness;
             region.display_active_directions = result.display_active_directions;
+            if !result.effects.is_empty() {
+                let mut effects = region.effects.to_vec();
+                effects.extend(result.effects);
+                region.effects = effects.into();
+            }
         }
     }
 

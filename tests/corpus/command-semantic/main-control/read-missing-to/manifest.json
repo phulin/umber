@@ -29,27 +29,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 3,
-            "expected": "! Missing `to' inserted.",
-            "actual": "\\target="
-          }
+          "mismatch": { "line": 3, "expected": "! Missing `to' inserted.", "actual": "\\target=" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "! Missing `to' inserted.",
-            "actual": "\\target="
-          }
+          "mismatch": { "line": 4, "expected": "! Missing `to' inserted.", "actual": "\\target=" }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

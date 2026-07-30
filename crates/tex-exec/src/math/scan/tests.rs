@@ -186,12 +186,13 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
         NoadKind::Operator(LimitType::DisplayLimits),
         MathField::Empty,
     );
+    let limit_input = InputStack::new(MemoryInput::new(""));
     for primitive in [
         UnexpandablePrimitive::Limits,
         UnexpandablePrimitive::NoLimits,
         UnexpandablePrimitive::DisplayLimits,
     ] {
-        apply_limit_switch(&mut nest, &mut stores, primitive);
+        apply_limit_switch(&mut nest, &limit_input, &mut stores, primitive);
         let Some(Node::MathNoad(noad)) = nest.current_list().nodes().last() else {
             panic!("operator remains last");
         };
@@ -205,7 +206,12 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
 
     let before = nest.current_list().nodes().len();
     nest.current_list_mutation().push(Node::Penalty(1));
-    apply_limit_switch(&mut nest, &mut stores, UnexpandablePrimitive::Limits);
+    apply_limit_switch(
+        &mut nest,
+        &limit_input,
+        &mut stores,
+        UnexpandablePrimitive::Limits,
+    );
     assert_eq!(nest.current_list().nodes().len(), before + 1);
     assert!(pending_terminal_text(&stores).contains("Limit controls must follow"));
 }
@@ -232,8 +238,11 @@ fn tex82_mathchoice_four_group_order_scope_and_retirement() {
     assert_eq!(stores.innermost_group_kind(), None);
     assert_eq!(nest.depth(), 2);
 
+    // §1172 ends in §403's `scan_left_brace`, which backs the offending token
+    // up and then behaves as though the mandatory `{` had been read, so the
+    // fourth arm is scanned starting from that token rather than left empty.
     let mut recovered_nest = math_nest();
-    let mut recovered = InputStack::new(MemoryInput::new("{a}{b}{c}d"));
+    let mut recovered = InputStack::new(MemoryInput::new("{a}{b}{c}d}"));
     append_math_choice(
         &mut recovered_nest,
         &mut recovered,
@@ -244,15 +253,8 @@ fn tex82_mathchoice_four_group_order_scope_and_retirement() {
     let [Node::MathChoice(choice)] = recovered_nest.current_list().nodes() else {
         panic!("recovered scan still appends one choice");
     };
-    assert!(stores.nodes(choice.script_script).is_empty());
-    let replayed = recovered
-        .next_traced_token(&mut stores)
-        .expect("read backed token")
-        .expect("rejected parent token survives");
-    assert!(matches!(
-        tex_expand::semantic_token(replayed),
-        Token::Char { ch: 'd', .. }
-    ));
+    assert_eq!(stores.nodes(choice.script_script).len(), 1);
+    assert!(pending_terminal_text(&stores).contains("Missing { inserted"));
 }
 
 #[test]
@@ -429,6 +431,7 @@ fn canonical_fraction_and_left_right_nesting_recovery_matrix() {
     assert!(
         close_missing_left_group(
             &mut missing,
+            &left,
             &mut stores,
             tex_command::CommandFuelLedger::default().fuel_mut(),
         )

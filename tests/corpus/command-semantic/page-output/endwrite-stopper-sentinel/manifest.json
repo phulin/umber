@@ -37,11 +37,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "<write> BEFORE \\endwrite ",
-            "actual": "BEFORE AFTER"
-          }
+          "mismatch": { "line": 4, "expected": "<write> BEFORE \\endwrite ", "actual": "BEFORE AFTER" }
         },
         "log": {
           "kind": "xfail",
@@ -52,12 +48,8 @@
             "actual": "The control sequence at the end of the top line"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -113,9 +113,19 @@ pub(crate) fn shipout_node_with_input_summary(
     prepare_pdf_output_policy(stores)?;
     let geometry = shipout_geometry(&node, stores);
     if huge_shipout_box(&node, stores) {
-        stores.world_mut().write_text(
-            PrintSink::TerminalAndLog,
-            "\n! Huge page cannot be shipped out.\nThe page just created is more than 18 feet tall or\nmore than 18 feet wide, so I suspect something went wrong.\n",
+        // TeX.web §641 drops the page rather than emitting it, so the report
+        // is the whole of the engine's response. Shipout also runs from
+        // canonical replay, which owns no live `InputStack`; the published
+        // summary is what §82 has to display from.
+        let context = crate::diagnostics::show_context(stores, &input_summary);
+        crate::error_report::report_error(
+            stores,
+            "Huge page cannot be shipped out",
+            &[
+                "The page just created is more than 18 feet tall or",
+                "more than 18 feet wide, so I suspect something went wrong.",
+            ],
+            context,
         );
         return Ok(None);
     }
@@ -310,17 +320,27 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
 
     let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
     if major < 1 {
-        stores.world_mut().write_text(
-            PrintSink::TerminalAndLog,
-            "\n! pdfTeX error (invalid pdfmajorversion).\nThe pdfmajorversion must be 1 or greater.\nI changed this to 1.\n",
+        report_invalid_pdf_version(
+            stores,
+            "pdfTeX error (invalid pdfmajorversion)",
+            &[
+                "The pdfmajorversion must be 1 or greater.",
+                "I changed this to 1.",
+            ],
+            major,
         );
         stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
     }
     let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
     if !(0..=9).contains(&minor) {
-        stores.world_mut().write_text(
-            PrintSink::TerminalAndLog,
-            "\n! pdfTeX error (invalid pdfminorversion).\nThe pdfminorversion must be between 0 and 9.\nI changed this to 4.\n",
+        report_invalid_pdf_version(
+            stores,
+            "pdfTeX error (invalid pdfminorversion)",
+            &[
+                "The pdfminorversion must be between 0 and 9.",
+                "I changed this to 4.",
+            ],
+            minor,
         );
         stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
     }
@@ -340,6 +360,20 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
         );
     }
     Ok(())
+}
+
+/// pdftex.web's `check_pdfversion`: `print_err`, `print_ln`, `help2`, then
+/// tex.web §91's `int_error` naming the rejected value.
+///
+/// The version is fixed at the first page, long after the command that set it
+/// was scanned, so §82's context is whatever input the job last published.
+fn report_invalid_pdf_version(stores: &mut Universe, message: &str, help: &[&str], value: i32) {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err(message);
+    // pdftex.web breaks the line before the value; `print_nl` on an open line
+    // is that `print_ln`.
+    report.print_nl("").help(help).context(context);
+    report.int_error(value);
 }
 
 fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {

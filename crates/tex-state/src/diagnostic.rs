@@ -13,10 +13,10 @@
 //! is a scope on [`crate::print::Printer`] rather than a second set of print
 //! routines.
 //!
-//! Not modeled here: tex.web §245 also raises `history` to `warning_issued`
-//! when it redirects to the transcript, which feeds TeX's process exit status.
-//! Umber does not track `history` at all, so that part of §245 is absent
-//! rather than approximated.
+//! §245 also raises `history` to `warning_issued` when it redirects to the
+//! transcript. That is what makes §1335 print `(see the transcript file for
+//! additional information)`: a run whose only diagnostics went to the log
+//! has to tell the terminal they exist.
 
 use crate::env::banks::IntParam;
 use crate::print::{Printer, Selector};
@@ -39,6 +39,14 @@ impl<'a> Diagnostic<'a> {
         let mut selector = Selector::for_interaction(universe.interaction_mode());
         if universe.int_param(IntParam::TRACING_ONLINE) <= 0 && selector == Selector::TermAndLog {
             selector = selector.decr();
+            // §245's other half: `if history=spotless then
+            // history:=warning_issued`. The trace is about to become
+            // transcript-only, and §1335's note is how the terminal learns
+            // there is something there to read.
+            universe
+                .world_mut()
+                .error_channel_mut()
+                .record_warning_history();
         }
         Self {
             printer: Printer::new(universe, selector),

@@ -1256,17 +1256,18 @@ fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
+    // The probes are registers rather than `\message`s: §1195's math-font
+    // report is unavoidable without loaded families, and §82's context display
+    // echoes the source line, so any probe text would also appear in it.
     let mut input = InputStack::new(MemoryInput::new(
-        r"\everypar{\message{PAR}}\setbox0=\vbox{$$\ifinner\message{INNER}\else\message{OUTER}\fi$$}",
+        r"\everypar{\global\count2=1}\setbox0=\vbox{$$\ifinner\global\count1=1\else\global\count1=2\fi$$}",
     ));
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("internal doubled shift executes");
 
-    let output = terminal_effect_text(&stores);
-    assert!(!output.contains("INNER"));
-    assert!(output.contains("OUTER"));
-    assert!(output.contains("PAR"));
+    assert_eq!(stores.count(1), 2);
+    assert_eq!(stores.count(2), 1);
 }
 
 #[test]

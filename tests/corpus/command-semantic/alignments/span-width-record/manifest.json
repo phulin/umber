@@ -35,27 +35,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 3,
-            "expected": "! This can't happen (256 spans).",
-            "actual": "No pages of output."
-          }
+          "mismatch": { "line": 3, "expected": "! This can't happen (256 spans).", "actual": "No pages of output." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "! This can't happen (256 spans).",
-            "actual": "No pages of output."
-          }
+          "mismatch": { "line": 4, "expected": "! This can't happen (256 spans).", "actual": "No pages of output." }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -31,44 +31,18 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:7222ac4997053d4a3fd1cd015882312a4b6448c9791e028d949126cf15428e36",
-        "artifact:4c27ec7bd66d739e6c37767304208fa7980c12ea6cf2991dd0990bee89fcf5f4",
-        "artifact:6b6fc390b71aaa9b3381cab6d826d250dc3cc89926d3c45fc11fb5a935f50660",
+        "artifact:4c8a51bf5f879fd0a401892848f0b8f4eed9b26c6d908389e86debc22d25b212",
+        "artifact:6cebb9c894061e3487d83d822ba88f5578a6c09e158e10ed4008f9a14355cc31",
+        "artifact:0a49a720cee78d6994bbf43a8b029aacb3c13d68f96ffe4e32dd84f24de9a147",
         "artifact:cd668059a52a09348c025a372ca95cf8d08779298246ce04a88b79e86b3b1a97"
       ],
       "channels": {
         "events": 706,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./page-contribution-natural-breaks.tex",
-            "actual": "(./page-contribution-natural-breaks.tex [1] [1] [1] [1] )"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./page-contribution-natural-breaks.tex",
-            "actual": "(./page-contribution-natural-breaks.tex [1] [1] [1] [1] )"
-          }
-        },
-        "dvi": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.22",
-          "mismatch": {
-            "line": 1,
-            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\b\u0000\u0000��\u0000K�`y\u0000",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\b\u0000\u0000��\u0000K�`y\u0000"
-          }
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "file" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

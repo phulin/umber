@@ -4588,7 +4588,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     // pins those bytes rather than this control-flow test.
     let terminal = terminal_text(&universe);
     assert!(
-        terminal.starts_with("\n! Missing } inserted.\n"),
+        terminal.starts_with("! Missing } inserted.\n"),
         "{terminal}"
     );
     observations.0.clear();
@@ -5980,8 +5980,8 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
     ));
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n",
-        "TeX82 §1065 prints the terminal-and-log diagnostic exactly once before the inserted closer replays",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 {\\endgroup\n              }\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n",
+        "TeX82 §1064 prints the report exactly once before the inserted closer replays",
     );
 
     observations.0.clear();
@@ -6022,8 +6022,11 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
     ));
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n\n! Extra \\endgroup.\n",
-        "TeX82 §§1065--1066 print one recovery diagnostic and one later bottom-level drop diagnostic",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 {\\endgroup\n              }\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n! Extra \\endgroup.\n<recently read> \\endgroup \n                          \nl.1 {\\endgroup\n              }\nThings are pretty mixed up, but I think the worst is over.\n\n",
+        "TeX82 §§1064--1066 print one recovery report and one later bottom-level \
+         drop report. §314 spells the exhausted `backed_up` level that \
+         delivered the `\\endgroup` `<recently read>`, not `<to be read \
+         again>`, exactly as pdfTeX does for this source.",
     );
 }
 
@@ -6128,10 +6131,7 @@ fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register()
     // twice here even though each real channel shows it only once.
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n\
-         \n*\n(Please type a command or say `\\end')\
-         (Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
-         End of file on the terminal!\n\n",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...box12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvbox\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n",
         "off_save should be the only recovery; the replay must retain operand 12"
     );
     let box_zero = universe
@@ -6175,10 +6175,7 @@ fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_b
     // twice here even though each real channel shows it only once.
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n\
-         \n*\n(Please type a command or say `\\end')\
-         (Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
-         End of file on the terminal!\n\n"
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...ox12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvcopy\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n"
     );
     assert!(
         universe.box_reg(12).is_some(),
@@ -6227,7 +6224,7 @@ fn canonical_halign_in_restricted_horizontal_recovers_before_alignment_start() {
 
     assert_eq!(
         terminal_text(&universe),
-        "\n! Missing } inserted.\n[0]",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 \\setbox0=\\hbox{\\halign\n                          {#\\cr\\cr}\\end\n[0]",
         "alignment recovery should neither start inside the hbox nor damage its preamble"
     );
     assert_eq!(
@@ -9189,7 +9186,8 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
     run_to_end(&mut control, &mut universe);
 
     let text = terminal_text(&universe);
-    assert!(text.contains("> \\shown=macro:->expanded."), "{text}");
+    // §296's `print_meaning` breaks the line after a macro's `:`.
+    assert!(text.contains("> \\shown=macro:\n->expanded."), "{text}");
     assert!(text.contains("> 17."), "{text}");
     assert!(text.contains("> \\box0="), "{text}");
     assert!(
@@ -9690,7 +9688,7 @@ fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
     assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
     assert_eq!(
         terminal_text(&universe),
-        "\n! Bad \\prevgraf (-1).\nI allow only nonnegative values here.\n"
+        "! Bad \\prevgraf (-1).\nl.1 \\prevgraf=-1 \n                 \\end\nI allow only nonnegative values here.\n\n"
     );
 }
 

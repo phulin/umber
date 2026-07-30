@@ -30,30 +30,10 @@
       "channels": {
         "events": 36,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 5,
-            "expected": "                   ",
-            "actual": "                   ? OK, entering \\scrollmode..."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 6,
-            "expected": "                   ",
-            "actual": "                   ? s"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

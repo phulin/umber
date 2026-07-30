@@ -74,12 +74,30 @@ use std::process::ExitCode;
 use tex_command_stream::semantic::{
     CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
     StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
-    first_line_difference, load_suite_with, normalize_log_clock, project,
+    first_line_difference, load_suite_with, normalize_channel, project,
     reclassify_no_error_channel, repository_root,
 };
 
 fn main() -> ExitCode {
-    match run() {
+    let mut arguments = std::env::args().skip(1);
+    let outcome = match arguments.next().as_deref() {
+        Some("--diff") => {
+            let selector = arguments.next().unwrap_or_default();
+            diff(&selector, StreamChannel::Terminal)
+        }
+        Some("--diff-log") => {
+            let selector = arguments.next().unwrap_or_default();
+            diff(&selector, StreamChannel::Log)
+        }
+        Some(other) => Err(format!(
+            "unknown argument {other:?}; the only options are no arguments (regenerate the \
+             corpus), `--diff <substring>` (print the oracle/Umber terminal text of every \
+             matching case), and `--diff-log <substring>` (the same for the transcript, which \
+             is where §90 puts an error's help lines). Neither `--diff` writes anything."
+        )),
+        None => run(),
+    };
+    match outcome {
         Ok(summary) => {
             println!("{summary}");
             ExitCode::SUCCESS
@@ -107,6 +125,81 @@ fn oracle_root() -> PathBuf {
         },
     );
     target_dir.join("minifixture-oracle")
+}
+
+/// Prints the pinned oracle's transcript beside Umber's own for every
+/// case whose `<domain>/<id>` label contains `selector`, and writes nothing.
+///
+/// `channel` picks which transcript: the terminal, or the log -- which is
+/// where §90 puts an error's help lines, so a help-routing difference is
+/// invisible in the terminal one.
+///
+/// The committed corpus records only *where* a channel first diverges, which
+/// is enough to tell that a case is wrong and never enough to tell what to
+/// change. This is the one command that shows both sides in full, so a fix
+/// can be aimed at what the reference actually prints rather than at a
+/// one-line fingerprint of it.
+fn diff(selector: &str, channel: StreamChannel) -> Result<String, String> {
+    if selector.is_empty() {
+        return Err("--diff needs a <domain>/<case> substring to select cases with".to_owned());
+    }
+    let oracle_root = oracle_root();
+    let cases = load_suite_with(ChannelPolicy::Deriving)?;
+    let mut shown = 0usize;
+    for declared in &cases {
+        let label = format!("{}/{}", declared.domain, declared.case.id);
+        if !label.contains(selector) {
+            continue;
+        }
+        shown += 1;
+        let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+            .map_err(|error| format!("{label}: source read: {error}"))?;
+        let completed = execute(&source, &declared.case)
+            .map_err(|error| format!("{label}: this case does not run: {error}"))?;
+        let captured = CapturedChannels::capture(&completed);
+        let stem = declared
+            .case
+            .source
+            .strip_suffix(".tex")
+            .expect("validate_case requires a .tex source");
+        let case_dir = oracle_root.join(&declared.domain).join(&declared.case.id);
+        let oracle_path = match channel {
+            StreamChannel::Log => case_dir.join(format!("{stem}.log")),
+            _ => case_dir.join("terminal.txt"),
+        };
+        let raw_oracle = fs::read(&oracle_path).unwrap_or_default();
+        let oracle = normalize_channel(channel, &raw_oracle)?;
+        let umber = normalize_channel(channel, captured.stream(channel))?;
+        println!("=== {label} ({}) ===", channel.name());
+        println!("--- source ---");
+        println!("{}", String::from_utf8_lossy(&source).trim_end());
+        print_side_by_side(&oracle, &umber);
+    }
+    if shown == 0 {
+        return Err(format!("no case label contains {selector:?}"));
+    }
+    Ok(format!("{shown} case(s) shown; nothing written"))
+}
+
+/// One numbered line per row, oracle on the left and Umber on the right, with
+/// every differing row marked. Trailing spaces are shown as `.` because they
+/// are load-bearing: §314's descriptors (`<to be read again>␣`) end in one.
+fn print_side_by_side(oracle: &[u8], umber: &[u8]) {
+    fn lines(bytes: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(|line| line.replace(' ', "\u{b7}"))
+            .collect()
+    }
+    let oracle = lines(oracle);
+    let umber = lines(umber);
+    println!("--- {:<54} | umber ---", "oracle");
+    for index in 0..oracle.len().max(umber.len()) {
+        let left = oracle.get(index).map_or("", String::as_str);
+        let right = umber.get(index).map_or("", String::as_str);
+        let mark = if left == right { ' ' } else { '!' };
+        println!("{mark}{:>3} {left:<54} | {right}", index + 1);
+    }
 }
 
 fn run() -> Result<String, String> {
@@ -331,21 +424,13 @@ fn plan_channel(
         Vec::new()
     };
 
-    // tex.web section 536's clock is the one byte range no two runs of the
-    // same job can ever agree on (`docs/job_framing.md`), and it appears only
-    // on the log channel's first line. Normalizing both sides the same way
-    // here is exactly what the ongoing gate's own `compare` does, so a
+    // `normalize_channel` is the single definition of what this corpus holds
+    // uncomparable, shared with the ongoing gate's own `compare`, so a
     // channel this tool marks `file` stays `file` under the gate that reads
-    // it back.
-    let normalize = |bytes: &[u8]| -> Vec<u8> {
-        if channel == StreamChannel::Log {
-            normalize_log_clock(bytes)
-        } else {
-            bytes.to_vec()
-        }
-    };
-    let oracle_bytes = normalize(&raw_oracle);
-    let umber_bytes = normalize(raw_umber);
+    // it back. It used to be spelled out separately here, and the copies had
+    // drifted apart on the `dvi` channel.
+    let oracle_bytes = normalize_channel(channel, &raw_oracle)?;
+    let umber_bytes = normalize_channel(channel, raw_umber)?;
 
     if raw_oracle.is_empty() && raw_umber.is_empty() {
         return Ok(ChannelPlan::Empty);

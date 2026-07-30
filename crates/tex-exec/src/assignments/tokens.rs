@@ -64,6 +64,41 @@ pub(super) fn skip_optional_equals_x(
     Ok(())
 }
 
+/// tex.web §1215's `help5` for `get_r_token`.
+const MISSING_CONTROL_SEQUENCE_HELP: [&str; 5] = [
+    "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+    "I've inserted an inaccessible control sequence so that your",
+    "definition will be completed without mixing me up too badly.",
+    "You can recover graciously from this error, if you're",
+    "careful; see exercise 27.2 in The TeXbook.",
+];
+
+/// tex.web §1215's `back_input; cur_tok:=frozen_protection; ins_error`.
+///
+/// The offending token goes back as its own `backed_up` level and the frozen
+/// `\inaccessible` is inserted above it, so the report names both, and the
+/// caller's restarted scan reads the insertion as the definition's target.
+fn insert_inaccessible_control_sequence(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    traced: TracedTokenWord,
+) {
+    let inaccessible = Token::Cs(stores.intern("inaccessible").symbol());
+    let origin = stores.inserted_origin(
+        InsertedOriginKind::ErrorRecovery,
+        inaccessible,
+        traced.origin(),
+    );
+    crate::error_report::back_tokens(input, stores, [traced]);
+    crate::error_report::ins_error(
+        input,
+        stores,
+        [TracedTokenWord::pack(inaccessible, origin)],
+        "Missing control sequence inserted",
+        &MISSING_CONTROL_SEQUENCE_HELP,
+    );
+}
+
 pub(super) fn scan_definition_target(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -79,14 +114,12 @@ pub(super) fn scan_definition_target(
             cat: Catcode::Active,
         } => Ok(active_character_symbol(stores, ch)),
         _ => {
-            // TeX82 `get_r_token` backs up a non-definable token and inserts
-            // its frozen inaccessible control sequence (tex.web §1215).
-            push_traced_tokens(input, stores, [traced]);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
-            );
-            Ok(stores.intern("inaccessible").symbol())
+            // §1215's `goto restart`: the insertion is what the restarted
+            // scan reads, so it, not a directly returned symbol, is the
+            // target -- and the token that provoked the error stays queued
+            // behind it exactly as TeX leaves it.
+            insert_inaccessible_control_sequence(input, stores, traced);
+            scan_definition_target(input, stores, context)
         }
     }
 }
@@ -115,24 +148,11 @@ pub(super) fn scan_traced_definition_target(
         } => active_character_symbol(stores, ch),
         _ => {
             // This is the provenance-preserving form of TeX.web §1215's
-            // `get_r_token` recovery used by macro definitions.
-            push_traced_tokens(input, stores, [traced]);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
-            );
-            let symbol = stores.intern("inaccessible");
-            let inserted_token = Token::Cs(symbol.symbol());
-            let origin = stores.inserted_origin(
-                InsertedOriginKind::ErrorRecovery,
-                inserted_token,
-                traced.origin(),
-            );
-            return Ok(TracedDefinitionTarget {
-                symbol: symbol.symbol(),
-                traced: TracedTokenWord::pack(inserted_token, origin),
-                origin,
-            });
+            // `get_r_token` recovery used by macro definitions: restarting
+            // the scan is what gives the target the inserted token's own
+            // origin rather than a synthesized copy of it.
+            insert_inaccessible_control_sequence(input, stores, traced);
+            return scan_traced_definition_target(input, stores, context);
         }
     };
     Ok(TracedDefinitionTarget {

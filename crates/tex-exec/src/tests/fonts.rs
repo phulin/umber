@@ -150,7 +150,7 @@ fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
             .run(&mut input, &mut stores)
             .expect("duplicate map actions execute");
         assert_eq!(
-            terminal_effect_text(&stores).contains(WARNING),
+            terminal_effect_text_unbroken(&stores).contains(WARNING),
             expects_warning,
             "\\pdfsuppresswarningdupmap={control}",
         );

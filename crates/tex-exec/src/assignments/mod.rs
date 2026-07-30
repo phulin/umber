@@ -184,13 +184,14 @@ pub(crate) fn execute_unexpandable_with_context(
     ) {
         Ok(command) => command,
         Err(ExecError::PrefixWithNonAssignment { token, origin }) => {
-            // TeX.web §§1218–1219 uses `back_error` here: the prefixes are
-            // discarded, but the offending expanded token is put back for
-            // ordinary main-control dispatch.
-            push_traced_tokens(input, stores, [TracedTokenWord::pack(token, origin)]);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\long or \\outer or \\global.\n",
+            // TeX.web §1212's `<Discard erroneous prefixes and return>` uses
+            // `back_error`: the prefixes are discarded, but the offending
+            // expanded token is put back for ordinary main-control dispatch,
+            // which is also what makes it the report's context line.
+            report_prefix_with_non_prefixed_command(
+                input,
+                stores,
+                TracedTokenWord::pack(token, origin),
             );
             return Ok(DispatchAction::Continue);
         }
@@ -231,11 +232,7 @@ pub(crate) fn execute_unexpandable_with_context(
     {
         Ok(outcome) => outcome,
         Err(ExecError::PrefixWithNonDefinition { .. }) => {
-            push_traced_tokens(input, stores, [command.traced]);
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\long or \\outer or \\global.\n",
-            );
+            report_prefix_with_non_prefixed_command(input, stores, command.traced);
             return Ok(DispatchAction::Continue);
         }
         Err(ExecError::ArithmeticOverflow)
@@ -248,11 +245,17 @@ pub(crate) fn execute_unexpandable_with_context(
                 )
             ) =>
         {
-            // TeX.web's arithmetic commands consume their operands, report
-            // overflow/division by zero, and leave the target unchanged.
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Arithmetic overflow.\nI can't carry out that multiplication or division,\nsince the result is out of range.\n",
+            // TeX.web §1236's arithmetic commands consume their operands,
+            // report overflow/division by zero, and leave the target
+            // unchanged.
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                "Arithmetic overflow",
+                &[
+                    "I can't carry out that multiplication or division,",
+                    "since the result is out of range.",
+                ],
             );
             return Ok(DispatchAction::Continue);
         }
@@ -1547,11 +1550,12 @@ pub(crate) fn off_save_alignment(
     // an enclosing group there; it only recreates the same off_save call.
     if stores.innermost_group_kind().is_none() {
         let command = tex_expand::token_text(stores, tex_expand::semantic_token(command));
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!(
-                "\n! Extra {command}.\nThings are pretty mixed up, but I think the worst is over.\n"
-            ),
+        // §1065's `<Drop current token and complain that it was unmatched>`.
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            &format!("Extra {command}"),
+            &["Things are pretty mixed up, but I think the worst is over."],
         );
         return Ok(());
     }
@@ -1560,11 +1564,13 @@ pub(crate) fn off_save_alignment(
     // the current group.  In particular, a semisimple group must be closed by
     // the inaccessible equivalent of `\endgroup`, not by a right brace.
     if stores.innermost_group_kind() == Some(GroupKind::SemiSimple) {
-        push_traced_tokens(input, stores, [command]);
+        crate::error_report::back_tokens(input, stores, [command]);
         leave_group_with_origin(input, stores, GroupKind::SemiSimple, command.origin())?;
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing \\endgroup inserted.\n",
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            "Missing \\endgroup inserted",
+            &OFF_SAVE_HELP,
         );
         return Ok(());
     }
@@ -1585,14 +1591,16 @@ pub(crate) fn off_save_alignment(
         closing_group,
         command.origin(),
     );
-    input.back_input_alignment_token(command);
-    crate::insert_traced_tokens(
+    // §1064's `back_input` then `ins_list`: the dropped command becomes its
+    // own `<to be read again>` level and the closing token an `<inserted
+    // text>` level above it, which is the arrangement help line 2 refers to.
+    // Reading order is unchanged -- the closing token first, the command
+    // behind it.
+    crate::error_report::back_tokens(input, stores, [command]);
+    crate::error_report::ins_error(
         input,
         stores,
-        [TracedTokenWord::pack(closing_group, origin), command],
-    );
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
+        [TracedTokenWord::pack(closing_group, origin)],
         if matches!(
             closing_group,
             Token::Char {
@@ -1600,12 +1608,39 @@ pub(crate) fn off_save_alignment(
                 ..
             }
         ) {
-            "\n! Missing $ inserted.\n"
+            "Missing $ inserted"
         } else {
-            "\n! Missing } inserted.\n"
+            "Missing } inserted"
         },
+        &OFF_SAVE_HELP,
     );
     Ok(())
+}
+
+/// TeX.web §1064's `help5` for every token `off_save` inserts.
+const OFF_SAVE_HELP: [&str; 5] = [
+    "I've inserted something that you may have forgotten.",
+    "(See the <inserted text> above.)",
+    "With luck, this will get me unwedged. But if you",
+    "really didn't forget anything, try typing `2' now; then",
+    "my insertion and my current dilemma will both disappear.",
+];
+
+/// TeX.web §1212's `<Discard erroneous prefixes and |return|>`.
+fn report_prefix_with_non_prefixed_command(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    command: TracedTokenWord,
+) {
+    let token = tex_expand::semantic_token(command);
+    let name = tex_command::command_token_text(&mut stores.command_context(), token);
+    crate::error_report::back_error(
+        input,
+        stores,
+        command,
+        &format!("You can't use a prefix with `{name}'"),
+        &["I'll pretend you didn't say \\long or \\outer or \\global."],
+    );
 }
 
 fn accumulate_prefixes(
@@ -1693,9 +1728,15 @@ fn execute_prefixed_command(
         )
     );
     if !accepts_macro_flags && prefixes.flags != MeaningFlags::EMPTY {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! You can't use `\\long' or `\\outer' with this command.\nI'll pretend you didn't say \\long or \\outer.\n",
+        // TeX.web §1213's `<Discard the prefixes \long and \outer if they are
+        // irrelevant>`, which reports without backing anything up.
+        let token = tex_expand::semantic_token(command.traced);
+        let name = tex_command::command_token_text(&mut stores.command_context(), token);
+        crate::error_report::report_input_error(
+            input,
+            stores,
+            &format!("You can't use `\\long' or `\\outer' with `{name}'"),
+            &["I'll pretend you didn't say \\long or \\outer here."],
         );
         prefixes.flags = MeaningFlags::EMPTY;
     }
@@ -1743,9 +1784,14 @@ fn execute_prefixed_command(
                     command.traced.origin(),
                 ) {
                     if matches!(error, ExecError::ExtraEndGroup { .. }) {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            "\n! Extra \\endgroup.\nThings are pretty mixed up, but I think the worst is over.\n",
+                        // §1065's unmatched-token branch of `off_save`,
+                        // reached because `\endgroup` found no semi simple
+                        // group to close.
+                        crate::error_report::report_input_error(
+                            input,
+                            stores,
+                            "Extra \\endgroup",
+                            &["Things are pretty mixed up, but I think the worst is over."],
                         );
                     } else {
                         return Err(error);
@@ -2373,7 +2419,8 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::ShowBox => {
                 reject_all_prefixes(prefixes)?;
                 let index = scan_register_index(input, stores, execution, command.traced)?;
-                diagnostics::execute_showbox(stores, index);
+                let context = diagnostics::show_context(stores, &input.summary());
+                diagnostics::execute_showbox(stores, index, context);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowThe => {
@@ -2408,7 +2455,8 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showlists(stores, nest);
+                let context = diagnostics::show_context(stores, &input.summary());
+                diagnostics::execute_showlists(stores, nest, context);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {
@@ -2456,9 +2504,14 @@ fn execute_prefixed_command(
                         UnexpandablePrimitive::EndR => "endR",
                         _ => unreachable!(),
                     };
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Improper \\{name}.\nSorry, this \\{name} will be ignored.\n"),
+                    // etex.ch's `eTeX_enabled`, the guard every optional
+                    // feature reports through when its state parameter is
+                    // still zero.
+                    crate::error_report::report_input_error(
+                        input,
+                        stores,
+                        &format!("Improper \\{name}"),
+                        &["Sorry, this optional e-TeX feature has been disabled."],
                     );
                     return Ok(CommandOutcome::continue_only());
                 }
@@ -2570,14 +2623,28 @@ fn execute_prefixed_command(
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::NoAlign | UnexpandablePrimitive::Omit => {
-                let name = if primitive == UnexpandablePrimitive::NoAlign {
-                    "noalign"
+                // TeX.web §1129's `no_align_error` and `omit_error`, which
+                // name different legal positions and so cannot share a help
+                // text.
+                let (name, position) = if primitive == UnexpandablePrimitive::NoAlign {
+                    (
+                        "noalign",
+                        "I expect to see \\noalign only after the \\cr of",
+                    )
                 } else {
-                    "omit"
+                    (
+                        "omit",
+                        "I expect to see \\omit only after tab marks or the \\cr of",
+                    )
                 };
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    &format!("\n! Misplaced \\{name}.\nI expect to see \\{name} only after the \\cr of an alignment.\n"),
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    &format!("Misplaced \\{name}"),
+                    &[
+                        position,
+                        "an alignment. Proceed, and I'll ignore this case.",
+                    ],
                 );
                 Ok(CommandOutcome::continue_only())
             }
@@ -2590,9 +2657,20 @@ fn execute_prefixed_command(
                     UnexpandablePrimitive::Span => "span",
                     _ => unreachable!(),
                 };
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    &format!("\n! Misplaced \\{name}.\nI can't figure out why you would want to use this alignment command here.\n"),
+                // TeX.web §1128's `align_error` with no alignment in progress.
+                // Only a tab mark takes the `\&`-specific help6; a control
+                // sequence always takes this help5.
+                crate::error_report::report_input_error(
+                    input,
+                    stores,
+                    &format!("Misplaced \\{name}"),
+                    &[
+                        "I can't figure out why you would want to use a tab mark",
+                        "or \\cr or \\span just now. If something like a right brace",
+                        "up above has ended a previous alignment prematurely,",
+                        "you're probably due for more error messages, and you",
+                        "might try typing `S' now just to see what is salvageable.",
+                    ],
                 );
                 Ok(CommandOutcome::continue_only())
             }

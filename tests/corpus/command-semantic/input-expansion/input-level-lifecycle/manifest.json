@@ -52,30 +52,10 @@
       "channels": {
         "events": 39,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.18",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./input-level-lifecycle.tex (./child.tex))",
-            "actual": "(./input-level-lifecycle.tex (child.tex))"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.18",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./input-level-lifecycle.tex (./child.tex))",
-            "actual": "(./input-level-lifecycle.tex (child.tex))"
-          }
-        },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

@@ -37,11 +37,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.1 \\long\\count",
-            "actual": " )"
-          }
+          "mismatch": { "line": 4, "expected": "l.1 \\long\\count", "actual": " )" }
         },
         "log": {
           "kind": "xfail",
@@ -52,12 +48,8 @@
             "actual": "I'll pretend you didn't say \\long or \\outer here."
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

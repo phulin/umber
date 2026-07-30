@@ -437,38 +437,65 @@ case-level `expectation`'s own pass/xpass/changed-failure discipline:
   divergence next to the one now observed so a shift in behavior is never
   mistaken for the one `bug` names.
 
-The log channel's clock (tex.web §536, present on the log's first line only)
-is the one byte range no two runs of the same job can ever agree on, and the
-one normalization this corpus applies
-(`tex_command_stream::semantic::normalize_log_clock`,
-`docs/job_framing.md`): both the committed reference and Umber's freshly
-captured bytes are normalized the same way before any comparison, so the
-committed file's stored clock text is stable across regenerations regardless
-of which day the oracle was captured. Nothing else is normalized away.
+Two byte ranges carry a wall clock that no two runs of the same job can ever
+agree on, and both are normalized -- by one function,
+`tex_command_stream::semantic::normalize_channel`, which the ongoing gate and
+the regeneration tool share so that a channel written as `file` cannot fail
+under the gate that reads it back:
 
-Final tally, measured at this commit: of 381 non-`effects` channel
-dispositions across 127 runnable cases, 165 are `file` and 115 are `xfail`
-(228 `effects`/`dvi`/etc. dispositions are `empty`; the `effects` channel
-itself has no reference-engine-comparable form at all -- it is Umber's own
-structured rendering of stream opens, closes, writes, and shell escapes, not
-a byte-for-byte reproduction of anything a real TeX writes -- so every case's
-capture is required to be empty rather than ever adjudicated). The 115
-`xfail` channels resolve to 12 bugs:
+- The log channel's clock (tex.web §536, on the log's first line only),
+  through `normalize_log_clock` (`docs/job_framing.md`).
+- The `dvi` channel's preamble comment (tex.web §617's `pre` comment), through
+  `test_support::dvi::normalized_dvi_for_comparison` -- the same normalization
+  the byte-exact DVI parity harness has always applied, which rewrites exactly
+  the declared `k`-byte comment payload and requires every other byte,
+  including `k` itself, to already match.
 
-- `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 48
-- `umber2-alfh.22` (Umber's DVI banner comment differs from the oracle's): 26
-- `umber2-alfh.15` (an `EtexLoaded`/`Production`-profile job is never framed):
-  10
-- `umber2-alfh.11` (the `*` prompt / terminal-read residual): 10
-- `umber2-alfh.16` (missing Underfull \hbox diagnostics): 6
-- `umber2-alfh.14` (show_context accuracy residual): 6
-- `umber2-alfh.18` (a nested `\input` misses its `./` name prefix): 2
-- `umber2-alfh.23` (long diagnostic lines are never wrapped): 2
-- `umber2-alfh.19` (`\show`'s macro meaning omits a newline): 2
+Both are idempotent, and both are applied to the committed reference and to
+Umber's freshly captured bytes alike before any comparison, so a committed
+file is stable across regenerations regardless of which day the oracle was
+captured. Nothing else is normalized away.
+
+The `dvi` entry was added late (`umber2-alfh.22`). Until then this corpus
+compared the preamble comment raw while the rest of the repository held it
+uncomparable, which pinned 66 cases as `xfail` for differing only in a
+banner. Masking it left exactly one real DVI divergence in the corpus
+(`umber2-86sl`), which had been invisible because the channel fingerprint
+records only the _first_ divergence and the banner always came first.
+
+Final tally, measured at this commit: of 597 non-`effects` channel
+dispositions across 199 cases, 267 are `file`, 196 are `xfail`, and 134 are
+`empty` (the 199 `effects` dispositions are all `empty`; that channel has no
+reference-engine-comparable form at all -- it is Umber's own structured
+rendering of stream opens, closes, writes, and shell escapes, not a
+byte-for-byte reproduction of anything a real TeX writes -- so every case's
+capture is required to be empty rather than ever adjudicated). The 196
+`xfail` channels resolve to 15 bugs:
+
+- `umber2-alfh.14` (show_context accuracy residual): 66
+- `umber2-alfh.16` (missing box diagnostics): 40
+- `umber2-alfh.26` (Umber raises a _different_ error than pdfTeX): 25
+- `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 18
+- `umber2-alfh.25` (a file's `)` is closed early): 14
+- `umber2-alfh.11` (the `*` prompt / terminal-read residual): 11
+- `umber2-alfh.23` (long diagnostic lines are never wrapped): 6
+- `umber2-alfh.18` (a nested `\input` misses its `./` name prefix): 4
+- `umber2-alfh.19` (`\show`'s macro meaning omits a newline): 4
+- `umber2-alfh.24` (a `\write` interleaves into the page marker): 2
+- `umber2-alfh.31` (a `\read` from the terminal is neither echoed nor closed):
+  2
 - `umber2-alfh.17` (e-TeX's pretend-you-didn't-say message omits `\protected`):
   1
-- `umber2-alfh.21` (an `\openout` notice is never printed to the log): 1
 - `umber2-alfh.20` (Umber does not recognize `nd`/`nc` dimension units): 1
+- `umber2-alfh.21` (an `\openout` notice is never printed to the log): 1
+- `umber2-86sl` (a `\special` is written ahead of the box's glyphs): 1
+
+Read those counts as channels, not as defects. `terminal` and `log` are not
+independent evidence: TeX writes most of a job's transcript to both at once
+(§54's `term_and_log`), so one divergence normally pins two channels, and the
+196 above are roughly 97 distinct case-level divergences. The `dvi` channel
+_is_ independent, and after the preamble normalization above it contributes
+exactly one.
 
 Regenerate the contract with:
 

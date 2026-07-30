@@ -248,15 +248,22 @@ pub(super) fn scan_token_list_assignment(
         _ => {}
     }
     if !has_catcode_meaning(stores, token, Catcode::BeginGroup) {
-        // TeX.web §403 backs up the rejected token, inserts the missing
-        // opening brace, and lets the absorbing scan continue to a later
-        // right brace.
-        push_traced_tokens(input, stores, [traced]);
-        input.account_inserted_alignment_left_brace();
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+        // TeX.web §403's `scan_left_brace` reports with `back_error`, so the
+        // rejected token becomes its own `<to be read again>` context line,
+        // and only then counts the brace it pretends to have read.
+        crate::error_report::back_error(
+            input,
+            stores,
+            traced,
+            "Missing { inserted",
+            &[
+                "A left brace was mandatory here, so I've put one in.",
+                "You might want to delete and/or insert some corrections",
+                "so that I will find a matching right brace soon.",
+                "(If you're confused by all this, try typing `I}' now.)",
+            ],
         );
+        input.account_inserted_alignment_left_brace();
     }
     scan_balanced_text_after_open_group(input, stores)
 }
@@ -303,14 +310,21 @@ fn scan_balanced_text_after_open_group(
                 right_brace,
                 traced.origin(),
             );
-            crate::insert_traced_tokens(
+            // TeX.web §338 inserts the recovery tokens and then reports, so
+            // the brace shows up under `<inserted text>`. §338 also appends
+            // `of ` and `sprint_cs(warning_index)`; the absorbing scanner here
+            // does not track a warning index, so that suffix is still missing.
+            crate::error_report::ins_error(
                 input,
                 stores,
                 [TracedTokenWord::pack(right_brace, inserted), traced],
-            );
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Forbidden control sequence found while scanning text.\nI've inserted a closing brace and will continue.\n",
+                "Forbidden control sequence found while scanning text",
+                &[
+                    "I suspect you have forgotten a `}', causing me",
+                    "to read past where you wanted me to stop.",
+                    "I'll try to recover; but if the error is serious,",
+                    "you'd better type `E' or `X' now and fix your file.",
+                ],
             );
             continue;
         }

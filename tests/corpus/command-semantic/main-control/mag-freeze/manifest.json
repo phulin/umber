@@ -31,27 +31,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.23",
-          "mismatch": {
-            "line": 3,
-            "expected": "! Incompatible magnification (1300);",
-            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
-          }
+          "mismatch": { "line": 5, "expected": "l.4 \\dimen1=1true", "actual": "l.4 \\dimen1=1truept" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.23",
-          "mismatch": {
-            "line": 4,
-            "expected": "! Incompatible magnification (1300);",
-            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
-          }
+          "mismatch": { "line": 6, "expected": "l.4 \\dimen1=1true", "actual": "l.4 \\dimen1=1truept" }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

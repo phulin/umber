@@ -45,6 +45,13 @@ pub(super) fn terminal_effect_text(stores: &Universe) -> String {
     output
 }
 
+/// [`terminal_effect_text`] with tex.web §58's `max_print_line` breaks
+/// removed, for a test whose subject is a message's content rather than its
+/// layout. See [`tex_state::print::without_line_breaks`].
+pub(super) fn terminal_effect_text_unbroken(stores: &Universe) -> String {
+    tex_state::print::without_line_breaks(&terminal_effect_text(stores))
+}
+
 pub(super) fn stores_with_fonts() -> Universe {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     const CMMI10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmmi10.tfm");

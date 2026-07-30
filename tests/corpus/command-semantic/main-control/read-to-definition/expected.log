@@ -1,23 +1,5 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **read-to-definition.tex
-(./read-to-definition.tex
-! Undefined control sequence.
-l.1 \read-1 \line
-                 
-The control sequence at the end of the top line
-of your error message was never \def'ed. If you have
-misspelled it (e.g., `\hobx'), type `I' and the correct
-spelling (e.g., `I\hbox'). Otherwise just continue,
-and I'll forget about whatever was undefined.
-
-! Missing `to' inserted.
-<to be read again> 
-                   \count 
-l.2 \count
-          0=1\end
-You should have said `\read<number> to \cs'.
-I'm going to look for the \cs now.
-
-alpha
-[0] )
-Output written on read-to-definition.dvi (1 page, 128 bytes).
+(./read-to-definition.texalpha
+ )
+No pages of output.

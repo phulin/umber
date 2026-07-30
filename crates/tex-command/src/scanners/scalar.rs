@@ -1085,10 +1085,13 @@ impl CommandProcessor<'_> {
             Some(value) => value,
             None => {
                 let rendered = meaning_text(&self.state, &command);
+                let context = self.command.output_open_context(&self.state);
                 let mut report = self
                     .state
                     .print_err(&format!("You can't use `{rendered}' after \\the."));
-                report.help(&["I'm forgetting what you said and using zero instead."]);
+                report
+                    .help(&["I'm forgetting what you said and using zero instead."])
+                    .context(context);
                 report.error();
                 InternalValue::Integer(0)
             }
@@ -1576,8 +1579,11 @@ impl CommandProcessor<'_> {
     /// quantities were mixed, and TeX assumes `1mu=1pt` and continues.
     ///
     fn mu_error(&mut self) {
+        let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Incompatible glue units");
-        report.help(&["I'm going to assume that 1mu=1pt when they're mixed."]);
+        report
+            .help(&["I'm going to assume that 1mu=1pt when they're mixed."])
+            .context(context);
         report.error();
     }
 
@@ -1615,24 +1621,32 @@ impl CommandProcessor<'_> {
     /// TeX82 §456's unit recovery for math glue.
     /// TeX82 §442's out-of-range alphabetic-constant recovery.
     fn improper_alphabetic_constant_error(&mut self) {
+        // §442 reaches `back_error`, so the caller has already restored the
+        // offending token and §314 names it `<to be read again>`.
+        let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Improper alphabetic constant");
-        report.help(&[
-            "A one-character control sequence belongs after a ` mark.",
-            "So I'm essentially inserting \\0 here.",
-        ]);
+        report
+            .help(&[
+                "A one-character control sequence belongs after a ` mark.",
+                "So I'm essentially inserting \\0 here.",
+            ])
+            .context(context);
         report.error();
     }
 
     fn illegal_unit_mu_error(&mut self) {
+        let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (mu inserted)");
-        report.help(&[
-            "The unit of measurement in math glue must be mu.",
-            "To recover gracefully from this error, it's best to",
-            "delete the erroneous units; e.g., type `2' to delete",
-            "two letters. (See Chapter 27 of The TeXbook.)",
-        ]);
+        report
+            .help(&[
+                "The unit of measurement in math glue must be mu.",
+                "To recover gracefully from this error, it's best to",
+                "delete the erroneous units; e.g., type `2' to delete",
+                "two letters. (See Chapter 27 of The TeXbook.)",
+            ])
+            .context(context);
         report.error();
     }
 
@@ -1653,27 +1667,33 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §459's unit recovery for ordinary dimensions.
     fn illegal_unit_pt_error(&mut self) {
+        let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (pt inserted)");
-        report.help(&[
-            "Dimensions can be in units of em, ex, in, pt, pc,",
-            "cm, mm, dd, cc, bp, or sp; but yours is a new one!",
-            "I'll assume that you meant to say pt, for printer's points.",
-            "To recover gracefully from this error, it's best to",
-            "delete the erroneous units; e.g., type `2' to delete",
-            "two letters. (See Chapter 27 of The TeXbook.)",
-        ]);
+        report
+            .help(&[
+                "Dimensions can be in units of em, ex, in, pt, pc,",
+                "cm, mm, dd, cc, bp, or sp; but yours is a new one!",
+                "I'll assume that you meant to say pt, for printer's points.",
+                "To recover gracefully from this error, it's best to",
+                "delete the erroneous units; e.g., type `2' to delete",
+                "two letters. (See Chapter 27 of The TeXbook.)",
+            ])
+            .context(context);
         report.error();
     }
 
     /// TeX82 §460's clamped dimension recovery.
     fn dimension_too_large_error(&mut self) {
+        let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Dimension too large");
-        report.help(&[
-            "I can't work with sizes bigger than about 19 feet.",
-            "Continue and I'll use the largest value I can.",
-        ]);
+        report
+            .help(&[
+                "I can't work with sizes bigger than about 19 feet.",
+                "Continue and I'll use the largest value I can.",
+            ])
+            .context(context);
         report.error();
     }
 
@@ -1698,16 +1718,22 @@ impl CommandProcessor<'_> {
                 attempted,
                 retained,
             } => {
-                let mut report = self.state.print_err(&format!(
-                    "Incompatible magnification ({attempted}); the previous value will be retained ({retained})"
-                ));
+                // §288 breaks the message itself: `print_err("Incompatible
+                // magnification ("); print_int(mag); print(");");
+                // print_nl(" the previous value will be retained")`, with the
+                // retained value supplied by `int_error` rather than by the
+                // message text.
+                let mut report = self
+                    .state
+                    .print_err(&format!("Incompatible magnification ({attempted});"));
+                report.print_nl(" the previous value will be retained");
                 report
                     .help(&[
                         "I can handle only one magnification ratio per job. So I've",
                         "reverted to the magnification you used earlier on this run.",
                     ])
                     .context(context);
-                report.error();
+                report.int_error(retained);
             }
         }
     }

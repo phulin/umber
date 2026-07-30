@@ -316,6 +316,18 @@ pub enum ChannelFailure {
         pinned: ChannelMismatch,
         observed: ChannelMismatch,
     },
+    /// A channel's bytes could not be brought into comparable form, so no
+    /// verdict about them is available. Only the `dvi` channel can reach
+    /// this: its normalization has to locate the preamble comment, and a
+    /// non-empty artifact with no valid preamble is corrupt rather than
+    /// divergent. Reported instead of comparing raw bytes, because falling
+    /// back to a raw comparison would turn a corrupt artifact into an
+    /// ordinary-looking content divergence.
+    Unnormalizable {
+        channel: &'static str,
+        side: &'static str,
+        detail: String,
+    },
 }
 
 /// Compares one run against its declared channel contract.
@@ -344,19 +356,10 @@ pub fn compare(
     for channel in STREAM_CHANNELS {
         let observed = captured.stream(channel);
         let name = channel.name();
-        // The log channel's first line carries tex.web section 536's clock,
-        // which no two runs of the same job can ever agree on byte for byte.
-        // `normalize_log_clock` is the one normalization this corpus applies
-        // (`docs/job_framing.md`), so it is applied here, symmetrically, to
-        // both sides of every log comparison below rather than baked into
-        // either side's stored bytes alone.
-        let normalize = |bytes: &[u8]| -> Vec<u8> {
-            if channel == StreamChannel::Log {
-                normalize_log_clock(bytes)
-            } else {
-                bytes.to_vec()
-            }
-        };
+        // Every comparison below is decided on `normalize_channel`'s output,
+        // applied symmetrically to the committed reference and to Umber's own
+        // capture, rather than baked into either side's stored bytes alone.
+        // The regeneration tool calls the same function for the same reason.
         match contract.stream(channel) {
             StreamDisposition::Empty => {
                 if !observed.is_empty() {
@@ -374,9 +377,13 @@ pub fn compare(
                     });
                     continue;
                 };
-                if let Some(divergence) =
-                    first_line_difference(&normalize(&declared), &normalize(observed))
-                {
+                let (Some(declared), Some(observed)) = (
+                    normalize_side(channel, &declared, "committed", &mut failures),
+                    normalize_side(channel, observed, "observed", &mut failures),
+                ) else {
+                    continue;
+                };
+                if let Some(divergence) = first_line_difference(&declared, &observed) {
                     failures.push(ChannelFailure::Content {
                         channel: name,
                         line: divergence.line,
@@ -401,7 +408,13 @@ pub fn compare(
                     });
                     continue;
                 };
-                match first_line_difference(&normalize(&reference), &normalize(observed)) {
+                let (Some(reference), Some(observed)) = (
+                    normalize_side(channel, &reference, "committed", &mut failures),
+                    normalize_side(channel, observed, "observed", &mut failures),
+                ) else {
+                    continue;
+                };
+                match first_line_difference(&reference, &observed) {
                     None => failures.push(ChannelFailure::Xpass {
                         channel: name,
                         bug: bug.clone(),
@@ -441,10 +454,111 @@ fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
+/// tex.web §1328's dump date, inside the log's `(preloaded format=NAME
+/// YYYY.M.D)`.
+///
+/// `store_fmt_file` stamps the dumped `format_ident` with `\year`/`\month`/
+/// `\day` as they stood *when the format was dumped*, and §536's
+/// `slow_print(format_ident)` reproduces it on the log's first line. For this
+/// corpus that is the day `scripts/run-minifixture-oracle.sh` happened to
+/// build the format, so it is a second wall clock -- no more reproducible
+/// than §536's own, and equally not a fact about typesetting. The terminal
+/// never shows it (web2c prints `dump_name` there instead, with no date), so
+/// only the log needs this.
+///
+/// Idempotent: the replacement holds no digits, so a second pass finds no
+/// date to rewrite.
+fn normalize_dump_date(bytes: &[u8]) -> Vec<u8> {
+    const MARKER: &[u8] = b" (preloaded format=";
+    let Some(start) = bytes
+        .windows(MARKER.len())
+        .position(|window| window == MARKER)
+    else {
+        return bytes.to_vec();
+    };
+    let open = start + MARKER.len();
+    let Some(close) = bytes[open..].iter().position(|&byte| byte == b')') else {
+        return bytes.to_vec();
+    };
+    let inner = &bytes[open..open + close];
+    // `NAME YYYY.M.D` -- split at the last space so a format name containing
+    // one is still handled, and leave a dateless `(preloaded format=NAME)`
+    // (what the terminal prints) untouched.
+    let Some(space) = inner.iter().rposition(|&byte| byte == b' ') else {
+        return bytes.to_vec();
+    };
+    if !inner[space + 1..]
+        .iter()
+        .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+        || inner[space + 1..].is_empty()
+    {
+        return bytes.to_vec();
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    normalized.extend_from_slice(&bytes[..open + space + 1]);
+    normalized.extend_from_slice(b"<DUMP-DATE>");
+    normalized.extend_from_slice(&bytes[open + close..]);
+    normalized
+}
+
+/// Brings one channel's bytes into the form every comparison in this corpus
+/// is decided on, for the committed reference and Umber's own capture alike.
+///
+/// This exists because the choice of what to normalize is not local to one
+/// caller. Both the ongoing gate (`compare` below) and the regeneration tool
+/// (`command-semantic-channels`) have to agree byte for byte, or a channel
+/// the tool writes as `file` fails under the gate that reads it back. They
+/// used to spell the rule out separately, and the two copies had already
+/// drifted: each normalized the log clock and nothing else, so the `dvi`
+/// channel's preamble comment -- a timestamp and engine-identity string that
+/// `test-support` has always normalized for the byte-exact DVI parity
+/// harness -- was compared raw here, and pinned 66 cases as `xfail` for
+/// differing in exactly the bytes the rest of the repository had already
+/// ruled uncomparable (`umber2-alfh.22`). One function, two callers.
+///
+/// Both normalizations are idempotent, which is what lets a caller apply
+/// this to a committed file (normalized when it was written) and a fresh
+/// capture (never normalized) with the same call.
+pub fn normalize_channel(channel: StreamChannel, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    match channel {
+        StreamChannel::Log => Ok(normalize_log_clock(bytes)),
+        // A case that ships no page has no preamble to normalize, and that
+        // is an ordinary observation rather than a malformed artifact: an
+        // empty capture against a committed reference stays a divergence,
+        // reported below as content rather than as corruption.
+        StreamChannel::Dvi if bytes.is_empty() => Ok(Vec::new()),
+        StreamChannel::Dvi => test_support::dvi::normalized_dvi_for_comparison(bytes)
+            .map_err(|error| format!("{error:#}")),
+        StreamChannel::Terminal | StreamChannel::Effects => Ok(bytes.to_vec()),
+    }
+}
+
+/// Normalizes one side of a comparison, recording a failure instead of
+/// returning bytes when the channel's own artifact is malformed.
+fn normalize_side(
+    channel: StreamChannel,
+    bytes: &[u8],
+    side: &'static str,
+    failures: &mut Vec<ChannelFailure>,
+) -> Option<Vec<u8>> {
+    match normalize_channel(channel, bytes) {
+        Ok(normalized) => Some(normalized),
+        Err(detail) => {
+            failures.push(ChannelFailure::Unnormalizable {
+                channel: channel.name(),
+                side,
+                detail,
+            });
+            None
+        }
+    }
+}
+
 /// tex.web section 536's clock suffix on the log channel's very first line --
-/// the one byte range no two runs of the same job can ever agree on, and the
-/// only normalization this corpus applies (`docs/job_framing.md`'s "Why the
-/// notices are configuration, not output" section). Replaces everything from
+/// the one byte range no two runs of the same job can ever agree on, and one
+/// of the two normalizations this corpus applies (`docs/job_framing.md`'s
+/// "Why the notices are configuration, not output" section; the other is the
+/// `dvi` preamble comment, see [`normalize_channel`]). Replaces everything from
 /// the first `)  ` (a closing paren immediately followed by section 536's
 /// fixed two-space separator -- `format_ident`'s own closing paren, e.g.
 /// `(INITEX)` or `(preloaded format=…)`, followed by that separator and the
@@ -459,6 +573,8 @@ fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
 /// normalized) with the same call.
 #[must_use]
 pub fn normalize_log_clock(bytes: &[u8]) -> Vec<u8> {
+    let bytes = normalize_dump_date(bytes);
+    let bytes = bytes.as_slice();
     let first_newline = bytes.iter().position(|&byte| byte == b'\n');
     let (first_line, rest) = match first_newline {
         Some(index) => (&bytes[..index], &bytes[index..]),

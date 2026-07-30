@@ -39,8 +39,8 @@
           "kind": "xfail",
           "bug": "umber2-alfh.15",
           "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)",
+            "line": 3,
+            "expected": "! Patterns can be loaded only by INITEX.",
             "actual": "! Too late for \\patterns."
           }
         },
@@ -48,17 +48,13 @@
           "kind": "xfail",
           "bug": "umber2-alfh.15",
           "mismatch": {
-            "line": 1,
-            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>",
+            "line": 4,
+            "expected": "! Patterns can be loaded only by INITEX.",
             "actual": "! Too late for \\patterns."
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

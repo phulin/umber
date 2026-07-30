@@ -18,7 +18,29 @@ use crate::mode::IncompleteFraction;
 use crate::packing_params::vpack;
 use crate::{DispatchAction, ExecError, Mode, ModeNest};
 
-use super::{dispatch_math_token_with_context, support::report_math_error};
+use super::dispatch_math_token_with_context;
+use super::support::OFF_SAVE_HELP;
+use crate::error_report::{back_error, report_input_error};
+
+/// tex.web §403's `scan_left_brace` help, shared by every site that requires
+/// a `{` and assumes one when the next token is something else.
+const MISSING_LEFT_BRACE_HELP: [&str; 4] = [
+    "A left brace was mandatory here, so I've put one in.",
+    "You might want to delete and/or insert some corrections",
+    "so that I will find a matching right brace soon.",
+    "(If you're confused by all this, try typing `I}' now.)",
+];
+
+/// tex.web §1160's `<Report that an invalid delimiter code is being changed
+/// to null>` help.
+const MISSING_DELIMITER_HELP: [&str; 6] = [
+    "I was expecting to see something like `(' or `\\{' or",
+    "`\\}' here. If you typed, e.g., `{' instead of `\\{', you",
+    "should probably delete the `{' by typing `1' now, so that",
+    "braces don't get unbalanced. Otherwise just proceed.",
+    "Acceptable delimiters are characters whose \\delcode is",
+    "nonnegative, or you can use `\\delimiter <delimiter code>'.",
+];
 
 mod chars;
 #[cfg(test)]
@@ -107,10 +129,12 @@ pub(super) fn scan_math_field(
                     | UnexpandablePrimitive::CLeaders
                     | UnexpandablePrimitive::XLeaders,
                 ) => {
-                    stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
-                );
+                    // §1151's `scan_math` sends anything that is not a math
+                    // character to §403's `scan_left_brace`, which backs the
+                    // offending token up, reports, and only then behaves as
+                    // though the mandatory `{` had been read. Inserting the
+                    // brace after the report keeps that reading order while
+                    // leaving §82's display showing only the backed-up token.
                     let opener = Token::Char {
                         ch: '{',
                         cat: Catcode::BeginGroup,
@@ -120,11 +144,17 @@ pub(super) fn scan_math_field(
                         opener,
                         traced.origin(),
                     );
-                    input.back_input_alignment_token(traced);
-                    crate::insert_traced_tokens(
+                    back_error(
                         input,
                         stores,
-                        [TracedTokenWord::pack(opener, origin), traced],
+                        traced,
+                        "Missing { inserted",
+                        &MISSING_LEFT_BRACE_HELP,
+                    );
+                    crate::error_report::insert_tokens(
+                        input,
+                        stores,
+                        [TracedTokenWord::pack(opener, origin)],
                     );
                     scan_math_field(nest, input, stores, execution)
                 }
@@ -280,7 +310,13 @@ pub(super) fn finish_left_group(
 ) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
-        report_math_error(stores, "Extra \\right");
+        // §1192's `<Try to recover from mismatched \right>`.
+        report_input_error(
+            input,
+            stores,
+            "Extra \\right",
+            &["I'm ignoring a \\right that had no matching \\left."],
+        );
         return Ok(());
     }
     close_left_group(nest, stores, delimiter, execution.command_fuel())?;
@@ -296,7 +332,13 @@ pub(super) fn append_middle_delimiter(
 ) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
-        report_math_error(stores, "Extra \\middle");
+        // etex.ch's §1192 replacement reports `\middle` with its own help.
+        report_input_error(
+            input,
+            stores,
+            "Extra \\middle",
+            &["I'm ignoring a \\middle that had no matching \\left."],
+        );
         return Ok(());
     }
     nest.current_list_mutation()
@@ -309,13 +351,16 @@ pub(super) fn append_middle_delimiter(
 
 pub(super) fn close_missing_left_group(
     nest: &mut ModeNest,
+    input: &InputStack,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<bool, ExecError> {
     if !current_list_is_left_group(nest, stores) {
         return Ok(false);
     }
-    report_math_error(stores, "Missing \\right. inserted");
+    // §1064's `off_save` for `math_left_group`: tex.web inserts `\right.` and
+    // rereads the `$`; closing the group directly reaches the same state.
+    report_input_error(input, stores, "Missing \\right. inserted", &OFF_SAVE_HELP);
     close_left_group(nest, stores, 0, fuel)?;
     Ok(true)
 }
@@ -419,10 +464,9 @@ pub(super) fn start_fraction(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    if nest.current_list().incomplete_fraction().is_some() {
-        report_math_error(stores, "Ambiguous; you need another { and }");
-        return Ok(());
-    }
+    // §1181 scans the second fraction operator's own delimiters and dimension
+    // before complaining, so those operands are consumed either way.
+    let ambiguous = nest.current_list().incomplete_fraction().is_some();
     let (left_delimiter, right_delimiter) = match primitive {
         UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
@@ -443,6 +487,19 @@ pub(super) fn start_fraction(
         }
         _ => FractionThickness::Default,
     };
+    if ambiguous {
+        report_input_error(
+            input,
+            stores,
+            "Ambiguous; you need another { and }",
+            &[
+                "I'm ignoring this fraction specification, since I don't",
+                "know whether a construction like `x \\over y \\over z'",
+                "means `{x \\over y} \\over z' or `x \\over {y \\over z}'.",
+            ],
+        );
+        return Ok(());
+    }
     let numerator_nodes = nest.current_list_mutation().take_nodes();
     let numerator = stores.freeze_node_list(&numerator_nodes);
     nest.current_list_mutation()
@@ -457,6 +514,7 @@ pub(super) fn start_fraction(
 
 pub(super) fn apply_limit_switch(
     nest: &mut ModeNest,
+    input: &InputStack,
     stores: &mut Universe,
     primitive: UnexpandablePrimitive,
 ) {
@@ -478,12 +536,22 @@ pub(super) fn apply_limit_switch(
             _ => false,
         }
     }) else {
-        report_math_error(stores, "Limit controls must follow a math operator");
+        report_misplaced_limit_switch(input, stores);
         return;
     };
     if !is_operator {
-        report_math_error(stores, "Limit controls must follow a math operator");
+        report_misplaced_limit_switch(input, stores);
     }
+}
+
+/// tex.web §1159's `math_limit_switch` diagnostic.
+fn report_misplaced_limit_switch(input: &InputStack, stores: &mut Universe) {
+    report_input_error(
+        input,
+        stores,
+        "Limit controls must follow a math operator",
+        &["I'm ignoring this misplaced \\limits or \\nolimits command."],
+    );
 }
 
 pub(super) fn append_math_choice(
@@ -492,10 +560,10 @@ pub(super) fn append_math_choice(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    let display = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
-    let text = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
-    let script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
-    let script_script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
+    let display = scan_required_math_group(nest, input, stores, execution)?;
+    let text = scan_required_math_group(nest, input, stores, execution)?;
+    let script = scan_required_math_group(nest, input, stores, execution)?;
+    let script_script = scan_required_math_group(nest, input, stores, execution)?;
     nest.current_list_mutation()
         .push(Node::MathChoice(MathChoice {
             display,
@@ -506,31 +574,40 @@ pub(super) fn append_math_choice(
     Ok(())
 }
 
+/// One of §1172's four `\mathchoice` groups.
+///
+/// §1172 ends in `scan_left_brace`, so a missing `{` is §403's report and is
+/// then assumed: the group is scanned from the backed-up token either way.
 fn scan_required_math_group(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-    context: &'static str,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
-    let Some(opener) = assignments::next_non_space_traced_x(input, stores, execution)? else {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!("\n! Missing {{ inserted while scanning {context}.\n"),
-        );
-        return Ok(stores.freeze_node_list(&[]));
-    };
-    if !assignments::has_catcode_meaning(
-        stores,
-        tex_expand::semantic_token(opener),
-        Catcode::BeginGroup,
-    ) {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!("\n! Missing {{ inserted while scanning {context}.\n"),
-        );
-        crate::push_traced_tokens(input, stores, [opener]);
-        return Ok(stores.freeze_node_list(&[]));
+    match assignments::next_non_space_traced_x(input, stores, execution)? {
+        Some(opener)
+            if assignments::has_catcode_meaning(
+                stores,
+                tex_expand::semantic_token(opener),
+                Catcode::BeginGroup,
+            ) => {}
+        Some(opener) => {
+            back_error(
+                input,
+                stores,
+                opener,
+                "Missing { inserted",
+                &MISSING_LEFT_BRACE_HELP,
+            );
+        }
+        None => {
+            report_input_error(
+                input,
+                stores,
+                "Missing { inserted",
+                &MISSING_LEFT_BRACE_HELP,
+            );
+        }
     }
     scan_math_group_after_open(nest, input, stores, execution)
 }
@@ -625,7 +702,13 @@ fn scan_delimiter_token(
             execution,
         )?
         else {
-            report_math_error(stores, "Missing delimiter (. inserted)");
+            // §1160 with nothing left to back up.
+            report_input_error(
+                input,
+                stores,
+                "Missing delimiter (. inserted)",
+                &MISSING_DELIMITER_HELP,
+            );
             return Ok(0);
         };
         let token = tex_expand::semantic_token(traced);
@@ -663,8 +746,15 @@ fn scan_delimiter_token(
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {}
         }
 
-        crate::push_traced_tokens(input, stores, [traced]);
-        report_math_error(stores, "Missing delimiter (. inserted)");
+        // §1160's `<Report that an invalid delimiter code ...>` ends in
+        // `back_error`, so the rejected token returns as `<to be read again>`.
+        back_error(
+            input,
+            stores,
+            traced,
+            "Missing delimiter (. inserted)",
+            &MISSING_DELIMITER_HELP,
+        );
         return Ok(0);
     }
 }

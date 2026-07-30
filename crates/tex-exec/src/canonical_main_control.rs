@@ -103,6 +103,11 @@ pub struct CanonicalMainControl {
     /// [`CanonicalMainControl::tex82_initex`] builds an INITEX session and
     /// every other constructor a production one.
     initex: bool,
+    /// Set when this session was started from a dumped format, so §61/§536's
+    /// banner can name it (`(preloaded format=…)`) the way a real `-fmt` run
+    /// does. `None` leaves the banner to `initex` above. Framing-only: no
+    /// execution decision reads it.
+    preloaded_format: Option<crate::job::PreloadedFormat>,
     /// True after TeX82 §1335 has successfully completed an INITEX `\dump`.
     ///
     /// This is a committed termination receipt for the host boundary; it is
@@ -618,9 +623,19 @@ impl CanonicalMainControl {
             stores,
             &mut self.capabilities,
             self.initex,
+            self.preloaded_format.as_ref(),
             etex,
             first_line,
         );
+    }
+
+    /// Declares that this session was restored from a dumped format, so
+    /// [`Self::begin_job`] frames it as `-fmt=<name>` rather than as INITEX.
+    ///
+    /// Framing only: nothing about execution changes, and a session that
+    /// never calls this is framed exactly as before.
+    pub fn set_preloaded_format(&mut self, format: crate::job::PreloadedFormat) {
+        self.preloaded_format = Some(format);
     }
 
     /// tex.web §1333 `close_files_and_terminate`'s prints: §642's DVI page
@@ -1063,6 +1078,11 @@ impl CanonicalMainControl {
     /// Returns whether this call was the entry, so an observed step publishes
     /// the prologue's push only on the step that produced it.
     fn enter_main_control(&mut self, stores: &mut Universe) -> bool {
+        // Seeds `line` before the first command is delivered; every step
+        // republishes it after delivery (see `step_once`).
+        stores.set_current_input_line(
+            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+        );
         if std::mem::replace(&mut self.main_control_entered, true) {
             return false;
         }
@@ -1150,6 +1170,16 @@ impl CanonicalMainControl {
             );
             scanned
         };
+        // tex.web's `line` is maintained by `get_next` as it moves to a new
+        // input line, so it is already the delivered command's own line by
+        // the time that command is applied. Publish it here, after delivery,
+        // rather than at the step's start: §660/§675's box diagnostics and
+        // §1091's `mode_line` both name the line the command is *on*, and a
+        // command that is the first thing on a line is scanned by a step
+        // that began on the previous one.
+        stores.set_current_input_line(
+            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+        );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -1596,6 +1626,16 @@ impl CanonicalMainControl {
             );
             scanned
         };
+        // tex.web's `line` is maintained by `get_next` as it moves to a new
+        // input line, so it is already the delivered command's own line by
+        // the time that command is applied. Publish it here, after delivery,
+        // rather than at the step's start: §660/§675's box diagnostics and
+        // §1091's `mode_line` both name the line the command is *on*, and a
+        // command that is the first thing on a line is scanned by a step
+        // that began on the previous one.
+        stores.set_current_input_line(
+            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+        );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -1914,9 +1954,16 @@ impl CanonicalMainControl {
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
         self.main_loop_active = false;
         while canonical_left_group_open(&self.modes, stores) {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Missing \\right. inserted.\n",
+            // The `\right.` applied below is exactly the closer §1065 selects
+            // for `math_left_group`, so the report is §1064's `off_save`.
+            let context = self.command.output_open_context(&stores.command_context());
+            report_escaped_error(
+                stores,
+                "Missing ",
+                "right.",
+                " inserted",
+                &OFF_SAVE_HELP,
+                context,
             );
             self.apply_canonical_math_delimiter(
                 MathDelimiterBoundary {
@@ -2122,9 +2169,15 @@ impl CanonicalMainControl {
                     // recovery inserts that closer before retrying the
                     // offending command, so `\eqno` must not consume the
                     // finished rows as an ordinary display mlist.
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! Missing $$ inserted.\nDisplays can use special alignments (like \\eqalignno)\nonly if nothing but the alignment itself is between $$'s.\n",
+                    let context = self.command.output_open_context(&stores.command_context());
+                    crate::error_report::report_error(
+                        stores,
+                        "Missing $$ inserted",
+                        &[
+                            "Displays can use special alignments (like \\eqalignno)",
+                            "only if nothing but the alignment itself is between $$'s.",
+                        ],
+                        context,
                     );
                     self.finish_canonical_display_alignment(
                         stores,
@@ -2133,21 +2186,29 @@ impl CanonicalMainControl {
                             aux_prev_depth,
                         },
                     )?;
+                    // The retry §1207 arranges lands in the paragraph the
+                    // display interrupted, where §1049 lists `eq_no` under
+                    // `non_math` and so answers with `report_illegal_case`.
                     let primitive = match number.side {
                         tex_command::EquationNumberSide::Left => "leqno",
                         tex_command::EquationNumberSide::Right => "eqno",
                     };
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        &format!("\n! You can't use `\\{primitive}' in horizontal mode.\n"),
-                    );
+                    let token = Token::Cs(stores.intern(primitive).symbol());
+                    crate::diagnostics::report_illegal_case(stores, token, Mode::Horizontal);
                     return Ok(ReplayStep::Continue);
                 }
                 if self.modes.current_mode() != Mode::DisplayMath {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! You can't use `\\eqno' in this mode.\n",
-                    );
+                    // §1140's `mmode+eq_no` is guarded by `privileged`, and
+                    // §1049 lists `eq_no` under `non_math`; both failures end
+                    // in §1050's `report_illegal_case`, which names the mode
+                    // the command was actually used in.
+                    let primitive = match number.side {
+                        tex_command::EquationNumberSide::Left => "leqno",
+                        tex_command::EquationNumberSide::Right => "eqno",
+                    };
+                    let token = Token::Cs(stores.intern(primitive).symbol());
+                    let mode = self.modes.current_mode();
+                    crate::diagnostics::report_illegal_case(stores, token, mode);
                 } else {
                     let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
                     stores.enter_group_with_kind_at_line(
@@ -2201,10 +2262,7 @@ impl CanonicalMainControl {
             Mode::Math => {
                 if self.modes.current_list().display_eq_no().is_some() {
                     if !paired {
-                        stores.world_mut().write_text(
-                            PrintSink::TerminalAndLog,
-                            "\n! Display math should end with $$.\n",
-                        );
+                        report_unpaired_display_end(&self.command, stores);
                     }
                     self.finish_canonical_equation_number(stores)?;
                 } else {
@@ -2213,10 +2271,7 @@ impl CanonicalMainControl {
             }
             Mode::DisplayMath => {
                 if !paired {
-                    stores.world_mut().write_text(
-                        PrintSink::TerminalAndLog,
-                        "\n! Display math should end with $$.\n",
-                    );
+                    report_unpaired_display_end(&self.command, stores);
                 }
                 self.finish_canonical_display_math(stores, None)?;
             }
@@ -2281,7 +2336,8 @@ impl CanonicalMainControl {
 
     fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        if crate::math::reject_invalid_math_fonts(stores) {
+        let math_font_context = self.command.output_open_context(&stores.command_context());
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
             content = stores.freeze_node_list(&[]);
         }
         let _ =
@@ -2314,7 +2370,8 @@ impl CanonicalMainControl {
             .list_mutation()
             .take_display_eq_no()
             .expect("equation number mode state");
-        if crate::math::reject_invalid_math_fonts(stores) {
+        let math_font_context = self.command.output_open_context(&stores.command_context());
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
             content = stores.freeze_node_list(&[]);
             eq.display = stores.freeze_node_list(&[]);
         }
@@ -2388,7 +2445,8 @@ impl CanonicalMainControl {
     ) -> Result<(), ExecError> {
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
-        if crate::math::reject_invalid_math_fonts(stores) {
+        let math_font_context = self.command.output_open_context(&stores.command_context());
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
             content = stores.freeze_node_list(&[]);
         }
         let mut level =
@@ -2498,16 +2556,31 @@ impl CanonicalMainControl {
                             MathField::Empty,
                         )));
                 } else {
-                    stores
-                        .world_mut()
-                        .write_text(PrintSink::TerminalAndLog, "\n! Extra \\middle.\n");
+                    // etex.ch [48.1192] splits §1192's report by noad type.
+                    let context = self.command.output_open_context(&stores.command_context());
+                    report_escaped_error(
+                        stores,
+                        "Extra ",
+                        "middle",
+                        "",
+                        &["I'm ignoring a \\middle that had no matching \\left."],
+                        context,
+                    );
                 }
             }
             MathDelimiterBoundaryKind::Right => {
                 if !canonical_left_group_open(&self.modes, stores) {
-                    stores
-                        .world_mut()
-                        .write_text(PrintSink::TerminalAndLog, "\n! Extra \\right.\n");
+                    // TeX82 §1192's `<Try to recover from mismatched \right>`
+                    // in its `math_shift_group` arm.
+                    let context = self.command.output_open_context(&stores.command_context());
+                    report_escaped_error(
+                        stores,
+                        "Extra ",
+                        "right",
+                        "",
+                        &["I'm ignoring a \\right that had no matching \\left."],
+                        context,
+                    );
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
@@ -2805,6 +2878,16 @@ impl CanonicalMainControl {
             );
             scanned
         };
+        // tex.web's `line` is maintained by `get_next` as it moves to a new
+        // input line, so it is already the delivered command's own line by
+        // the time that command is applied. Publish it here, after delivery,
+        // rather than at the step's start: §660/§675's box diagnostics and
+        // §1091's `mode_line` both name the line the command is *on*, and a
+        // command that is the first thing on a line is scanned by a step
+        // that began on the previous one.
+        stores.set_current_input_line(
+            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+        );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -3477,6 +3560,85 @@ fn take_finished_canonical_math_list(
     finish_canonical_math_list(&nodes, incomplete.as_ref(), stores)
 }
 
+/// TeX82 §1064's `off_save` help, shared by all four closers §1065 selects.
+const OFF_SAVE_HELP: [&str; 5] = [
+    "I've inserted something that you may have forgotten.",
+    "(See the <inserted text> above.)",
+    "With luck, this will get me unwedged. But if you",
+    "really didn't forget anything, try typing `2' now; then",
+    "my insertion and my current dilemma will both disappear.",
+];
+
+/// [`crate::error_report::report_error`] for a message tex.web assembles as
+/// `print_err(prefix)`, §63's `print_esc(escaped)`, and `print(suffix)`.
+///
+/// Spelling the control sequence with `print_esc` rather than a literal
+/// backslash is what keeps the report honest under a changed `\escapechar`.
+fn report_escaped_error(
+    stores: &mut Universe,
+    prefix: &str,
+    escaped: &str,
+    suffix: &str,
+    help: &[&str],
+    context: String,
+) {
+    let mut report = stores.print_err(prefix);
+    report.print_esc(escaped).print(suffix);
+    report.help(help).context(context);
+    report.error();
+}
+
+/// TeX82 §1084's `scan_box` recovery for a command that is not a box.
+///
+/// §1084 reports through `back_error`, and every caller here has already had
+/// the rejected command backed up during scanning, so only the report is
+/// left.
+fn report_missing_box(command: &CommandState, stores: &mut Universe) {
+    let context = command.output_open_context(&stores.command_context());
+    crate::error_report::report_error(
+        stores,
+        "A <box> was supposed to be here",
+        &[
+            "I was expecting to see \\hbox or \\vbox or \\copy or \\box or",
+            "something like that. So you might find something missing in",
+            "your output. But keep trying; you can fix this later.",
+        ],
+        context,
+    );
+}
+
+/// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
+fn report_missing_vsplit_to(command: &CommandState, stores: &mut Universe) {
+    let context = command.output_open_context(&stores.command_context());
+    crate::error_report::report_error(
+        stores,
+        "Missing `to' inserted",
+        &[
+            "I'm working on `\\vsplit<box number> to <dimen>';",
+            "will look for the <dimen> next.",
+        ],
+        context,
+    );
+}
+
+/// TeX82 §1197's `<Check that another `$` follows>`.
+///
+/// §1197 reaches this through `back_error`, and the scanner's probe
+/// (`scan_display_end_math_shift`) has already put the offending token back,
+/// so only the report itself is left to issue.
+fn report_unpaired_display_end(command: &CommandState, stores: &mut Universe) {
+    let context = command.output_open_context(&stores.command_context());
+    crate::error_report::report_error(
+        stores,
+        "Display math should end with $$",
+        &[
+            "The `$' that I just saw supposedly matches a previous `$$'.",
+            "So I shall assume that you typed `$$' both times.",
+        ],
+        context,
+    );
+}
+
 fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
     let starts_left_node = |node: Option<&Node>| {
         matches!(
@@ -3517,6 +3679,28 @@ struct MainControlParking {
     /// resumption of a `get_next` that is still in progress. Such a step
     /// leaves parking exactly as it found it.
     resumes_interrupted_fetch: bool,
+}
+
+/// The closer TeX82 §1065 selects for `cur_group`, in the form its report
+/// prints it: `print_esc` for the two frozen control sequences, `print_char`
+/// for the two literal characters.
+#[derive(Clone, Copy)]
+enum OffSaveCloser {
+    EndGroup,
+    MathShift,
+    NullRight,
+    RightBrace,
+}
+
+impl OffSaveCloser {
+    fn print(self, report: &mut tex_state::print::ErrorReport<'_>) {
+        match self {
+            Self::EndGroup => report.print_esc("endgroup"),
+            Self::MathShift => report.print_char('$'),
+            Self::NullRight => report.print_esc("right."),
+            Self::RightBrace => report.print_char('}'),
+        };
+    }
 }
 
 #[derive(Clone)]
@@ -4077,10 +4261,11 @@ enum ScannedStep {
     /// accommodate the scanned command, so `scan_off_save` already chose and
     /// inserted the matching closer ahead of the backed-up command
     /// (`CommandProcessor::recover_off_save`). The execute phase only prints
-    /// §1065's diagnostic naming what was inserted; the four cases share one
-    /// static message because the closer itself was already selected during
-    /// scanning.
-    OffSave(&'static str),
+    /// §1064's report naming what was inserted; the closer travels as the
+    /// typed choice §1065 already made rather than as rendered text, because
+    /// two of the four spell a control sequence and so must be printed
+    /// through §63's `print_esc` under the live `\\escapechar`.
+    OffSave(OffSaveCloser),
     /// TeX82 §§1064/1066's bottom-level `off_save`: no enclosing group
     /// existed to close, so the offending command was dropped outright
     /// (`CommandProcessor::report_off_save_bottom_drop` already ran); the
@@ -6878,7 +7063,7 @@ fn scan_off_save(
             processor
                 .recover_off_save(command, &[endgroup])
                 .map_err(command_error)?;
-            Ok(ScannedStep::OffSave("\n! Missing \\endgroup inserted.\n"))
+            Ok(ScannedStep::OffSave(OffSaveCloser::EndGroup))
         }
         GroupKind::MathShift => {
             let dollar = Token::Char {
@@ -6888,7 +7073,7 @@ fn scan_off_save(
             processor
                 .recover_off_save(command, &[dollar])
                 .map_err(command_error)?;
-            Ok(ScannedStep::OffSave("\n! Missing $ inserted.\n"))
+            Ok(ScannedStep::OffSave(OffSaveCloser::MathShift))
         }
         GroupKind::MathLeft => {
             let right = processor
@@ -6901,7 +7086,7 @@ fn scan_off_save(
             processor
                 .recover_off_save(command, &[right, dot])
                 .map_err(command_error)?;
-            Ok(ScannedStep::OffSave("\n! Missing \\right. inserted.\n"))
+            Ok(ScannedStep::OffSave(OffSaveCloser::NullRight))
         }
         _ => {
             let right_brace = Token::Char {
@@ -6911,7 +7096,7 @@ fn scan_off_save(
             processor
                 .recover_off_save(command, &[right_brace])
                 .map_err(command_error)?;
-            Ok(ScannedStep::OffSave("\n! Missing } inserted.\n"))
+            Ok(ScannedStep::OffSave(OffSaveCloser::RightBrace))
         }
     }
 }
@@ -7979,6 +8164,7 @@ fn apply_pdf_graphics_request(
     request: PdfGraphicsRequest,
     stores: &mut Universe,
     modes: &mut ModeNest,
+    command: &CommandState,
 ) -> Result<ReplayStep, ExecError> {
     use PdfColorStackActionRequest as Action;
 
@@ -8031,25 +8217,49 @@ fn apply_pdf_graphics_request(
         }
         PdfGraphicsRequest::SnapYComp { ratio } => Node::Whatsit(Whatsit::PdfSnapYComp { ratio }),
         PdfGraphicsRequest::ColorStack { id, action } => {
+            // pdftex.web's `<Implement \pdfcolorstack>` reports all three of
+            // these through `print_err`/`error`, so each is a counted error
+            // with a context display, not a bare note.
             let id = if id < 0 {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "Invalid negative color stack number\n",
+                let context = command.output_open_context(&stores.command_context());
+                crate::error_report::report_error(
+                    stores,
+                    "Invalid negative color stack number",
+                    &[
+                        "I'll use default color stack 0 here.",
+                        "Proceed, with fingers crossed.",
+                    ],
+                    context,
                 );
                 0
             } else if !stores.has_pdf_color_stack(id as u32) {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("Unknown color stack number {id}\n"),
+                let context = command.output_open_context(&stores.command_context());
+                crate::error_report::report_error(
+                    stores,
+                    &format!("Unknown color stack number {id}"),
+                    &[
+                        "Allocate and initialize a color stack with \\pdfcolorstackinit.",
+                        "I'll use default color stack 0 here.",
+                        "Proceed, with fingers crossed.",
+                    ],
+                    context,
                 );
                 0
             } else {
                 id as u32
             };
             let Some(action) = action else {
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, "Color stack action is missing\n");
+                let context = command.output_open_context(&stores.command_context());
+                crate::error_report::report_error(
+                    stores,
+                    "Color stack action is missing",
+                    &[
+                        "The expected actions for \\pdfcolorstack:",
+                        "    set, push, pop, current",
+                        "I'll ignore the color stack command.",
+                    ],
+                    context,
+                );
                 return Ok(ReplayStep::Continue);
             };
             let action = match action {
@@ -9195,6 +9405,10 @@ fn shipout_replay_box(
     let mut expansion = tex_expand::ExpansionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
+    // §1372's recovery reports from inside the write expansion, after the
+    // enclosing `command` borrow has moved into the closure below, so the
+    // context it needs is captured here alongside the shipout's own copy.
+    let unbalanced_context = output_open_context.clone();
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
     let mut expand_write =
@@ -9241,9 +9455,16 @@ fn shipout_replay_box(
                     }));
             }
             if expanded.unbalanced {
-                stores
-                    .world_mut()
-                    .write_text(PrintSink::TerminalAndLog, "\n! Unbalanced write command.\n");
+                // TeX82 §1372's `<Recover from an unbalanced write command>`.
+                crate::error_report::report_error(
+                    stores,
+                    "Unbalanced write command",
+                    &[
+                        "On this page there's a \\write with fewer real {'s than }'s.",
+                        "I can't handle that very well; good luck.",
+                    ],
+                    unbalanced_context.clone(),
+                );
             }
             let mut text = String::new();
             for &token in stores.tokens(expanded.tokens.token_list()) {
@@ -10110,9 +10331,17 @@ fn apply_scanned_step(
                     tex_state::node::Direction::BeginR => "beginR",
                     tex_state::node::Direction::EndR => "endR",
                 };
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("\n! Improper \\{name}.\nSorry, this \\{name} will be ignored.\n"),
+                // etex.ch's `eTeX_enabled`: one report for every optional
+                // feature, so the help names the disabled feature generally
+                // rather than the primitive the message already named.
+                let context = command.state.output_open_context(&stores.command_context());
+                report_escaped_error(
+                    stores,
+                    "Improper ",
+                    name,
+                    "",
+                    &["Sorry, this optional e-TeX feature has been disabled."],
+                    context,
                 );
             }
             Ok(ReplayStep::Continue)
@@ -10132,9 +10361,15 @@ fn apply_scanned_step(
             // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
             // input recovery (backing up the offending command behind an
             // inserted `$`) already ran in `recover_missing_math_shift`.
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Missing $ inserted.\n<inserted text>\n<to be read again>\nI've inserted a begin-math/end-math symbol since I think\nyou left one out. Proceed, with fingers crossed.\n",
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Missing $ inserted",
+                &[
+                    "I've inserted a begin-math/end-math symbol since I think",
+                    "you left one out. Proceed, with fingers crossed.",
+                ],
+                context,
             );
             Ok(ReplayStep::Continue)
         }
@@ -10390,17 +10625,35 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalItalicCorrection { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalMacroParameter { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraEndCsName => {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            // TeX82 §1135's `cs_error`.
+            let context = command.state.output_open_context(&stores.command_context());
+            report_escaped_error(
+                stores,
+                "Extra ",
+                "endcsname",
+                "",
+                &["I'm ignoring this, since I wasn't doing a \\csname."],
+                context,
             );
             Ok(ReplayStep::Continue)
         }
@@ -10510,10 +10763,8 @@ fn apply_scanned_step(
                 // report_illegal_case`, which prints "You can't use
                 // `\prevdepth' in ... mode" and otherwise leaves the value
                 // alone -- it does not raise an executor error.
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! You can't use `\\prevdepth' in this mode.\n",
-                );
+                let token = Token::Cs(stores.intern("prevdepth").symbol());
+                crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             }
             Ok(ReplayStep::Continue)
         }
@@ -10529,12 +10780,15 @@ fn apply_scanned_step(
             if (1..=32767).contains(&value) {
                 modes.current_list_mutation().set_space_factor(value);
             } else {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!(
-                        "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
-                    ),
-                );
+                // §91's `int_error` appends ` (value)` to the message before
+                // §82 completes the report, so the value is not part of the
+                // `print_err` text.
+                let context = command.state.output_open_context(&stores.command_context());
+                let mut report = stores.print_err("Bad space factor");
+                report
+                    .help(&["I allow only values in the range 1..32767 here."])
+                    .context(context);
+                report.int_error(value);
             }
             Ok(ReplayStep::Continue)
         }
@@ -10548,12 +10802,13 @@ fn apply_scanned_step(
             // rather than checking the current mode), unlike `\spacefactor`/
             // `\prevdepth`'s §1243 `report_illegal_case`.
             if value < 0 {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!(
-                        "\n! Bad \\prevgraf ({value}).\nI allow only nonnegative values here.\n"
-                    ),
-                );
+                let context = command.state.output_open_context(&stores.command_context());
+                let mut report = stores.print_err("Bad ");
+                report
+                    .print_esc("prevgraf")
+                    .help(&["I allow only nonnegative values here."])
+                    .context(context);
+                report.int_error(value);
             } else {
                 modes.set_enclosing_vertical_prev_graf(value);
             }
@@ -11085,7 +11340,9 @@ fn apply_scanned_step(
             stores.set_pdf_space_font_name(pdf_graphics_text(tokens, stores));
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
+        ScannedStep::PdfGraphics(request) => {
+            apply_pdf_graphics_request(request, stores, modes, command.state)
+        }
         ScannedStep::PdfNavigation(request) => apply_pdf_navigation_request(request, stores, modes),
         ScannedStep::PdfObject(request) => apply_pdf_object_request(request, stores, false),
         ScannedStep::PdfReferenceObject(request) => {
@@ -11279,9 +11536,20 @@ fn apply_scanned_step(
             missing_target,
         } => {
             if missing_target {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\n",
+                // TeX82 §1215's `get_r_token`; the frozen `\inaccessible`
+                // insertion it recovers with is already the scanner's.
+                let context = command.state.output_open_context(&stores.command_context());
+                crate::error_report::report_error(
+                    stores,
+                    "Missing control sequence inserted",
+                    &[
+                        "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+                        "I've inserted an inaccessible control sequence so that your",
+                        "definition will be completed without mixing me up too badly.",
+                        "You can recover graciously from this error, if you're",
+                        "careful; see exercise 27.2 in The TeXbook.",
+                    ],
+                    context,
                 );
             }
             let meaning = MacroMeaning::new(
@@ -11442,20 +11710,23 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowBox { index } => {
-            crate::diagnostics::execute_showbox(stores, index);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::execute_showbox(stores, index, context);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowLists => {
-            crate::diagnostics::execute_showlists(stores, modes);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::execute_showlists(stores, modes, context);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowTokens { tokens } => {
             // e-TeX's odd xray modifier reaches `the_toks`, then TeX82
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
+            let context = command.state.output_open_context(&stores.command_context());
             let text = show_tokens_text(stores, tokens.token_list());
             stores.printer().print(&format!("\n> {text}"));
-            crate::diagnostics::complete_show(stores, false, None);
+            crate::diagnostics::complete_show(stores, false, Some(context));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowIfs { conditions } => {
@@ -11464,22 +11735,25 @@ fn apply_scanned_step(
             // print: see `tex-exec::diagnostics`'s module doc for why the
             // dump must be routed through §245's redirection rather than
             // written straight to both channels.
+            let context = command.state.output_open_context(&stores.command_context());
             let mut diagnostic = stores.begin_diagnostic();
             diagnostic.print_nl("").print_ln();
             diagnostic.print(&render_showifs(&conditions));
             diagnostic.end(true);
-            crate::diagnostics::complete_show(stores, true, None);
+            crate::diagnostics::complete_show(stores, true, Some(context));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups {
             diagnostic: Some(diagnostic),
         } => {
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups { diagnostic: None } => {
             let diagnostic = detached_showgroups(stores, modes, active_alignment, boxes);
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
@@ -11537,10 +11811,7 @@ fn apply_scanned_step(
         }
         ScannedStep::VSplit(split) => {
             if split.missing_to {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
-                );
+                report_missing_vsplit_to(command.state, stores);
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             let context = boxes.take_box_context(false);
@@ -11644,17 +11915,26 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MissingLeaderPayload => {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! A <box> was supposed to be here.\nI'm ignoring these leaders.\n",
-            );
+            // A leader payload is scanned by §1084's `scan_box` like any
+            // other box context, so a non-box command there gets §1084's own
+            // report, not a leader-specific one.
+            report_missing_box(command.state, stores);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LeadersNotFollowedByGlue => {
             boxes.pending_leader = None;
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Leaders not followed by proper glue.\nYou should say `\\leaders <box or rule><hskip or vskip>'.\nI'm ignoring these leaders.\n",
+            // TeX82 §1078's `back_error`; `scan_leader_glue_command` has
+            // already put the command that was not glue back.
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Leaders not followed by proper glue",
+                &[
+                    "You should say `\\leaders <box or rule><hskip or vskip>'.",
+                    "I found the <box or rule>, but there's no suitable",
+                    "<hskip or vskip>, so I'm ignoring these leaders.",
+                ],
+                context,
             );
             Ok(ReplayStep::Continue)
         }
@@ -11834,7 +12114,13 @@ fn apply_scanned_step(
             apply_box_shift(shift, command.state, modes, stores, boxes, command.fuel)
         }
         ScannedStep::IllegalBoxShift { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
@@ -11893,7 +12179,13 @@ fn apply_scanned_step(
             // TeX82 §1051's `privileged`: `\end`/`\dump` below outer
             // vertical mode reports and is discarded, exactly like the other
             // Forbidden cases.
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {
@@ -11921,37 +12213,64 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraRightBrace => {
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, "\n! Too many }'s.\n");
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::ExtraRightBraceInSemiSimpleGroup => {
-            // TeX82 §1068's `extra_right_brace` reports and discards the
-            // mismatched brace. It does not `unsave` the semisimple group.
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! Extra }, or forgotten \\endgroup.\n",
+            // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Too many }'s",
+                &[
+                    "You've closed more groups than you opened.",
+                    "Such booboos are generally harmless, so keep going.",
+                ],
+                context,
             );
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::OffSave(message) => {
+        ScannedStep::ExtraRightBraceInSemiSimpleGroup => {
+            // TeX82 §1069's `extra_right_brace` reports and discards the
+            // mismatched brace. It does not `unsave` the semisimple group.
+            let context = command.state.output_open_context(&stores.command_context());
+            report_escaped_error(
+                stores,
+                "Extra }, or forgotten ",
+                "endgroup",
+                "",
+                &[
+                    "I've deleted a group-closing symbol because it seems to be",
+                    "spurious, as in `$x}$'. But perhaps the } is legitimate and",
+                    "you forgot something else, as in `\\hbox{$x}'. In such cases",
+                    "the way to recover is to insert both the forgotten and the",
+                    "deleted material, e.g., by typing `I$}'.",
+                ],
+                context,
+            );
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::OffSave(closer) => {
             // `scan_off_save` already ran the input recovery (backing up the
             // command behind its chosen closer); this only prints TeX82
-            // §1065's diagnostic naming what was inserted.
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, message);
+            // §1064's report naming what §1065 inserted.
+            let context = command.state.output_open_context(&stores.command_context());
+            let mut report = stores.print_err("Missing ");
+            closer.print(&mut report);
+            report
+                .print(" inserted")
+                .help(&OFF_SAVE_HELP)
+                .context(context);
+            report.error();
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSaveBottomDrop { token } => {
             // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
             // cur_chr)". `scan_off_save` already dropped the command itself
             // (no backup, nothing to replay); this only names it.
-            let command = tex_command::command_token_text(&mut stores.command_context(), token);
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                &format!("\n! Extra {command}.\n"),
+            let name = tex_command::command_token_text(&mut stores.command_context(), token);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                &format!("Extra {name}"),
+                &["Things are pretty mixed up, but I think the worst is over."],
+                context,
             );
             Ok(ReplayStep::Continue)
         }
@@ -13057,10 +13376,7 @@ fn apply_box_shift(
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_shift_payload` for ordinary replay.
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! A <box> was supposed to be here.\nI was expecting to see \\hbox or \\vbox or \\copy or \\box or\nsomething like that. So you might find something missing in\nyour output. But keep trying; you can fix this later.\n",
-            );
+            report_missing_box(command, stores);
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -13083,10 +13399,7 @@ fn apply_box_shift(
         }
         ScannedBoxShiftPayload::VSplit(split) => {
             if split.missing_to {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
-                );
+                report_missing_vsplit_to(command, stores);
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
@@ -13270,9 +13583,20 @@ fn apply_scanned_rule(
                 )?;
             }
             Mode::RestrictedHorizontal => {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! You can't use `\\hrule' here except with leaders.\nTo put a horizontal rule in an hbox or an alignment,\nyou should use \\leaders or \\hrulefill.\n",
+                // TeX82 §1095's `head_for_vmode`: an `\hrule` in restricted
+                // horizontal mode is the one command there that does not go
+                // through `off_save`.
+                let context = command.state.output_open_context(&stores.command_context());
+                report_escaped_error(
+                    stores,
+                    "You can't use `",
+                    "hrule",
+                    "' here except with leaders",
+                    &[
+                        "To put a horizontal rule in an hbox or an alignment,",
+                        "you should use \\leaders or \\hrulefill (see The TeXbook).",
+                    ],
+                    context,
                 );
                 return Ok(ReplayStep::Continue);
             }

@@ -42,26 +42,22 @@
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 4,
-            "expected": "<to be read again> ",
-            "actual": "! Missing { inserted."
+            "line": 57,
+            "expected": "! Missing # inserted in alignment preamble.",
+            "actual": "! Missing } inserted."
           }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 5,
-            "expected": "<to be read again> ",
-            "actual": "A left brace was mandatory here, so I've put one in."
+            "line": 112,
+            "expected": "! Missing # inserted in alignment preamble.",
+            "actual": "! Missing } inserted."
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"

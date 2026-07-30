@@ -13,12 +13,14 @@ mod checkpoint;
 mod diagnostics;
 mod dispatch;
 mod error;
+mod error_report;
 mod executor;
 mod job;
 mod math;
 mod mode;
 mod node_dump;
 mod output;
+mod pack_report;
 mod packing_params;
 mod page_builder;
 mod paragraph_memo;
@@ -50,7 +52,7 @@ pub use executor::{
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
 };
-pub use job::{BANNER, DviJobOutput};
+pub use job::{BANNER, DviJobOutput, PreloadedFormat};
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,

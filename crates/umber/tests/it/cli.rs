@@ -1582,7 +1582,10 @@ fn run_recovers_from_undefined_control_sequence() {
         "recovered undefined control sequence should succeed"
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
-    assert!(stdout.contains("Undefined control sequence \\undefined"));
+    // tex.web §370 prints the message alone; §82's `show_context` display is
+    // what names the offending control sequence, on its own `l.N` line.
+    assert!(stdout.contains("! Undefined control sequence."), "{stdout}");
+    assert!(stdout.contains("l.1 \\undefined"), "{stdout}");
     assert!(
         output.stderr.is_empty(),
         "recovered error must not reach stderr"

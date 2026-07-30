@@ -398,3 +398,85 @@ fn the_committed_schema_requires_exactly_the_contract_fields() {
     mismatch_expected.sort_unstable();
     assert_eq!(mismatch_declared, mismatch_expected);
 }
+
+/// A minimal DVI preamble: `pre`, version, num/den/mag, comment length, then
+/// `comment` -- followed by `body` so a test can prove the normalization
+/// leaves everything past the comment alone.
+fn dvi_with_comment(comment: &[u8], body: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![247, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 232];
+    bytes.push(u8::try_from(comment.len()).expect("test comment fits a byte"));
+    bytes.extend_from_slice(comment);
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+/// The whole point of the change this test guards: two DVI files that differ
+/// only in the preamble comment -- pdfTeX's `␣TeX output <clock>` against
+/// `tex_out::model::DEFAULT_BANNER` -- compare equal, while a single byte
+/// past the comment still diverges. Both banners are 27 bytes, which is the
+/// documented precondition of `test_support::dvi`'s normalization: it rewrites
+/// the payload in place and the length byte itself must already match.
+#[test]
+fn dvi_normalization_neutralizes_the_preamble_banner_only() {
+    let oracle = dvi_with_comment(b" TeX output 2026.07.30:1421", &[139, 65, 66, 140]);
+    let umber = dvi_with_comment(b"  Umber DVI 1970.01.01:0000", &[139, 65, 66, 140]);
+    assert_eq!(
+        normalize_channel(StreamChannel::Dvi, &oracle),
+        normalize_channel(StreamChannel::Dvi, &umber),
+    );
+
+    let reordered = dvi_with_comment(b"  Umber DVI 1970.01.01:0000", &[139, 66, 65, 140]);
+    assert_ne!(
+        normalize_channel(StreamChannel::Dvi, &oracle),
+        normalize_channel(StreamChannel::Dvi, &reordered),
+        "a body byte must still diverge",
+    );
+}
+
+/// Idempotence is what lets one call serve a committed file (normalized when
+/// it was written) and a fresh capture (never normalized) alike.
+#[test]
+fn dvi_normalization_is_idempotent() {
+    let once = normalize_channel(
+        StreamChannel::Dvi,
+        &dvi_with_comment(b" TeX output 2026.07.30:1421", &[139, 140]),
+    )
+    .expect("valid preamble");
+    let twice = normalize_channel(StreamChannel::Dvi, &once).expect("valid preamble");
+    assert_eq!(once, twice);
+}
+
+/// A case that ships no page is an ordinary observation, not corruption, so
+/// it normalizes to empty and stays comparable against a committed reference.
+#[test]
+fn empty_dvi_normalizes_rather_than_failing() {
+    assert_eq!(normalize_channel(StreamChannel::Dvi, &[]), Ok(Vec::new()));
+}
+
+/// Non-empty bytes with no locatable preamble comment are corrupt, and a raw
+/// comparison would dress that up as an ordinary content divergence.
+#[test]
+fn malformed_dvi_refuses_to_normalize() {
+    assert!(normalize_channel(StreamChannel::Dvi, &[1, 2, 3]).is_err());
+    // `pre` present, but the declared comment length runs past the end.
+    assert!(normalize_channel(StreamChannel::Dvi, &dvi_with_comment(b"abc", &[])[..16]).is_err());
+}
+
+/// A malformed artifact is reported as its own failure rather than compared.
+#[test]
+fn compare_reports_an_unnormalizable_dvi_channel() {
+    let mut contract = contract();
+    contract.dvi = StreamDisposition::File;
+    let mut captured = captured();
+    captured.streams[StreamChannel::Dvi as usize] = vec![1, 2, 3];
+    let committed = |_channel: StreamChannel| Some(dvi_with_comment(b"x", &[139, 140]));
+
+    assert_eq!(
+        compare(&captured, &contract, &committed),
+        vec![ChannelFailure::Unnormalizable {
+            channel: "dvi",
+            side: "observed",
+            detail: "DVI is missing a valid preamble".into(),
+        }]
+    );
+}

@@ -450,11 +450,18 @@ pub(super) fn execute_leaders(
     let spec = match scan_leader_glue(input, stores, execution, nest.current_mode(), context) {
         Ok(spec) => spec,
         Err(ExecError::LeadersNotFollowedByProperGlue { .. }) => {
-            // TeX.web §1077 backs up the unsuitable command, discards the
-            // scanned leader payload, and resumes main control.
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Leaders not followed by proper glue.\nYou should say `\\leaders <box or rule><hskip or vskip>'.\nI'm ignoring these leaders.\n",
+            // TeX.web §1078 discards the scanned leader payload and resumes
+            // main control. The scanner has already backed the unsuitable
+            // command up, so `error` alone completes §1078's `back_error`.
+            crate::error_report::report_input_error(
+                input,
+                stores,
+                "Leaders not followed by proper glue",
+                &[
+                    "You should say `\\leaders <box or rule><hskip or vskip>'.",
+                    "I found the <box or rule>, but there's no suitable",
+                    "<hskip or vskip>, so I'm ignoring these leaders.",
+                ],
             );
             return Ok(());
         }
@@ -485,10 +492,20 @@ pub(super) fn execute_hrule(
         Mode::Vertical | Mode::InternalVertical => {}
         Mode::Horizontal => end_paragraph_with_fuel(nest, stores, execution.command_fuel())?,
         Mode::RestrictedHorizontal => {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! You can't use `\\hrule' here except with leaders.\nTo put a horizontal rule in an hbox or an alignment,\nyou should use \\leaders or \\hrulefill.\n",
-            );
+            // TeX.web §1095's `head_for_vmode`: an `\hrule` in restricted
+            // horizontal mode cannot start a vertical list, so it is dropped
+            // rather than turned into a mode change.
+            let report_context = crate::diagnostics::show_context(stores, &input.summary());
+            let mut report = stores.print_err("You can't use `");
+            report
+                .print_esc("hrule")
+                .print("' here except with leaders")
+                .help(&[
+                    "To put a horizontal rule in an hbox or an alignment,",
+                    "you should use \\leaders or \\hrulefill (see The TeXbook).",
+                ])
+                .context(report_context);
+            report.error();
             return Ok(());
         }
         mode => {
@@ -587,6 +604,7 @@ fn report_cannot_delete_from_page(primitive: UnexpandablePrimitive, stores: &mut
         UnexpandablePrimitive::UnPenalty => "Perhaps you can make the output routine do it.",
         _ => unreachable!("caller restricts delete_last primitives"),
     };
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("You can't use `");
     report
         .print_esc(command)
@@ -594,7 +612,8 @@ fn report_cannot_delete_from_page(primitive: UnexpandablePrimitive, stores: &mut
         .help(&[
             "Sorry...I usually can't take things from the current page.",
             last_help,
-        ]);
+        ])
+        .context(context);
     report.error();
 }
 
@@ -800,10 +819,21 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
     )
 }
 
+/// TeX.web §1110's `unpackage` refusal, which leaves the register alone.
+///
+/// Unboxing also runs from canonical replay, which owns no live `InputStack`,
+/// so §82's display comes from the last published input summary.
 fn report_incompatible_unbox(stores: &mut Universe) {
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        "\n! Incompatible list can't be unboxed.\nSorry, Pandora. (You sneaky devil.)\nI refuse to unbox an \\hbox in vertical mode or vice versa.\nAnd I can't open any boxes in math mode.\n",
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
+        stores,
+        "Incompatible list can't be unboxed",
+        &[
+            "Sorry, Pandora. (You sneaky devil.)",
+            "I refuse to unbox an \\hbox in vertical mode or vice versa.",
+            "And I can't open any boxes in math mode.",
+        ],
+        context,
     );
 }
 

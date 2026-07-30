@@ -45,11 +45,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "l.2 \\multiply\\count0 by2",
-            "actual": " )"
-          }
+          "mismatch": { "line": 4, "expected": "l.2 \\multiply\\count0 by2", "actual": " )" }
         },
         "log": {
           "kind": "xfail",
@@ -60,12 +56,8 @@
             "actual": "I can't carry out that multiplication or division,"
           }
         },
-        "dvi": {
-          "kind": "empty"
-        },
-        "effects": {
-          "kind": "empty"
-        }
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
       },
       "expectation": {
         "kind": "pass"
