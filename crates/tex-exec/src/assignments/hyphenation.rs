@@ -116,7 +116,11 @@ pub(crate) fn apply_hyphenation_exceptions(
     diagnostics
 }
 
-pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
+pub(crate) fn hyphenated_hlist_with_fuel(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
@@ -142,13 +146,25 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<N
 
         if auto_breaking
             && matches!(node, Node::Glue { .. })
-            && let Some(next) =
-                hyphenate_after_glue(stores, &nodes, index, language, left, right, &mut out)
+            && let Some(next) = hyphenate_after_glue(
+                stores,
+                &nodes,
+                index,
+                (language, left, right),
+                &mut out,
+                fuel,
+            )?
         {
             index = next;
         }
     }
-    out.unwrap_or(nodes)
+    Ok(out.unwrap_or(nodes))
+}
+
+#[cfg(test)]
+pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
+    let mut fuel = tex_command::CommandFuel::default();
+    hyphenated_hlist_with_fuel(stores, nodes, &mut fuel).expect("test hyphenation fuel")
 }
 
 /// Returns legal character boundaries for pass-1 OpenType shaping.
@@ -226,7 +242,9 @@ pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec
     paragraph.push(boundary.clone());
     paragraph.extend_from_slice(nodes);
     paragraph.push(boundary);
-    let mut hyphenated = hyphenated_hlist(stores, paragraph);
+    let mut fuel = tex_command::CommandFuel::default();
+    let mut hyphenated =
+        hyphenated_hlist_with_fuel(stores, paragraph, &mut fuel).expect("test hyphenation fuel");
     hyphenated.remove(0);
     hyphenated.pop();
     hyphenated
@@ -260,18 +278,20 @@ fn hyphenate_after_glue(
     stores: &mut Universe,
     nodes: &[Node],
     start: usize,
-    mut language: u8,
-    mut left: usize,
-    mut right: usize,
+    context: (u8, usize, usize),
     out: &mut Option<Vec<Node>>,
-) -> Option<usize> {
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Option<usize>, ExecError> {
+    let (mut language, mut left, mut right) = context;
     let mut index = start;
     let (word_start, font) = loop {
-        let node = nodes.get(index)?;
+        let Some(node) = nodes.get(index) else {
+            return Ok(None);
+        };
         match first_word_char(stores, language, node) {
             Some((font, ch, lower)) => {
                 if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
-                    return None;
+                    return Ok(None);
                 }
                 break (index, font);
             }
@@ -279,17 +299,19 @@ fn hyphenate_after_glue(
                 update_hyphenation_context(node, &mut language, &mut left, &mut right);
                 index += 1;
             }
-            None => return None,
+            None => return Ok(None),
         }
     };
 
-    let minima = left.checked_add(right)?;
+    let Some(minima) = left.checked_add(right) else {
+        return Ok(None);
+    };
     if minima > 63 {
-        return None;
+        return Ok(None);
     }
     let hyphen = stores.font_hyphen_char(font);
     if !(0..=255).contains(&hyphen) {
-        return None;
+        return Ok(None);
     }
 
     let mut word = Vec::new();
@@ -354,7 +376,7 @@ fn hyphenate_after_glue(
     }
 
     if word.len() < minima || !permitted_word_terminator(nodes, index) {
-        return None;
+        return Ok(None);
     }
 
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
@@ -363,7 +385,7 @@ fn hyphenate_after_glue(
         if let Some(out) = out {
             out.extend_from_slice(&nodes[start..index]);
         }
-        return Some(index);
+        return Ok(Some(index));
     }
 
     let out = out.get_or_insert_with(|| {
@@ -389,11 +411,11 @@ fn hyphenate_after_glue(
             ..
         })
     );
-    append_hyphenated_word(stores, &word, &positions, no_left_boundary, out);
+    append_hyphenated_word(stores, &word, &positions, no_left_boundary, out, fuel)?;
     if let Some(kern) = trailing_font_kern {
         out.push(kern);
     }
-    Some(index)
+    Ok(Some(index))
 }
 
 fn first_word_char(
@@ -587,9 +609,12 @@ fn append_hyphenated_word(
     positions: &[usize],
     no_left_boundary: bool,
     out: &mut Vec<Node>,
-) {
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = super::hmode::reconstitute(stores, &pending, no_left_boundary, false);
+    let nodes =
+        super::hmode::reconstitute_with_fuel(stores, &pending, no_left_boundary, false, fuel)
+            .map_err(ExecError::Command)?;
     let mut position_index = 0;
     let mut char_start = 0;
 
@@ -620,8 +645,8 @@ fn append_hyphenated_word(
             .filter(|&&position| char_start < position && position < char_end)
         {
             out.push(discretionary_through_node(
-                stores, word, char_start, position, char_end, node,
-            ));
+                stores, word, char_start, position, char_end, node, fuel,
+            )?);
             position_index += 1;
             // TeX82 likewise suppresses another hyphenation point whose
             // branches have not synchronized before this node ends.
@@ -642,6 +667,7 @@ fn append_hyphenated_word(
         out.push(discretionary_hyphen(stores, word[position - 1].font, None));
         position_index += 1;
     }
+    Ok(())
 }
 
 fn discretionary_through_node(
@@ -651,7 +677,8 @@ fn discretionary_through_node(
     position: usize,
     end: usize,
     replacement: Node,
-) -> Node {
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Node, ExecError> {
     let font = word[position - 1].font;
     let mut pre_pending: Vec<_> = word[start..position]
         .iter()
@@ -664,19 +691,21 @@ fn discretionary_through_node(
             origin: word[position - 1].origin,
         });
     }
-    let pre = super::hmode::reconstitute(stores, &pre_pending, true, false);
+    let pre = super::hmode::reconstitute_with_fuel(stores, &pre_pending, true, false, fuel)
+        .map_err(ExecError::Command)?;
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = super::hmode::reconstitute(stores, &post_pending, false, false);
+    let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
+        .map_err(ExecError::Command)?;
 
     let pre = stores.freeze_node_list(&pre);
     let post = stores.freeze_node_list(&post);
     let replace = stores.freeze_node_list(&[replacement]);
-    Node::Disc {
+    Ok(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre,
         post,
         replace,
-    }
+    })
 }
 
 fn node_original_len(node: &Node) -> usize {

@@ -135,30 +135,44 @@ pub(crate) fn append_given_char(
 /// horizontal mode.  Keeping this small entry point here preserves the one
 /// ligature/space-factor implementation while ensuring canonical replay has
 /// no `InputStack` fallback.
+pub(crate) fn append_canonical_character_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    ch: char,
+    origin: OriginId,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
+    append_hchar_with_fuel(nest, stores, ch, origin, fuel)
+}
+
+#[cfg(test)]
 pub(crate) fn append_canonical_character(
     nest: &mut ModeNest,
     stores: &mut Universe,
     ch: char,
     origin: OriginId,
 ) -> Result<(), ExecError> {
-    debug_assert!(matches!(
-        nest.current_mode(),
-        Mode::Horizontal | Mode::RestrictedHorizontal
-    ));
-    append_hchar(nest, stores, ch, origin)
+    let mut fuel = tex_command::CommandFuel::default();
+    append_canonical_character_with_fuel(nest, stores, ch, origin, &mut fuel)
 }
 
 /// Appends an ordinary space from canonical main control after horizontal
 /// mode has been selected by TeX82 §1095.
-pub(crate) fn append_canonical_space(
+pub(crate) fn append_canonical_space_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    append_space(nest, stores)
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    append_space_after_flush(nest, stores)
 }
 
 pub(crate) fn flush_pending_hchars(
@@ -184,10 +198,10 @@ pub(crate) fn flush_pending_hchars_with_fuel(
 pub(crate) fn flush_pending_hchars_without_right_boundary(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    let mut fuel = tex_command::CommandFuel::default();
-    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, true, &mut fuel)
+    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, true, fuel)
 }
 
 /// Closes the current list's mutable construction phase.
@@ -551,6 +565,10 @@ fn execute_vadjust(
 
 fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
+    append_space_after_flush(nest, stores)
+}
+
+fn append_space_after_flush(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     let configuration = stores.pdf_font_configuration();
     let sf = if configuration.adjusts_interword_glue() {
         1000
@@ -594,6 +612,13 @@ fn append_control_space(
 /// and canonical main control's mode-switch-then-append split below.
 fn append_control_space_glue(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
+    append_control_space_glue_after_flush(nest, stores)
+}
+
+fn append_control_space_glue_after_flush(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let mut spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
         adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
@@ -610,15 +635,17 @@ fn append_control_space_glue(nest: &mut ModeNest, stores: &mut Universe) -> Resu
 /// Appends the explicit `\ ` control-space glue from canonical main control
 /// after TeX82 §1090's vertical-mode paragraph start (if any) has already run.
 /// Mirrors `append_canonical_space`'s split from `append_space` above.
-pub(crate) fn append_canonical_control_space(
+pub(crate) fn append_canonical_control_space_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    append_control_space_glue(nest, stores)
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    append_control_space_glue_after_flush(nest, stores)
 }
 
 /// The `\ ` glue specification for TeX82 §1041's `append_normal_space` when
@@ -636,8 +663,19 @@ fn append_hchar(
     ch: char,
     origin: OriginId,
 ) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    append_hchar_with_fuel(nest, stores, ch, origin, &mut fuel)
+}
+
+fn append_hchar_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    ch: char,
+    origin: OriginId,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     let mode = nest.current_mode();
-    fix_hyphen_language(nest, stores, mode)?;
+    fix_hyphen_language_with_fuel(nest, stores, mode, fuel)?;
     let font = stores.current_font();
     let (character_exists, font_is_ltr_shaping) = {
         let loaded = stores.font(font);
@@ -659,7 +697,7 @@ fn append_hchar(
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
-            flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false)?;
+            flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)?;
         }
         let mut list = nest.current_list_mutation();
         append_pending_hchar(
@@ -706,6 +744,16 @@ fn fix_hyphen_language(
     stores: &mut Universe,
     mode: Mode,
 ) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    fix_hyphen_language_with_fuel(nest, stores, mode, &mut fuel)
+}
+
+fn fix_hyphen_language_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    mode: Mode,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     if mode != Mode::Horizontal {
         return Ok(());
     }
@@ -715,7 +763,7 @@ fn fix_hyphen_language(
     }
     // tex.web's fix_language flushes the current ligature word before
     // recording the new language and its current hyphen minima.
-    flush_pending_hchar_run(nest, stores, true, false)?;
+    flush_pending_hchar_run_with_fuel(nest, stores, true, false, fuel)?;
     let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
     let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
     nest.current_list_mutation()
@@ -967,6 +1015,7 @@ pub(super) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn reconstitute(
     stores: &mut Universe,
     pending: &[crate::mode::PendingHChar],
@@ -974,15 +1023,31 @@ pub(crate) fn reconstitute(
     insert_hyphen_discs: bool,
 ) -> Vec<Node> {
     let mut fuel = tex_command::CommandFuel::default();
+    reconstitute_with_fuel(
+        stores,
+        pending,
+        no_left_boundary,
+        insert_hyphen_discs,
+        &mut fuel,
+    )
+    .expect("test reconstruction fuel")
+}
+
+pub(crate) fn reconstitute_with_fuel(
+    stores: &mut Universe,
+    pending: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+    insert_hyphen_discs: bool,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, tex_command::CommandError> {
     run_tfm_ligature_machine(
         stores,
         pending,
         no_left_boundary,
         false,
         insert_hyphen_discs,
-        &mut fuel,
+        fuel,
     )
-    .unwrap_or_default()
 }
 
 #[derive(Clone)]
@@ -1166,6 +1231,18 @@ fn run_tfm_ligature_machine(
             continue;
         };
 
+        if false_boundary_match {
+            if let LigatureWorkItem::Glyph(right) = &right_item
+                && !stores.font(right.font).character_exists(right.ch)
+            {
+                report_missing_character(stores, right.font, right.ch);
+                work.remove(right_index);
+                break;
+            }
+            cursor = Some(right_index);
+            continue;
+        }
+
         let auto = match (&left_item, &right_item) {
             (LigatureWorkItem::Boundary, LigatureWorkItem::Glyph(right)) => {
                 auto_kern(stores, right, Some(true))
@@ -1184,10 +1261,6 @@ fn run_tfm_ligature_machine(
             continue;
         }
 
-        if false_boundary_match {
-            cursor = Some(right_index);
-            continue;
-        }
         let Some(command) = stores.tfm_lig_kern_command(font, left_code, right_code) else {
             cursor = Some(right_index);
             continue;
@@ -1801,6 +1874,28 @@ pub(crate) fn append_italic_correction(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
+    let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
+        return Ok(());
+    };
+    let Ok(code) = font_code(ch) else {
+        return Ok(());
+    };
+    let Some(metrics) = stores.font_char_metrics(font, code) else {
+        return Ok(());
+    };
+    nest.current_list_mutation().push(Node::Kern {
+        amount: metrics.italic_correction,
+        kind: KernKind::Explicit,
+    });
+    Ok(())
+}
+
+pub(crate) fn append_italic_correction_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
         return Ok(());
     };

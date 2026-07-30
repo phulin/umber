@@ -2134,8 +2134,11 @@ impl CanonicalMainControl {
     }
 
     fn enter_canonical_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let paragraph =
-            crate::assignments::interrupt_canonical_paragraph_for_display(&mut self.modes, stores)?;
+        let paragraph = crate::assignments::interrupt_canonical_paragraph_for_display(
+            &mut self.modes,
+            stores,
+            &mut self.fuel,
+        )?;
         let dimensions = crate::assignments::display_line_dimensions(&self.modes, stores);
         let pre_display_size = paragraph
             .last_line
@@ -10079,7 +10082,11 @@ fn apply_scanned_step(
         ScannedStep::ItalicCorrection => {
             match modes.current_mode() {
                 Mode::Horizontal | Mode::RestrictedHorizontal => {
-                    crate::assignments::append_italic_correction(modes, stores)?;
+                    crate::assignments::append_italic_correction_with_fuel(
+                        modes,
+                        stores,
+                        command.fuel,
+                    )?;
                 }
                 Mode::Math | Mode::DisplayMath => {
                     // TeX82 §1112: `mmode+ital_corr: tail_append(new_kern(0));`
@@ -10115,7 +10122,11 @@ fn apply_scanned_step(
         }
         ScannedStep::NoBoundary { suppress_right } => {
             if suppress_right {
-                crate::assignments::flush_pending_hchars_without_right_boundary(modes, stores)?;
+                crate::assignments::flush_pending_hchars_without_right_boundary(
+                    modes,
+                    stores,
+                    command.fuel,
+                )?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -10164,11 +10175,12 @@ fn apply_scanned_step(
             modes
                 .current_list_mutation()
                 .set_no_boundary(suppress_left_boundary);
-            crate::assignments::append_canonical_character(
+            crate::assignments::append_canonical_character_with_fuel(
                 modes,
                 stores,
                 ch,
                 tex_state::token::OriginId::UNKNOWN,
+                command.fuel,
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -10187,10 +10199,18 @@ fn apply_scanned_step(
                 }
                 Mode::Vertical | Mode::InternalVertical => {
                     start_canonical_paragraph(command.state, modes, stores, true)?;
-                    crate::assignments::append_canonical_control_space(modes, stores)?;
+                    crate::assignments::append_canonical_control_space_with_fuel(
+                        modes,
+                        stores,
+                        command.fuel,
+                    )?;
                 }
                 _ => {
-                    crate::assignments::append_canonical_control_space(modes, stores)?;
+                    crate::assignments::append_canonical_control_space_with_fuel(
+                        modes,
+                        stores,
+                        command.fuel,
+                    )?;
                 }
             }
             Ok(ReplayStep::Continue)
@@ -11108,15 +11128,7 @@ fn apply_scanned_step(
             height,
             depth,
             horizontal,
-        } => apply_scanned_rule(
-            command.state,
-            modes,
-            stores,
-            width,
-            height,
-            depth,
-            horizontal,
-        ),
+        } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
         ScannedStep::Message { tokens, error } => {
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
@@ -11652,7 +11664,7 @@ fn apply_scanned_step(
                 context: "box group",
             })?;
             if let ReplayBoxKind::Insert(class) = box_state.kind {
-                return finish_insert_or_adjust_group(class, modes, stores);
+                return finish_insert_or_adjust_group(class, modes, stores, command);
             }
             // TeX82 §1085's `handle_right_brace` runs `end_graf` (§1096) for
             // `vbox_group` and `vtop_group` -- and only for those two -- before
@@ -12164,7 +12176,12 @@ fn apply_scanned_step(
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
                 let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
-                crate::assignments::end_paragraph_with_consumer(modes, stores, &mut memo)?;
+                crate::assignments::end_paragraph_with_consumer_and_fuel(
+                    modes,
+                    stores,
+                    &mut memo,
+                    command.fuel,
+                )?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -12206,7 +12223,11 @@ fn apply_scanned_step(
                         modes.current_mode(),
                         Mode::Horizontal | Mode::RestrictedHorizontal
                     ) {
-                        crate::assignments::append_canonical_space(modes, stores)?;
+                        crate::assignments::append_canonical_space_with_fuel(
+                            modes,
+                            stores,
+                            command.fuel,
+                        )?;
                     }
                 }
                 Catcode::Letter | Catcode::Other => {
@@ -12219,7 +12240,13 @@ fn apply_scanned_step(
                     modes
                         .current_list_mutation()
                         .set_no_boundary(suppress_left_boundary);
-                    crate::assignments::append_canonical_character(modes, stores, ch, origin)?;
+                    crate::assignments::append_canonical_character_with_fuel(
+                        modes,
+                        stores,
+                        ch,
+                        origin,
+                        command.fuel,
+                    )?;
                 }
                 _ => unreachable!("canonical character scan restricts catcodes"),
             }
@@ -12878,7 +12905,7 @@ fn append_shifted_box(
 }
 
 fn apply_scanned_rule(
-    command: &mut CommandState,
+    command: &mut CommandMachine<'_>,
     modes: &mut ModeNest,
     stores: &mut Universe,
     width: Option<Scaled>,
@@ -12896,7 +12923,12 @@ fn apply_scanned_rule(
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
                 let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
-                crate::assignments::end_paragraph_with_consumer(modes, stores, &mut memo)?;
+                crate::assignments::end_paragraph_with_consumer_and_fuel(
+                    modes,
+                    stores,
+                    &mut memo,
+                    command.fuel,
+                )?;
             }
             Mode::RestrictedHorizontal => {
                 stores.world_mut().write_text(
@@ -12927,13 +12959,13 @@ fn apply_scanned_rule(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_canonical_paragraph(command, modes, stores, true)?;
+            start_canonical_paragraph(command.state, modes, stores, true)?;
         }
         // TeX82 §1054 reaches `append_rule` only after main_control has
         // finished the current word. Materialize Umber's pending character
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
-        crate::assignments::flush_pending_hchars(modes, stores)?;
+        crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
         modes.current_list_mutation().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
@@ -13178,6 +13210,7 @@ fn finish_insert_or_adjust_group(
     class: u16,
     modes: &mut ModeNest,
     stores: &mut Universe,
+    command: &mut CommandMachine<'_>,
 ) -> Result<ReplayStep, ExecError> {
     crate::assignments::end_paragraph(modes, stores)?;
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
@@ -13195,7 +13228,7 @@ fn finish_insert_or_adjust_group(
         ..crate::packing_params::vpack_params(stores)
     };
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
-    crate::assignments::flush_pending_hchars(modes, stores)?;
+    crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(content)
     } else {

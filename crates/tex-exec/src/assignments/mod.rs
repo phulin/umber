@@ -84,10 +84,11 @@ pub(crate) use hmode::flush_pending_hchars_with_fuel;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{
-    append_canonical_character, append_canonical_control_space, append_canonical_space,
-    append_given_char, append_italic_correction, commit_current_list, control_space_glue_spec,
-    flush_pending_hchars, flush_pending_hchars_without_right_boundary, norm_min,
-    try_append_character, try_append_tfm_character_span,
+    append_canonical_character_with_fuel, append_canonical_control_space_with_fuel,
+    append_canonical_space_with_fuel, append_given_char, append_italic_correction_with_fuel,
+    commit_current_list, control_space_glue_spec, flush_pending_hchars,
+    flush_pending_hchars_without_right_boundary, norm_min, try_append_character,
+    try_append_tfm_character_span,
 };
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
@@ -109,9 +110,10 @@ pub use paragraph::cached_pretolerance_plan;
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    ParagraphBreakResult, display_line_dimensions, end_paragraph, end_paragraph_with_consumer,
-    ensure_horizontal_for_character, indent_in_hmode, interrupt_canonical_paragraph_for_display,
-    interrupt_paragraph_for_display, make_indent_box, normal_paragraph, start_canonical_paragraph,
+    ParagraphBreakResult, display_line_dimensions, end_paragraph,
+    end_paragraph_with_consumer_and_fuel, ensure_horizontal_for_character, indent_in_hmode,
+    interrupt_canonical_paragraph_for_display, interrupt_paragraph_for_display, make_indent_box,
+    normal_paragraph, start_canonical_paragraph,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;

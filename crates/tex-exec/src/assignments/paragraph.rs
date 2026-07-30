@@ -225,10 +225,19 @@ pub(crate) fn make_indent_box(stores: &mut Universe) -> Node {
 }
 
 pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    end_paragraph_with_fuel(nest, stores, &mut fuel)
+}
+
+pub(crate) fn end_paragraph_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     if nest.current_mode() != Mode::Horizontal {
         return Ok(());
     }
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     if nest.current_list().is_empty() {
         let _ = crate::assignments::commit_current_list(nest, stores)?;
         normal_paragraph(nest, stores);
@@ -244,6 +253,7 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         final_widow_penalties,
         true,
         None,
+        fuel,
     )?;
     Ok(())
 }
@@ -270,8 +280,18 @@ pub(crate) fn end_paragraph_with_consumer(
     stores: &mut Universe,
     memo: &mut dyn crate::paragraph_memo::ParagraphMemoConsumer,
 ) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    end_paragraph_with_consumer_and_fuel(nest, stores, memo, &mut fuel)
+}
+
+pub(crate) fn end_paragraph_with_consumer_and_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    memo: &mut dyn crate::paragraph_memo::ParagraphMemoConsumer,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     if nest.current_mode() == Mode::Horizontal {
-        flush_pending_hchars(nest, stores)?;
+        flush_pending_hchars_with_fuel(nest, stores, fuel)?;
         memo.prepare_hlist(
             stores,
             nest.current_list().nodes(),
@@ -281,11 +301,11 @@ pub(crate) fn end_paragraph_with_consumer(
     }
     if nest.current_mode() != Mode::Horizontal {
         memo.abandon();
-        return end_paragraph(nest, stores);
+        return end_paragraph_with_fuel(nest, stores, fuel);
     }
     if nest.current_list().is_empty() {
         memo.abandon();
-        return end_paragraph(nest, stores);
+        return end_paragraph_with_fuel(nest, stores, fuel);
     }
     let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
     let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
@@ -296,6 +316,7 @@ pub(crate) fn end_paragraph_with_consumer(
         final_widow_penalties,
         true,
         Some(memo),
+        fuel,
     )?;
     Ok(())
 }
@@ -327,6 +348,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
         let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
         let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
         let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+        let mut fuel = tex_command::CommandFuel::default();
         let _ = break_current_paragraph(
             nest,
             stores,
@@ -334,6 +356,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
             final_widow_penalties,
             true,
             Some(&mut memo),
+            &mut fuel,
         )?;
         return Ok(None);
     };
@@ -388,6 +411,7 @@ pub(crate) fn interrupt_paragraph_for_display(
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
     let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
     let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+    let mut fuel = tex_command::CommandFuel::default();
     break_current_paragraph(
         nest,
         stores,
@@ -395,6 +419,7 @@ pub(crate) fn interrupt_paragraph_for_display(
         final_widow_penalties,
         false,
         Some(&mut memo),
+        &mut fuel,
     )
 }
 
@@ -404,8 +429,9 @@ pub(crate) fn interrupt_paragraph_for_display(
 pub(crate) fn interrupt_canonical_paragraph_for_display(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     if nest.current_list().is_empty() {
         let _ = crate::assignments::commit_current_list(nest, stores)?;
         return Ok(ParagraphBreakResult {
@@ -423,6 +449,7 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
         final_widow_penalties,
         false,
         Some(&mut memo),
+        fuel,
     )
 }
 
@@ -466,8 +493,9 @@ fn break_current_paragraph(
     final_widow_penalties: Vec<i32>,
     reset_paragraph: bool,
     mut memo: Option<&mut dyn crate::paragraph_memo::ParagraphMemoConsumer>,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
     let params = snapshot_paragraph_params(nest, stores);
     {
@@ -490,7 +518,7 @@ fn break_current_paragraph(
         line_params.expansion_steps =
             tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
     }
-    let mut decisions = break_hlist(stores, hlist, line_params);
+    let mut decisions = break_hlist_with_fuel(stores, hlist, line_params, fuel)?;
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
         if let Some(Node::Glue { spec: par_fill, .. }) =
@@ -713,11 +741,23 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
     active
 }
 
+#[cfg(test)]
 pub(crate) fn break_hlist(
     stores: &mut Universe,
     hlist: Vec<Node>,
     line_params: LineBreakParams,
 ) -> LineBreakResult {
+    let mut fuel = tex_command::CommandFuel::default();
+    break_hlist_with_fuel(stores, hlist, line_params, &mut fuel)
+        .expect("default paragraph reconstruction fuel")
+}
+
+pub(crate) fn break_hlist_with_fuel(
+    stores: &mut Universe,
+    hlist: Vec<Node>,
+    line_params: LineBreakParams,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<LineBreakResult, ExecError> {
     // TeX82 §815 skips the pretolerance pass when `pretolerance<0` and
     // enters the hyphenating second pass directly. §919 initializes the trie
     // at that boundary, even if Umber's pure non-hyphenating planner can
@@ -727,14 +767,14 @@ pub(crate) fn break_hlist(
     }
     let first = cached_pretolerance_plan(stores, &hlist, &line_params);
     if let Some(first) = first {
-        tex_typeset::linebreak::plan_with_nodes(first, hlist)
+        Ok(tex_typeset::linebreak::plan_with_nodes(first, hlist))
     } else {
-        let mut hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
+        let mut hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(stores, hlist, fuel)?;
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
-        tex_typeset::linebreak::plan_with_nodes(
+        Ok(tex_typeset::linebreak::plan_with_nodes(
             line_break_hyphenated(stores, &hyphenated, &line_params),
             hyphenated,
-        )
+        ))
     }
 }
 

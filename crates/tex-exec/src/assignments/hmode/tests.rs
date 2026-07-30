@@ -982,7 +982,8 @@ fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
         .expect("public pending-character append");
     append_canonical_character(&mut nest, &mut stores, '1', OriginId::UNKNOWN)
         .expect("public pending-character append");
-    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores)
+    let mut fuel = tex_command::CommandFuel::default();
+    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, &mut fuel)
         .expect("public flush completes");
     let nodes = nest.current_list().nodes();
 
@@ -1139,6 +1140,10 @@ fn false_boundary_test_font() -> (Universe, FontId) {
 #[test]
 fn public_flush_suppresses_false_boundary_pair_without_consuming_lookahead() {
     let (mut stores, font) = false_boundary_test_font();
+    stores.set_int_param(IntParam::PDF_APPEND_KERN, 1);
+    stores.set_int_param(IntParam::PDF_PREPEND_KERN, 1);
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Knac, font, b'B', 100);
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Knbc, font, b'B', 100);
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal).expect("test hmode");
     let left = stores.synthetic_origin(SyntheticOriginKind::Test);
@@ -1186,6 +1191,61 @@ fn public_flush_fuel_exhaustion_rolls_back_pending_run() {
     let mut retry = tex_command::CommandFuel::new(16).expect("retry fuel");
     flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut retry).expect("retry commits");
     assert_eq!(node_characters(nest.current_list().nodes()), ['C']);
+}
+
+#[test]
+fn no_right_boundary_flush_shares_fuel_and_rolls_back_on_exhaustion() {
+    let (mut stores, font) =
+        ligature_test_font(&[(b'A', b'B', ligature_command(0, b'C'))], None, None);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+        .expect("left character");
+    append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
+        .expect("right character");
+    let before = nest.current_list().pending_hchars().cloned();
+    let mut fuel = tex_command::CommandFuel::new(1).expect("one transition");
+
+    assert!(matches!(
+        flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, &mut fuel),
+        Err(ExecError::Command(
+            tex_command::CommandError::FuelExhausted { .. }
+        ))
+    ));
+    assert_eq!(fuel.burned(), 1);
+    assert!(nest.current_list().nodes().is_empty());
+    assert_eq!(nest.current_list().pending_hchars(), before.as_ref());
+}
+
+#[test]
+fn reconstruction_uses_one_monotonic_caller_ledger() {
+    let (mut stores, font) =
+        ligature_test_font(&[(b'A', b'B', ligature_command(0, b'C'))], None, None);
+    let pending = [
+        crate::mode::PendingHChar {
+            font,
+            ch: 'A',
+            origin: OriginId::UNKNOWN,
+        },
+        crate::mode::PendingHChar {
+            font,
+            ch: 'B',
+            origin: OriginId::UNKNOWN,
+        },
+    ];
+    let mut fuel = tex_command::CommandFuel::new(16).expect("finite ledger");
+
+    let first = reconstitute_with_fuel(&mut stores, &pending, false, false, &mut fuel)
+        .expect("first reconstruction");
+    let after_first = fuel.burned();
+    let second = reconstitute_with_fuel(&mut stores, &pending, false, false, &mut fuel)
+        .expect("second reconstruction");
+
+    assert_eq!(node_characters(&first), ['C']);
+    assert_eq!(second, first);
+    assert!(after_first > 0);
+    assert_eq!(fuel.burned(), after_first * 2);
 }
 
 #[test]
