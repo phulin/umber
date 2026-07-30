@@ -30,8 +30,7 @@ use std::sync::Arc;
 use tex_command::{CommandHostCapabilities, FileFramingEvent};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::error_context::{ContextEntry, ContextHeader, ContextLevel, ErrorContext};
-use tex_state::print::{History, MAX_PRINT_LINE, Printer, Selector};
+use tex_state::print::{ErrorHistory, MAX_PRINT_LINE, Printer, Selector};
 use tex_state::world::PrintSink;
 
 /// tex.web's `banner`: the reference engine's own start-up string.
@@ -269,12 +268,12 @@ pub(crate) fn close_open_parens(job: &mut JobFraming, stores: &mut Universe) {
 /// test.
 pub(crate) fn print_history_note(stores: &mut Universe) {
     let history = stores.world().error_channel().history();
-    if history == History::Spotless {
+    if history == ErrorHistory::Spotless {
         return;
     }
     let interaction = stores.interaction_mode();
     let severity_warrants_note =
-        history == History::WarningIssued || interaction != tex_state::InteractionMode::ErrorStop;
+        history == ErrorHistory::WarningIssued || interaction != tex_state::InteractionMode::ErrorStop;
     if !severity_warrants_note {
         return;
     }
@@ -288,17 +287,14 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
 /// tex.web §311's `<*>` context: `show_context`'s rendering for the
 /// bottom-of-stack terminal source level.
 ///
-/// [`print_terminal_exhausted`] is the only caller because it is the only
-/// site with no live level for `tex-command`'s own
-/// `crate::context::render_error_context` to render: input has genuinely run
-/// out, so the input stack it would walk is empty.
-fn terminal_exhausted_context() -> ErrorContext {
-    ErrorContext::new(vec![ContextEntry::Level(ContextLevel {
-        header: ContextHeader::Normal("<*> ".to_owned()),
-        before: String::new(),
-        after: String::new(),
-    })])
-}
+/// [`print_terminal_exhausted`] is the only site that has to spell this out.
+/// Everywhere else `tex-command`'s `output_open_context` renders context from
+/// a live input level, but here input has genuinely run out, so the stack it
+/// would walk is empty. §317's two-line form for a level whose label is
+/// `<*>` followed by a space and whose consumed and pending text are both
+/// empty is that label alone, then an indent of the label's own width with
+/// nothing after it.
+const TERMINAL_EXHAUSTED_CONTEXT: &str = "\n<*> \n    ";
 
 /// tex.web §360/§362's `*` prompt -- printed when the last input file has
 /// closed and the job has not yet seen `\end`/`\dump` -- followed by §71's
@@ -362,10 +358,8 @@ pub(crate) fn print_terminal_exhausted(stores: &mut Universe) {
             printer.print_char('*');
         }
     }
-    stores
-        .world_mut()
-        .set_error_context(terminal_exhausted_context());
     let mut report = stores.print_err("Emergency stop");
+    report.context(TERMINAL_EXHAUSTED_CONTEXT.to_owned());
     report.help(&[if interactive {
         "End of file on the terminal!"
     } else {

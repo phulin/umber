@@ -272,7 +272,7 @@ fn history_note_prints_terminal_only_below_errorstop_mode() {
     stores
         .world_mut()
         .error_channel_mut()
-        .raise_history(History::ErrorMessageIssued);
+        .record_error_history();
 
     print_history_note(&mut stores);
 
@@ -287,7 +287,7 @@ fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
     raised_error
         .world_mut()
         .error_channel_mut()
-        .raise_history(History::ErrorMessageIssued);
+        .record_error_history();
     print_history_note(&mut raised_error);
     assert!(terminal_text(&raised_error).is_empty());
 
@@ -295,7 +295,7 @@ fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
     raised_warning
         .world_mut()
         .error_channel_mut()
-        .raise_history(History::WarningIssued);
+        .record_warning_history();
     print_history_note(&mut raised_warning);
     assert_eq!(terminal_text(&raised_warning), HISTORY_NOTE);
 }
@@ -309,7 +309,7 @@ fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
     stores
         .world_mut()
         .error_channel_mut()
-        .raise_history(History::FatalErrorStop);
+        .record_fatal_history();
 
     print_history_note(&mut stores);
 

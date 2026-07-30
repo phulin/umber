@@ -1147,13 +1147,6 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
-            // Republishes tex.web §310's context for wherever this delivered
-            // command's scan actually ended, so the execution-time errors
-            // below (printed straight through `World`, after this episode's
-            // processor has gone out of scope) never read a stale context an
-            // earlier command published. See `tex-command`'s `context` module
-            // doc and `CommandProcessor::publish_context`.
-            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -1599,13 +1592,6 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
-            // Republishes tex.web §310's context for wherever this delivered
-            // command's scan actually ended, so the execution-time errors
-            // below (printed straight through `World`, after this episode's
-            // processor has gone out of scope) never read a stale context an
-            // earlier command published. See `tex-command`'s `context` module
-            // doc and `CommandProcessor::publish_context`.
-            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -1788,7 +1774,6 @@ impl CanonicalMainControl {
                     stores,
                 );
                 let outcome = processor.scan_accent_base();
-                processor.publish_context();
                 outcome.map_err(command_error)?
             };
             match outcome {
@@ -1859,7 +1844,6 @@ impl CanonicalMainControl {
                         stores,
                     );
                     let opened = processor.begin_selected_output_routine();
-                    processor.publish_context();
                     let opened = opened.map_err(command_error);
                     if enclosing.is_some() {
                         let deferred =
@@ -2474,7 +2458,6 @@ impl CanonicalMainControl {
             Ok(_) => Ok(()),
             Err(err) => Err(command_error(err)),
         };
-        processor.publish_context();
         result
     }
 
@@ -2575,7 +2558,6 @@ impl CanonicalMainControl {
             stores,
         );
         let scanned = processor.scan_math_field_episode();
-        processor.publish_context();
         scanned.map_err(command_error)
     }
 
@@ -2592,7 +2574,6 @@ impl CanonicalMainControl {
             stores,
         );
         let scanned = processor.scan_math_choice_group();
-        processor.publish_context();
         scanned.map_err(command_error)
     }
 
@@ -2819,13 +2800,6 @@ impl CanonicalMainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
-            // Republishes tex.web §310's context for wherever this delivered
-            // command's scan actually ended, so the execution-time errors
-            // below (printed straight through `World`, after this episode's
-            // processor has gone out of scope) never read a stale context an
-            // earlier command published. See `tex-command`'s `context` module
-            // doc and `CommandProcessor::publish_context`.
-            processor.publish_context();
             scanned
         };
         report_pending_diagnostics(stores, diagnostics)?;
@@ -3111,7 +3085,6 @@ impl CanonicalMainControl {
                         }
                     }
                 };
-                processor.publish_context();
                 filename
             };
         // The terminal line supplies only the startup filename.  It is not a
@@ -3131,7 +3104,6 @@ impl CanonicalMainControl {
             stores,
         );
         let exhausted = processor.get_x_token();
-        processor.publish_context();
         let exhausted = exhausted.map_err(command_error);
         self.operation_observations = silenced;
         let terminal_exhausted = exhausted?.is_none();
@@ -3249,7 +3221,6 @@ fn set_canonical_math_char(
     if code >= 0x8000 {
         let mut processor = command.processor(stores);
         let treated = processor.treat_as_active_character(ch, origin);
-        processor.publish_context();
         treated.map_err(command_error)?;
         return Ok(());
     }
@@ -9202,6 +9173,13 @@ fn shipout_replay_box(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
+    // §638's `[` marker reports the page's `\count0`..`\count9` and, under
+    // `\tracingoutput`, dumps the shipped box. Both are read before the page
+    // is replayed, because replaying it is what changes them.
+    let tracing_output = stores.int_param(IntParam::TRACING_OUTPUT);
+    let counts: [i32; 10] =
+        std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
+    let traced_node = (tracing_output > 0).then(|| node.clone());
     let mut expansion = tex_expand::ExpansionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
@@ -12643,7 +12621,6 @@ fn schedule_aftergroup(
             break;
         }
     }
-    processor.publish_context();
     result
 }
 
@@ -12669,7 +12646,6 @@ fn schedule_afterassignment(
     let mut processor =
         command_processor(command, runtime, fuel, capabilities, observations, stores);
     let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
-    processor.publish_context();
     result.map_err(command_error)
 }
 

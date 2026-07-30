@@ -634,6 +634,21 @@ impl ErrorChannel {
         self.history = ErrorHistory::FatalErrorStop;
     }
 
+    /// tex.web §76's `history:=warning_issued`, raised by the non-error
+    /// warnings (§660's overfull-box reports, §1298's `\show` family under
+    /// `batch_mode`) rather than by `error`.
+    ///
+    /// No engine site raises it yet, so `history` reaches this level only
+    /// when a caller asks for it. It is declared here because §1335's
+    /// end-of-job note (`tex_exec::job`'s `print_history_note`) branches on
+    /// `history=warning_issued` specifically, and a transition the model
+    /// cannot represent is a branch nothing can exercise.
+    pub const fn record_warning_history(&mut self) {
+        if matches!(self.history, ErrorHistory::Spotless) {
+            self.history = ErrorHistory::WarningIssued;
+        }
+    }
+
     #[must_use]
     pub const fn history(&self) -> ErrorHistory {
         self.history
