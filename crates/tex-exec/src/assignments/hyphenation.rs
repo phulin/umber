@@ -15,7 +15,11 @@ pub(super) fn execute_patterns(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let words = scan_hyphenation_words(input, stores, execution, "\\patterns")?;
-    let diagnostics = apply_patterns(stores, words, true);
+    let patterns = words
+        .iter()
+        .map(|word| parse_pattern_word(stores, word).0)
+        .collect();
+    let diagnostics = apply_patterns(stores, patterns);
     report_apply_diagnostics(stores, diagnostics);
     Ok(())
 }
@@ -32,14 +36,13 @@ pub(super) fn execute_hyphenation(
 }
 
 /// TeX82 §961's `k>0` branch ("Insert a new pattern into the linked trie")
-/// applied once per word collected from `\patterns`'s balanced group. Shared
-/// by the legacy `InputStack` scanner above and canonical main control, which
-/// collects the same raw words from an already-frozen expanded token list
-/// instead of a live input stream.
+/// applied to §962's already-validated pattern representation. Canonical main
+/// control receives that representation directly from its live scanner; the
+/// retired `InputStack` compatibility path above converts its raw words before
+/// crossing this apply boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HyphenationApplyDiagnostic {
     NotALetter,
-    Nonletter,
     DuplicatePattern,
 }
 
@@ -56,7 +59,6 @@ pub(crate) fn report_apply_diagnostics(
                     "Proceed; I'll ignore the character I just read.",
                 ],
             ),
-            HyphenationApplyDiagnostic::Nonletter => ("Nonletter", &["(See Appendix H.)"]),
             HyphenationApplyDiagnostic::DuplicatePattern => {
                 ("Duplicate pattern", &["(See Appendix H.)"])
             }
@@ -69,19 +71,11 @@ pub(crate) fn report_apply_diagnostics(
 
 pub(crate) fn apply_patterns(
     stores: &mut Universe,
-    words: Vec<Vec<char>>,
-    report_nonletters: bool,
+    patterns: Vec<PatternSpec>,
 ) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
     let mut diagnostics = Vec::new();
-    for word in words {
-        let (pattern, nonletters) = parse_pattern_word(stores, &word);
-        if report_nonletters {
-            diagnostics.extend(std::iter::repeat_n(
-                HyphenationApplyDiagnostic::Nonletter,
-                nonletters,
-            ));
-        }
+    for pattern in patterns {
         if stores.add_hyphenation_pattern_for_language(language, pattern) {
             diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
         }

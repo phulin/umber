@@ -3940,13 +3940,14 @@ enum ScannedStep {
     /// TeX82 §1252's `hyph_data` command: `\patterns` (`chr_code=1`) installs
     /// pattern data through §960's `new_patterns`; `\hyphenation`
     /// (`chr_code=0`) installs exception words through §934's
-    /// `new_hyph_exceptions`. Each scan has already classified its group into
-    /// §935/§961's raw words; the flag selects which table they populate.
+    /// `new_hyph_exceptions`. The scan carries §935's raw exception words or
+    /// §962's normalized pattern specs; the flag selects which table they
+    /// populate.
     HyphenationData {
         words: Vec<Vec<char>>,
+        pattern_specs: Vec<tex_state::hyphenation::PatternSpec>,
         patterns: bool,
         too_late: bool,
-        reported_nonletters: usize,
     },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
@@ -6778,9 +6779,9 @@ fn scan_command(
                 let _ = processor.scan_balanced_text(false).map_err(command_error)?;
                 return Ok(ScannedStep::HyphenationData {
                     words: Vec::new(),
+                    pattern_specs: Vec::new(),
                     patterns: true,
                     too_late: true,
-                    reported_nonletters: 0,
                 });
             }
             let scanned = processor
@@ -6792,9 +6793,9 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::HyphenationData {
                 words: scanned.words,
+                pattern_specs: scanned.patterns,
                 patterns,
                 too_late: false,
-                reported_nonletters: scanned.reported_nonletters,
             })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
@@ -11353,9 +11354,9 @@ fn apply_scanned_step(
         }
         ScannedStep::HyphenationData {
             words,
+            pattern_specs,
             patterns,
             too_late,
-            reported_nonletters,
         } => {
             // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
             // "Patterns can be loaded only by INITEX", flushes the braced
@@ -11368,7 +11369,7 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let diagnostics = if patterns {
-                crate::assignments::apply_patterns(stores, words, reported_nonletters == 0)
+                crate::assignments::apply_patterns(stores, pattern_specs)
             } else {
                 crate::assignments::apply_hyphenation_exceptions(stores, words)
             };

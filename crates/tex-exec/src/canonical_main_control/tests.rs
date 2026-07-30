@@ -5167,6 +5167,39 @@ fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
 }
 
 #[test]
+fn pattern_length_bound_preserves_section_962_digit_state() {
+    // TeX82 §962 changes `digit_sensed` only in the branches guarded by
+    // `k<63`. Thus a digit after 63 stored letters is ignored without making
+    // the next digit a letter, while consecutive digits below the bound do
+    // classify the second digit as a letter and diagnose its zero `\lccode`.
+    for (letters, suffix, expected_nonletters) in [
+        (62, "11!", 2),
+        (63, "11!", 1),
+        (64, "11!", 1),
+        (2, "11", 1),
+        (2, "1a", 0),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let source = format!(
+            "\\nonstopmode\\patterns{{{}{suffix}}}\\count0=1\\end",
+            "a".repeat(letters)
+        );
+        register_source(&mut control, source.as_bytes());
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(stores.count(0), 1, "letters={letters}, suffix={suffix}");
+        assert_eq!(
+            terminal_text(&stores).matches("! Nonletter.").count(),
+            expected_nonletters,
+            "letters={letters}, suffix={suffix}: {}",
+            terminal_text(&stores)
+        );
+    }
+}
+
+#[test]
 fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
     // TeX82 §1293's `common_ending: ...; error`, whose §83 dialog prompts
     // `?␣` and whose §86 `S` answer switches to scroll mode.

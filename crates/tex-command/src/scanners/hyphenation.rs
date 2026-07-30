@@ -14,6 +14,7 @@
 //! gave `\the` the direct-splice treatment §473 reserves for token-list
 //! collection instead of the ordinary expansion `get_x_token` performs.
 
+use tex_state::hyphenation::PatternSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
@@ -46,9 +47,10 @@ pub enum HyphenationDataKind {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ScannedHyphenationData {
     pub words: Vec<Vec<char>>,
-    /// Number of TeX82 §962 `Nonletter` errors already reported at the live
-    /// `get_x_token` boundary.
-    pub reported_nonletters: usize,
+    /// TeX82 §962's already-normalized pattern representation. Pattern
+    /// parsing belongs to the live scan because its errors call §82 before
+    /// the next `get_x_token`; the executor only installs these values.
+    pub patterns: Vec<PatternSpec>,
 }
 
 impl CommandProcessor<'_> {
@@ -74,8 +76,10 @@ impl CommandProcessor<'_> {
         self.scan_left_brace(true)?;
         let mut words: Vec<Vec<char>> = Vec::new();
         let mut current: Vec<char> = Vec::new();
+        let mut patterns: Vec<PatternSpec> = Vec::new();
+        let mut pattern_letters: Vec<char> = Vec::new();
+        let mut pattern_values = vec![0];
         let mut pattern_digit_sensed = false;
-        let mut reported_nonletters = 0;
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let character = match command.meaning() {
@@ -85,22 +89,31 @@ impl CommandProcessor<'_> {
                     cat: Catcode::Letter | Catcode::Other,
                 } => {
                     if kind == HyphenationDataKind::Patterns {
-                        // TeX82 §962 diagnoses an invalid `\lccode` while
-                        // this command and its source cursor are still live;
-                        // postponing it until the whole group has scanned
-                        // lets §82's interaction consume terminal input at
-                        // the wrong point. Digits are hyphen levels unless
-                        // the preceding character was a digit, in which case
-                        // §962 deliberately treats the second digit as a
-                        // letter and checks its `\lccode`.
-                        if (pattern_digit_sensed || !ch.is_ascii_digit())
-                            && ch != '.'
-                            && self.state.lccode(ch) == 0
-                        {
-                            self.report_pattern_nonletter();
-                            reported_nonletters += 1;
+                        let k = pattern_letters.len();
+                        if pattern_digit_sensed || !ch.is_ascii_digit() {
+                            let normalized = if ch == '.' {
+                                '.'
+                            } else {
+                                let normalized = char::from_u32(self.state.lccode(ch));
+                                if normalized.is_none_or(|normalized| normalized == '\0') {
+                                    self.report_pattern_nonletter();
+                                }
+                                normalized.unwrap_or('\0')
+                            };
+                            // §962 changes `k` and `digit_sensed` only while
+                            // `k<63`; characters beyond the bound are still
+                            // classified (and can report Nonletter), but do
+                            // not change the pattern state.
+                            if k < 63 {
+                                pattern_letters.push(normalized);
+                                pattern_values.push(0);
+                                pattern_digit_sensed = false;
+                            }
+                        } else if k < 63 {
+                            *pattern_values.last_mut().expect("pattern has hyf[0]") =
+                                ch.to_digit(10).expect("ASCII digit has a value") as u8;
+                            pattern_digit_sensed = true;
                         }
-                        pattern_digit_sensed = ch.is_ascii_digit() && !pattern_digit_sensed;
                     }
                     Some(ch)
                 }
@@ -119,6 +132,12 @@ impl CommandProcessor<'_> {
                     cat: Catcode::Space,
                     ..
                 } => {
+                    if !pattern_letters.is_empty() {
+                        patterns.push(PatternSpec {
+                            letters: std::mem::take(&mut pattern_letters),
+                            values: std::mem::replace(&mut pattern_values, vec![0]),
+                        });
+                    }
                     pattern_digit_sensed = false;
                     None
                 }
@@ -129,10 +148,13 @@ impl CommandProcessor<'_> {
                     if !current.is_empty() {
                         words.push(current);
                     }
-                    return Ok(ScannedHyphenationData {
-                        words,
-                        reported_nonletters,
-                    });
+                    if !pattern_letters.is_empty() {
+                        patterns.push(PatternSpec {
+                            letters: pattern_letters,
+                            values: pattern_values,
+                        });
+                    }
+                    return Ok(ScannedHyphenationData { words, patterns });
                 }
                 // §§936/961: diagnose and resume with the offending command
                 // consumed. In particular, this does not end or reset the
