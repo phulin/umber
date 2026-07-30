@@ -4053,6 +4053,38 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
 }
 
 #[test]
+fn errorstop_show_reports_live_source_context_before_prompting_and_resumes() {
+    // TeX82 §§82/1293: every show common ending calls `error`, and `error`
+    // shows the still-live input cursor before asking for terminal advice.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts the show response");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\show\errorstopmode\count0=23\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("l.1 \\show\\errorstopmode\n                       \\count0=23\\end"),
+        "{output:?}"
+    );
+    assert!(
+        output.find("l.1 \\show\\errorstopmode").expect("context")
+            < output.find("? ").expect("prompt"),
+        "{output:?}"
+    );
+    assert_eq!(stores.count(0), 23, "show leaves the following input live");
+    assert_eq!(
+        stores.world().error_channel().error_count(),
+        0,
+        "interactive show does not enter the scrolled error count"
+    );
+}
+
+#[test]
 fn display_content_preserves_future_multiple_leading_newlines() {
     // The structured scanner never produces this malformed/future content.
     // If that contract expands, replay must still pass the content verbatim
@@ -4080,11 +4112,19 @@ fn consecutive_shows_and_following_error_preserve_only_canonical_separators() {
 
     let output = terminal_text(&stores);
     assert!(
-        output.contains("> \\errorstopmode=\\errorstopmode.\n\n> \\scrollmode=\\scrollmode."),
+        output.contains("> \\errorstopmode=\\errorstopmode."),
         "{output:?}"
     );
     assert!(
-        output.contains("\\scrollmode=\\scrollmode.\n\n! Undefined control sequence."),
+        output.contains("> \\scrollmode=\\scrollmode."),
+        "{output:?}"
+    );
+    assert!(
+        output.contains("\\show\\scrollmode\\undefined\\end\n\n> \\scrollmode"),
+        "{output:?}"
+    );
+    assert!(
+        output.contains("\\undefined\\end\n\n! Undefined control sequence."),
         "{output:?}"
     );
     assert!(!output.contains("\n\n\n> "), "{output:?}");

@@ -273,7 +273,7 @@ pub(crate) fn execute_canonical_showgroups(
         output.print_nl("### bottom level");
         output.end(true);
     }
-    complete_show(stores, true);
+    complete_show(stores, true, None);
 }
 
 pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
@@ -357,7 +357,7 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     // `print_nl(""); print_ln`.
     diagnostic.print_nl(&text);
     diagnostic.end(true);
-    complete_show(stores, true);
+    complete_show(stores, true, None);
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -366,7 +366,7 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
 /// Every `\show` family member ends here. `long` selects §1298, which only
 /// the two `begin_diagnostic` forms (`\showbox`, `\showlists`) fall through
 /// to; `\show` and `\showthe` `goto common_ending` and skip it.
-pub(crate) fn complete_show(stores: &mut Universe, long: bool) {
+pub(crate) fn complete_show(stores: &mut Universe, long: bool, context: Option<String>) {
     let tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
     let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
     if !interactive {
@@ -390,6 +390,12 @@ pub(crate) fn complete_show(stores: &mut Universe, long: bool) {
         report.set_selector(Selector::TermOnly);
         report.print(" (see the transcript file)");
         report.set_selector(Selector::TermAndLog);
+    }
+    if let Some(context) = context {
+        // TeX82 §1293's common ending calls §82 `error`, which always calls
+        // `show_context` before either prompting or scrolling. The command
+        // core captures this while its input cursor is still live.
+        report.context(context);
     }
     if !interactive {
         report.help(&[]);
@@ -518,7 +524,7 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
     diagnostic.print_nl("").print_ln();
     diagnostic.print(&text);
     diagnostic.end(true);
-    complete_show(stores, true);
+    complete_show(stores, true, None);
 }
 
 fn push_page_totals(stores: &Universe, text: &mut String) {

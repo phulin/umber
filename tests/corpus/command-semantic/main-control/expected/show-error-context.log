@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**show-error-context.tex
+(./show-error-context.tex
+> \errorstopmode=\errorstopmode.
+l.2 \show\errorstopmode
+                       \count0=23
+? s
+OK, entering \scrollmode...
+ )
+No pages of output.

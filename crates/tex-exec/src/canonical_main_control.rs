@@ -11423,8 +11423,9 @@ fn apply_scanned_step(
             // The scanned value carries exactly that line's content; replay
             // owns the selector-sensitive transition and decodes no textual
             // envelope.
+            let context = command.state.output_open_context(&stores.command_context());
             print_display_content(stores, &diagnostic.content);
-            crate::diagnostics::complete_show(stores, false);
+            crate::diagnostics::complete_show(stores, false, Some(context));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowBox { index } => {
@@ -11441,7 +11442,7 @@ fn apply_scanned_step(
             // `\show` completion path.
             let text = show_tokens_text(stores, tokens.token_list());
             stores.printer().print(&format!("\n> {text}"));
-            crate::diagnostics::complete_show(stores, false);
+            crate::diagnostics::complete_show(stores, false, None);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowIfs { conditions } => {
@@ -11454,7 +11455,7 @@ fn apply_scanned_step(
             diagnostic.print_nl("").print_ln();
             diagnostic.print(&render_showifs(&conditions));
             diagnostic.end(true);
-            crate::diagnostics::complete_show(stores, true);
+            crate::diagnostics::complete_show(stores, true, None);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups {

@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./show-error-context.tex
+> \errorstopmode=\errorstopmode.
+l.2 \show\errorstopmode
+                       \count0=23
+? OK, entering \scrollmode...
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on show-error-context.log.
