@@ -103,7 +103,9 @@ transparency workflow, and emits an aggregate uncommitted build record under
 `tests/corpus/distribution/cross-frontend-v1` is the closed
 authored-JavaScript/Rust manifest and selection case. Its `case.inventory`
 declares every payload; `test_support::git_fixture` requires the declared,
-tracked, and on-disk inventories to agree before Rust reads it. The payloads
+tracked, and on-disk inventories to agree before Rust reads it, and validates
+every directory ancestor without following symlinks so generated, scratch,
+`target`, or alternate-checkout bytes cannot provide authority. The payloads
 are hand-authored contract data, not live-reference outputs, and both
 `umber-distribution` and the authored JavaScript tests consume the exact same
 files.

@@ -4,8 +4,10 @@ Read the repository-level `AGENTS.md` before editing here. This crate contains h
 
 `git_fixture` validates small repository-owned cases against the selected
 runtime Git checkout. Its `case.inventory` schema closes both the tracked and
-on-disk file sets and forbids alternate-checkout, target, symlink, and
-non-regular authority.
+on-disk file sets. Every directory component from that checkout through the
+case root is inspected without following links, so alternate-checkout,
+`target`/generated/scratch, symlink, and non-regular authority are forbidden
+before canonical traversal.
 
 ## Crate Role
 

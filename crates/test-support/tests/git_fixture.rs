@@ -44,6 +44,22 @@ fn accepts_a_closed_tracked_case() {
 }
 
 #[test]
+fn reports_missing_and_non_directory_ancestry() {
+    let temp = fixture();
+    let error = ClosedCase::discover_at(temp.path(), "tests/corpus/missing/only")
+        .expect_err("missing ancestry accepted");
+    assert!(format!("{error:#}").contains("inspect closed fixture ancestry"));
+
+    let temp = fixture();
+    let example = temp.path().join("tests/corpus/example");
+    fs::remove_dir_all(&example).expect("remove example directory");
+    fs::write(&example, "not a directory").expect("replace ancestor with file");
+    let error = ClosedCase::discover_at(temp.path(), "tests/corpus/example/only")
+        .expect_err("non-directory ancestry accepted");
+    assert!(format!("{error:#}").contains("ancestry component is not a directory"));
+}
+
+#[test]
 fn rejects_missing_extra_duplicate_untracked_and_ignored_entries() {
     let temp = fixture();
     fs::remove_file(temp.path().join("tests/corpus/example/only/input.txt")).expect("remove");
@@ -101,6 +117,28 @@ fn rejects_symlink_and_non_regular_entries() {
     assert!(ClosedCase::discover_at(temp.path(), "tests/corpus/example/only").is_ok());
     fs::create_dir(case.join("directory")).expect("directory");
     reject(&temp, "not a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_intermediate_symlinks_with_matching_git_inventory() {
+    use std::os::unix::fs::symlink;
+
+    let temp = fixture();
+    let example = temp.path().join("tests/corpus/example");
+    let target_example = temp.path().join("target/generated/example");
+    fs::create_dir_all(target_example.parent().expect("target parent")).expect("target parent");
+    fs::rename(&example, &target_example).expect("move tracked tree under target");
+    symlink(&target_example, &example).expect("link ancestor into target");
+    reject(&temp, "ancestry contains a symlink");
+
+    let temp = fixture();
+    let other = fixture();
+    let example = temp.path().join("tests/corpus/example");
+    fs::remove_dir_all(&example).expect("remove selected checkout ancestor");
+    symlink(other.path().join("tests/corpus/example"), &example)
+        .expect("link ancestor into alternate checkout");
+    reject(&temp, "ancestry contains a symlink");
 }
 
 #[test]

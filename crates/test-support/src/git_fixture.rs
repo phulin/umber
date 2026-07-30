@@ -45,14 +45,7 @@ impl ClosedCase {
         );
 
         let case_relative = checked_relative(case_relative.as_ref())?;
-        let root = repository.join(&case_relative);
-        let root_metadata = fs::symlink_metadata(&root)
-            .with_context(|| format!("inspect closed fixture {}", root.display()))?;
-        ensure!(
-            root_metadata.is_dir() && !root_metadata.file_type().is_symlink(),
-            "closed fixture is not a regular directory: {}",
-            root.display()
-        );
+        let root = checked_directory_ancestry(&repository, &case_relative)?;
         ensure!(
             git_root(&root)? == repository,
             "closed fixture resolves outside selected Git checkout: {}",
@@ -142,6 +135,47 @@ fn checked_relative(path: &Path) -> Result<PathBuf> {
         }
     }
     Ok(checked)
+}
+
+fn checked_directory_ancestry(repository: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut current = repository.to_owned();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            unreachable!("checked_relative returned a non-normal component");
+        };
+        current.push(name);
+        let metadata = fs::symlink_metadata(&current)
+            .with_context(|| format!("inspect closed fixture ancestry {}", current.display()))?;
+        ensure!(
+            !metadata.file_type().is_symlink(),
+            "closed fixture ancestry contains a symlink: {}",
+            current.display()
+        );
+        ensure!(
+            metadata.is_dir(),
+            "closed fixture ancestry component is not a directory: {}",
+            current.display()
+        );
+    }
+
+    let resolved = current
+        .canonicalize()
+        .with_context(|| format!("canonicalize closed fixture {}", current.display()))?;
+    ensure!(
+        resolved.starts_with(repository),
+        "closed fixture resolves outside selected Git checkout: {}",
+        current.display()
+    );
+    ensure!(
+        !resolved
+            .strip_prefix(repository)
+            .expect("resolved fixture is beneath repository")
+            .components()
+            .any(|component| component.as_os_str() == "target"),
+        "target-backed fixture authority is forbidden: {}",
+        current.display()
+    );
+    Ok(resolved)
 }
 
 fn git_root(path: &Path) -> Result<PathBuf> {
