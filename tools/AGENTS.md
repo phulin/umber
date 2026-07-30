@@ -35,6 +35,15 @@ destination, and every tracked authority to consume. Each staged directory
 must carry `closed-case-v1` `case.inventory` metadata, but it need not be
 tracked: staged output is validated as closed local data while old authorities
 are independently required to belong to the selected Git checkout. The command
+canonically owns the schema, normalized destination, staged-case inventory, and
+normalized authority paths for every case; case and authority ordering do not
+change that ownership digest. Preflight rejects every equal, ancestor, or
+descendant overlap among staged cases, destinations, authorities, and the
+transaction-root namespace before authority inspection or mutation. Commit
+revalidates the exact inventory of the full cohort, including cases that were
+already complete when the transaction began. Initial and retry-time
+post-commit cleanup failures both report `committed=true` and the exact owned
+retained transaction root, whether cleanup made zero or partial progress. The command
 prints one `umber-fixture-cohort-result-v1` JSON object on success and exits
 nonzero without a success object on validation, transaction, rollback, or
 garbage-collection failure. This is the Rust transaction interface intended

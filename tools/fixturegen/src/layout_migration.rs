@@ -330,30 +330,10 @@ pub(crate) fn run_staged_cohort_with_fs(
     mode: Mode,
     io: &dyn MigrationFs,
 ) -> Result<String> {
+    validate_cohort_path_ownership(cases)?;
     let mut planned = Vec::new();
-    let mut destinations = BTreeSet::new();
-    let mut authorities = BTreeSet::new();
     ensure!(!cases.is_empty(), "cohort plan has no cases");
     for case in cases {
-        validate_relative(&case.staged)?;
-        validate_relative(&case.destination)?;
-        ensure!(
-            destinations.insert(case.destination.clone()),
-            "duplicate cohort destination {}",
-            case.destination
-        );
-        for other in destinations
-            .iter()
-            .filter(|other| *other != &case.destination)
-        {
-            ensure!(
-                !Path::new(other).starts_with(&case.destination)
-                    && !Path::new(&case.destination).starts_with(other),
-                "nested cohort destinations collide: {} and {}",
-                case.destination,
-                other
-            );
-        }
         let staged = repository.join(&case.staged);
         let inventory = crate::cohort_transaction::validate_staged_case(&staged)?;
         let destination = repository.join(&case.destination);
@@ -375,11 +355,6 @@ pub(crate) fn run_staged_cohort_with_fs(
         let mut case_authorities = Vec::new();
         if !complete {
             for authority in &case.authorities {
-                validate_relative(authority)?;
-                ensure!(
-                    authorities.insert(authority.clone()),
-                    "authority {authority} appears more than once"
-                );
                 crate::cohort_transaction::validate_git_authority(repository, authority)?;
                 case_authorities.push(repository.join(authority));
             }
@@ -406,6 +381,12 @@ pub(crate) fn run_staged_cohort_with_fs(
             },
             inventory,
             authorities: case_authorities,
+            ownership_staged: Some(staged),
+            ownership_authorities: case
+                .authorities
+                .iter()
+                .map(|path| repository.join(path))
+                .collect(),
         });
     }
     let plan = MigrationPlan { cases: planned };
@@ -419,7 +400,13 @@ pub(crate) fn run_staged_cohort_with_fs(
             .all(|case| case.layout == Layout::Directory);
         if complete {
             for root in retained.committed {
-                garbage_collect(io, &root)?;
+                garbage_collect(io, &root).with_context(|| {
+                    format!(
+                        "committed fixture cohort is complete; garbage collection failed; \
+                         committed=true; retained owned transaction={}",
+                        root.display()
+                    )
+                })?;
             }
         } else {
             ensure!(
@@ -430,6 +417,64 @@ pub(crate) fn run_staged_cohort_with_fs(
         }
     }
     Ok(report)
+}
+
+#[derive(Clone)]
+struct CohortPathRole {
+    path: PathBuf,
+    role: &'static str,
+    case: usize,
+}
+
+fn validate_cohort_path_ownership(cases: &[CohortCase]) -> Result<()> {
+    ensure!(!cases.is_empty(), "cohort plan has no cases");
+    let mut paths = Vec::new();
+    for (case, entry) in cases.iter().enumerate() {
+        for (role, value) in [
+            ("staged case", entry.staged.as_str()),
+            ("destination", entry.destination.as_str()),
+        ] {
+            validate_relative(value)?;
+            paths.push(CohortPathRole {
+                path: PathBuf::from(value),
+                role,
+                case,
+            });
+        }
+        for authority in &entry.authorities {
+            validate_relative(authority)?;
+            paths.push(CohortPathRole {
+                path: PathBuf::from(authority),
+                role: "authority",
+                case,
+            });
+        }
+    }
+    for path in &paths {
+        let first = path.path.components().next();
+        ensure!(
+            !matches!(first, Some(Component::Normal(name)) if name.to_string_lossy().starts_with(TRANSACTION_PREFIX)),
+            "{} {} overlaps the transaction-root namespace",
+            path.role,
+            path.path.display()
+        );
+    }
+    for (index, left) in paths.iter().enumerate() {
+        for right in &paths[index + 1..] {
+            if left.path.starts_with(&right.path) || right.path.starts_with(&left.path) {
+                bail!(
+                    "cohort path ownership collision: case {} {} {} overlaps case {} {} {}",
+                    left.case,
+                    left.role,
+                    left.path.display(),
+                    right.case,
+                    right.role,
+                    right.path.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_with_fs(
@@ -483,6 +528,8 @@ struct PlannedCase {
     layout: Layout,
     inventory: BTreeMap<String, Vec<u8>>,
     authorities: Vec<PathBuf>,
+    ownership_staged: Option<PathBuf>,
+    ownership_authorities: Vec<PathBuf>,
 }
 
 struct MigrationPlan {
@@ -522,6 +569,8 @@ impl MigrationPlan {
                     display_area: spec.area.to_owned(),
                     layout,
                     inventory,
+                    ownership_staged: None,
+                    ownership_authorities: authorities.clone(),
                     authorities,
                 });
             }
@@ -547,15 +596,33 @@ impl MigrationPlan {
     fn transaction_digest(&self) -> String {
         let mut digest = Sha256::new();
         digest.update(TRANSACTION_SCHEMA.as_bytes());
-        for case in &self.cases {
-            digest.update((case.display_area.len() as u64).to_be_bytes());
-            digest.update(case.display_area.as_bytes());
-            digest.update((case.case.len() as u64).to_be_bytes());
-            digest.update(case.case.as_bytes());
+        digest.update(b"\0canonical-plan-v2\0");
+        let mut cases = self.cases.iter().collect::<Vec<_>>();
+        cases.sort_by_key(|case| case.area.join(&case.case));
+        for case in cases {
+            digest_path(&mut digest, &case.area.join(&case.case));
             digest.update(inventory_digest(&case.inventory).as_bytes());
+            if let Some(staged) = &case.ownership_staged {
+                digest.update([1]);
+                digest_path(&mut digest, staged);
+                let mut authorities = case.ownership_authorities.iter().collect::<Vec<_>>();
+                authorities.sort();
+                digest.update((authorities.len() as u64).to_be_bytes());
+                for authority in authorities {
+                    digest_path(&mut digest, authority);
+                }
+            } else {
+                digest.update([0]);
+            }
         }
         format!("{:x}", digest.finalize())
     }
+}
+
+fn digest_path(digest: &mut Sha256, path: &Path) {
+    let value = path.to_string_lossy();
+    digest.update((value.len() as u64).to_be_bytes());
+    digest.update(value.as_bytes());
 }
 
 fn discover_cases(area: &Path, discovery_suffix: &str) -> Result<BTreeMap<String, Layout>> {
@@ -839,7 +906,7 @@ impl<'a> Transaction<'a> {
                 self.io.rename(&staged, &target)?;
                 installed.push((target, staged));
             }
-            self.validate_installed(&installed)?;
+            self.validate_installed()?;
             self.io.write(
                 &self.root.join(COMMITTED_MARKER),
                 committed_marker(&self.digest).as_bytes(),
@@ -864,17 +931,10 @@ impl<'a> Transaction<'a> {
         Ok(())
     }
 
-    fn validate_installed(&self, installed: &[(PathBuf, PathBuf)]) -> Result<()> {
-        for (target, _) in installed {
-            let case = self
-                .plan
-                .cases
-                .iter()
-                .find(|case| case.area.join(&case.case) == *target)
-                .ok_or_else(|| {
-                    anyhow!("installed target is absent from plan: {}", target.display())
-                })?;
-            if read_regular_inventory_recursive(target)? != case.inventory {
+    fn validate_installed(&self) -> Result<()> {
+        for case in &self.plan.cases {
+            let target = case.area.join(&case.case);
+            if read_regular_inventory_recursive(&target)? != case.inventory {
                 bail!(
                     "installed byte inventory changed for {}/{}",
                     case.display_area,

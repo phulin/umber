@@ -85,8 +85,50 @@ fn rejects_destination_collision_before_authority_mutation() {
     let mut plan = cases();
     plan[1].destination = plan[0].destination.clone();
     let error = run_staged_cohort(repo.path(), &plan, Mode::Apply).expect_err("collision");
-    assert!(format!("{error:#}").contains("duplicate cohort destination"));
+    assert!(format!("{error:#}").contains("path ownership collision"));
     assert!(repo.path().join("old/one/old.txt").is_file());
+}
+
+#[test]
+fn rejects_every_nested_path_role_collision_and_accepts_siblings() {
+    let mutations = [
+        (0, "authorities", "old", "authority-authority"),
+        (0, "authorities", "cases/one", "authority-destination"),
+        (
+            1,
+            "destination",
+            "cases/one/nested",
+            "destination-destination",
+        ),
+        (0, "authorities", "stage", "staged-authority"),
+        (0, "destination", "stage/one/output", "staged-destination"),
+        (
+            0,
+            "destination",
+            ".fixture-layout-transaction-owned/case",
+            "transaction namespace",
+        ),
+    ];
+    for (case_index, field, value, label) in mutations {
+        let repo = repository();
+        let mut plan = cases();
+        match field {
+            "authorities" => plan[case_index].authorities = vec![value.to_owned()],
+            "destination" => plan[case_index].destination = value.to_owned(),
+            _ => unreachable!(),
+        }
+        let error = run_staged_cohort(repo.path(), &plan, Mode::Apply).expect_err(label);
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("path ownership collision")
+                || message.contains("transaction-root namespace"),
+            "{label}: {message}"
+        );
+        assert!(repo.path().join("old/one/old.txt").is_file(), "{label}");
+    }
+
+    let repo = repository();
+    run_staged_cohort(repo.path(), &cases(), Mode::Plan).expect("benign siblings");
 }
 
 #[test]
@@ -112,6 +154,7 @@ enum Failure {
     RenameFrom(usize),
     Remove(usize),
     PartialRemove,
+    MutateComplete,
 }
 
 struct InjectedFs {
@@ -157,6 +200,20 @@ impl MigrationFs for InjectedFs {
             || matches!(self.failure, Failure::RenameFrom(at) if n >= at)
         {
             bail!("injected rename failure {n}");
+        }
+        if matches!(self.failure, Failure::MutateComplete) && n == 2 {
+            fs::write(
+                from.parent()
+                    .expect("transaction path")
+                    .parent()
+                    .expect("transaction root")
+                    .parent()
+                    .expect("repository")
+                    .parent()
+                    .expect("repository")
+                    .join("cases/one/payload.txt"),
+                b"mutated",
+            )?;
         }
         RealFs.rename(from, to)
     }
@@ -277,6 +334,73 @@ fn genuine_partial_gc_and_same_plan_retry_keep_new_cohort() {
     assert!(format!("{error:#}").contains("committed=true"));
     assert!(repo.path().join("cases/one/payload.txt").is_file());
     run_staged_cohort(repo.path(), &cases(), Mode::Apply).expect("retry");
+}
+
+#[test]
+fn authority_only_plan_change_cannot_claim_committed_root() {
+    let repo = repository();
+    run_staged_cohort_with_fs(
+        repo.path(),
+        &cases(),
+        Mode::Apply,
+        &InjectedFs::new(Failure::Remove(1)),
+    )
+    .expect_err("retained root");
+    let mut changed = cases();
+    changed[0].authorities = vec!["different/authority".to_owned()];
+    let error = run_staged_cohort(repo.path(), &changed, Mode::Apply).expect_err("mismatch");
+    assert!(format!("{error:#}").contains("mismatched transaction root"));
+}
+
+#[test]
+fn complete_case_is_revalidated_during_another_case_commit() {
+    let repo = repository();
+    fs::create_dir(repo.path().join("cases/one")).expect("complete case");
+    for name in ["case.inventory", "payload.txt"] {
+        fs::copy(
+            repo.path().join("stage/one").join(name),
+            repo.path().join("cases/one").join(name),
+        )
+        .expect("complete payload");
+    }
+    let error = run_staged_cohort_with_fs(
+        repo.path(),
+        &cases(),
+        Mode::Apply,
+        &InjectedFs::new(Failure::MutateComplete),
+    )
+    .expect_err("revalidation");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("installed byte inventory changed"),
+        "{message}"
+    );
+    assert!(repo.path().join("old/two/old.txt").is_file());
+    assert!(!repo.path().join("cases/two").exists());
+}
+
+#[test]
+fn retry_gc_failures_report_committed_root_at_zero_and_partial_progress() {
+    for retry_failure in [Failure::Remove(1), Failure::PartialRemove] {
+        let repo = repository();
+        run_staged_cohort_with_fs(
+            repo.path(),
+            &cases(),
+            Mode::Apply,
+            &InjectedFs::new(Failure::Remove(1)),
+        )
+        .expect_err("initial retained root");
+        let error = run_staged_cohort_with_fs(
+            repo.path(),
+            &cases(),
+            Mode::Apply,
+            &InjectedFs::new(retry_failure),
+        )
+        .expect_err("retry gc");
+        let message = format!("{error:#}");
+        assert!(message.contains("committed=true"), "{message}");
+        assert!(message.contains("retained owned transaction="), "{message}");
+    }
 }
 
 #[test]
