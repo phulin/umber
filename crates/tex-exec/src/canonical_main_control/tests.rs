@@ -5194,6 +5194,30 @@ fn distinct_pattern_paths_do_not_report_section_963_duplicate() {
 }
 
 #[test]
+fn operationless_pattern_path_is_not_a_section_963_duplicate() {
+    // TeX82 §§963-964: `bb` creates a trie path but computes
+    // `v=min_quarterword`, so the first pattern that gives that path a real
+    // operation is not a duplicate. A subsequent operation on the path is.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\patterns{bb bb1 b2b}\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(
+        terminal_text(&stores)
+            .matches("! Duplicate pattern.")
+            .count(),
+        1,
+        "only the second real trie operation on the shared path is duplicate"
+    );
+}
+
+#[test]
 fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
     // TeX82 §962's `digit_sensed=false` branch treats the first ASCII digit
     // as a hyphen level and therefore never consults its zero `\lccode`.

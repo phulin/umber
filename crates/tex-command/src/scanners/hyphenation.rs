@@ -203,7 +203,9 @@ impl CommandProcessor<'_> {
         pending: &[PatternSpec],
         pattern: &PatternSpec,
     ) {
-        let duplicate = pending.iter().any(|prior| prior.letters == pattern.letters)
+        let duplicate = pending
+            .iter()
+            .any(|prior| prior.letters == pattern.letters && prior.has_trie_operation())
             || self
                 .state
                 .contains_hyphenation_pattern_for_language(language, &pattern.letters);

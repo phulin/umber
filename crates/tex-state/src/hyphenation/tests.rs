@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn operationless_pattern_does_not_occupy_its_trie_path() {
+    // TeX82 §§963-964 leave trie_o at min_quarterword when every effective
+    // hyphenation value is zero.
+    let mut table = HyphenationTable::new();
+    assert!(!table.add_pattern_for_language(
+        0,
+        PatternSpec {
+            letters: vec!['b', 'b'],
+            values: vec![0, 0, 0],
+        },
+    ));
+    assert!(!table.contains_pattern_for_language(0, &['b', 'b']));
+    assert!(!table.add_pattern_for_language(
+        0,
+        PatternSpec {
+            letters: vec!['b', 'b'],
+            values: vec![0, 0, 1],
+        },
+    ));
+    assert!(table.contains_pattern_for_language(0, &['b', 'b']));
+    assert!(table.add_pattern_for_language(
+        0,
+        PatternSpec {
+            letters: vec!['b', 'b'],
+            values: vec![0, 2, 0],
+        },
+    ));
+    assert!(!table.add_pattern_for_language(
+        0,
+        PatternSpec {
+            letters: vec!['.', 'x', '.'],
+            values: vec![1, 0, 0, 2],
+        },
+    ));
+    assert!(!table.contains_pattern_for_language(0, &['.', 'x', '.']));
+}
+
+#[test]
 fn pattern_values_apply_liang_odd_positions() {
     let mut table = HyphenationTable::new();
     table.add_pattern(PatternSpec {

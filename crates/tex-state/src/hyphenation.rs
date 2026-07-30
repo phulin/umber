@@ -60,6 +60,39 @@ pub struct PatternSpec {
     pub values: Vec<u8>,
 }
 
+impl PatternSpec {
+    /// Whether TeX82 §963's `v` is a real trie op rather than
+    /// `min_quarterword`.
+    ///
+    /// Section 964 clears the values outside an explicit `.` boundary before
+    /// it computes `v`; a pattern with no remaining nonzero value creates its
+    /// letter path but does not occupy that path for duplicate detection.
+    #[must_use]
+    pub fn has_trie_operation(&self) -> bool {
+        self.values.iter().enumerate().any(|(index, &value)| {
+            value != 0
+                && !(index == 0 && self.letters.first() == Some(&'.'))
+                && !(index == self.letters.len() && self.letters.last() == Some(&'.'))
+        })
+    }
+
+    fn canonicalize_trie_operation(&mut self) {
+        if self.letters.first() == Some(&'.')
+            && let Some(value) = self.values.first_mut()
+        {
+            *value = 0;
+        }
+        if self.letters.last() == Some(&'.')
+            && let Some(value) = self.values.get_mut(self.letters.len())
+        {
+            *value = 0;
+        }
+        if !self.values.iter().any(|&value| value != 0) {
+            self.values.clear();
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExceptionSpec {
     pub word: String,
@@ -126,13 +159,14 @@ impl HyphenationTable {
 
     /// Inserts or replaces a pattern and reports whether the same letter path
     /// already carried pattern values (TeX82 §963's duplicate test).
-    pub fn add_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) -> bool {
+    pub fn add_pattern_for_language(&mut self, language: u8, mut pattern: PatternSpec) -> bool {
         if pattern.letters.is_empty() {
             return false;
         }
         self.dependency_fingerprints = OnceLock::new();
         let table = self.languages.entry(language).or_default();
         let mut node = 0usize;
+        pattern.canonicalize_trie_operation();
         for ch in pattern.letters {
             node = table.edge_or_insert(node, ch);
         }
