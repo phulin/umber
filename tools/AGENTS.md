@@ -5,9 +5,10 @@
 `tools/fixturegen` is the script-owned fixture regeneration tool used by `scripts/regen-fixtures.sh` for text/native fixtures, pinned pdfTeX/Poppler PDF parity fixtures, and the explicit live font check. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 
 `fixturegen --migrate-layout --plan` deterministically inventories the
-declarative lexical/session-family specifications in `layout_migration.rs`, reports
-each case's file/byte census and domain-separated SHA-256, and performs no
-writes. `--apply` stages and byte-verifies the entire requested plan before any
+single declarative registry of execution/output, lexical/session, and native
+bibliography-invocation specifications in `layout_migration.rs`, reports each
+case's file/byte census and domain-separated SHA-256, and performs no writes.
+`--apply` stages and byte-verifies the entire requested plan before any
 authority mutation. Its commit renames every old authority into a named
 transaction backup and installs the staged cases; a failure reverses every
 completed rename, reports every restoration failure, and retains recoverable
