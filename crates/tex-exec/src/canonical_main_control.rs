@@ -11462,10 +11462,14 @@ fn apply_scanned_step(
             // `set_font_dimen` implements, can add a parameter.
             match u32::try_from(number).ok().filter(|number| *number > 0) {
                 // §578's `if n<=0 then cur_val:=fmem_ptr`.
-                None => report_font_parameter_recovery(stores, font),
+                None => {
+                    let context = command.state.output_open_context(&stores.command_context());
+                    report_font_parameter_recovery(stores, font, context);
+                }
                 Some(number) => {
                     if stores.set_font_dimen(font, number, value).is_err() {
-                        report_font_parameter_recovery(stores, font);
+                        let context = command.state.output_open_context(&stores.command_context());
+                        report_font_parameter_recovery(stores, font, context);
                     }
                 }
             }
@@ -11762,7 +11766,8 @@ fn apply_scanned_step(
             // §1283; neither branch formats or routes its own output.
             let text = message_text(stores, tokens.token_list());
             if error {
-                issue_error_message(stores, &text);
+                let context = command.state.output_open_context(&stores.command_context());
+                issue_error_message(stores, &text, context);
             } else {
                 issue_terminal_message(stores, &text);
             }
@@ -14321,7 +14326,7 @@ fn issue_terminal_message(stores: &mut Universe, text: &str) {
 }
 
 /// TeX82 §1283's `<Print string s as an error message>`.
-fn issue_error_message(stores: &mut Universe, text: &str) {
+fn issue_error_message(stores: &mut Universe, text: &str, context: String) {
     let err_help = stores.tok_param(TokParam::ERR_HELP);
     let rendered = (!stores.tokens(err_help).is_empty()).then(|| message_text(stores, err_help));
     let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
@@ -14347,6 +14352,7 @@ fn issue_error_message(stores: &mut Universe, text: &str) {
             ]);
         }
     }
+    report.context(context);
     report.error();
 }
 
@@ -14356,7 +14362,11 @@ fn issue_error_message(stores: &mut Universe, text: &str) {
 /// fallback -- a number at or below zero, a number past the font's table when
 /// the font is not the last one loaded, or a capacity bound -- so all of them
 /// report the same §579 message and leave the font untouched.
-fn report_font_parameter_recovery(stores: &mut Universe, font: tex_state::ids::FontId) {
+fn report_font_parameter_recovery(
+    stores: &mut Universe,
+    font: tex_state::ids::FontId,
+    context: String,
+) {
     let name = stores.font_name(font).to_owned();
     let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
     let mut report = stores.print_err("Font ");
@@ -14369,6 +14379,7 @@ fn report_font_parameter_recovery(stores: &mut Universe, font: tex_state::ids::F
         "To increase the number of font parameters, you must",
         "use \\fontdimen immediately after the \\font is loaded.",
     ]);
+    report.context(context);
     report.error();
 }
 

@@ -33,20 +33,8 @@
       "channels": {
         "events": 109,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 4, "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}", "actual": " )" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 5,
-            "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}",
-            "actual": "user help"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
