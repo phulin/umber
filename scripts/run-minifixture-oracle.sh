@@ -52,7 +52,7 @@ Each selected case is staged and run under:
 
 Options:
   --case DOMAIN/CASE-ID   Run one case. May be repeated.
-  --all                   Run every case in every domain manifest.
+  --all                   Run all 202 singleton fixture-local manifests.
   --help, -h              Show this message.
 
 Environment:
@@ -233,14 +233,14 @@ ensure_format() {
 # ~126 bytes per run), which would make this runner's terminal channel
 # vacuous for comparison purposes.
 #
-# 8 of the 130 minifixtures carry a `terminal_lines` manifest field: answers
+# 11 of the 202 minifixtures carry a `terminal_lines` manifest field: answers
 # fed to interactive prompts (`\read`-from-terminal, `\pausing`, or an
 # ordinary error's `?` prompt). tex.web section 7593 (firm_up_the_line) and
 # the `\read`-from-terminal case in read_toks (section ~9487) both gate on
 # `interaction>nonstop_mode`: under -interaction=batchmode or =nonstopmode,
 # `\read` from a negative stream is a *fatal* "cannot \read from terminal in
 # nonstop modes" error and `\pausing` never fires at all, so either mode would
-# misrun those 8 cases outright rather than exercise the behavior the
+# misrun those 11 cases outright rather than exercise the behavior the
 # minifixture is testing.
 #
 # -interaction=errorstopmode (tex82's actual default when no -interaction flag
@@ -251,8 +251,8 @@ ensure_format() {
 # the error, gets an unanswered `?` prompt, and immediately follows with
 # "! Emergency stop." before reaching the rest of the source (`\count0=1`
 # never executes). The same source under scrollmode reaches `\end` normally.
-# Since only 8 of 130 cases are known to need terminal interaction,
-# errorstopmode-by-default would make the other 122 fragile to *any*
+# Since only 11 of 202 cases are known to need terminal interaction,
+# errorstopmode-by-default would make the other 191 fragile to *any*
 # undeclared error the reference engine raises that Umber's simulation
 # doesn't (which is precisely the kind of divergence this whole effort exists
 # to surface).
@@ -401,7 +401,7 @@ run_one_case() {
   # page-output/open-close-effect-observation.tex does). The corpus does not
   # use the fixed "<jobname>-effects.out" convention
   # scripts/build-pdftex14027-oracle.sh's own transitions/extensions/state
-  # fixtures use (only one of 130 sources calls \openout at all, and it opens
+  # fixtures use (only one of 202 sources calls \openout at all, and it opens
   # a name of its own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \

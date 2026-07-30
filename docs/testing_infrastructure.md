@@ -281,10 +281,10 @@ XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
 long-document trace registry.
 
-The corpus holds 130 cases across 8 domains, with 8 strict xfails: 3 in
-`alignments`, 3 in `input-expansion`, and 2 in `main-control`. The other five
-domains carry none. Bounded in-memory terminal lines and named inputs keep the
-pausing, read, and input-open evidence hermetic.
+The corpus holds 202 fixtures across 8 domains, with one strict xfail in
+`main-control`. The other seven domains carry none. Bounded in-memory terminal
+lines and named inputs keep the pausing, read, and input-open evidence
+hermetic.
 
 #### The Minimality Contract
 
@@ -322,15 +322,12 @@ accept and reject direction in `tex-command-stream/src/semantic/tests.rs`.
 #### The Per-Channel Contract
 
 A projection is a focused property claim about one observable. It is not
-coverage of the run, and for a long time it was standing in for one. Measured
-across the corpus, the 130 cases produce 33,112 events, 23,013 bytes of
-terminal and log text, and 26 shipped DVI pages, against 698 declared
-assertion strings -- a mean of 5.5 per case. 26 cases ship a page that nothing
-compared; 39 write a log, and the log was read by no projection that exists,
-because `terminal-checks` is a `contains()` boolean over the merged terminal
-text. **A projection is an omission with a schema**, which is the same defect
-as `default-members` naming 21 of 34 crates: an absence that reads as
-coverage.
+coverage of the run, and for a long time it was standing in for one. Before
+per-channel coverage was introduced, measured corpus runs produced far more
+observations than their concise projections declared, including shipped pages
+and complete log streams that no projection compared. **A projection is an
+omission with a schema**, which is the same defect as `default-members` naming
+21 of 34 crates: an absence that reads as coverage.
 
 So each case declares a `channels` block accounting for every observable its
 run produces, and the gate compares all of them alongside the projection:
@@ -343,7 +340,8 @@ run produces, and the gate compares all of them alongside the projection:
 - `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
   A fixture-local `expected.<channel>` file is required for the latter two,
   and it always holds the pinned reference engine's bytes (see below).
-  The corpus commits 280 such files today: 127 terminal, 127 log, and 26 dvi.
+  The corpus commits 471 applicable files today: 202 terminal, 202 log, and 67
+  DVI.
   Terminal and log both grew from a minority of cases to nearly every one once
   job framing gave every run a banner, a `**` line, and a page report or
   "No pages of output." to write, where previously only a case with its own

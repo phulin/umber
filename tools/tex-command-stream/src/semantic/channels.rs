@@ -5,10 +5,9 @@
 //! it. That is a focused property claim, and it stays. What it is not is
 //! coverage: the same run also writes a terminal transcript, a log, shipped
 //! pages, and ordinary effects, and before this module nothing compared any of
-//! them. Measured across the committed corpus, 130 cases produced 33,112
-//! events, 23,013 bytes of terminal and log text, and 26 shipped pages against
-//! 698 declared assertion strings -- and the log channel was read by no
-//! projection that exists.
+//! them. Measured corpus runs produced far more observations than their concise
+//! projections declared, including shipped pages and complete logs that no
+//! projection read at all.
 //!
 //! So a case declares a disposition for *every* channel here. A channel with
 //! no disposition fails validation rather than passing quietly, for the same
