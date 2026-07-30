@@ -340,6 +340,144 @@ fn etex_scantokens_pseudo_source_name_tracks_tracing() {
 }
 
 #[test]
+fn etex_scantokens_null_everyeof_has_no_token_list_retirement() {
+    // e-TeX 2.6 etex.ch §24.362 tests `every_eof<>null` before
+    // `begin_token_list`. The default null parameter must therefore return
+    // directly from the pseudo-file to its enclosing input level.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let scantokens =
+        install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(scantokens)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+            traced(Token::Char {
+                ch: 'Z',
+                cat: Catcode::Letter,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(fuel.fuel_mut())
+        .with_observer(&mut recorder);
+    let mut output = Vec::new();
+    while let Some(delivery) = processor.get_x_token().expect("scantokens expands") {
+        output.push(delivery.spelling().semantic_token());
+    }
+
+    assert!(output.contains(&Token::Char {
+        ch: 'a',
+        cat: Catcode::Letter,
+    }));
+    assert_eq!(
+        output.last(),
+        Some(&Token::Char {
+            ch: 'Z',
+            cat: Catcode::Letter,
+        })
+    );
+    assert!(!recorder.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Input(crate::InputRecord {
+            transition: InputTransition::Retire,
+            reason: crate::InputReason::Recovery,
+            ..
+        })
+    )));
+}
+
+#[test]
+fn etex_scantokens_defined_empty_everyeof_pushes_and_retires_before_close() {
+    // e-TeX 2.6 etex.ch §24.362 tests pointer presence, not list length.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_tok_param(
+        tex_state::env::banks::TokParam::EVERY_EOF,
+        TokenListId::EMPTY,
+    );
+    let scantokens =
+        install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(scantokens)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+            traced(Token::Char {
+                ch: 'Z',
+                cat: Catcode::Letter,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_fuel(fuel.fuel_mut())
+        .with_observer(&mut recorder);
+    let mut output = Vec::new();
+    while let Some(delivery) = processor.get_x_token().expect("scantokens expands") {
+        output.push(delivery.spelling().semantic_token());
+    }
+
+    assert_eq!(
+        output.last(),
+        Some(&Token::Char {
+            ch: 'Z',
+            cat: Catcode::Letter,
+        })
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|event| matches!(
+                event,
+                CommandObservation::Input(crate::InputRecord {
+                    transition: InputTransition::Retire,
+                    reason: crate::InputReason::Recovery,
+                    ..
+                })
+            ))
+            .count(),
+        1,
+        "the present empty everyeof level retires before pseudo_close resumes Z"
+    );
+}
+
+#[test]
 fn etex_detokenize_projects_token_show_text_without_expansion() {
     // e-TeX 2.6 etex.ch §53a: scan_general_text is unexpanded, token_show
     // separates a control word, and str_toks makes only spaces category 10.

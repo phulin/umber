@@ -30,7 +30,7 @@ fn identity(mode: FormatEngineMode) -> FormatCacheIdentity {
 }
 
 fn format() -> Vec<u8> {
-    Universe::new().dump_format().expect("schema-10 format")
+    Universe::new().dump_format().expect("schema-11 format")
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn canonical_key_covers_every_identity_component() {
     assert_eq!(original.key(), original.clone().key());
     assert_eq!(
         original.key().hex(),
-        "bc00f33d67890f252f6c5ac6ec748271ac1a19bf490af1dbdb37f6e86528962c"
+        "a75f09ab4d472e4dc23a313114059bfe1fdd2a93b5b48c292064484c912a149d"
     );
 
     let mutations = [

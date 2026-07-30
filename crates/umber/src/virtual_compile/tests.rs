@@ -2911,7 +2911,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
 }
 
 #[test]
-fn every_engine_mode_has_source_and_schema_10_format_artifact_equivalence() {
+fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
     let source = b"\\shipout\\hbox{}\\end";
     for engine in [
         EngineMode::Tex82,
@@ -2922,10 +2922,10 @@ fn every_engine_mode_has_source_and_schema_10_format_artifact_equivalence() {
     ] {
         let mut stores = Universe::with_world(World::memory());
         engine.prepare_fresh(&mut stores);
-        let format = stores.dump_format().expect("dump schema-10 format");
+        let format = stores.dump_format().expect("dump schema-11 format");
         assert_eq!(
             u32::from_le_bytes(format[8..12].try_into().expect("schema bytes")),
-            10
+            11
         );
 
         let mut formatted = VirtualCompileSession::new(SessionOptions {

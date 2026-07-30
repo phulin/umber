@@ -1,11 +1,11 @@
 use super::{
     FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
 };
-use crate::env::banks::IntParam;
+use crate::env::banks::{IntParam, TokParam};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, FontId, NodeListId};
+use crate::ids::{ArenaRef, FontId, NodeListId, TokenListId};
 use crate::input::{
     ConditionFrameSummary, ConditionFrameToken, InputFrameSummary, InputSummary, LexerState,
     MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
@@ -663,7 +663,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             semantic_reseals: 0,
             assignment_replays: 0,
         },
-        "normal schema-10 loading must not remap graphs, reseal semantic identities, or replay environment assignments"
+        "normal schema-11 loading must not remap graphs, reseal semantic identities, or replay environment assignments"
     );
     assert_eq!(loaded.dump_format().expect("canonical redump"), image);
     let immutable_base = loaded.stores.env().testing_format_base().to_vec();
@@ -1118,6 +1118,78 @@ fn token_semantic_id_converges_across_cold_restore_and_fork() {
 }
 
 #[test]
+fn token_parameter_presence_is_grouped_checkpointed_and_format_stable() {
+    // e-TeX 2.6 etex.ch §24.362 distinguishes a null \everyeof pointer from
+    // an explicitly assigned empty token list.
+    let mut universe = Universe::new();
+    let parameter = TokParam::EVERY_EOF;
+    assert_eq!(universe.tok_param_option(parameter), None);
+    let null_hash = universe.snapshot().state_hash();
+    universe.set_tok_param(parameter, TokenListId::EMPTY);
+    assert_ne!(
+        universe.snapshot().state_hash(),
+        null_hash,
+        "observation identity must distinguish null from assigned empty"
+    );
+    universe = Universe::new();
+
+    universe.enter_group();
+    universe.set_tok_param(parameter, TokenListId::EMPTY);
+    assert_eq!(
+        universe.tok_param_option(parameter),
+        Some(TokenListId::EMPTY)
+    );
+    let _ = universe.leave_group();
+    assert_eq!(universe.tok_param_option(parameter), None);
+
+    universe.set_tok_param_global(parameter, TokenListId::EMPTY);
+    universe.enter_group();
+    let nonempty = universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    universe.set_tok_param(parameter, nonempty);
+    let _ = universe.leave_group();
+    assert_eq!(
+        universe.tok_param_option(parameter),
+        Some(TokenListId::EMPTY)
+    );
+
+    let format = universe
+        .dump_format()
+        .expect("present-empty format encodes");
+    let restored =
+        Universe::from_format(World::memory(), &format).expect("present-empty format restores");
+    assert_eq!(
+        restored.tok_param_option(parameter),
+        Some(TokenListId::EMPTY)
+    );
+    assert_eq!(
+        restored
+            .dump_format()
+            .expect("present-empty format redumps"),
+        format
+    );
+
+    let checkpoint = universe.snapshot();
+    universe.set_tok_param(parameter, nonempty);
+    universe.rollback(&checkpoint);
+    assert_eq!(
+        universe.tok_param_option(parameter),
+        Some(TokenListId::EMPTY)
+    );
+}
+
+#[test]
+fn checkpoint_hash_schema_receipts_token_parameter_presence_vocabulary() {
+    assert_eq!(
+        crate::CHECKPOINT_STATE_HASH_SCHEMA_VERSION,
+        26,
+        "changing token-cell presence framing requires a checkpoint hash schema bump"
+    );
+}
+
+#[test]
 fn paragraph_input_identity_uses_token_and_symbol_semantics_across_restore() {
     let mut cold = Universe::new();
     let target = cold.intern("target");
@@ -1340,7 +1412,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 }
 
 #[test]
-fn format_v10_round_trips_tex_web_box_shift_and_rejects_legacy_v9() {
+fn format_v11_round_trips_tex_web_box_shift_and_rejects_legacy_v10() {
     let mut universe = Universe::with_world(World::memory());
     let children = universe.freeze_node_list(&[]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -1357,19 +1429,19 @@ fn format_v10_round_trips_tex_web_box_shift_and_rejects_legacy_v9() {
     universe.set_box_reg(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
-    assert_eq!(&bytes[8..12], &10_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v10 format restores");
+    assert_eq!(&bytes[8..12], &11_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v11 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
     let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
 
-    let mut v9 = bytes;
-    v9[8..12].copy_from_slice(&9_u32.to_le_bytes());
+    let mut v10 = bytes;
+    v10[8..12].copy_from_slice(&10_u32.to_le_bytes());
     assert!(matches!(
-        Universe::from_format(World::memory(), &v9),
-        Err(super::FormatError::UnsupportedVersion(9))
+        Universe::from_format(World::memory(), &v10),
+        Err(super::FormatError::UnsupportedVersion(10))
     ));
 }
 

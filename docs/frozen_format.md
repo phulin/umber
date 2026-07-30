@@ -1,12 +1,13 @@
 # Portable Frozen Format Images
 
-Status: schema-10 container, authoritative core-store sections, portable
+Status: schema-11 container, authoritative core-store sections, portable
 precomputed lookup indexes, runtime-ready frozen node arena, and groupable
 environment base/overlay.
 
 This document is the durable ABI contract for Umber format images. The outer
-container is implemented in `tex-state::format_container`. Schema 10 replaces
-the schema-9 envelope. Section 1 now contains only Universe-level interaction
+container is implemented in `tex-state::format_container`. Schema 11 replaces
+schema 10 to make token-parameter cell presence part of the frozen environment
+vocabulary. Section 1 contains only Universe-level interaction
 mode and permitted PDF configuration. Format-visible environment entries are
 authoritative in kind 528, reachable node graphs are authoritative in kind
 512, and non-node semantic stores are authoritative in their fixed sections.
@@ -26,14 +27,14 @@ or process-local handle. Integers in frozen sections have an explicit `u8`,
 schema change is required to change the meaning or width of any existing
 field.
 
-## Schema-10 container
+## Schema-11 container
 
 The header is exactly 80 bytes:
 
 | Offset | Width | Field                            |
 | -----: | ----: | -------------------------------- |
 |      0 |     8 | magic `UMBRFMT\0`                |
-|      8 |     4 | schema version, currently `10`   |
+|      8 |     4 | schema version, currently `11`   |
 |     12 |     4 | header size, `80`                |
 |     16 |     4 | directory-record size, `40`      |
 |     20 |     4 | section count, `1..=64`          |
@@ -42,14 +43,14 @@ The header is exactly 80 bytes:
 |     40 |     8 | container ABI fingerprint        |
 |     48 |     8 | lookup-configuration fingerprint |
 |     56 |     8 | image checksum                   |
-|     64 |     4 | flags, zero in schema 10         |
+|     64 |     4 | flags, zero in schema 11         |
 |     68 |    12 | reserved, all zero               |
 
 Every integer is little-endian. The ABI fingerprint is FNV-1a-64 of the
 literal contract string in `format_container.rs`; the lookup fingerprint is
 the same operation over the literal lookup-configuration string. A decoder
 requires the current values, except that it recognizes the previous
-uncompressed/literal-token-lookup pair for schema-10 migration. The strings,
+uncompressed/literal-token-lookup pair for schema-11 migration. The strings,
 not a compiler's struct layout, define the values.
 
 The directory immediately follows the header. Each record is exactly 40
@@ -75,7 +76,7 @@ with deterministic raw DEFLATE level 6. The decoder bounds each logical
 section at 512 MiB, limits decompression to the declared logical length plus
 one byte, and requires the result to have exactly that length. It retains the
 container-v1 fingerprint and zero-flag decode path only to read already
-published uncompressed schema-10 images.
+published uncompressed schema-11 images.
 
 The checksum is FNV-1a-64 over the exact complete file with header bytes
 56..64 treated as zero. It therefore covers header fields, compatibility
@@ -83,9 +84,9 @@ fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
-`TransitionalSemanticV9`, but its schema-10 payload is restricted to
+`TransitionalSemanticV9`, but its schema-11 payload is restricted to
 Universe-level interaction mode and permitted format-level PDF configuration.
-It contains no store or environment data. The schema-10 runtime requires
+It contains no store or environment data. The schema-11 runtime requires
 exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
 following kinds are allocated for the complete rollout:
 
@@ -155,7 +156,7 @@ Unused payload bits are zero. Character, catcode, name-index, and sentinel
 domains are validated. The semantic identity is recomputed from the decoded
 tokens and name semantic atoms before the arena is published. The decoder
 also accepts the previous version-1, 24-byte-record, `u64`-word token section
-when loading an older schema-10 image; new dumps never emit it.
+when loading an older schema-11 image; new dumps never emit it.
 
 ### Macros (kind 288)
 
@@ -199,7 +200,7 @@ their semantic interning APIs.
 
 The 32-byte header contains version, font count, payload offset and length,
 an optional-prepared-`mag` tag and signed value, the last-loaded font index,
-and a reserved `u32`. The payload is the canonical fixed-integer schema-10
+and a reserved `u32`. The payload is the canonical fixed-integer schema-11
 encoding of detached font records: names and content hashes, immutable and
 source parameters, character metrics, lig/kern instructions, extensible
 recipes, derivation identity, control-sequence identifier index, and pdfTeX
@@ -226,7 +227,7 @@ and no assignment or group history.
 ### Hyphenation (kind 352)
 
 The 16-byte header contains version, payload offset and length, and a reserved
-`u32`. Its canonical fixed-integer schema-10 payload stores language-indexed
+`u32`. Its canonical fixed-integer schema-11 payload stores language-indexed
 runtime tries, exception maps, and saved hyphen-code maps. Validation requires
 one root per language, strictly sorted unique edges, live edge targets, exactly
 one incoming edge for every non-root node, and nonempty exception words whose
@@ -274,6 +275,12 @@ serialized. After cross-store and node-reference validation, the loader maps
 box records to the installed survivor arena and bulk-installs all cells as an
 immutable format base without calling assignment APIs.
 
+For token-parameter banks, record presence is semantic: an omitted cell is
+null, while a present record whose payload is token-list record 0 is an
+explicitly assigned empty token list. This distinction is required by e-TeX's
+`\everyeof` test and is the environment-vocabulary change that introduced
+schema 11.
+
 The ordinary environment banks are the mutable job overlay seeded from that
 base. Their existing write barrier owns all later local/global assignment,
 save-stack journaling, grouping, snapshot, and rollback behavior. The retained
@@ -318,7 +325,7 @@ flags. A checksum-valid image can still be structurally invalid.
 Frozen lookup indexes use literal bucket arrays, never serialized
 `HashMap` state. A lookup-table header consists of:
 
-| Field         | Type  | Schema-10 configuration              |
+| Field         | Type  | Schema-11 configuration              |
 | ------------- | ----- | ------------------------------------ |
 | algorithm     | `u32` | `1`, FNV-1a-64                       |
 | table version | `u32` | `1`                                  |
@@ -359,7 +366,7 @@ configuration compatibility plus full structural validation are authoritative:
 the decoder verifies bucket bounds, entry uniqueness, one bucket per entry,
 canonical insertion/probe placement, key equality, and the declared maximum
 probe. Deterministic checksum-derived spot checks additionally exercise the
-runtime lookup implementation after validation. Schema 10 selects up to eight
+runtime lookup implementation after validation. Schema 11 selects up to eight
 entries per table from the container checksum using a fixed xorshift64*
 sequence. Those checks are
 supplementary diagnostics and can never make an incompatible fingerprint or
@@ -389,21 +396,25 @@ live meanings restored by the format. This preserves deliberately shadowed
 primitives while making primitive-enquiry and frozen-primitive tokens behave
 the same as source initialization, without replaying store construction.
 
-## Migration from schema 9
+## Migration from schemas 9 and 10
 
-Schema 9 was a deterministic semantic reconstruction format, but its outer
+Schema 9 was a deterministic semantic reconstruction format whose outer
 envelope had one opaque payload rather than an extensible fixed-width section
-directory and carried no compatibility fingerprints. Schema 10 is a clean
-boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
-regenerate format images from their source under the schema-10 engine; Umber
-does not reinterpret an old image heuristically.
+directory and carried no compatibility fingerprints. Schema 10 introduced the
+sectioned frozen-store representation, but it could not distinguish an absent
+token-parameter cell from a present cell containing token-list record 0.
+Schema 11 is therefore a clean boundary: the loader rejects schemas 9 and 10
+with `UnsupportedVersion(9)` and `UnsupportedVersion(10)`. Users regenerate
+format images from source under the schema-11 engine; Umber does not
+reinterpret an old image heuristically.
 
-Schema 10 writes environment cells only to kind 528 and node graphs only to
+Schema 11 writes environment cells only to kind 528 and node graphs only to
 kind 512. Names, token lists, macros, glue, fonts, code tables, and hyphenation
 exist only in authoritative sections 256 through 352 and are never reinterned
-during normal loading. The decoder validates environment references against
-those frozen stores before publication. Section 1 remains only for
-Universe-level format metadata until a later explicit schema migration.
+during normal loading. The decoder validates environment references and token
+cell presence against those frozen stores before publication. Section 1
+remains only for Universe-level format metadata until a later explicit schema
+migration.
 
 ## Compatibility failures
 
@@ -412,16 +423,16 @@ image rejected: ...`; WASM returns the same message in its compile diagnostic.
 Failures are deterministic and identify the rejected boundary:
 
 - wrong magic means the input is not an Umber format image;
-- any schema other than 10 reports the unsupported version, including schema
-  9, which must be regenerated rather than upgraded in place;
+- any schema other than 11 reports the unsupported version, including schemas
+  9 and 10, which must be regenerated rather than upgraded in place;
 - ABI or lookup fingerprint mismatch means the image and runtime implement
-  different schema-10 contracts;
+  different schema-11 contracts;
 - checksum mismatch means the bytes changed after publication; and
 - directory, section, canonical-order, or cross-reference errors identify a
   structurally invalid image even when its checksum was recomputed.
 
 Browser manifests reject an incompatible `engineVersion` or `formatSchema`
 before downloading the object. Length and SHA-256 validate transport, then the
-Rust decoder applies the complete schema-10 validation above. There is no
-compatibility flag or fallback loader for TeX Live-native `.fmt`, schema 9, or
-partially migrated images.
+Rust decoder applies the complete schema-11 validation above. There is no
+compatibility flag or fallback loader for TeX Live-native `.fmt`, schema 9,
+schema 10, or partially migrated images.

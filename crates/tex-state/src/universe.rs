@@ -1723,7 +1723,9 @@ impl Universe {
                         self.dimen_param(DimenParam::new(index16)).raw(),
                     )),
                     DependencyBank::GlueParam => glue(self.glue_param(GlueParam::new(index16))),
-                    DependencyBank::TokParam => token_list(self.tok_param(TokParam::new(index16))),
+                    DependencyBank::TokParam => self
+                        .tok_param_option(TokParam::new(index16))
+                        .map_or(DependencyValue::Absent, token_list),
                     DependencyBank::CurrentFont => font(self.current_font()),
                     DependencyBank::MathFamilyFont => {
                         let family = u8::try_from(index % 16).ok()?;
@@ -2281,7 +2283,7 @@ impl Universe {
     ///
     /// Host effects, provenance, checkpoints, journals, caches, and input
     /// cursors are intentionally absent. The image is deterministic for one
-    /// semantic state across the portable schema-10 frozen stores and its
+    /// semantic state across the portable schema-11 frozen stores and its
     /// fixed node arena and portable frozen environment base.
     pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
         if !self.input_summary.is_empty() {
@@ -2368,14 +2370,14 @@ impl Universe {
         let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
         if container.sections.len() != 11 {
             return Err(FormatError::InvalidState(
-                "schema-10 core format requires exactly eleven sections".to_owned(),
+                "schema-11 core format requires exactly eleven sections".to_owned(),
             ));
         }
         let payload = container
             .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
             .ok_or_else(|| {
                 FormatError::InvalidState(
-                    "schema-10 transition is missing its semantic section".to_owned(),
+                    "schema-11 transition is missing its semantic section".to_owned(),
                 )
             })?;
         let format: UniverseFormatPayload = bincode::deserialize(payload.bytes.as_ref())
@@ -6287,6 +6289,12 @@ impl Universe {
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
         self.stores.tok_param(param)
+    }
+
+    /// Returns a token-list parameter while preserving an unassigned null cell.
+    #[must_use]
+    pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
+        self.stores.tok_param_option(param)
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {

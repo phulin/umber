@@ -1,4 +1,4 @@
-//! Validated native storage for generated schema-10 format images.
+//! Validated native storage for generated schema-11 format images.
 
 use std::error::Error;
 use std::fmt;
@@ -143,7 +143,7 @@ impl FormatCacheIdentity {
     }
 }
 
-/// Format bytes that passed the complete schema-10 `Universe` decoder.
+/// Format bytes that passed the complete schema-11 `Universe` decoder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidatedFormatImage(Vec<u8>);
 
@@ -192,7 +192,7 @@ impl fmt::Display for FormatCacheError {
                 "failed to {operation} format cache path {}: {source}",
                 path.display()
             ),
-            Self::InvalidFormat(message) => write!(f, "invalid schema-10 format image: {message}"),
+            Self::InvalidFormat(message) => write!(f, "invalid schema-11 format image: {message}"),
             Self::FormatTooLarge(bytes) => {
                 write!(
                     f,

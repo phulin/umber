@@ -918,20 +918,23 @@ impl CommandState {
     pub(crate) fn open_scantokens(
         &mut self,
         registration: SourceRegistration,
-        every_eof: TracedTokenList,
+        every_eof: Option<TracedTokenList>,
     ) -> Result<InputLevelId, SourceRegistrationError> {
-        // etex.ch §24.362 inserts \everyeof after natural pseudo-file EOF and
-        // calls pseudo_close only after that list retires. Installing this
-        // closing level below the source gives the stack exactly that order.
-        self.push_token_level(
-            TokenPayload::Stored {
-                tokens: every_eof.token_list(),
-                origins: every_eof.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::CloseScantokens,
-            ReplayTrace::Transient(TransientReplayReason::Scantokens),
-        );
+        // etex.ch §24.362 begins the `every_eof` token list only when
+        // `every_eof<>null`. A null parameter closes the pseudo-file directly;
+        // representing it with an empty level would publish a spurious
+        // recovery retirement after the source closes.
+        if let Some(every_eof) = every_eof {
+            self.push_token_level(
+                TokenPayload::Stored {
+                    tokens: every_eof.token_list(),
+                    origins: every_eof.origin_list(),
+                },
+                TokenBehavior::Ordinary,
+                RetirementBehavior::CloseScantokens,
+                ReplayTrace::Transient(TransientReplayReason::Scantokens),
+            );
+        }
         let source = self.register_source(registration)?;
         let registered = self
             .input

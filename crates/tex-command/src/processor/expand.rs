@@ -661,10 +661,10 @@ impl CommandProcessor<'_> {
         // The pseudo-input representation is line-oriented, so a final LF
         // expresses that final record without becoming source text itself.
         text.push('\n');
-        let every_eof = tex_state::TracedTokenList::synthetic(
-            self.state
-                .tok_param(tex_state::env::banks::TokParam::EVERY_EOF),
-        );
+        let every_eof = self
+            .state
+            .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
+            .map(tex_state::TracedTokenList::synthetic);
         let level = self
             .command
             .open_scantokens(

@@ -630,6 +630,22 @@ impl BankCodec for TokenListIdCodec {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OptionalTokenListIdCodec;
+
+impl BankCodec for OptionalTokenListIdCodec {
+    type Value = Option<TokenListId>;
+
+    fn encode(value: Self::Value) -> u64 {
+        value.map_or(0, |id| u64::from(id.raw()) + 1)
+    }
+
+    fn decode(word: u64) -> Self::Value {
+        word.checked_sub(1)
+            .map(|raw| TokenListId::new(decode_u32(raw)))
+    }
+}
+
 fn checked_index<const N: usize>(index: u16) -> usize {
     let index = usize::from(index);
     assert!(index < N, "index out of dense bank range");

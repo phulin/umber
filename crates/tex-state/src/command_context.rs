@@ -236,6 +236,12 @@ impl CommandContext<'_> {
         self.universe.tok_param(param)
     }
 
+    /// Reads a token parameter without conflating null with an assigned empty list.
+    #[must_use]
+    pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
+        self.universe.tok_param_option(param)
+    }
+
     /// Reads one count register for canonical expandable conversion.
     #[must_use]
     pub fn count(&self, index: u16) -> i32 {

@@ -35,10 +35,12 @@
 /// 24 adds total-page and color-depth facts to external-image metadata.
 /// Version 25 adopts node semantic-identity v3, whose canonical node-list
 /// stream groups maximal same-font character runs.
+/// Version 26 includes token-parameter presence, distinguishing an absent
+/// parameter cell from a present cell whose value is the empty token list.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 25;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 26;
 
 pub mod cell;
 pub mod code_tables;

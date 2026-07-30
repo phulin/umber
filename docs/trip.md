@@ -152,7 +152,7 @@ emits no new triage output.
 
 `umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates
 with `\dump`; `umber run INPUT --format NAME.fmt` starts from that image. The
-schema-10 format has an explicit fixed-width little-endian header and section
+schema-11 format has an explicit fixed-width little-endian header and section
 directory, compatibility fingerprints, deterministic alignment, and a
 whole-image checksum. Its deterministic fixed sections contain semantic
 engine state only: control-sequence namespaces and meanings, immutable

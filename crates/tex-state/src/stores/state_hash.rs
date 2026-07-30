@@ -737,11 +737,22 @@ impl Stores {
                     hasher,
                 );
             }
-            BankTag::Toks | BankTag::TokParam => {
+            BankTag::Toks => {
                 self.hash_token_list_semantic(
                     self.resolve_stored_token_list(TokenListId::new(decode_u32(word))),
                     hasher,
                 );
+            }
+            BankTag::TokParam => {
+                if word == 0 {
+                    hasher.tag(0);
+                } else {
+                    hasher.tag(1);
+                    self.hash_token_list_semantic(
+                        self.resolve_stored_token_list(TokenListId::new(decode_u32(word - 1))),
+                        hasher,
+                    );
+                }
             }
             BankTag::Box => match NodeListId::decode_box_word(word) {
                 Some(id) => self.hash_node_list_identity(id, hasher),

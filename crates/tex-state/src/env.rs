@@ -17,8 +17,8 @@ pub(crate) mod raw;
 
 use self::banks::{
     BankSetContext, BoxWriteOutcome, DENSE_REGISTER_COUNT, DimenParam, FixedBank, FontIdCodec,
-    GlueIdCodec, GlueParam, I32Codec, IntParam, PARAMETER_COUNT, ScaledCodec, TokParam,
-    TokenListIdCodec,
+    GlueIdCodec, GlueParam, I32Codec, IntParam, OptionalTokenListIdCodec, PARAMETER_COUNT,
+    ScaledCodec, TokParam, TokenListIdCodec,
 };
 use self::box_bank::{BoxBank, BoxWriteContext};
 use self::overflow::{REGISTER_COUNT, SparseBank};
@@ -162,7 +162,7 @@ pub struct Env {
     int_params: FixedBank<I32Codec, PARAMETER_COUNT>,
     dimen_params: FixedBank<ScaledCodec, PARAMETER_COUNT>,
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
-    tok_params: FixedBank<TokenListIdCodec, PARAMETER_COUNT>,
+    tok_params: FixedBank<OptionalTokenListIdCodec, PARAMETER_COUNT>,
     font_dimens: BTreeMap<u32, WordStamp>,
     font_param_lens: BTreeMap<u32, WordStamp>,
     font_hyphen_chars: BTreeMap<u32, WordStamp>,
@@ -674,6 +674,12 @@ impl Env {
     /// Returns a token-list parameter value.
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
+        self.tok_param_option(param).unwrap_or(TokenListId::EMPTY)
+    }
+
+    /// Returns a token-list parameter while preserving tex.web's null pointer.
+    #[must_use]
+    pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
         self.tok_params.get(param.raw())
     }
 
@@ -681,7 +687,7 @@ impl Env {
     pub(crate) fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.tok_params.set(
             param.raw(),
-            value,
+            Some(value),
             BankSetContext {
                 journal: &mut self.journal,
                 #[cfg(feature = "shadow")]
@@ -697,7 +703,7 @@ impl Env {
     pub(crate) fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.tok_params.set(
             param.raw(),
-            value,
+            Some(value),
             BankSetContext {
                 journal: &mut self.journal,
                 #[cfg(feature = "shadow")]

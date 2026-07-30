@@ -242,8 +242,8 @@ async function integration() {
 		manifestSha256,
 	});
 	assert(
-		formatSchemaVersion() === 10,
-		"browser runtime did not expose schema 10",
+		formatSchemaVersion() === 11,
+		"browser runtime did not expose schema 11",
 	);
 	await rejected(
 		() =>

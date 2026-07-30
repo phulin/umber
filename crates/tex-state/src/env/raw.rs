@@ -5,7 +5,9 @@ use super::{
     segment_index, segment_offset, u16_index,
 };
 use crate::cell::{BankTag, CellId};
-use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use crate::env::banks::{
+    BankCodec, DimenParam, GlueParam, IntParam, OptionalTokenListIdCodec, TokParam,
+};
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -123,7 +125,9 @@ impl Env {
             BankTag::GlueParam => {
                 u64::from(self.glue_param(GlueParam::new(u16_index(index))).raw())
             }
-            BankTag::TokParam => u64::from(self.tok_param(TokParam::new(u16_index(index))).raw()),
+            BankTag::TokParam => OptionalTokenListIdCodec::encode(
+                self.tok_param_option(TokParam::new(u16_index(index))),
+            ),
             BankTag::FontDimen => self.font_dimens.get(&index).map_or(0, |entry| entry.word),
             BankTag::FontParamLen => self
                 .font_param_lens

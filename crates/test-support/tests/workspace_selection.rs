@@ -191,3 +191,73 @@ fn every_excluded_workspace_directory_names_its_tier() {
         );
     }
 }
+
+/// A format-schema bump crosses workspace, excluded-tool, release-lock,
+/// browser-fixture, benchmark, and documentation boundaries. Keep the
+/// deliberately explicit inventory here so a new bump cannot leave a
+/// consumer outside the crate that owns the version.
+#[test]
+fn current_format_schema_receipts_cover_every_release_surface() {
+    let root = repo_root();
+    let schema_source =
+        std::fs::read_to_string(root.join("crates/tex-state/src/format_container.rs"))
+            .expect("read format schema owner");
+    let schema = schema_source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("pub(crate) const SCHEMA_VERSION: u32 = ")
+                .and_then(|value| value.strip_suffix(';'))
+                .and_then(|value| value.parse::<u32>().ok())
+        })
+        .expect("format schema owner declares a literal SCHEMA_VERSION");
+
+    let receipts = [
+        (
+            "crates/umber-wasm/assets/plain-source.lock",
+            format!("format_schema {schema}"),
+        ),
+        (
+            "crates/umber-wasm/assets/plain-format.json",
+            format!("\"formatSchema\": {schema}"),
+        ),
+        (
+            "crates/umber-wasm/browser-tests/fixture.js",
+            format!("formatSchemaVersion() === {schema}"),
+        ),
+        (
+            "crates/umber-wasm/js/manifest-schema.test.js",
+            format!("formatSchema: {schema}"),
+        ),
+        ("tests/latex-source.lock", format!("format_schema {schema}")),
+        (
+            "tools/texlive-wasm-publish/src/tests.rs",
+            format!("assert_eq!(format.format_schema, {schema})"),
+        ),
+        (
+            "benchmarks/tex-state/src/bin/format_cache_profile.rs",
+            format!("profile input must be schema-{schema}"),
+        ),
+        (
+            "docs/architecture.md",
+            format!("currently\nat schema {schema}"),
+        ),
+    ];
+
+    for (path, expected) in receipts {
+        let contents = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert!(
+            contents.contains(&expected),
+            "{path} must receipt current format schema {schema} with {expected:?}"
+        );
+    }
+
+    let plain_format =
+        std::fs::read(root.join("crates/umber-wasm/assets/plain.fmt")).expect("read Plain format");
+    assert_eq!(
+        plain_format.get(8..12),
+        Some(schema.to_le_bytes().as_slice()),
+        "packaged Plain format header must receipt current format schema {schema}"
+    );
+}

@@ -1298,9 +1298,29 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 10);
+    const EXPECTED_FORMAT_SCHEMA: u32 = 11;
+    assert_eq!(format_schema_version(), EXPECTED_FORMAT_SCHEMA);
     let format = include_bytes!("../assets/plain.fmt");
-    assert_eq!(u32::from_le_bytes(format[8..12].try_into().unwrap()), 10);
+    assert_eq!(
+        u32::from_le_bytes(format[8..12].try_into().unwrap()),
+        EXPECTED_FORMAT_SCHEMA
+    );
+    assert!(
+        include_str!("../assets/plain-format.json")
+            .contains(&format!("\"formatSchema\": {EXPECTED_FORMAT_SCHEMA}")),
+        "published metadata must match the runtime schema"
+    );
+    assert!(
+        include_str!("../assets/plain-source.lock")
+            .contains(&format!("format_schema {EXPECTED_FORMAT_SCHEMA}")),
+        "reproducible source lock must match the runtime schema"
+    );
+    assert!(
+        include_str!("../browser-tests/fixture.js").contains(&format!(
+            "formatSchemaVersion() === {EXPECTED_FORMAT_SCHEMA}"
+        )),
+        "browser acceptance constant must match the runtime schema"
+    );
     let source = b"\\shipout\\hbox{}\\end";
     let mut plain = session_with_format("main.tex", format);
     plain
@@ -1311,7 +1331,7 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
 
     let mut initialized = Universe::with_world(World::memory());
     prepare_run_stores(&mut initialized);
-    let minimal_format = initialized.dump_format().expect("dump schema-10 format");
+    let minimal_format = initialized.dump_format().expect("dump schema-11 format");
     let mut format_initialized = session_with_format("main.tex", &minimal_format);
     format_initialized
         .add_user_file("main.tex", &bytes(source))

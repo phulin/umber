@@ -2490,6 +2490,14 @@ impl Stores {
         self.resolve_stored_token_list(self.env.tok_param(param))
     }
 
+    /// Returns a token-list parameter while preserving an unassigned null cell.
+    #[must_use]
+    pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
+        self.env
+            .tok_param_option(param)
+            .map(|value| self.resolve_stored_token_list(value))
+    }
+
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.assert_live_token_list(value);
         self.env.set_tok_param_global(param, value);

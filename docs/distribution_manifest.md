@@ -290,7 +290,7 @@ mutable hosted distribution name.
 The focused
 `format_closure_batch_is_installed_for_an_exactly_two_attempt_retry` native
 host test constructs canonical schema-3 distributions with runtime-created
-schema-10 LaTeX and pdfLaTeX formats and nested closures at the production
+schema-11 LaTeX and pdfLaTeX formats and nested closures at the production
 cardinalities. Run it with:
 
 ```bash
@@ -311,7 +311,7 @@ terminal diagnostic before it was stopped after 689.50 seconds; the pdfLaTeX
 builder likewise produced no format or diagnostic during a bounded 69.70-second
 observation (including a 19.33-second release rebuild). This is the independent
 early-completion/bootstrap path tracked by `umber2-pbxv.5.4.1`; it prevents the
-schema-10 determinism, source-versus-format, corpus, and live WASM gates from
+schema-11 determinism, source-versus-format, corpus, and live WASM gates from
 reaching their comparison phases and is not hidden by weakening those gates.
 
 ### Production shard selection and publication evidence

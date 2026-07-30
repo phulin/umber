@@ -83,7 +83,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         write(&root_path, relative, bytes)?;
     }
 
-    let format_bytes = [b"UMBRFMT\0".as_slice(), &10_u32.to_le_bytes()].concat();
+    let format_bytes = [b"UMBRFMT\0".as_slice(), &11_u32.to_le_bytes()].concat();
     let format_path = fixture.path().join("plain.fmt");
     fs::write(&format_path, &format_bytes)?;
     let format_metadata = fixture.path().join("plain-format.json");
@@ -97,7 +97,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
             "bytes": format_bytes.len(),
             "engine": "umber",
             "engineVersion": "fixture",
-            "formatSchema": 10,
+            "formatSchema": 11,
             "sourceDistribution": "fixture",
             "sourceManifestSha256": "1".repeat(64),
             "sourceDateEpoch": 1,
@@ -313,7 +313,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     assert_eq!(inline.sha256, manifest.files["tfm:cmr10.tfm"].sha256);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 10);
+    assert_eq!(format.format_schema, 11);
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)

@@ -1,4 +1,4 @@
-//! Portable schema-10 node-graph section.
+//! Portable schema-11 node-graph section.
 //!
 //! List metadata is a fixed-width table. Node DTO payloads use bincode's
 //! explicitly selected little-endian fixed-integer vocabulary; they are

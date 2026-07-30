@@ -289,7 +289,7 @@ test("schema three validates bounded canonical format closures", () => {
 		bytes: 4,
 		engine: "umber",
 		engineVersion: "0.1.0",
-		formatSchema: 10,
+		formatSchema: 11,
 		sourceDistribution: "fixture",
 		sourceManifestSha256: "4".repeat(64),
 		sourceDateEpoch: 0,

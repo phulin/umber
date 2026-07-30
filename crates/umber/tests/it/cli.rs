@@ -34,7 +34,7 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
     let format_path = directory.path().join("generated.fmt");
     fs::write(
         &format_path,
-        Universe::new().dump_format().expect("schema-10 format"),
+        Universe::new().dump_format().expect("schema-11 format"),
     )
     .expect("write format image");
     let cache_root = directory.path().join("cache");

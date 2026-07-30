@@ -1053,10 +1053,17 @@ impl StoreFormat {
                         mark_reachable(&mut live_macros, definition.raw(), "meaning macro")?;
                     }
                 }
-                BankTag::Toks | BankTag::TokParam => {
+                BankTag::Toks => {
                     let raw = u32::try_from(raw)
                         .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
                     mark_reachable(&mut live_tokens, raw, "environment token list")?;
+                }
+                BankTag::TokParam => {
+                    if raw != 0 {
+                        let raw = u32::try_from(raw - 1)
+                            .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                        mark_reachable(&mut live_tokens, raw, "environment token list")?;
+                    }
                 }
                 _ => {}
             }
@@ -1158,10 +1165,17 @@ impl StoreFormat {
                         .encode();
                     }
                 }
-                BankTag::Toks | BankTag::TokParam => {
+                BankTag::Toks => {
                     let old = u32::try_from(*raw)
                         .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
                     *raw = u64::from(remapped(&token_map, old, "environment token list")?);
+                }
+                BankTag::TokParam => {
+                    if *raw != 0 {
+                        let old = u32::try_from(*raw - 1)
+                            .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                        *raw = u64::from(remapped(&token_map, old, "environment token list")?) + 1;
+                    }
                 }
                 BankTag::CurrentFont => {
                     let symbol_plus_one = *raw >> 32;
@@ -1639,7 +1653,7 @@ impl StoreFormat {
     }
 }
 
-/// Publishes the already decoded and cross-section-validated schema-10 bases.
+/// Publishes the already decoded and cross-section-validated schema-11 bases.
 ///
 /// This is deliberately separate from the test-only transitional DTO restore
 /// above. The production loader installs one frozen node root and one immutable
@@ -1879,8 +1893,9 @@ impl StoreFormat {
                         return Err(StoreFormatError::Invalid("parameter glue is not live"));
                     }
                     if cell.bank() == BankTag::TokParam
-                        && (raw > u64::from(u32::MAX)
-                            || raw as u32 as usize >= self.token_lists.len())
+                        && raw != 0
+                        && (raw - 1 > u64::from(u32::MAX)
+                            || (raw - 1) as u32 as usize >= self.token_lists.len())
                     {
                         return Err(StoreFormatError::Invalid(
                             "parameter token list is not live",

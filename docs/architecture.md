@@ -594,19 +594,21 @@ it.
 
 ## 14. Portable format images
 
-`tex-state` owns a fixed-width little-endian frozen-format container beginning
-at schema 10. Its canonical section directory, alignment and zero-padding
+`tex-state` owns a fixed-width little-endian frozen-format container, currently
+at schema 11. Its canonical section directory, alignment and zero-padding
 rules, whole-image checksum, exact ABI and lookup-configuration fingerprints,
 relative/index reference model, validation order, literal hash-table layout,
 and immutable-versus-job-local state boundary are specified in
 [frozen_format.md](frozen_format.md).
 
-Schema 10 installs authoritative fixed-width sections for names, lookup
+Schema 10 introduced authoritative fixed-width sections for names, lookup
 indexes, token lists, macros, glue, fonts, code tables, hyphenation,
 environment cells, and reachable node graphs. The historically named section
 1 contains only Universe-level interaction and PDF configuration metadata; it
-is not a schema-9 compatibility payload. Schema 9 itself is rejected rather
-than guessed or reinterpreted, and formats are regenerated from source.
-Loading never publishes partially validated state, persists Rust heap layout,
-or mutates frozen bytes. Job-local clocks, input, page state, journals,
-effects, and mutable overlays are constructed fresh.
+is not a schema-9 compatibility payload. Schema 11 additionally preserves the
+presence tag that distinguishes an absent token parameter from an explicitly
+assigned empty token list. Schemas 9 and 10 are rejected rather than guessed
+or reinterpreted, and formats are regenerated from source. Loading never
+publishes partially validated state, persists Rust heap layout, or mutates
+frozen bytes. Job-local clocks, input, page state, journals, effects, and
+mutable overlays are constructed fresh.

@@ -9,7 +9,7 @@ use std::fmt;
 use std::io::{Read, Write};
 
 pub(crate) const MAGIC: [u8; 8] = *b"UMBRFMT\0";
-pub(crate) const SCHEMA_VERSION: u32 = 10;
+pub(crate) const SCHEMA_VERSION: u32 = 11;
 pub(crate) const HEADER_LEN: usize = 80;
 const DIRECTORY_ENTRY_LEN: usize = 40;
 const CHECKSUM_OFFSET: usize = 56;

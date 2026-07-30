@@ -161,7 +161,7 @@ external content-verification contract. Execution-transient token flows stay in
 pooled lexer buffers and enter the token store only when crossing a durable
 boundary.
 
-Schema-10 format loading installs names, token lists, macro definitions, glue,
+Schema-11 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen
 bases. It attaches fresh runtime identity tags and builds ordinary lookup and
 semantic-hash indexes in bulk rather than replaying semantic interning or
@@ -170,7 +170,7 @@ content and code-table/hyphenation mutations extend those bases and follow the
 same lookup, snapshot, generation, and rollback rules as a cold store; no
 format byte is mutated.
 
-Schema-10 kind 528 installs validated environment cells directly as an
+Schema-11 kind 528 installs validated environment cells directly as an
 immutable format base, including references into kind 512's frozen node arena.
 The existing banks form the mutable job overlay and retain their ordinary
 write barrier, journal, grouping, snapshot, and rollback semantics. Core
@@ -179,7 +179,7 @@ duplicated there nor reconstructed through their ordinary mutation APIs.
 Environment references are checked against the decoded frozen prefixes before
 either the base or its stores are published.
 
-The schema-10 publisher is structurally separate from the test-only legacy DTO
+The schema-11 publisher is structurally separate from the test-only legacy DTO
 restorer. Operation-level test instrumentation proves that normal loading does
 not remap detached graph keys, reseal node semantic identities, or replay raw
 environment assignments. Loaded-base mutation remains ordinary groupable and

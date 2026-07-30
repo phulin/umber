@@ -421,7 +421,7 @@ fn parameter_journal_records_use_parameter_bank_tags() {
             undo(BankTag::IntParam, 1, 0, u64::from((-9_i32) as u32)),
             undo(BankTag::DimenParam, 2, 0, u64::from((-10_i32) as u32)),
             undo(BankTag::GlueParam, 3, 0, 90),
-            undo(BankTag::TokParam, 4, 0, 100),
+            undo(BankTag::TokParam, 4, 0, 101),
         ]
     );
 }
@@ -438,7 +438,7 @@ fn parameter_global_sets_tag_journal_records() {
         &[Entry::Undo(UndoRec::new(
             CellId::new_global(BankTag::TokParam, 7),
             0,
-            11,
+            12,
         ))]
     );
 }

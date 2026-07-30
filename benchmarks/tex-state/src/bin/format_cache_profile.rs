@@ -82,7 +82,7 @@ fn main() {
     );
     let format = std::fs::read(&format_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", format_path.display()));
-    Universe::from_format(World::memory(), &format).expect("profile input must be schema-10");
+    Universe::from_format(World::memory(), &format).expect("profile input must be schema-11");
 
     let root =
         std::env::temp_dir().join(format!("umber-format-cache-profile-{}", std::process::id()));

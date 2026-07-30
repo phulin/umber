@@ -621,7 +621,7 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
     let shard_digest = hex_digest(shard.as_bytes());
     std::fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("shard");
     let root = format!(
-        "{{\"schema\":3,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":10,\"sourceDistribution\":\"closure\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
+        "{{\"schema\":3,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":11,\"sourceDistribution\":\"closure\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
         format_bytes.len(),
         crate::PACKAGE_VERSION,
         "1".repeat(64)
@@ -835,7 +835,7 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
 
         let mut initex = tex_state::Universe::with_world(World::memory());
         engine.prepare_fresh(&mut initex);
-        let format = initex.dump_format().expect("schema-10 format");
+        let format = initex.dump_format().expect("schema-11 format");
         let format_digest = hex_digest(&format);
         std::fs::write(objects.join(format!("sha256-{format_digest}")), &format)
             .expect("format object");
@@ -869,7 +869,7 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
         std::fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
             .expect("shard object");
         let root = format!(
-            "{{\"schema\":3,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":10,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+            "{{\"schema\":3,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":11,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
             format.len(),
             crate::PACKAGE_VERSION,
             "1".repeat(64),
