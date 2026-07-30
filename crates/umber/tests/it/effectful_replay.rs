@@ -318,7 +318,15 @@ fn seed_world(world: &mut World) {
             .set_memory_file(path, bytes)
             .expect("seed memory file");
     }
-    for index in 0..64 {
+    // Two independent consumers draw from this pool, and the harness must
+    // stay at `errorstop`: §484 makes `\read` from the terminal a fatal
+    // error in the nonstop modes, so the generator's `TerminalRead` step
+    // needs the interactive one. Besides those reads, §82's `error` reads a
+    // line for §83's advice on every recoverable error -- and the generator
+    // deliberately emits out-of-range registers (`300..308` against TeX82's
+    // 255 maximum), so §436's `Bad register code` fires on ordinary runs.
+    // The pool therefore has to cover prompts as well as reads.
+    for index in 0..512 {
         world
             .push_memory_terminal_line(format!("terminal{index}"))
             .expect("seed terminal line");
