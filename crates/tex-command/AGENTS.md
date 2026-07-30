@@ -78,9 +78,10 @@ print channel of its own.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.
-- `src/processor/expand.rs`, `src/processor/expand/tests.rs`: ordinary
-  expanded-command delivery, expandable primitives, converted-token
-  construction, and focused private unit tests.
+- `src/processor/expand.rs`, `src/processor/expand/tests.rs`, and
+  `src/processor/fixtures/`: ordinary expanded-command delivery, expandable
+  primitives, converted-token construction, focused private unit tests, and
+  bounded source microfixtures.
 - `src/scanners/`: private typed scanner family. `hyphenation.rs` owns TeX82
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
   classification loops rather than `scan_toks` collections and so must never

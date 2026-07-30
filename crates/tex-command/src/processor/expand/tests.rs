@@ -1412,6 +1412,140 @@ fn frozen_undefined_control_sequence_reports_then_resumes_source_once() {
     ));
 }
 
+/// TeX82 §§370/380 still report and discard `undefined_cs` under the e-TeX
+/// profile, but the pinned e-TeX 2.6 observer has no diagnostic seam at §370.
+/// Its detached stream therefore retires an exhausted macro immediately after
+/// the raw undefined command while the command-owned semantic diagnostic
+/// remains available to the executor.
+#[test]
+fn etex_undefined_recovery_retires_macro_without_observer_diagnostic() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"A".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let undefined = universe.intern("undefined").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(undefined))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::MacroReplacement,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        let resumed = processor
+            .get_x_token()
+            .expect("undefined recovery is finite")
+            .expect("enclosing source resumes");
+        assert_eq!(
+            resumed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+    }
+    assert_eq!(
+        command.take_semantic_diagnostics(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
+    );
+    assert!(matches!(
+        command_and_diagnostic_observations(&recorder.0).as_slice(),
+        [
+            CommandObservation::Command(raw_undefined),
+            CommandObservation::Command(raw_a),
+            CommandObservation::Command(expanded_a),
+        ] if raw_undefined.boundary == CommandDeliveryBoundary::Raw
+            && raw_undefined.command == "undefined_cs"
+            && raw_a.boundary == CommandDeliveryBoundary::Raw
+            && raw_a.command == "letter"
+            && expanded_a.boundary == CommandDeliveryBoundary::Expanded
+            && expanded_a.command == "letter"
+    ));
+    let undefined_position = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(
+                record,
+                CommandObservation::Command(command) if command.command == "undefined_cs"
+            )
+        })
+        .expect("raw undefined command observed");
+    assert!(matches!(
+        recorder.0.get(undefined_position + 1),
+        Some(CommandObservation::Input(record))
+            if record.transition == crate::observation::InputTransition::Retire
+                && record.reason == crate::observation::InputReason::Macro
+    ));
+}
+
+/// Bounded source fixture for the e-TeX 2.6 §370 observer boundary. The raw
+/// undefined command is visible, recovery remains semantic, and detached
+/// observation resumes at the following expanded token with no diagnostic
+/// record inserted between them.
+#[test]
+fn etex_undefined_semantic_microfixture_omits_observer_diagnostic() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(
+                include_bytes!("../fixtures/etex-undefined-expansion.tex").as_slice(),
+            ),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        let resumed = processor
+            .get_x_token()
+            .expect("undefined recovery is finite")
+            .expect("fixture resumes");
+        assert_eq!(
+            resumed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+    }
+    assert_eq!(
+        command.take_semantic_diagnostics(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
+    );
+    assert!(matches!(
+        command_and_diagnostic_observations(&recorder.0).as_slice(),
+        [
+            CommandObservation::Command(raw_undefined),
+            CommandObservation::Command(raw_a),
+            CommandObservation::Command(expanded_a),
+        ] if raw_undefined.boundary == CommandDeliveryBoundary::Raw
+            && raw_undefined.command == "undefined_cs"
+            && raw_a.boundary == CommandDeliveryBoundary::Raw
+            && raw_a.command == "letter"
+            && expanded_a.boundary == CommandDeliveryBoundary::Expanded
+            && expanded_a.command == "letter"
+    ));
+}
+
 #[test]
 fn undefined_semantic_diagnostic_survives_unobserved_execution_and_snapshot_retry() {
     let mut command = CommandState::default();

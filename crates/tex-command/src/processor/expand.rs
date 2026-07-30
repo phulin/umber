@@ -634,7 +634,14 @@ impl CommandProcessor<'_> {
                 self.command
                     .semantic_diagnostics
                     .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence);
-                self.observe_command_diagnostic("undefined_control_sequence", &command);
+                if !self.command.profile().capabilities().supports_etex() {
+                    // TeX82 §370 still owns the recoverable user-visible
+                    // error above. The pinned e-TeX 2.6 observer has no
+                    // diagnostic seam at that error site, so its detached
+                    // event stream advances directly to the next input
+                    // transition.
+                    self.observe_command_diagnostic("undefined_control_sequence", &command);
+                }
                 Ok(())
             }
             _ => Err(CommandError::input_invariant()),
