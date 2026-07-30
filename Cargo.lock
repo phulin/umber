@@ -1176,6 +1176,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "similar",
  "tex-command",
  "tex-exec",
  "tex-oracle",

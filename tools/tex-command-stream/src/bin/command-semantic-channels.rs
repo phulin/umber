@@ -19,12 +19,19 @@
 //! `docs/testing_policy.md`'s rule that a skipped case must never read as a
 //! pass.
 //!
-//! An `xfail` channel's `bug` id is never invented here: it is read from
-//! whatever the case's manifest already declares for that channel (exactly
-//! as the projection layer's own `expectation` xfail is hand-authored) and
-//! carried forward. A channel that newly diverges from the oracle and has no
-//! existing bug to preserve fails the run with the divergence printed, so a
-//! human decides which issue it belongs to before the corpus can commit it.
+//! An `xfail` channel's `bug` id is resolved by
+//! `tex_command_stream::semantic::classify_divergence`, which matches the
+//! *shape* of the first line the oracle produced that Umber's did not
+//! against a fixed set of already-filed bugs (a missing `*` prompt, a
+//! `show_context` accuracy gap, a missing box diagnostic, a file's `)`
+//! closed early, and so on -- see `tools/tex-command-stream/src/semantic/
+//! classify.rs`). It refuses rather than guesses: an unclassifiable
+//! divergence falls back to whatever bug id the case's manifest already
+//! declares for that channel (correct for a genuine one-off with no shared
+//! shape to generalize), and a channel that newly diverges with *neither* a
+//! classification *nor* an existing declaration fails the run with the
+//! divergence printed, so a human decides which issue it belongs to before
+//! the corpus can commit it.
 //!
 //! The `effects` channel has no oracle-comparable source at all: it is
 //! Umber's own structured rendering of stream opens/closes/writes and shell
@@ -33,6 +40,25 @@
 //! empty today, so this tool requires that and fails loudly if it ever stops
 //! being true, rather than inventing an authority for content with no
 //! reference to check it against.
+//!
+//! This tool also derives a `pass` case's projection `expected` array from
+//! this same run (`plan_expected`), the same way it derives `channels`:
+//! `docs/testing_infrastructure.md` calls the projection layer
+//! "Umber-self-authoritative by design", so `expected` has no oracle to read
+//! it from, and the only thing it can mean for a `pass` case is exactly what
+//! this run's own projection produces. That is not new information hiding
+//! behind a new name -- a `pass` case's `expected` was already required to
+//! equal a fresh run's projection byte for byte (`evaluate_expectation`
+//! rejects any other outcome), so deriving it removes only the throwaway
+//! harness every migration used to hand-build to capture that value once,
+//! not a check. An `xfail` case's `expected` is different in kind, not just
+//! in accuracy: it names a still-uncorrected divergence's position, which by
+//! definition is not what the current run produces, so it is never derived
+//! and this tool never rewrites it. A `pass` case whose freshly derived
+//! `expected` disagrees with what is already committed is a real behavior
+//! change, and this tool refuses to absorb it silently: the whole batch
+//! fails with both arrays printed, so a human reviews the diff before it can
+//! land.
 
 #![allow(
     clippy::disallowed_methods,
@@ -45,9 +71,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use tex_command_stream::semantic::{
-    CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, STREAM_CHANNELS, StreamChannel,
-    StreamDisposition, channel_file, execute, first_line_difference, load_suite_with,
-    normalize_log_clock, repository_root,
+    CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
+    StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
+    first_line_difference, load_suite_with, normalize_log_clock, project,
+    reclassify_no_error_channel, repository_root,
 };
 
 fn main() -> ExitCode {
@@ -96,7 +123,12 @@ fn run() -> Result<String, String> {
         match execute(&source, &declared.case) {
             Ok(completed) => {
                 let captured = CapturedChannels::capture(&completed);
-                match plan_case(&oracle_root, declared, &source, &captured) {
+                let actual_projection = project(&completed, &declared.case.projection);
+                let plan = plan_expected(declared, &actual_projection).and_then(|expected| {
+                    plan_case(&oracle_root, declared, &source, &captured)
+                        .map(|channels| CasePlan { expected, channels })
+                });
+                match plan {
                     Ok(plan) => {
                         plans
                             .entry(declared.domain.clone())
@@ -167,11 +199,41 @@ enum ChannelPlan {
     },
 }
 
+/// A case's complete derived plan: its `expected` projection array (a
+/// `pass` case only; `None` for `xfail`, which is never derived -- see this
+/// file's module doc) and its channel contract.
 struct CasePlan {
+    expected: Option<Vec<String>>,
+    channels: ChannelsPlan,
+}
+
+struct ChannelsPlan {
     events: usize,
     status: String,
     /// In [`STREAM_CHANNELS`] order.
     channels: [ChannelPlan; 4],
+}
+
+/// Derives a `pass` case's `expected` array from its own freshly projected
+/// run, or refuses when that would silently absorb a behavior change. See
+/// this file's module doc.
+fn plan_expected(
+    declared: &DeclaredCase,
+    actual: &[String],
+) -> Result<Option<Vec<String>>, String> {
+    if !matches!(declared.case.expectation, Expectation::Pass) {
+        return Ok(None);
+    }
+    if !declared.case.expected.is_empty() && declared.case.expected != actual {
+        return Err(format!(
+            "expected observations changed: committed {:?}, this run's projection now produces \
+             {actual:?}; regeneration never absorbs a pass case's behavior change silently -- \
+             review the difference and, if it is an intended, reviewed change, update this \
+             case's committed \"expected\" to the new array by hand before regenerating again",
+            declared.case.expected,
+        ));
+    }
+    Ok(Some(actual.to_vec()))
 }
 
 /// Resolves every stream channel's disposition for one case by comparing
@@ -181,7 +243,7 @@ fn plan_case(
     declared: &DeclaredCase,
     source: &[u8],
     captured: &CapturedChannels,
-) -> Result<CasePlan, String> {
+) -> Result<ChannelsPlan, String> {
     let case_dir = oracle_root.join(&declared.domain).join(&declared.case.id);
     if !case_dir.is_dir() {
         return Err(format!(
@@ -220,7 +282,7 @@ fn plan_case(
         .try_into()
         .unwrap_or_else(|_| panic!("STREAM_CHANNELS has exactly 4 entries"));
 
-    Ok(CasePlan {
+    Ok(ChannelsPlan {
         events: captured.events,
         status: captured.status.clone(),
         channels,
@@ -289,20 +351,49 @@ fn plan_channel(
             bytes: oracle_bytes,
         }),
         Some(mismatch) => {
-            let bug = existing_bug(declared, channel).ok_or_else(|| {
-                format!(
-                    "channel {} newly diverges from the oracle at line {} (oracle: {:?}, umber: \
-                     {:?}) and has no existing xfail bug to preserve; hand-author \
-                     `channels.{}` in the manifest as `{{\"kind\": \"xfail\", \"bug\": \
-                     \"umber2-<epic>.<n>\", \"mismatch\": {{\"line\": 1, \"expected\": \"x\", \
-                     \"actual\": \"y\"}}}}` before regenerating",
-                    channel.name(),
-                    mismatch.line,
-                    mismatch.expected,
-                    mismatch.actual,
-                    channel.name(),
-                )
-            })?;
+            // The bug id is never invented (see this file's module doc).
+            // Exactly one of three things decides it, in order:
+            //
+            // 1. A channel already pinned on `umber2-alfh.13` is re-tested
+            //    against its own positional mismatch alone
+            //    (`reclassify_no_error_channel`), because that guess is the
+            //    one this tool exists to correct and a deeper scan would
+            //    routinely misattribute it to an unrelated, already-correct
+            //    label instead (see `classify.rs`'s module doc). A shape
+            //    that reclassifies replaces `.13`; one that does not keeps
+            //    it, since `.13` remains the best available answer until a
+            //    human reclassifies it by hand.
+            // 2. Any other already-declared bug (`.11`, `.14`-`.24`) is
+            //    trusted outright and never re-examined: only `.13` was
+            //    audited and found wrong.
+            // 3. A channel with *no* existing declaration at all (a
+            //    brand-new divergence) is classified by the general,
+            //    deeper `classify_divergence` scan, since there is no
+            //    already-correct label it could disturb. When even that
+            //    refuses, a human must hand-author the disposition before
+            //    regenerating.
+            let bug = match existing_bug(declared, channel) {
+                Some(bug) if bug == "umber2-alfh.13" => reclassify_no_error_channel(&mismatch)
+                    .map_or(bug, |class| class.bug().to_owned()),
+                Some(bug) => bug,
+                None => classify_divergence(channel, &oracle_bytes, &umber_bytes)
+                    .map(|class| class.bug().to_owned())
+                    .ok_or_else(|| {
+                        format!(
+                            "channel {} newly diverges from the oracle at line {} (oracle: \
+                             {:?}, umber: {:?}) and matches no known divergence shape and no \
+                             existing xfail bug to preserve; hand-author `channels.{}` in the \
+                             manifest as `{{\"kind\": \"xfail\", \"bug\": \
+                             \"umber2-<epic>.<n>\", \"mismatch\": {{\"line\": 1, \"expected\": \
+                             \"x\", \"actual\": \"y\"}}}}` before regenerating",
+                            channel.name(),
+                            mismatch.line,
+                            mismatch.expected,
+                            mismatch.actual,
+                            channel.name(),
+                        )
+                    })?,
+            };
             Ok(ChannelPlan::Xfail {
                 bytes: oracle_bytes,
                 bug,
@@ -313,9 +404,9 @@ fn plan_channel(
 }
 
 /// The bug a case's manifest already declares for one channel's `xfail`
-/// disposition, if any. Never invented: only ever carried forward from what
-/// was already committed, exactly as the projection layer's own
-/// `expectation` xfail bug is hand-authored rather than derived.
+/// disposition, if any. See `plan_channel`'s three-way dispatch: this is
+/// consulted first, and everything except an already-`.13` declaration is
+/// trusted outright rather than re-examined.
 fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<String> {
     let contract = declared.case.channels.as_ref()?;
     match contract.stream(channel) {
@@ -327,7 +418,7 @@ fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<Strin
 fn write_channel_files(domain_dir: &Path, case_id: &str, plan: &CasePlan) -> Result<(), String> {
     for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
         let path = channel_file(domain_dir, case_id, channel);
-        match &plan.channels[index] {
+        match &plan.channels.channels[index] {
             ChannelPlan::Empty => {
                 if path.exists() {
                     fs::remove_file(&path)
@@ -346,7 +437,20 @@ fn write_channel_files(domain_dir: &Path, case_id: &str, plan: &CasePlan) -> Res
     Ok(())
 }
 
-impl CasePlan {
+/// Renders a derived `expected` array close to the shape `dprint` produces,
+/// one observation per line, exactly like every hand-authored one already
+/// committed; `dprint fmt` (part of `scripts/regen-fixtures.sh`'s own
+/// workflow) settles any remaining wrapping.
+fn expected_json(expected: &[String], indent: &str) -> String {
+    let inner = format!("{indent}  ");
+    let items: Vec<String> = expected
+        .iter()
+        .map(|observation| format!("{inner}{}", json_string(observation)))
+        .collect();
+    format!("[\n{}\n{indent}]", items.join(",\n"))
+}
+
+impl ChannelsPlan {
     /// Renders the block close to the shape `dprint` produces so a
     /// regeneration run leaves it little to do; an explicit `dprint fmt`
     /// pass (part of `scripts/regen-fixtures.sh`'s own workflow) settles any
@@ -377,8 +481,10 @@ impl CasePlan {
     }
 }
 
-/// Inserts each case's derived `channels` block into the manifest immediately
-/// *before* its `expectation` key, preserving every other byte of the file.
+/// Inserts each case's derived `expected` array (when derived at all -- an
+/// `xfail` case's is left untouched) and `channels` block into the manifest
+/// immediately *before* its `expectation` key, preserving every other byte
+/// of the file.
 ///
 /// A structural rewrite through `serde_json` would reorder keys and drop the
 /// hand-authored formatting the corpus is reviewed in, so the edit is textual.
@@ -391,19 +497,21 @@ fn rewrite_manifest(path: &Path, cases: &BTreeMap<String, CasePlan>) -> Result<(
     let mut current: Option<&CasePlan> = None;
     let mut applied = 0;
 
+    let mut skipping_expected = 0i32;
     let mut skipping_channels = 0i32;
     for line in text.lines() {
         let trimmed = line.trim_start();
 
         // Drop any previously derived block, which the formatter may have
-        // expanded across several lines. Counting braces rather than matching
-        // one line is what makes the tool re-runnable on its own output.
-        if skipping_channels > 0 {
-            skipping_channels += braces(line);
+        // expanded across several lines. Counting delimiters rather than
+        // matching one line is what makes the tool re-runnable on its own
+        // output.
+        if skipping_expected > 0 {
+            skipping_expected += brackets(line);
             continue;
         }
-        if trimmed.starts_with("\"channels\":") {
-            skipping_channels = braces(line);
+        if skipping_channels > 0 {
+            skipping_channels += braces(line);
             continue;
         }
 
@@ -413,16 +521,46 @@ fn rewrite_manifest(path: &Path, cases: &BTreeMap<String, CasePlan>) -> Result<(
         {
             current = cases.get(id);
         }
+        // Only a case whose `expected` was actually derived (a `pass` case)
+        // has its existing array stripped here; an `xfail` case's committed
+        // `expected` passes through this loop untouched, exactly like every
+        // other field this tool does not derive.
+        if current.is_some_and(|plan| plan.expected.is_some())
+            && trimmed.starts_with("\"expected\":")
+        {
+            skipping_expected = brackets(line);
+            continue;
+        }
+        if trimmed.starts_with("\"channels\":") {
+            skipping_channels = braces(line);
+            continue;
+        }
+
         if let Some(plan) = current
             && trimmed.starts_with("\"expectation\":")
         {
             let indent = &line[..line.len() - trimmed.len()];
-            output.push_str(&format!("{indent}\"channels\": {},\n", plan.json(indent)));
+            if let Some(expected) = &plan.expected {
+                output.push_str(&format!(
+                    "{indent}\"expected\": {},\n",
+                    expected_json(expected, indent)
+                ));
+            }
+            output.push_str(&format!(
+                "{indent}\"channels\": {},\n",
+                plan.channels.json(indent)
+            ));
             applied += 1;
             current = None;
         }
         output.push_str(line);
         output.push('\n');
+    }
+    if skipping_expected != 0 {
+        return Err(format!(
+            "{}: an existing \"expected\" array does not close",
+            path.display()
+        ));
     }
     if skipping_channels != 0 {
         return Err(format!(
@@ -445,8 +583,18 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
-/// Net brace depth a line contributes, ignoring braces inside JSON strings.
+/// Net `{`/`}` depth a line contributes, ignoring braces inside JSON strings.
 fn braces(line: &str) -> i32 {
+    net_delimiter_depth(line, '{', '}')
+}
+
+/// Net `[`/`]` depth a line contributes, ignoring brackets inside JSON
+/// strings.
+fn brackets(line: &str) -> i32 {
+    net_delimiter_depth(line, '[', ']')
+}
+
+fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
     let mut depth = 0;
     let mut in_string = false;
     let mut escaped = false;
@@ -455,8 +603,8 @@ fn braces(line: &str) -> i32 {
             _ if escaped => escaped = false,
             '\\' if in_string => escaped = true,
             '"' => in_string = !in_string,
-            '{' if !in_string => depth += 1,
-            '}' if !in_string => depth -= 1,
+            character if !in_string && character == open => depth += 1,
+            character if !in_string && character == close => depth -= 1,
             _ => {}
         }
     }

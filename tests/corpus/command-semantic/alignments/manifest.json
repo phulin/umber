@@ -661,7 +661,7 @@
         "status": "clean",
         "terminal": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": {
             "line": 2,
             "expected": "(./misplaced-delimiter-recovery.tex",
@@ -670,7 +670,7 @@
         },
         "log": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": {
             "line": 3,
             "expected": "(./misplaced-delimiter-recovery.tex",

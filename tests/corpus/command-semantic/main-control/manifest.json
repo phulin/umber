@@ -10,10 +10,31 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [224, 228, 230, 236, 247]
+        "sections": [
+          224,
+          228,
+          230,
+          236,
+          247
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4] },
-      "expected": ["count:0=7", "count:1=1", "count:2=1", "count:3=1", "count:4=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expected": [
+        "count:0=7",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1"
+      ],
       "channels": {
         "events": 517,
         "status": "clean",
@@ -22,7 +43,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "save-level-lifecycle",
@@ -31,10 +54,28 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [269, 270, 271, 272, 273, 274]
+        "sections": [
+          269,
+          270,
+          271,
+          272,
+          273,
+          274
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2] },
-      "expected": ["count:0=1", "count:1=1", "count:2=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=1",
+        "count:2=1"
+      ],
       "channels": {
         "events": 206,
         "status": "clean",
@@ -43,7 +84,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "local-global-save",
@@ -52,10 +95,29 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [275, 276, 277, 278, 279]
+        "sections": [
+          275,
+          276,
+          277,
+          278,
+          279
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3] },
-      "expected": ["count:0=3", "count:1=1", "count:2=4", "count:3=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expected": [
+        "count:0=3",
+        "count:1=1",
+        "count:2=4",
+        "count:3=1"
+      ],
       "channels": {
         "events": 251,
         "status": "clean",
@@ -64,15 +126,30 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "aftergroup-replay",
       "property_id": "tex82.group.aftergroup-replay",
       "source": "aftergroup-replay.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [280] },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=12"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          280
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=12"
+      ],
       "channels": {
         "events": 256,
         "status": "clean",
@@ -81,7 +158,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "unsave-restoration",
@@ -90,10 +169,32 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [281, 282, 283, 284, 1068, 1069]
+        "sections": [
+          281,
+          282,
+          283,
+          284,
+          1068,
+          1069
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4] },
-      "expected": ["count:0=3", "count:1=1", "count:2=1", "count:3=0", "count:4=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expected": [
+        "count:0=3",
+        "count:1=1",
+        "count:2=1",
+        "count:3=0",
+        "count:4=1"
+      ],
       "channels": {
         "events": 281,
         "status": "clean",
@@ -102,7 +203,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "mode-dispatch",
@@ -111,16 +214,40 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1029, 1030, 1031, 1045, 1046, 1047]
+        "sections": [
+          1029,
+          1030,
+          1031,
+          1045,
+          1046,
+          1047
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4, 5] },
-      "expected": ["count:0=1", "count:1=1", "count:2=1", "count:3=1", "count:4=1", "count:5=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1",
+        "count:5=1"
+      ],
       "channels": {
         "events": 301,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": {
             "line": 2,
             "expected": "(./mode-dispatch.tex",
@@ -129,7 +256,7 @@
         },
         "log": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": {
             "line": 3,
             "expected": "(./mode-dispatch.tex",
@@ -147,7 +274,9 @@
         },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "brace-dispatch",
@@ -156,10 +285,27 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1063, 1064, 1065, 1066, 1067]
+        "sections": [
+          1063,
+          1064,
+          1065,
+          1066,
+          1067
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2] },
-      "expected": ["count:0=0", "count:1=0", "count:2=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=0",
+        "count:1=0",
+        "count:2=1"
+      ],
       "channels": {
         "events": 168,
         "status": "clean",
@@ -168,7 +314,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "prefix-collection",
@@ -177,10 +325,27 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1208, 1209, 1210, 1211, 1212, 1213, 1214]
+        "sections": [
+          1208,
+          1209,
+          1210,
+          1211,
+          1212,
+          1213,
+          1214
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1] },
-      "expected": ["count:0=1", "count:1=2"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=2"
+      ],
       "channels": {
         "events": 43,
         "status": "clean",
@@ -189,15 +354,31 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "redefinable-target",
       "property_id": "tex82.assignment.redefinable-target",
       "source": "redefinable-target.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1215, 1216] },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1215,
+          1216
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 86,
         "status": "clean",
@@ -206,15 +387,30 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "current-font-selection",
       "property_id": "tex82.assignment.current-font-selection",
       "source": "current-font-selection.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1217] },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1217
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 120,
         "status": "clean",
@@ -223,15 +419,30 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "macro-definitions",
       "property_id": "tex82.assignment.macro-definitions",
       "source": "macro-definitions.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1218] },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=15"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1218
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=15"
+      ],
       "channels": {
         "events": 213,
         "status": "clean",
@@ -240,7 +451,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "macro-parameter-errors",
@@ -249,7 +462,11 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [476, 479, 1218]
+        "sections": [
+          476,
+          479,
+          1218
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
@@ -260,7 +477,9 @@
           "I've inserted the digit you should have used after the #.",
           "are all screwed up? I'm going to assume that you meant ##."
         ],
-        "count_registers": [0]
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "terminal-check:! Parameters must be numbered consecutively.=true",
@@ -278,7 +497,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "let-and-futurelet",
@@ -287,10 +508,23 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1219, 1220, 1221]
+        "sections": [
+          1219,
+          1220,
+          1221
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1] },
-      "expected": ["count:0=3", "count:1=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=3",
+        "count:1=1"
+      ],
       "channels": {
         "events": 224,
         "status": "clean",
@@ -299,7 +533,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "shorthand-definitions",
@@ -308,10 +544,27 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1222, 1223, 1224]
+        "sections": [
+          1222,
+          1223,
+          1224
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 7] },
-      "expected": ["count:0=65", "count:1=66", "count:2=1", "count:7=3"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          7
+        ]
+      },
+      "expected": [
+        "count:0=65",
+        "count:1=66",
+        "count:2=1",
+        "count:7=3"
+      ],
       "channels": {
         "events": 382,
         "status": "clean",
@@ -320,7 +573,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "afterassignment",
@@ -329,10 +584,26 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1266, 1267, 1268, 1269]
+        "sections": [
+          1266,
+          1267,
+          1268,
+          1269
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2] },
-      "expected": ["count:0=7", "count:1=1", "count:2=9"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=7",
+        "count:1=1",
+        "count:2=9"
+      ],
       "channels": {
         "events": 128,
         "status": "clean",
@@ -341,7 +612,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "afterassignment-back-input",
@@ -350,11 +623,17 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [325, 1269]
+        "sections": [
+          325,
+          1269
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["input", "recovery"]
+        "kinds": [
+          "input",
+          "recovery"
+        ]
       },
       "expected": [
         "input:backup:backup",
@@ -374,7 +653,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "afterassignment-no-token",
@@ -383,11 +664,17 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [325, 1269]
+        "sections": [
+          325,
+          1269
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["input", "recovery"]
+        "kinds": [
+          "input",
+          "recovery"
+        ]
       },
       "expected": [
         "input:backup:backup",
@@ -404,15 +691,35 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "command-terminator",
       "property_id": "tex82.assignment.command-terminator",
       "source": "command-terminator.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1270, 1271] },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2] },
-      "expected": ["count:0=7", "count:1=1", "count:2=9"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1270,
+          1271
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=7",
+        "count:1=1",
+        "count:2=9"
+      ],
       "channels": {
         "events": 123,
         "status": "clean",
@@ -421,7 +728,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "mag-freeze",
@@ -430,10 +739,21 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [286, 287, 288]
+        "sections": [
+          286,
+          287,
+          288
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1200"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1200"
+      ],
       "channels": {
         "events": 166,
         "status": "clean",
@@ -458,7 +778,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "mag-error-context",
@@ -494,10 +816,25 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1048, 1049, 1050, 1051, 1052, 1053, 1054]
+        "sections": [
+          1048,
+          1049,
+          1050,
+          1051,
+          1052,
+          1053,
+          1054
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 92,
         "status": "clean",
@@ -514,15 +851,30 @@
         },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "read-missing-to",
       "property_id": "tex82.assignment.read-to-definition",
       "source": "read-missing-to.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1225] },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1225
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 58,
         "status": "clean",
@@ -539,8 +891,12 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" },
-      "terminal_lines": ["alpha"]
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "alpha"
+      ]
     },
     {
       "id": "read-to-definition",
@@ -549,7 +905,11 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [370, 1215, 1225]
+        "sections": [
+          370,
+          1215,
+          1225
+        ]
       },
       "projection": { "kind": "observations", "kinds": ["mutation"] },
       "expected": ["mutation:meaning:count:macro definition:local"],
@@ -563,11 +923,17 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1214, 1225, 1269]
+        "sections": [
+          1214,
+          1225,
+          1269
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["mutation"],
+        "kinds": [
+          "mutation"
+        ],
         "commands": []
       },
       "expected": [
@@ -593,8 +959,12 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" },
-      "terminal_lines": ["alpha"]
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "alpha"
+      ]
     },
     {
       "id": "parameters-registers-arithmetic",
@@ -603,10 +973,35 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240]
+        "sections": [
+          1226,
+          1227,
+          1228,
+          1229,
+          1230,
+          1231,
+          1232,
+          1233,
+          1234,
+          1235,
+          1236,
+          1237,
+          1238,
+          1239,
+          1240
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1] },
-      "expected": ["count:0=2000000000", "count:1=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=2000000000",
+        "count:1=1"
+      ],
       "channels": {
         "events": 81,
         "status": "clean",
@@ -615,7 +1010,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "empty-token-register",
@@ -624,10 +1021,21 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1226, 1227, 1228]
+        "sections": [
+          1226,
+          1227,
+          1228
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=0"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=0"
+      ],
       "channels": {
         "events": 39,
         "status": "clean",
@@ -644,15 +1052,35 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "setbox-request",
       "property_id": "tex82.assignment.setbox-request",
       "source": "setbox-request.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1241] },
-      "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
-      "expected": ["box:0/0:hlist", "box:0/0/0:kern", "count:0=0"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1241
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "box:0/0:hlist",
+        "box:0/0/0:kern",
+        "count:0=0"
+      ],
       "channels": {
         "events": 142,
         "status": "clean",
@@ -661,7 +1089,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "auxiliary-state",
@@ -670,10 +1100,34 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1242, 1243, 1244, 1245, 1246, 1247]
+        "sections": [
+          1242,
+          1243,
+          1244,
+          1245,
+          1246,
+          1247
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0, 1, 2, 3, 4, 5] },
-      "expected": ["count:0=1", "count:1=1", "count:2=1", "count:3=1", "count:4=1", "count:5=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1",
+        "count:5=1"
+      ],
       "channels": {
         "events": 780,
         "status": "clean",
@@ -690,7 +1144,9 @@
         },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "prevgraf-assignment",
@@ -699,12 +1155,29 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1210, 1242, 1244]
+        "sections": [
+          1210,
+          1242,
+          1244
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
-        "terminal_checks": ["! Bad \\prevgraf (-1).", "I allow only nonnegative values here."],
-        "count_registers": [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        "terminal_checks": [
+          "! Bad \\prevgraf (-1).",
+          "I allow only nonnegative values here."
+        ],
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ]
       },
       "expected": [
         "terminal-check:! Bad \\prevgraf (-1).=true",
@@ -727,7 +1200,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "spacefactor-assignment",
@@ -736,7 +1211,11 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1210, 1242, 1243]
+        "sections": [
+          1210,
+          1242,
+          1243
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
@@ -746,7 +1225,23 @@
           "! Bad space factor (32768).",
           "I allow only values in the range 1..32767 here."
         ],
-        "count_registers": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ]
       },
       "expected": [
         "terminal-check:! Bad space factor (0).=true",
@@ -777,15 +1272,32 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "parshape",
       "property_id": "tex82.assignment.parshape",
       "source": "parshape.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1248] },
-      "projection": { "kind": "state", "count_registers": [0, 1] },
-      "expected": ["count:0=1", "count:1=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1248
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=1"
+      ],
       "channels": {
         "events": 312,
         "status": "clean",
@@ -794,7 +1306,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "hyphenation-data",
@@ -804,12 +1318,21 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1250, 1251, 1252]
+        "sections": [
+          1250,
+          1251,
+          1252
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
-        "terminal_checks": ["Too late for \\patterns", "All patterns must be given before typesetting begins."],
-        "count_registers": [0]
+        "terminal_checks": [
+          "Too late for \\patterns",
+          "All patterns must be given before typesetting begins."
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "terminal-check:Too late for \\patterns=true",
@@ -840,7 +1363,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "hyphenation-errors",
@@ -850,7 +1375,16 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [934, 935, 936, 937, 960, 961, 962, 963]
+        "sections": [
+          934,
+          935,
+          936,
+          937,
+          960,
+          961,
+          962,
+          963
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
@@ -862,7 +1396,9 @@
           "Duplicate pattern",
           "(See Appendix H.)"
         ],
-        "count_registers": [0]
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "terminal-check:Improper \\hyphenation will be flushed=true",
@@ -897,7 +1433,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "font-parameters",
@@ -906,10 +1444,21 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1253, 1254, 1255]
+        "sections": [
+          1253,
+          1254,
+          1255
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 80,
         "status": "clean",
@@ -918,22 +1467,36 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "font-definition",
       "property_id": "tex82.assignment.font-definition",
       "source": "font-definition.tex",
-      "font_inputs": { "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm" },
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1256, 1257, 1258, 1259, 1260]
+        "sections": [
+          1256,
+          1257,
+          1258,
+          1259,
+          1260
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
-        "terminal_checks": ["! Illegal magnification has been changed to 1000 (0)."],
-        "count_registers": [0]
+        "terminal_checks": [
+          "! Illegal magnification has been changed to 1000 (0)."
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "terminal-check:! Illegal magnification has been changed to 1000 (0).=true",
@@ -947,7 +1510,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "interaction-mode",
@@ -956,10 +1521,26 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1262, 1263, 1264, 1265]
+        "sections": [
+          1262,
+          1263,
+          1264,
+          1265
+        ]
       },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["x"], "count_registers": [0] },
-      "expected": ["terminal-check:x=false", "count:0=1"],
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "x"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:x=false",
+        "count:0=1"
+      ],
       "channels": {
         "events": 80,
         "status": "clean",
@@ -986,10 +1567,22 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1272, 1273, 1274, 1275]
+        "sections": [
+          1272,
+          1273,
+          1274,
+          1275
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 76,
         "status": "clean",
@@ -998,8 +1591,12 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" },
-      "inputs": { "first.tex": "ok" }
+      "expectation": {
+        "kind": "pass"
+      },
+      "inputs": {
+        "first.tex": "ok"
+      }
     },
     {
       "id": "messages",
@@ -1008,10 +1605,27 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1276, 1277, 1278, 1279, 1280]
+        "sections": [
+          1276,
+          1277,
+          1278,
+          1279,
+          1280
+        ]
       },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["a b"], "count_registers": [0] },
-      "expected": ["terminal-check:a b=true", "count:0=1"],
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "a b"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:a b=true",
+        "count:0=1"
+      ],
       "channels": {
         "events": 90,
         "status": "clean",
@@ -1020,7 +1634,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "errmessage-help",
@@ -1029,10 +1645,26 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1281, 1282, 1283, 1284]
+        "sections": [
+          1281,
+          1282,
+          1283,
+          1284
+        ]
       },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["user help"], "count_registers": [0] },
-      "expected": ["terminal-check:user help=true", "count:0=1"],
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "user help"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:user help=true",
+        "count:0=1"
+      ],
       "channels": {
         "events": 109,
         "status": "clean",
@@ -1041,7 +1673,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "case-shift",
@@ -1050,10 +1684,23 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1285, 1286, 1287, 1288, 1289]
+        "sections": [
+          1285,
+          1286,
+          1287,
+          1288,
+          1289
+        ]
       },
-      "projection": { "kind": "state", "count_registers": [0] },
-      "expected": ["count:0=1"],
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
       "channels": {
         "events": 133,
         "status": "clean",
@@ -1062,7 +1709,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "show-dispatch",
@@ -1071,10 +1720,26 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1290, 1291, 1292, 1293]
+        "sections": [
+          1290,
+          1291,
+          1292,
+          1293
+        ]
       },
-      "projection": { "kind": "observations", "kinds": ["effect"], "count_registers": [0] },
-      "expected": ["effect:terminate:engine\u0000", "count:0=1"],
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "effect:terminate:engine\u0000",
+        "count:0=1"
+      ],
       "channels": {
         "events": 28,
         "status": "clean",
@@ -1083,7 +1748,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "show-meaning",
@@ -1092,7 +1759,15 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [294, 295, 296, 297, 298, 1294, 1295]
+        "sections": [
+          294,
+          295,
+          296,
+          297,
+          298,
+          1294,
+          1295
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
@@ -1104,7 +1779,10 @@
           "SkipRegister(",
           "CountRegister("
         ],
-        "count_registers": [0, 9]
+        "count_registers": [
+          0,
+          9
+        ]
       },
       "expected": [
         "terminal-check:meaning-skip=\\skip3=true",
@@ -1132,7 +1810,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "show-selector-transitions",
@@ -1165,9 +1845,27 @@
       "id": "show-box",
       "property_id": "tex82.main-control.show-box",
       "source": "show-box.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1296] },
-      "projection": { "kind": "execution-boundaries", "box_registers": [0], "count_registers": [0] },
-      "expected": ["box:0/0:hlist", "box:0/0/0:kern", "count:0=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1296
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "box:0/0:hlist",
+        "box:0/0/0:kern",
+        "count:0=1"
+      ],
       "channels": {
         "events": 146,
         "status": "clean",
@@ -1176,15 +1874,32 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "show-value",
       "property_id": "tex82.main-control.show-value",
       "source": "show-value.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1297] },
-      "projection": { "kind": "state", "count_registers": [0, 1] },
-      "expected": ["count:0=17", "count:1=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1297
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=17",
+        "count:1=1"
+      ],
       "channels": {
         "events": 59,
         "status": "clean",
@@ -1193,15 +1908,34 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "show-completion",
       "property_id": "tex82.main-control.show-completion",
       "source": "show-completion.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1298] },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["? "], "count_registers": [1] },
-      "expected": ["terminal-check:? =true", "count:1=1"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1298
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "? "
+        ],
+        "count_registers": [
+          1
+        ]
+      },
+      "expected": [
+        "terminal-check:? =true",
+        "count:1=1"
+      ],
       "channels": {
         "events": 36,
         "status": "clean",
@@ -1222,8 +1956,12 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" },
-      "terminal_lines": ["s"],
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "s"
+      ],
       "interaction_mode": "errorstopmode",
       "interaction_mode_note": "This case exists to exercise the `? ` prompt that only errorstopmode issues after \\showthe (tex.web section 1298); scripts/run-minifixture-oracle.sh's standard sweep runs every case under scrollmode, so this case's channels are comparable only to an oracle capture taken under the same declared errorstopmode, not to that standard sweep."
     },
@@ -1232,9 +1970,22 @@
       "property_id": "tex82.main-control.final-cleanup-end-or-dump",
       "profile": "production",
       "source": "final-cleanup-end-or-dump.tex",
-      "provenance": { "authority": "tex.web", "manifest": "tests/tex82-oracle-manifest.txt", "sections": [1335] },
-      "projection": { "kind": "terminal-checks", "terminal_checks": ["performed only by INITEX"] },
-      "expected": ["terminal-check:performed only by INITEX=true"],
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1335
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "performed only by INITEX"
+        ]
+      },
+      "expected": [
+        "terminal-check:performed only by INITEX=true"
+      ],
       "channels": {
         "events": 5,
         "status": "clean",
@@ -1259,7 +2010,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "final-cleanup-incomplete-conditionals",
@@ -1268,7 +2021,12 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [489, 495, 496, 1335]
+        "sections": [
+          489,
+          495,
+          496,
+          1335
+        ]
       },
       "projection": {
         "kind": "terminal-checks",
@@ -1293,7 +2051,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "italic-correction",
@@ -1302,12 +2062,20 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [1111, 1112, 1113]
+        "sections": [
+          1111,
+          1112,
+          1113
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["ital_corr"]
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "ital_corr"
+        ]
       },
       "expected": [
         "command:raw:cs:/:ital_corr:0",
@@ -1325,7 +2093,119 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "afterassignment-aftergroup-order",
+      "property_id": "tex82.assignment.afterassignment",
+      "source": "afterassignment-aftergroup-order.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          280,
+          1266,
+          1267,
+          1268,
+          1269
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "A B C"
+        ]
+      },
+      "expected": [
+        "terminal-check:A B C=true"
+      ],
+      "channels": {
+        "events": 158,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "case-shift-uppercase-lowercase",
+      "property_id": "tex82.main-control.case-shift",
+      "source": "case-shift-uppercase-lowercase.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1285,
+          1286,
+          1287,
+          1288,
+          1289
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "[AB] [ab] [done]"
+        ]
+      },
+      "expected": [
+        "terminal-check:[AB] [ab] [done]=true"
+      ],
+      "channels": {
+        "events": 247,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    },
+    {
+      "id": "globaldefs-scope-override",
+      "property_id": "tex82.assignment.prefix-collection",
+      "source": "globaldefs-scope-override.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1208,
+          1209,
+          1210,
+          1211,
+          1212,
+          1213,
+          1214
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "g=1,3,4,0"
+        ]
+      },
+      "expected": [
+        "terminal-check:g=1,3,4,0=true"
+      ],
+      "channels": {
+        "events": 242,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

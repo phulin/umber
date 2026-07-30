@@ -31,6 +31,7 @@ use tex_state::{
 };
 
 pub mod channels;
+pub mod classify;
 #[cfg(test)]
 mod tests;
 
@@ -39,6 +40,7 @@ pub use channels::{
     StreamChannel, StreamDisposition, first_line_difference, normalize_log_clock,
     validate_xfail_disposition,
 };
+pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 
 pub const SCHEMA: u32 = 1;
 // A command-semantic minifixture must be truly minimal: short, self-contained,
@@ -80,6 +82,20 @@ pub struct Case {
     pub source: String,
     pub provenance: Provenance,
     pub projection: Projection,
+    /// The canonical projection a real run must produce.
+    ///
+    /// Parsed as possibly-empty only so the regeneration path can read a
+    /// manifest it is about to derive this into for a brand-new `pass`
+    /// case (see [`ChannelPolicy`], which this shares with `channels`
+    /// below): [`validate_case`] requires it nonempty for every other case,
+    /// exactly as it required `channels` before that block could be
+    /// derived. A `pass` case's `expected` *is* mechanically derivable --
+    /// passing means the run's own projection matches it exactly -- but an
+    /// `xfail` case's is not: it names the still-uncorrected divergence's
+    /// position, which is definitionally not what the run currently
+    /// produces, so it stays hand-authored and this field is never treated
+    /// as empty-and-derivable for one.
+    #[serde(default)]
     pub expected: Vec<String>,
     pub expectation: Expectation,
     /// The disposition of every channel this case's run produces.
@@ -632,11 +648,21 @@ pub fn validate_case(
             case.id
         ));
     }
-    if case.expected.is_empty()
-        || case
-            .expected
-            .iter()
-            .any(|observation| observation.is_empty() || observation.len() > 256)
+    // An empty `expected` is permitted only for the one case the
+    // regeneration path is actively deriving it for: a brand-new `pass`
+    // case, under `ChannelPolicy::Deriving`, that has not been run yet. The
+    // gate's own `ChannelPolicy::Required` never grants this, so a case
+    // cannot reach the committed corpus with `expected` still empty, and an
+    // `xfail` case -- whose `expected` can never be derived from a run, see
+    // the field's own doc -- never grants it either.
+    let expected_may_be_empty =
+        policy == ChannelPolicy::Deriving && matches!(case.expectation, Expectation::Pass);
+    if !(expected_may_be_empty && case.expected.is_empty())
+        && (case.expected.is_empty()
+            || case
+                .expected
+                .iter()
+                .any(|observation| observation.is_empty() || observation.len() > 256))
     {
         return Err(format!(
             "case {} needs short, nonempty expected observations",

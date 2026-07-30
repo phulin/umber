@@ -280,12 +280,12 @@
         "status": "clean",
         "terminal": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": { "line": 2, "expected": "(./predicate-dispatch.tex", "actual": "(./predicate-dispatch.tex)" }
         },
         "log": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": { "line": 3, "expected": "(./predicate-dispatch.tex", "actual": "(./predicate-dispatch.tex)" }
         },
         "dvi": { "kind": "empty" },
@@ -327,12 +327,12 @@
         "status": "clean",
         "terminal": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": { "line": 2, "expected": "(./ordered-relations.tex", "actual": "(./ordered-relations.tex)" }
         },
         "log": {
           "kind": "xfail",
-          "bug": "umber2-alfh.13",
+          "bug": "umber2-alfh.25",
           "mismatch": { "line": 3, "expected": "(./ordered-relations.tex", "actual": "(./ordered-relations.tex)" }
         },
         "dvi": { "kind": "empty" },
