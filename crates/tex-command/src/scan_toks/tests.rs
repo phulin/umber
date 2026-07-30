@@ -9,9 +9,9 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandRuntime, CommandState, InputTransition, ObservedToken, RegisteredSourceKind,
-    SourceRegistration,
+    CommandDeliveryBoundary, CommandHostCapabilities, CommandHostContext, CommandObservation,
+    CommandObserver, CommandRuntime, CommandState, InputTransition, ObservedToken,
+    RegisteredSourceKind, SourceRegistration,
 };
 
 #[derive(Default)]
@@ -1552,6 +1552,82 @@ fn expanded_scan_toks_outer_abort_reinstates_saved_collector_status() {
     processor.restore_collector_status_after_outer_abort(&collector);
 
     assert_eq!(processor.command.scanner.status(), &collector);
+}
+
+#[test]
+fn expanded_collection_observes_protected_macro_suppression_before_delivery() {
+    // e-TeX 2.6 change section [27.465] changes a protected macro to
+    // `relax/no_expand_flag` inside expanded `scan_toks`. The reference
+    // instrumentation records the retained spelling at that transition.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let protected = universe.intern("protected-macro").symbol();
+    let empty = universe.intern_token_list(&[]);
+    universe.set_macro_meaning(
+        protected,
+        MacroMeaning::new(MeaningFlags::PROTECTED, empty, empty),
+    );
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(protected),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let scanned = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder)
+    .scan_toks(ScanToksMode::General { expanded: true })
+    .expect("protected macro remains in expanded collection");
+
+    assert_eq!(
+        universe.tokens(scanned.replacement_text.token_list()),
+        &[Token::Cs(protected)]
+    );
+    let suppression = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::TokenList(record)
+                    if record.transition == "splice"
+                        && record.purpose == "protected_expansion_suppression"
+                        && record.tokens
+                            == [ObservedToken::ControlSequence("protected-macro".into())]
+            )
+        })
+        .expect("protected suppression splice is observed");
+    let delivery = recorder
+        .0
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommandObservation::Command(record)
+                    if record.boundary == CommandDeliveryBoundary::Expanded
+                        && record.spelling
+                        == ObservedToken::ControlSequence("protected-macro".into())
+                        && record.command == "relax"
+                        && record.command_operand == Some(257)
+            )
+        })
+        .expect("terminal expanded delivery is observed");
+    assert!(suppression < delivery);
 }
 
 #[test]

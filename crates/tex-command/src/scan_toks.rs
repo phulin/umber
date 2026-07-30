@@ -373,7 +373,7 @@ impl CommandProcessor<'_> {
         loop {
             let delivered;
             let spelling = {
-                let command = if expanded {
+                let mut command = if expanded {
                     self.get_next()?
                 } else {
                     self.get_token()?
@@ -396,8 +396,21 @@ impl CommandProcessor<'_> {
                     }
                     if matches!(command.meaning(), Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
                     {
-                        // Protected macros are terminal tokens in an e-TeX
-                        // expanded token-list scan.
+                        // e-TeX 2.6 change section [27.465] represents a
+                        // protected macro as `relax/no_expand_flag` for this
+                        // collector iteration. The spelling is retained, and
+                        // the reference instrumentation observes that exact
+                        // one-token suppression splice before the terminal
+                        // expanded delivery.
+                        observe!(
+                            self,
+                            CommandObservation::TokenList(TokenListRecord {
+                                transition: "splice",
+                                purpose: "protected_expansion_suppression",
+                                tokens: vec![self.observed_token(command.spelling())],
+                            }),
+                        );
+                        command.suppress_expandable();
                     } else {
                         // TeX82 §394 returns from a failed macro call after
                         // either an ordinary non-`\long` `\par` or §23's
