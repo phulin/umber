@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "domain": "scanners-internal-quantities",
+  "property_domain": "scanners-internal-quantities",
+  "cases": [
+    {
+      "id": "scaled-division",
+      "property_id": "tex82.scanner.arithmetic",
+      "source": "scaled-division.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          100,
+          106
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          40,
+          41
+        ]
+      },
+      "expected": [
+        "count:40=218453",
+        "count:41=-218453"
+      ],
+      "channels": {
+        "events": 207,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "etex-loaded-ifcsname",
+      "property_id": "tex82.conditionals.predicate-dispatch",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-ifcsname.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          4712,
+          4716,
+          4724,
+          4765,
+          4779
+        ]
+      },
+      "projection": {
+        "kind": "predicate-outcomes",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "predicate:ifcsname:-:true",
+        "predicate:ifcsname:-:false",
+        "predicate:ifdefined:-:false",
+        "count:0=3"
+      ],
+      "channels": {
+        "events": 181,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

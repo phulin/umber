@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "setlanguage-replay",
+      "property_id": "tex82.whatsits.language-state",
+      "source": "setlanguage-replay.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1344,
+          1376,
+          1377
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "extension"
+        ],
+        "box_registers": [
+          0
+        ],
+        "node_depth": 1
+      },
+      "expected": [
+        "command:extension:5",
+        "box:0/0:hlist",
+        "box:0/0/0:whatsit"
+      ],
+      "channels": {
+        "events": 81,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

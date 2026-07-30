@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "brace-dispatch",
+      "property_id": "tex82.group.brace-dispatch",
+      "source": "brace-dispatch.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1063,
+          1064,
+          1065,
+          1066,
+          1067
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=0",
+        "count:1=0",
+        "count:2=1"
+      ],
+      "channels": {
+        "events": 168,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

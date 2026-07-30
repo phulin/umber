@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "expansion-delivery",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "source": "expansion-delivery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          366,
+          367,
+          368,
+          369,
+          370,
+          371,
+          372,
+          373,
+          374,
+          375,
+          376,
+          377,
+          378,
+          379,
+          380,
+          381
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "diagnostic"
+        ],
+        "commands": [
+          "letter",
+          "relax",
+          "undefined_cs"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:^^@:undefined_cs:-268435455",
+        "diagnostic:error:undefined_control_sequence:cs:^^@",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65",
+        "command:raw:char:letter:65:letter:65",
+        "command:expanded:char:letter:65:letter:65"
+      ],
+      "channels": {
+        "events": 13,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "l.1 \\undefined",
+            "actual": ")"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "l.1 \\undefined",
+            "actual": "The control sequence at the end of the top line"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

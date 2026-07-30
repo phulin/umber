@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "errmessage-help",
+      "property_id": "tex82.main-control.errmessage-help",
+      "source": "errmessage-help.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1281,
+          1282,
+          1283,
+          1284
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "user help"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:user help=true",
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 109,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}",
+            "actual": " )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "l.2 ...topmode\\errhelp={user help}\\errmessage{bad}",
+            "actual": "user help"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

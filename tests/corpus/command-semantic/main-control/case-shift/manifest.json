@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "case-shift",
+      "property_id": "tex82.main-control.case-shift",
+      "source": "case-shift.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1285,
+          1286,
+          1287,
+          1288,
+          1289
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 133,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

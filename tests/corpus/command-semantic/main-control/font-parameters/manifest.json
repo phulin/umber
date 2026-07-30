@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "font-parameters",
+      "property_id": "tex82.assignment.font-parameters",
+      "source": "font-parameters.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1253,
+          1254,
+          1255
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 80,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "<recently read> \\nullfont ",
+            "actual": " )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "<recently read> \\nullfont ",
+            "actual": "To increase the number of font parameters, you must"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "input-outer-recovery",
+      "property_id": "tex82.input.outer-validity-recovery",
+      "source": "input-outer-recovery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          336,
+          337,
+          338,
+          339,
+          340
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "diagnostic",
+          "recovery",
+          "scanner-status"
+        ]
+      },
+      "expected": [
+        "recovery:backup:char:other_char:61",
+        "recovery:backup:char:other_char:61",
+        "scanner-status:normal>defining",
+        "scanner-status:defining>normal",
+        "scanner-status:normal>defining",
+        "diagnostic:error:outer_validity_control_sequence:name:defining",
+        "recovery:backup:cs:boom",
+        "recovery:inserted-token:char:right_brace:125",
+        "scanner-status:defining>normal"
+      ],
+      "channels": {
+        "events": 76,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 3,
+            "expected": "Runaway definition?",
+            "actual": "! Too many }'s."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 4,
+            "expected": "Runaway definition?",
+            "actual": "! Too many }'s."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

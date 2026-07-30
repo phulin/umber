@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "etex-loaded-iffontchar",
+      "property_id": "tex82.conditionals.predicate-dispatch",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-iffontchar.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          4712,
+          4717,
+          4726,
+          4797,
+          4805
+        ]
+      },
+      "projection": {
+        "kind": "predicate-outcomes",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "predicate:iffontchar:integer=65:true",
+        "predicate:iffontchar:integer=0:false",
+        "predicate:iffontchar:integer=255:false",
+        "count:0=3"
+      ],
+      "channels": {
+        "events": 199,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

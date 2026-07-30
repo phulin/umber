@@ -118,7 +118,7 @@ fn run() -> Result<String, String> {
 
     for declared in &cases {
         let label = format!("{}/{}", declared.domain, declared.case.id);
-        let source = fs::read(declared.domain_dir.join(&declared.case.source))
+        let source = fs::read(declared.fixture_dir.join(&declared.case.source))
             .map_err(|error| format!("{label}: source read: {error}"))?;
         match execute(&source, &declared.case) {
             Ok(completed) => {
@@ -163,15 +163,15 @@ fn run() -> Result<String, String> {
             .join("tests/corpus/command-semantic")
             .join(domain);
         for (case_id, plan) in cases_by_id {
-            write_channel_files(&domain_dir, case_id, plan)?;
+            let fixture_dir = domain_dir.join(case_id);
+            write_channel_files(&fixture_dir, plan)?;
+            rewrite_manifest(&fixture_dir.join("manifest.json"), cases_by_id)?;
+            rewritten += 1;
         }
-        rewrite_manifest(&domain_dir.join("manifest.json"), cases_by_id)?;
-        rewritten += 1;
     }
 
     let mut summary = format!(
-        "derived channel contracts for {} cases across {rewritten} domains against the pinned pdfTeX 1.40.27 oracle",
-        plans.values().map(BTreeMap::len).sum::<usize>()
+        "derived channel contracts for {rewritten} self-contained cases against the pinned pdfTeX 1.40.27 oracle"
     );
     if !unrunnable.is_empty() {
         summary.push_str(&format!(
@@ -415,9 +415,9 @@ fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<Strin
     }
 }
 
-fn write_channel_files(domain_dir: &Path, case_id: &str, plan: &CasePlan) -> Result<(), String> {
+fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String> {
     for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
-        let path = channel_file(domain_dir, case_id, channel);
+        let path = channel_file(fixture_dir, channel);
         match &plan.channels.channels[index] {
             ChannelPlan::Empty => {
                 if path.exists() {

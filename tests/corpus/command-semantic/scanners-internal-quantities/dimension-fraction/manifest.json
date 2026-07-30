@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "domain": "scanners-internal-quantities",
+  "property_domain": "scanners-internal-quantities",
+  "cases": [
+    {
+      "id": "dimension-fraction",
+      "property_id": "tex82.scanner.dimension-prefix-fraction",
+      "source": "dimension-fraction.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          448,
+          452,
+          453
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          30,
+          31,
+          32
+        ]
+      },
+      "expected": [
+        "count:30=32768",
+        "count:31=-98304",
+        "count:32=524288"
+      ],
+      "channels": {
+        "events": 250,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

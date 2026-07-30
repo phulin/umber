@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "unsave-restoration",
+      "property_id": "tex82.group.unsave-restoration",
+      "source": "unsave-restoration.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          281,
+          282,
+          283,
+          284,
+          1068,
+          1069
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expected": [
+        "count:0=3",
+        "count:1=1",
+        "count:2=1",
+        "count:3=0",
+        "count:4=1"
+      ],
+      "channels": {
+        "events": 281,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

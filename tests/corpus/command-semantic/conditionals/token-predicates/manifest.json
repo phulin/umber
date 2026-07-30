@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "token-predicates",
+      "property_id": "tex82.conditionals.token-predicates",
+      "source": "token-predicates.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          506,
+          507,
+          508
+        ]
+      },
+      "projection": {
+        "kind": "predicate-outcomes",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      "expected": [
+        "predicate:if:-:true",
+        "predicate:if:-:false",
+        "predicate:ifcat:-:true",
+        "predicate:ifcat:-:false",
+        "predicate:if:-:true",
+        "predicate:if:-:true",
+        "predicate:ifx:-:true",
+        "predicate:ifx:-:false",
+        "predicate:ifx:-:true",
+        "predicate:ifx:-:false",
+        "count:0=1",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1",
+        "count:5=1",
+        "count:6=1",
+        "count:7=1",
+        "count:8=1",
+        "count:9=1"
+      ],
+      "channels": {
+        "events": 476,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

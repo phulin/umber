@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "endwrite-stopper-sentinel",
+      "property_id": "tex82.effects.deferred-write-expansion",
+      "source": "endwrite-stopper-sentinel.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1369,
+          1370,
+          1372
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "MEANING=[undefined]",
+          "! Undefined control sequence.",
+          "BEFORE AFTER",
+          "REPLAYED"
+        ]
+      },
+      "expected": [
+        "terminal-check:MEANING=[undefined]=true",
+        "terminal-check:! Undefined control sequence.=true",
+        "terminal-check:BEFORE AFTER=true",
+        "terminal-check:REPLAYED=true"
+      ],
+      "channels": {
+        "events": 208,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "<write> BEFORE \\endwrite ",
+            "actual": "BEFORE AFTER"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 5,
+            "expected": "<write> BEFORE \\endwrite ",
+            "actual": "The control sequence at the end of the top line"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

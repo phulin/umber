@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "domain": "alignments",
+  "property_domain": "alignment-preambles-templates-and-lifecycle",
+  "cases": [
+    {
+      "id": "vertical-prevdepth",
+      "property_id": "tex82.align.initialize-spec-and-mode",
+      "source": "vertical-prevdepth.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          216,
+          774
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 316,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

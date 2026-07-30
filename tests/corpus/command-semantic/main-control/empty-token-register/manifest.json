@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "empty-token-register",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "source": "empty-token-register.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1226,
+          1227,
+          1228
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 39,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 4,
+            "expected": "<to be read again> ",
+            "actual": ")"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

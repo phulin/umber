@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "illegal-last-item-context",
+      "property_id": "tex82.main-control.mode-dispatch",
+      "source": "illegal-last-item-context.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          82,
+          90,
+          1048,
+          1111
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "You can't use `\\badness' in vertical mode.",
+          "l.2 \\hyphenpenalty 89 \\badness"
+        ]
+      },
+      "expected": [
+        "terminal-check:You can't use `\\badness' in vertical mode.=true",
+        "terminal-check:l.2 \\hyphenpenalty 89 \\badness=true"
+      ],
+      "channels": {
+        "events": 24,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

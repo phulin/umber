@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "macro-parameter-errors",
+      "property_id": "tex82.assignment.macro-definitions",
+      "source": "macro-parameter-errors.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          476,
+          479,
+          1218
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "! Parameters must be numbered consecutively.",
+          "! Illegal parameter number in definition of \\body.",
+          "! Illegal parameter number in definition of ~.",
+          "I've inserted the digit you should have used after the #.",
+          "are all screwed up? I'm going to assume that you meant ##."
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:! Parameters must be numbered consecutively.=true",
+        "terminal-check:! Illegal parameter number in definition of \\body.=true",
+        "terminal-check:! Illegal parameter number in definition of ~.=true",
+        "terminal-check:I've inserted the digit you should have used after the #.=true",
+        "terminal-check:are all screwed up? I'm going to assume that you meant ##.=true",
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 186,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "<to be read again> ",
+            "actual": "! Illegal parameter number in definition of \\body."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "I've inserted the digit you should have used after the #."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

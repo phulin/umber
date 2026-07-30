@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "leaders-fill-macros",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "leaders-fill-macros.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          626,
+          627
+        ]
+      },
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "command:leader_ship:101",
+        "command:leader_ship:100",
+        "command:leader_ship:102",
+        "artifact:175a36fdae8bebd3465f2f2f61e45c3f299a82aa488bda1b14d91cb5826e1c5b"
+      ],
+      "channels": {
+        "events": 925,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T��\u0000K�`y\u0000"
+          }
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

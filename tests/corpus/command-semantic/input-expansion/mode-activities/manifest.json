@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "mode-activities",
+      "property_id": "tex82.modes.activity-diagnostics",
+      "source": "mode-activities.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          218,
+          219
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 4,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "l.1 \\showlists",
+            "actual": ")"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 10,
+            "expected": "l.1 \\showlists",
+            "actual": ""
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

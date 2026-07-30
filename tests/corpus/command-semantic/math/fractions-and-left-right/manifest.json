@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "domain": "math",
+  "property_domain": "math-box-list-and-mode-semantics",
+  "cases": [
+    {
+      "id": "fractions-and-left-right",
+      "property_id": "tex82.math.fractions-and-left-right",
+      "source": "fractions-and-left-right.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1178,
+          1179,
+          1180,
+          1181,
+          1182,
+          1183,
+          1184,
+          1185,
+          1186,
+          1187,
+          1188,
+          1189,
+          1190,
+          1191,
+          1192
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "include_artifact_hashes": true,
+        "command_names": [
+          "above",
+          "left_right",
+          "mkern"
+        ]
+      },
+      "expected": [
+        "command:left_right:30",
+        "command:left_right:30",
+        "command:mkern:99",
+        "command:above:1",
+        "command:above:1",
+        "command:mkern:99",
+        "command:left_right:31",
+        "artifact:e43d5e850e661da89bb3818dfd23807e33e48130c1b5f16a0c8d8692025b57c2"
+      ],
+      "channels": {
+        "events": 142,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 4,
+            "expected": "<to be read again> ",
+            "actual": ""
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

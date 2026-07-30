@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "etex-noexpand-undefined",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "profile": "etex-initex",
+      "source": "etex-noexpand-undefined.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          379
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "relax"
+        ],
+        "count_registers": []
+      },
+      "expected": [
+        "command:raw:cs:missing:relax:257",
+        "command:expanded:cs:missing:relax:257"
+      ],
+      "channels": {
+        "events": 64,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "command-terminator",
+      "property_id": "tex82.assignment.command-terminator",
+      "source": "command-terminator.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1270,
+          1271
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "count:0=7",
+        "count:1=1",
+        "count:2=9"
+      ],
+      "channels": {
+        "events": 123,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

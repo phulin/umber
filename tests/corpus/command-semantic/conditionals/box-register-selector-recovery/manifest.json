@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "box-register-selector-recovery",
+      "property_id": "tex82.conditionals.box-register-kind",
+      "source": "box-register-selector-recovery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          433,
+          505
+        ]
+      },
+      "projection": {
+        "kind": "predicate-outcomes",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "predicate:ifhbox:integer=256:true",
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 113,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

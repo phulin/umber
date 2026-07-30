@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "domain": "alignments",
+  "property_domain": "alignment-preambles-templates-and-lifecycle",
+  "cases": [
+    {
+      "id": "valign-endv-paragraph",
+      "property_id": "tex82.align.endv-validation-and-off-save",
+      "source": "valign-endv-paragraph.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1131
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 221,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

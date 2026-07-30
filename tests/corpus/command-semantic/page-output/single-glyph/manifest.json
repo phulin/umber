@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "single-glyph",
+      "property_id": "tex82.shipout.hlist-traversal",
+      "source": "single-glyph.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          618,
+          619,
+          622
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:ca42a1158c4b49955fff8b585ff9dfce30825fb1517124a427388592f82222ff"
+      ],
+      "channels": {
+        "events": 121,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000"
+          }
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "input-read-toks",
+      "property_id": "tex82.input.read-token-list",
+      "source": "input-read-toks.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          480,
+          481,
+          482,
+          483,
+          484,
+          485,
+          486
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "scanner-status",
+          "input",
+          "macro",
+          "token-list"
+        ]
+      },
+      "expected": [
+        "scanner-status:normal>defining",
+        "input:push:terminal",
+        "input:retire:terminal",
+        "scanner-status:defining>normal",
+        "input:push:macro",
+        "macro:activate:readvalue:0:",
+        "input:retire:macro",
+        "input:backup:backup",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
+      ],
+      "channels": {
+        "events": 45,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./input-read-toks.tex)",
+            "actual": "(./input-read-toks.tex"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./input-read-toks.texR",
+            "actual": "(./input-read-toks.tex"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "R"
+      ]
+    }
+  ]
+}

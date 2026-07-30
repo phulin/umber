@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "read-missing-to",
+      "property_id": "tex82.assignment.read-to-definition",
+      "source": "read-missing-to.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1225
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 58,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 3,
+            "expected": "! Missing `to' inserted.",
+            "actual": "\\target="
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Missing `to' inserted.",
+            "actual": "\\target="
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "alpha"
+      ]
+    }
+  ]
+}

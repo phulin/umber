@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "branch-delimiters",
+      "property_id": "tex82.conditionals.branch-and-delimiters",
+      "source": "branch-delimiters.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          498,
+          499,
+          500,
+          509,
+          510
+        ]
+      },
+      "projection": {
+        "kind": "branch-selections",
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "branch:ifcase:evaluating:or",
+        "branch:ifcase:evaluating:or",
+        "branch:ifcase:or:case",
+        "branch:ifcase:or:else",
+        "branch:ifcase:or:fi",
+        "branch:ifcase:evaluating:or",
+        "branch:ifcase:evaluating:else",
+        "branch:iffalse:evaluating:false",
+        "branch:iffalse:evaluating:else",
+        "count:0=7",
+        "count:1=1",
+        "count:2=1"
+      ],
+      "channels": {
+        "events": 146,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

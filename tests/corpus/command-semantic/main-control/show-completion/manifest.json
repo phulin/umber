@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "show-completion",
+      "property_id": "tex82.main-control.show-completion",
+      "source": "show-completion.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1298
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "? "
+        ],
+        "count_registers": [
+          1
+        ]
+      },
+      "expected": [
+        "terminal-check:? =true",
+        "count:1=1"
+      ],
+      "channels": {
+        "events": 36,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 5,
+            "expected": "                   ",
+            "actual": "                   ? OK, entering \\scrollmode..."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 6,
+            "expected": "                   ",
+            "actual": "                   ? s"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "s"
+      ],
+      "interaction_mode": "errorstopmode",
+      "interaction_mode_note": "This case exists to exercise the `? ` prompt that only errorstopmode issues after \\showthe (tex.web section 1298); scripts/run-minifixture-oracle.sh's standard sweep runs every case under scrollmode, so this case's channels are comparable only to an oracle capture taken under the same declared errorstopmode, not to that standard sweep."
+    }
+  ]
+}

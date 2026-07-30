@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "final-cleanup-end-or-dump",
+      "property_id": "tex82.main-control.final-cleanup-end-or-dump",
+      "profile": "production",
+      "source": "final-cleanup-end-or-dump.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1335
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "performed only by INITEX"
+        ]
+      },
+      "expected": [
+        "terminal-check:performed only by INITEX=true"
+      ],
+      "channels": {
+        "events": 5,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)",
+            "actual": "(\\dump is performed only by INITEX)"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>",
+            "actual": "(\\dump is performed only by INITEX)"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

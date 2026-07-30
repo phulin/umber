@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "input-control-sequences",
+      "property_id": "tex82.input.control-sequence-lookup",
+      "source": "input-control-sequences.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          259,
+          260
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "macro",
+          "token-list"
+        ],
+        "commands": [
+          "call",
+          "cs_name",
+          "end_cs_name"
+        ]
+      },
+      "expected": [
+        "token-list:complete:macro_replacement:char:letter:65",
+        "command:raw:cs:csname:cs_name:0",
+        "command:raw:cs:endcsname:end_cs_name:0",
+        "command:expanded:cs:endcsname:end_cs_name:0",
+        "command:raw:cs:made:call:249984",
+        "macro:activate:made:0:"
+      ],
+      "channels": {
+        "events": 75,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

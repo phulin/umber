@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://umber.dev/schema/command-semantic-manifest-v1.json",
-  "title": "Umber command semantic minifixture domain manifest",
+  "title": "Umber command semantic minifixture manifest",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "domain", "cases"],
@@ -12,6 +12,7 @@
     "cases": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 1,
       "items": { "$ref": "#/$defs/case" }
     }
   },
@@ -111,7 +112,7 @@
           "properties": { "kind": { "const": "empty" } }
         },
         {
-          "description": "The channel must match `expected/<case-id>.<channel>` byte for byte against the pinned reference engine's committed bytes.",
+          "description": "The channel must match the fixture-local `expected.<channel>` file byte for byte against the pinned reference engine's committed bytes.",
           "type": "object",
           "additionalProperties": false,
           "required": ["kind"],

@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "mag-freeze",
+      "property_id": "tex82.assignment.mag-freeze",
+      "source": "mag-freeze.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          286,
+          287,
+          288
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1200"
+      ],
+      "channels": {
+        "events": 166,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.23",
+          "mismatch": {
+            "line": 3,
+            "expected": "! Incompatible magnification (1300);",
+            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.23",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Incompatible magnification (1300);",
+            "actual": "! Incompatible magnification (1300); the previous value will be retained (1200)."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "input-start-file",
+      "property_id": "tex82.input.start-input-and-first-line",
+      "source": "input-start-file.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          537,
+          538
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command",
+          "effect"
+        ],
+        "commands": [
+          "letter"
+        ]
+      },
+      "expected": [
+        "command:raw:char:letter:110:letter:110",
+        "command:expanded:char:letter:110:letter:110",
+        "command:raw:char:letter:110:letter:110",
+        "command:expanded:char:letter:110:letter:110",
+        "command:raw:char:letter:101:letter:101",
+        "command:expanded:char:letter:101:letter:101",
+        "command:raw:char:letter:115:letter:115",
+        "command:expanded:char:letter:115:letter:115",
+        "command:raw:char:letter:116:letter:116",
+        "command:expanded:char:letter:116:letter:116",
+        "command:raw:char:letter:101:letter:101",
+        "command:expanded:char:letter:101:letter:101",
+        "command:raw:char:letter:100:letter:100",
+        "command:expanded:char:letter:100:letter:100",
+        "effect:input:nested.tex",
+        "command:raw:char:letter:78:letter:78",
+        "command:expanded:char:letter:78:letter:78",
+        "command:raw:char:letter:78:letter:78",
+        "command:expanded:char:letter:78:letter:78"
+      ],
+      "channels": {
+        "events": 33,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.18",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./input-start-file.tex (./nested.tex))",
+            "actual": "(./input-start-file.tex (nested.tex))"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.18",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./input-start-file.tex (./nested.tex))",
+            "actual": "(./input-start-file.tex (nested.tex))"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "inputs": {
+        "nested.tex": "N"
+      }
+    }
+  ]
+}

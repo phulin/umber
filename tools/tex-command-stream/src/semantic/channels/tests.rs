@@ -96,7 +96,7 @@ fn a_file_disposition_without_a_committed_file_fails() {
         compare(&run, &declared, &no_files),
         vec![ChannelFailure::MissingFile {
             channel: "log",
-            path: "expected/<case>.log".into()
+            path: "expected.log".into()
         }]
     );
 }
@@ -279,7 +279,7 @@ fn an_xfail_channel_without_a_committed_file_fails() {
         compare(&run, &declared, &no_files),
         vec![ChannelFailure::MissingFile {
             channel: "effects",
-            path: "expected/<case>.effects".into()
+            path: "expected.effects".into()
         }]
     );
 }

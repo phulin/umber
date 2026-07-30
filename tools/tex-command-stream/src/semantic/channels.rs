@@ -371,7 +371,7 @@ pub fn compare(
                 let Some(declared) = committed(channel) else {
                     failures.push(ChannelFailure::MissingFile {
                         channel: name,
-                        path: format!("expected/<case>.{name}"),
+                        path: format!("expected.{name}"),
                     });
                     continue;
                 };
@@ -398,7 +398,7 @@ pub fn compare(
                 let Some(reference) = committed(channel) else {
                     failures.push(ChannelFailure::MissingFile {
                         channel: name,
-                        path: format!("expected/<case>.{name}"),
+                        path: format!("expected.{name}"),
                     });
                     continue;
                 };

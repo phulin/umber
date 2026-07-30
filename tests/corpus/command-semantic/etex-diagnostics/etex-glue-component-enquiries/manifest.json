@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "domain": "etex-diagnostics",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "etex-glue-component-enquiries",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-glue-component-enquiries.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          5363,
+          5367,
+          5373,
+          5389,
+          5397,
+          5404
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=8191"
+      ],
+      "channels": {
+        "events": 1161,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "! Missing { inserted."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 6,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

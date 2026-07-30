@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "parshape",
+      "property_id": "tex82.assignment.parshape",
+      "source": "parshape.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1248
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1
+        ]
+      },
+      "expected": [
+        "count:0=1",
+        "count:1=1"
+      ],
+      "channels": {
+        "events": 312,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

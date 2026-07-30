@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "command-code-boundaries",
+      "property_id": "tex82.input.command-code-boundaries",
+      "source": "command-code-boundaries.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          73,
+          207,
+          208,
+          209,
+          210,
+          265,
+          334,
+          410,
+          411,
+          416,
+          1052,
+          1208,
+          1219,
+          1222,
+          1262
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "char_given",
+          "expand_after",
+          "last_item",
+          "let",
+          "math_given",
+          "par_end",
+          "prefix",
+          "register",
+          "relax",
+          "set_interaction",
+          "shorthand_def",
+          "stop"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:errorstopmode:set_interaction:3",
+        "command:expanded:cs:errorstopmode:set_interaction:3",
+        "command:raw:cs:relax:relax:256",
+        "command:expanded:cs:relax:relax:256",
+        "command:raw:cs:chardef:shorthand_def:0",
+        "command:expanded:cs:chardef:shorthand_def:0",
+        "command:raw:cs:mathchardef:shorthand_def:1",
+        "command:expanded:cs:mathchardef:shorthand_def:1",
+        "command:raw:cs:count:register:0",
+        "command:expanded:cs:count:register:0",
+        "command:raw:cs:cgiven:char_given:65",
+        "command:expanded:cs:cgiven:char_given:65",
+        "command:raw:cs:count:register:0",
+        "command:expanded:cs:count:register:0",
+        "command:raw:cs:mgiven:math_given:65",
+        "command:expanded:cs:mgiven:math_given:65",
+        "command:raw:cs:count:register:0",
+        "command:expanded:cs:count:register:0",
+        "command:raw:cs:lastpenalty:last_item:0",
+        "command:expanded:cs:lastpenalty:last_item:0",
+        "command:raw:cs:global:prefix:4",
+        "command:expanded:cs:global:prefix:4",
+        "command:raw:cs:let:let:0",
+        "command:expanded:cs:let:let:0",
+        "command:raw:cs:relax:relax:256",
+        "command:raw:cs:expandafter:expand_after:0",
+        "command:raw:cs:relax:relax:256",
+        "command:raw:cs:par:par_end:256",
+        "command:raw:cs:relax:relax:256",
+        "command:expanded:cs:relax:relax:256",
+        "command:raw:cs:par:par_end:256",
+        "command:expanded:cs:par:par_end:256",
+        "command:raw:cs:end:stop:0",
+        "command:expanded:cs:end:stop:0"
+      ],
+      "channels": {
+        "events": 115,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

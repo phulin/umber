@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "classification",
+      "property_id": "tex82.conditionals.classification",
+      "source": "classification.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          210,
+          487,
+          491
+        ]
+      },
+      "projection": {
+        "kind": "classification"
+      },
+      "expected": [
+        "command:if_test:0",
+        "command:if_test:1",
+        "command:if_test:2",
+        "command:if_test:3",
+        "command:if_test:4",
+        "command:if_test:5",
+        "command:if_test:6",
+        "command:if_test:7",
+        "command:if_test:8",
+        "command:if_test:9",
+        "command:if_test:10",
+        "command:if_test:11",
+        "command:if_test:12",
+        "command:if_test:13",
+        "command:if_test:14",
+        "command:if_test:15",
+        "command:if_test:16",
+        "command:fi_or_else:2",
+        "command:fi_or_else:3",
+        "command:fi_or_else:4",
+        "recovery:inserted-token:cs:fi"
+      ],
+      "channels": {
+        "events": 300,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 3,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 20.",
+            "actual": "*(Please type a command or say `\\end')"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 20.",
+            "actual": "*"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

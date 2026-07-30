@@ -312,8 +312,8 @@ domains() {
 
 case_json_for() {
   local domain="$1" case_id="$2"
-  local manifest="${corpus_root}/${domain}/manifest.json"
-  [[ -f "$manifest" ]] || fail "no such domain manifest: $manifest"
+  local manifest="${corpus_root}/${domain}/${case_id}/manifest.json"
+  [[ -f "$manifest" ]] || fail "no such fixture manifest: $manifest"
   local json
   json="$(jq -c --arg id "$case_id" '.cases[] | select(.id == $id)' "$manifest")"
   [[ -n "$json" ]] || fail "no such case in $domain: $case_id"
@@ -324,8 +324,8 @@ case_json_for() {
 # and `font_inputs` (TFM bytes copied from the repository path the manifest
 # names) into the run directory, alongside the source itself.
 stage_case_files() {
-  local case_json="$1" domain="$2" run_dir="$3" source_name="$4"
-  cp "${corpus_root}/${domain}/${source_name}" "${run_dir}/${source_name}"
+  local case_json="$1" domain="$2" case_id="$3" run_dir="$4" source_name="$5"
+  cp "${corpus_root}/${domain}/${case_id}/${source_name}" "${run_dir}/${source_name}"
   local key
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
@@ -365,7 +365,7 @@ run_one_case() {
   local run_dir="${out_root}/${domain}/${case_id}"
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
-  stage_case_files "$case_json" "$domain" "$run_dir" "$source_name"
+  stage_case_files "$case_json" "$domain" "$case_id" "$run_dir" "$source_name"
   # A fmt-based profile's format was just built (or already cached) by
   # `engine_args_for_profile`'s `ensure_format` call above; stage it beside
   # the source the same way a declared `font_inputs` TFM is staged, so
@@ -446,16 +446,18 @@ skipped=0
 if [[ "$run_all" -eq 1 ]]; then
   domain=""
   while IFS= read -r domain; do
-    [[ -f "${corpus_root}/${domain}/manifest.json" ]] || continue
-    case_id=""
-    while IFS= read -r case_id; do
-      [[ -n "$case_id" ]] || continue
+    fixture_dir=""
+    while IFS= read -r fixture_dir; do
+      case_id="$(basename "$fixture_dir")"
       if run_one_case "$domain" "$case_id"; then
         ran=$((ran + 1))
       else
         skipped=$((skipped + 1))
       fi
-    done < <(jq -r '.cases[].id' "${corpus_root}/${domain}/manifest.json")
+    done < <(
+      LC_ALL=C find "${corpus_root}/${domain}" -mindepth 1 -maxdepth 1 \
+        -type d -exec test -f '{}/manifest.json' ';' -print | LC_ALL=C sort
+    )
   done < <(domains)
 else
   for selector in "${selected_cases[@]}"; do

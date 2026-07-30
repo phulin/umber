@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "domain": "etex-diagnostics",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "etex-loaded-meaning-reassignment",
+      "property_id": "tex82.assignment.macro-definitions",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-meaning-reassignment.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          277,
+          1221
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "mutation"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "mutation:catcode:-:123=1:local",
+        "mutation:meaning:bgroup:left_brace:local",
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 42,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

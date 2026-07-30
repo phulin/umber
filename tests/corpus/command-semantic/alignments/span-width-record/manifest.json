@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "domain": "alignments",
+  "property_domain": "alignment-preambles-templates-and-lifecycle",
+  "cases": [
+    {
+      "id": "span-width-record",
+      "property_id": "tex82.align.record-span-width",
+      "source": "span-width-record.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          93,
+          95,
+          110,
+          796,
+          797,
+          798
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "execution:error:confusion(256 spans)",
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 6909,
+        "status": "fatal:confusion(256 spans)",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 3,
+            "expected": "! This can't happen (256 spans).",
+            "actual": "No pages of output."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "! This can't happen (256 spans).",
+            "actual": "No pages of output."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

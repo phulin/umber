@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "local-global-save",
+      "property_id": "tex82.assignment.local-global-save",
+      "source": "local-global-save.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          275,
+          276,
+          277,
+          278,
+          279
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expected": [
+        "count:0=3",
+        "count:1=1",
+        "count:2=4",
+        "count:3=1"
+      ],
+      "channels": {
+        "events": 251,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

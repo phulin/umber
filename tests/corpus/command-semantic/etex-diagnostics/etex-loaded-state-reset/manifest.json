@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "domain": "etex-diagnostics",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "etex-loaded-state-reset",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-state-reset.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          1307
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "scanner"
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "scanner:integer:0:-",
+        "scanner:internal:0:-",
+        "scanner:integer:0:-",
+        "count:0=0"
+      ],
+      "channels": {
+        "events": 21,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

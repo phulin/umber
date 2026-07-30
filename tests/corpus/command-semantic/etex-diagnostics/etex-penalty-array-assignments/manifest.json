@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "domain": "etex-diagnostics",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "etex-penalty-array-assignments",
+      "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "etex-initex",
+      "source": "etex-penalty-array-assignments.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          1248,
+          6336,
+          6361
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "set_shape"
+        ],
+        "count_registers": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expected": [
+        "command:raw:cs:interlinepenalties:set_shape:25324",
+        "command:expanded:cs:interlinepenalties:set_shape:25324",
+        "command:raw:cs:clubpenalties:set_shape:25325",
+        "command:expanded:cs:clubpenalties:set_shape:25325",
+        "command:raw:cs:widowpenalties:set_shape:25326",
+        "command:expanded:cs:widowpenalties:set_shape:25326",
+        "command:raw:cs:displaywidowpenalties:set_shape:25327",
+        "command:expanded:cs:displaywidowpenalties:set_shape:25327",
+        "count:0=11",
+        "count:1=12",
+        "count:2=13",
+        "count:3=14"
+      ],
+      "channels": {
+        "events": 154,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

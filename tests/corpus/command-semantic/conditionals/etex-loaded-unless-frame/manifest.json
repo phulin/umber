@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "etex-loaded-unless-frame",
+      "property_id": "tex82.conditionals.stack-lifecycle",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-unless-frame.tex",
+      "provenance": {
+        "authority": "etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          4713,
+          4720,
+          4738,
+          4751
+        ]
+      },
+      "projection": {
+        "kind": "condition-steps",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "condition:push:unless_iftrue:evaluating:-",
+        "condition:branch:iftrue:evaluating:false",
+        "condition:branch:unless_iftrue:evaluating:else",
+        "condition:limit:unless_iftrue:fi:-",
+        "condition:pop:unless_iftrue:fi:-",
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 37,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "domain": "math",
+  "property_domain": "math-box-list-and-mode-semantics",
+  "cases": [
+    {
+      "id": "choice-groups",
+      "property_id": "tex82.math.choice-groups",
+      "source": "choice-groups.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1172,
+          1173,
+          1174
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "box_registers": [
+          0
+        ],
+        "node_depth": 4,
+        "command_names": [
+          "math_choice"
+        ]
+      },
+      "expected": [
+        "command:math_choice:0",
+        "box:0/0:hlist",
+        "box:0/0/0:math-on",
+        "box:0/0/1:math-off"
+      ],
+      "channels": {
+        "events": 116,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.25",
+          "mismatch": {
+            "line": 4,
+            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
+            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.25",
+          "mismatch": {
+            "line": 5,
+            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
+            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

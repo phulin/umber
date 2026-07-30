@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "domain": "input-expansion",
+  "property_domain": "input-tokenization-control-sequences-expansion",
+  "cases": [
+    {
+      "id": "etex-outer-validity-eof",
+      "property_id": "tex82.input.outer-validity-recovery",
+      "profile": "etex-initex",
+      "source": "etex-outer-validity-eof.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          336,
+          379,
+          494,
+          510
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "diagnostic",
+          "recovery",
+          "scanner-status"
+        ]
+      },
+      "expected": [
+        "recovery:backup:char:other_char:61",
+        "recovery:backup:char:other_char:61",
+        "scanner-status:normal>skipping",
+        "diagnostic:error:outer_validity_eof:",
+        "diagnostic:error:conditional_incomplete:",
+        "recovery:inserted-token:cs:fi",
+        "scanner-status:skipping>normal"
+      ],
+      "channels": {
+        "events": 53,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
+            "actual": "*(Please type a command or say `\\end')"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 5,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
+            "actual": "*"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

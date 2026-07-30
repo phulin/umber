@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "domain": "page-output",
+  "property_domain": "page-builder-output-whatsits-io-shipout",
+  "cases": [
+    {
+      "id": "special-in-shipped-hbox",
+      "property_id": "tex82.effects.special-output",
+      "source": "special-in-shipped-hbox.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1368
+        ]
+      },
+      "projection": {
+        "kind": "execution-boundaries",
+        "command_names": [
+          "leader_ship"
+        ],
+        "include_artifact_hashes": true
+      },
+      "expected": [
+        "command:leader_ship:99",
+        "artifact:5e2b05c7bc86c47642341d39cbdaa76b1933aaf550f1758c1910a8198ba89899"
+      ],
+      "channels": {
+        "events": 180,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0000K�`y\u0000",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\u0006�T�\u0018umber dvi corpus special�\u0000K�`y\u0000"
+          }
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

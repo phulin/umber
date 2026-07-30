@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "spacefactor-assignment",
+      "property_id": "tex82.assignment.auxiliary-state",
+      "source": "spacefactor-assignment.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1210,
+          1242,
+          1243
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "! Bad space factor (0).",
+          "! Bad space factor (-1).",
+          "! Bad space factor (32768).",
+          "I allow only values in the range 1..32767 here."
+        ],
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ]
+      },
+      "expected": [
+        "terminal-check:! Bad space factor (0).=true",
+        "terminal-check:! Bad space factor (-1).=true",
+        "terminal-check:! Bad space factor (32768).=true",
+        "terminal-check:I allow only values in the range 1..32767 here.=true",
+        "count:0=1",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1",
+        "count:5=1",
+        "count:6=1",
+        "count:7=1",
+        "count:8=1",
+        "count:9=1",
+        "count:10=1",
+        "count:11=1",
+        "count:12=1",
+        "count:13=1",
+        "count:14=1"
+      ],
+      "channels": {
+        "events": 1107,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "l.4 \\spacefactor",
+            "actual": "Sorry, but I'm not programmed to handle this case;"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "l.4 \\spacefactor",
+            "actual": "Sorry, but I'm not programmed to handle this case;"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

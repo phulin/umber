@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "read-mutation-order",
+      "property_id": "tex82.assignment.read-to-definition",
+      "source": "read-mutation-order.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1214,
+          1225,
+          1269
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "mutation"
+        ],
+        "commands": []
+      },
+      "expected": [
+        "mutation:meaning:relax:macro definition:global"
+      ],
+      "channels": {
+        "events": 41,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./read-mutation-order.tex )",
+            "actual": "(./read-mutation-order.tex"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.11",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./read-mutation-order.texalpha",
+            "actual": "(./read-mutation-order.tex"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "alpha"
+      ]
+    }
+  ]
+}

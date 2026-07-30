@@ -261,7 +261,7 @@ pub struct OwnedProperty {
 }
 
 pub struct DeclaredCase {
-    pub domain_dir: PathBuf,
+    pub fixture_dir: PathBuf,
     pub domain: String,
     pub case: Case,
 }
@@ -396,10 +396,8 @@ pub fn validate_expectation(expectation: &Expectation) -> Result<(), String> {
 
 /// The committed expectation file for one stream channel of one case.
 #[must_use]
-pub fn channel_file(domain_dir: &Path, case_id: &str, channel: StreamChannel) -> PathBuf {
-    domain_dir
-        .join("expected")
-        .join(format!("{case_id}.{}", channel.name()))
+pub fn channel_file(fixture_dir: &Path, channel: StreamChannel) -> PathBuf {
+    fixture_dir.join(format!("expected.{}", channel.name()))
 }
 
 /// Requires that a case account for every channel its run can produce.
@@ -408,7 +406,7 @@ pub fn channel_file(domain_dir: &Path, case_id: &str, channel: StreamChannel) ->
 /// contract on purpose. Defaulting would let a case that ships a page or
 /// writes a log read as covered, which is the exact failure this contract
 /// exists to remove.
-pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
+pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> {
     let Some(channels) = &case.channels else {
         // A case whose engine run does not complete has no channels to
         // record, and inventing a contract for it would be a fiction. The
@@ -437,7 +435,7 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
     }
     for channel in STREAM_CHANNELS {
         let declared = channels.stream(channel);
-        let path = channel_file(domain_dir, &case.id, channel);
+        let path = channel_file(fixture_dir, channel);
         let present = path.exists();
         match declared {
             StreamDisposition::Empty if present => {
@@ -462,6 +460,56 @@ pub fn validate_channels(case: &Case, domain_dir: &Path) -> Result<(), String> {
             validate_xfail_disposition(channel, bug, mismatch)
                 .map_err(|error| format!("case {}: {error}", case.id))?;
         }
+    }
+    Ok(())
+}
+
+/// Requires a fixture directory to be a closed, self-contained inventory.
+///
+/// This prevents a source, metadata file, or expected channel from drifting
+/// back into a domain-level catalogue, and rejects symlinks so a fixture
+/// cannot quietly depend on `target/` or another checkout.
+fn validate_fixture_entries(case: &Case, fixture_dir: &Path) -> Result<(), String> {
+    let mut allowed = BTreeSet::from(["manifest.json".to_owned(), case.source.clone()]);
+    if let Some(channels) = &case.channels {
+        for channel in STREAM_CHANNELS {
+            if !matches!(channels.stream(channel), StreamDisposition::Empty) {
+                allowed.insert(format!("expected.{}", channel.name()));
+            }
+        }
+    }
+    let mut entries = fs::read_dir(fixture_dir)
+        .map_err(|error| format!("{}: {error}", fixture_dir.display()))?
+        .map(|entry| entry.map_err(|error| format!("{}: {error}", fixture_dir.display())))
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    let mut observed = BTreeSet::new();
+    for entry in entries {
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+        if !file_type.is_file() {
+            return Err(format!(
+                "fixture entry {} must be a regular committed file",
+                entry.path().display()
+            ));
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| format!("non-UTF-8 fixture entry {}", entry.path().display()))?;
+        if !allowed.contains(&name) {
+            return Err(format!("unowned fixture entry {}", entry.path().display()));
+        }
+        observed.insert(name);
+    }
+    if observed != allowed {
+        let missing: Vec<_> = allowed.difference(&observed).cloned().collect();
+        return Err(format!(
+            "fixture {} is missing local file(s): {}",
+            case.id,
+            missing.join(", ")
+        ));
     }
     Ok(())
 }
@@ -578,7 +626,7 @@ fn input_targets(source: &str) -> Vec<String> {
 pub fn validate_case(
     case: &Case,
     property_domain: &str,
-    domain_dir: &Path,
+    fixture_dir: &Path,
     root: &Path,
     owners: &BTreeMap<String, String>,
     policy: ChannelPolicy,
@@ -587,7 +635,7 @@ pub fn validate_case(
         return Err(format!("case id {:?} is not a lower-kebab slug", case.id));
     }
     if policy == ChannelPolicy::Required {
-        validate_channels(case, domain_dir)?;
+        validate_channels(case, fixture_dir)?;
     }
     match owners.get(&case.property_id) {
         Some(owner) if owner == property_domain => {}
@@ -614,7 +662,7 @@ pub fn validate_case(
             case.id, case.source
         ));
     }
-    let source_path = domain_dir.join(source);
+    let source_path = fixture_dir.join(source);
     let source_bytes =
         fs::read(&source_path).map_err(|error| format!("{}: {error}", source_path.display()))?;
     let byte_len = source_bytes.len();
@@ -889,39 +937,70 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| format!("non-UTF-8 domain directory {}", domain_dir.display()))?;
-        let manifest_path = domain_dir.join("manifest.json");
-        let manifest: DomainManifest = read_json(&manifest_path)?;
-        if manifest.schema != SCHEMA {
-            return Err(format!(
-                "{} has schema {}, expected {SCHEMA}",
-                manifest_path.display(),
-                manifest.schema
-            ));
-        }
-        if manifest.domain != directory_name || !valid_slug(&manifest.domain) {
-            return Err(format!(
-                "{} domain {:?} does not own directory {directory_name}",
-                manifest_path.display(),
-                manifest.domain
-            ));
-        }
-        let property_domain = manifest
-            .property_domain
-            .as_deref()
-            .unwrap_or(&manifest.domain);
-        if !valid_slug(property_domain) {
-            return Err(format!(
-                "{} property domain {:?} is not a lower-kebab slug",
-                manifest_path.display(),
-                property_domain
-            ));
-        }
-        if manifest.cases.is_empty() {
-            return Err(format!("{} declares no cases", manifest_path.display()));
-        }
+        let mut fixture_dirs = fs::read_dir(&domain_dir)
+            .map_err(|error| format!("{}: {error}", domain_dir.display()))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("{}: {error}", domain_dir.display()))?;
+        fixture_dirs.sort();
         let mut declared_sources = BTreeSet::new();
-        for case in manifest.cases {
-            validate_case(&case, property_domain, &domain_dir, &root, &owners, policy)?;
+        for fixture_dir in fixture_dirs {
+            if fixture_dir.is_file()
+                && fixture_dir.file_name().and_then(|value| value.to_str()) == Some("README.md")
+            {
+                continue;
+            }
+            if !fixture_dir.is_dir() {
+                return Err(format!("unowned domain entry {}", fixture_dir.display()));
+            }
+            let fixture_name = fixture_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| format!("non-UTF-8 fixture directory {}", fixture_dir.display()))?;
+            let manifest_path = fixture_dir.join("manifest.json");
+            let manifest: DomainManifest = read_json(&manifest_path)?;
+            if manifest.schema != SCHEMA {
+                return Err(format!(
+                    "{} has schema {}, expected {SCHEMA}",
+                    manifest_path.display(),
+                    manifest.schema
+                ));
+            }
+            if manifest.domain != directory_name || !valid_slug(&manifest.domain) {
+                return Err(format!(
+                    "{} domain {:?} does not own directory {directory_name}",
+                    manifest_path.display(),
+                    manifest.domain
+                ));
+            }
+            let property_domain = manifest
+                .property_domain
+                .as_deref()
+                .unwrap_or(&manifest.domain);
+            if !valid_slug(property_domain) {
+                return Err(format!(
+                    "{} property domain {:?} is not a lower-kebab slug",
+                    manifest_path.display(),
+                    property_domain
+                ));
+            }
+            if manifest.cases.len() != 1 {
+                return Err(format!(
+                    "{} must declare exactly one case, found {}",
+                    manifest_path.display(),
+                    manifest.cases.len()
+                ));
+            }
+            let case = manifest.cases.into_iter().next().expect("length checked");
+            if case.id != fixture_name {
+                return Err(format!(
+                    "{} case {:?} does not own fixture directory {fixture_name}",
+                    manifest_path.display(),
+                    case.id
+                ));
+            }
+            validate_case(&case, property_domain, &fixture_dir, &root, &owners, policy)?;
+            validate_fixture_entries(&case, &fixture_dir)?;
             claim_case_identity(
                 &mut case_ids,
                 &mut sources,
@@ -931,27 +1010,10 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
                 &case.source,
             )?;
             declared.push(DeclaredCase {
-                domain_dir: domain_dir.clone(),
+                fixture_dir,
                 domain: manifest.domain.clone(),
                 case,
             });
-        }
-        let mut fixture_sources = fs::read_dir(&domain_dir)
-            .map_err(|error| format!("{}: {error}", domain_dir.display()))?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("{}: {error}", domain_dir.display()))?;
-        fixture_sources.sort();
-        for fixture in fixture_sources {
-            if fixture.extension().and_then(|value| value.to_str()) == Some("tex") {
-                let name = fixture
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .ok_or_else(|| format!("non-UTF-8 source {}", fixture.display()))?;
-                if !declared_sources.contains(name) {
-                    return Err(format!("unowned fixture source {}", fixture.display()));
-                }
-            }
         }
     }
     if declared.is_empty() {

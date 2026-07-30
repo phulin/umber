@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "domain": "math",
+  "property_domain": "math-box-list-and-mode-semantics",
+  "cases": [
+    {
+      "id": "everypar-hook-paragraph-entry",
+      "property_id": "tex82.paragraphs.boundaries",
+      "source": "everypar-hook-paragraph-entry.tex",
+      "font_inputs": {
+        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+      },
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1088,
+          1089,
+          1090
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=7"
+      ],
+      "channels": {
+        "events": 178,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "Overfull \\hbox (5.2778pt too wide) in paragraph at lines 5--5",
+            "actual": "> 7."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 4,
+            "expected": "Overfull \\hbox (5.2778pt too wide) in paragraph at lines 5--5",
+            "actual": "> 7."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

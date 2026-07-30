@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "domain": "alignments",
+  "property_domain": "alignment-preambles-templates-and-lifecycle",
+  "cases": [
+    {
+      "id": "display-prevdepth",
+      "property_id": "tex82.align.initialize-spec-and-mode",
+      "source": "display-prevdepth.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          774
+        ]
+      },
+      "projection": {
+        "kind": "state",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 427,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./display-prevdepth.tex",
+            "actual": "(./display-prevdepth.tex )"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.16",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./display-prevdepth.tex",
+            "actual": "(./display-prevdepth.tex )"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "italic-correction",
+      "property_id": "tex82.main-control.mode-dispatch",
+      "source": "italic-correction.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1111,
+          1112,
+          1113
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "ital_corr"
+        ]
+      },
+      "expected": [
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0",
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0",
+        "command:raw:cs:/:ital_corr:0",
+        "command:expanded:cs:/:ital_corr:0"
+      ],
+      "channels": {
+        "events": 134,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 4,
+            "expected": "<to be read again> ",
+            "actual": "! Missing { inserted."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "domain": "main-control",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "hyphenation-data",
+      "property_id": "tex82.assignment.hyphenation-data",
+      "profile": "production",
+      "source": "hyphenation-data.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1250,
+          1251,
+          1252
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "Too late for \\patterns",
+          "All patterns must be given before typesetting begins."
+        ],
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "terminal-check:Too late for \\patterns=true",
+        "terminal-check:All patterns must be given before typesetting begins.=true",
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 78,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production)",
+            "actual": "! Too late for \\patterns."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production 2026.7.9) <HOST-CLOCK>",
+            "actual": "! Too late for \\patterns."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

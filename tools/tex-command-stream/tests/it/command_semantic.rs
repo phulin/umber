@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use tex_command::FatalError;
 use tex_state::Universe;
@@ -25,7 +26,7 @@ fn declared_command_semantic_cases_match() {
     let mut failures = Vec::new();
     for declared in &cases {
         let label = format!("{}/{}", declared.domain, declared.case.id);
-        let run = fs::read(declared.domain_dir.join(&declared.case.source))
+        let run = fs::read(declared.fixture_dir.join(&declared.case.source))
             .map_err(|error| format!("source read: {error}"))
             .and_then(|source| execute(&source, &declared.case));
         let actual = run
@@ -61,14 +62,8 @@ fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<
         .channels
         .as_ref()
         .expect("load_suite requires every case to declare a channel contract");
-    let committed = |channel: StreamChannel| {
-        fs::read(channel_file(
-            &declared.domain_dir,
-            &declared.case.id,
-            channel,
-        ))
-        .ok()
-    };
+    let committed =
+        |channel: StreamChannel| fs::read(channel_file(&declared.fixture_dir, channel)).ok();
     compare(&CapturedChannels::capture(run), contract, &committed)
 }
 
@@ -90,7 +85,7 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
         if declared.case.channels.is_some() {
             continue;
         }
-        let source = fs::read(declared.domain_dir.join(&declared.case.source))
+        let source = fs::read(declared.fixture_dir.join(&declared.case.source))
             .expect("an exempt case still has a readable source");
         assert!(
             execute(&source, &declared.case).is_err(),
@@ -108,6 +103,55 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
     // declares a channel contract. Growing this list again is a regression to
     // argue for, not a convenience.
     assert_eq!(exempt, [] as [String; 0], "the exempt set moved");
+}
+
+#[test]
+fn every_minifixture_file_is_local_and_tracked() {
+    let root = repository_root();
+    let cases =
+        load_suite().unwrap_or_else(|error| panic!("invalid command-semantic corpus: {error}"));
+    let mut fixture_dirs = BTreeSet::new();
+    for declared in &cases {
+        assert!(
+            fixture_dirs.insert(declared.fixture_dir.clone()),
+            "duplicate fixture directory {}",
+            declared.fixture_dir.display()
+        );
+        let relative = declared
+            .fixture_dir
+            .strip_prefix(&root)
+            .expect("fixture is beneath the repository");
+        let output = Command::new("git")
+            .args(["ls-files", "--error-unmatch", "--"])
+            .arg(relative)
+            .current_dir(&root)
+            .output()
+            .expect("git is available for the repository fixture gate");
+        assert!(
+            output.status.success(),
+            "{} contains an untracked fixture file:\n{}",
+            relative.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let tracked = String::from_utf8(output.stdout).expect("Git paths are UTF-8");
+        assert_eq!(
+            tracked.lines().count(),
+            fs::read_dir(&declared.fixture_dir)
+                .expect("fixture directory is readable")
+                .count(),
+            "{} has a file not represented in Git",
+            relative.display()
+        );
+        for channel in STREAM_CHANNELS {
+            assert_eq!(
+                channel_file(&declared.fixture_dir, channel),
+                declared
+                    .fixture_dir
+                    .join(format!("expected.{}", channel.name())),
+                "the generator must emit channels inside their fixture directory"
+            );
+        }
+    }
 }
 
 #[test]

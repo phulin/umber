@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "domain": "etex-diagnostics",
+  "property_domain": "main-control-groups-assignments",
+  "cases": [
+    {
+      "id": "etex-loaded-macro-call",
+      "property_id": "tex82.assignment.macro-definitions",
+      "profile": "etex-loaded",
+      "source": "etex-loaded-macro-call.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          341,
+          1221,
+          1309
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "call"
+        ],
+        "count_registers": []
+      },
+      "expected": [
+        "command:raw:cs:formatmacro:call:249985"
+      ],
+      "channels": {
+        "events": 11,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

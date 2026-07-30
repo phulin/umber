@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "stack-lifecycle",
+      "property_id": "tex82.conditionals.stack-lifecycle",
+      "source": "stack-lifecycle.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          489,
+          495,
+          496,
+          497
+        ]
+      },
+      "projection": {
+        "kind": "condition-steps",
+        "count_registers": [
+          0
+        ]
+      },
+      "expected": [
+        "condition:push:ifnum:evaluating:-",
+        "condition:push:iftrue:evaluating:-",
+        "condition:branch:iftrue:evaluating:true",
+        "condition:limit:iftrue:else:-",
+        "condition:pop:iftrue:else:-",
+        "condition:branch:ifnum:evaluating:true",
+        "condition:limit:ifnum:else:-",
+        "condition:pop:ifnum:else:-",
+        "count:0=1"
+      ],
+      "channels": {
+        "events": 102,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

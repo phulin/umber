@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "cases": [
+    {
+      "id": "odd-integer",
+      "property_id": "tex82.conditionals.odd-integer",
+      "source": "odd-integer.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          504
+        ]
+      },
+      "projection": {
+        "kind": "predicate-outcomes",
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expected": [
+        "predicate:ifodd:integer=0:false",
+        "predicate:ifodd:integer=2:false",
+        "predicate:ifodd:integer=-2:false",
+        "predicate:ifodd:integer=1:true",
+        "predicate:ifodd:integer=-1:true",
+        "count:0=1",
+        "count:1=1",
+        "count:2=1",
+        "count:3=1",
+        "count:4=1"
+      ],
+      "channels": {
+        "events": 217,
+        "status": "clean",
+        "terminal": {
+          "kind": "file"
+        },
+        "log": {
+          "kind": "file"
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
+    }
+  ]
+}

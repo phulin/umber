@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "domain": "math",
+  "property_domain": "math-box-list-and-mode-semantics",
+  "cases": [
+    {
+      "id": "head-for-vmode-recovery",
+      "property_id": "tex82.paragraphs.boundaries",
+      "source": "head-for-vmode-recovery.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          1064,
+          1065,
+          1066,
+          1091,
+          1095
+        ]
+      },
+      "projection": {
+        "kind": "terminal-checks",
+        "terminal_checks": [
+          "Missing } inserted"
+        ],
+        "count_registers": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expected": [
+        "terminal-check:Missing } inserted=true",
+        "count:0=1",
+        "count:1=1",
+        "count:2=1"
+      ],
+      "channels": {
+        "events": 522,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 4,
+            "expected": "<to be read again> ",
+            "actual": "! Missing { inserted."
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
+        "dvi": {
+          "kind": "empty"
+        },
+        "effects": {
+          "kind": "empty"
+        }
+      },
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "",
+        "",
+        ""
+      ]
+    }
+  ]
+}
