@@ -3,7 +3,8 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 use test_support::{
-    corpus_cases, corpus_root,
+    corpus_root,
+    git_fixture::ClosedCase,
     pdf::normalize_structure,
     pdf_probe::{PdfProbe, ProbeLimits, ProbeValue},
     read_binary_fixture, read_fixture,
@@ -11,18 +12,74 @@ use test_support::{
 use tex_state::Universe;
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
+const PDF_PARITY_CASES: &[PdfParityCase] = &[
+    PdfParityCase::new("annotations_running", &[]),
+    PdfParityCase::new("external_pdf_page", &["minimal_rule.expected.ref.pdf"]),
+    PdfParityCase::new("form_xobjects", &[]),
+    PdfParityCase::new("minimal_rule", &[]),
+    PdfParityCase::new("navigation_structures", &[]),
+    PdfParityCase::new("object_dictionaries", &[]),
+];
+const PDF_PARITY_CHANNELS_PER_CASE: usize = 5;
+
+#[derive(Clone, Copy)]
+struct PdfParityCase {
+    name: &'static str,
+    owned_inputs: &'static [&'static str],
+}
+
+impl PdfParityCase {
+    const fn new(name: &'static str, owned_inputs: &'static [&'static str]) -> Self {
+        Self { name, owned_inputs }
+    }
+}
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_pdftex_fixtures_match_structure_and_bytes() {
-    for case in corpus_cases("pdf") {
-        let expected_structure = corpus_root()
-            .join("pdf")
-            .join(format!("{}.expected.structure", case.name()));
-        if expected_structure.exists() {
-            assert_committed_case(case.name());
-        }
+    assert!(
+        !PDF_PARITY_CASES.is_empty(),
+        "PDF parity case declaration must not be empty"
+    );
+    let mut exercised_cases = 0;
+    let mut exercised_channels = 0;
+    for declaration in PDF_PARITY_CASES {
+        exercised_channels += assert_committed_case(*declaration);
+        exercised_cases += 1;
     }
+    assert_eq!(
+        exercised_cases,
+        PDF_PARITY_CASES.len(),
+        "fewer PDF parity cases ran than were declared"
+    );
+    assert_eq!(
+        exercised_channels,
+        PDF_PARITY_CASES.len() * PDF_PARITY_CHANNELS_PER_CASE,
+        "fewer PDF parity channels ran than were declared"
+    );
+}
+
+#[test]
+fn migrated_pdftex_parity_roles_resolve_inside_closed_cases() {
+    let resolved = PDF_PARITY_CASES
+        .iter()
+        .map(|declaration| {
+            let case = closed_pdf_case(declaration.name);
+            case.payload_path("source.tex")
+                .expect("declared source role");
+            case.payload_path("expected.structure")
+                .expect("declared structure role");
+            declaration.name
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resolved,
+        PDF_PARITY_CASES
+            .iter()
+            .map(|declaration| declaration.name)
+            .collect::<Vec<_>>(),
+        "migrated PDF parity discovery skipped a declared case"
+    );
 }
 
 #[test]
@@ -105,13 +162,39 @@ fn annotation_projection(bytes: &[u8]) -> Vec<Vec<AnnotationProjection>> {
 }
 
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
-fn assert_committed_case(case: &str) {
+fn assert_committed_case(declaration: PdfParityCase) -> usize {
+    let case = declaration.name;
+    let closed = closed_pdf_case(case);
+    let source = closed
+        .payload_path("source.tex")
+        .expect("resolve declared PDF source role");
+    for input in declaration.owned_inputs {
+        closed.payload_path(input).unwrap_or_else(|error| {
+            panic!("resolve owned input role {input} for {case}: {error:#}")
+        });
+    }
+    let expected_umber = closed
+        .read("expected.umber.pdf")
+        .expect("read declared Umber PDF role");
+    let reference = closed
+        .read("expected.ref.pdf")
+        .expect("read declared reference PDF role");
+    let expected_structure = closed
+        .read_to_string("expected.structure")
+        .expect("read declared structure role");
+    let raster = closed
+        .read("expected.pgm")
+        .expect("read declared raster role");
+    let render = closed
+        .read_to_string("expected.render")
+        .expect("read declared render-attestation role");
+
     let temp = tempfile::tempdir().expect("create PDF parity directory");
     let actual_path = temp.path().join(format!("{case}.pdf"));
-    let source = corpus_root().join("pdf").join(format!("{case}.tex"));
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .args(["run", "--pdftex", "--pdf"])
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("UMBER_ENGINE_FUEL", "10000000")
         .arg(&actual_path)
         .arg(source)
         .output()
@@ -123,14 +206,11 @@ fn assert_committed_case(case: &str) {
     );
 
     let actual = fs::read(actual_path).expect("read current Umber PDF");
-    let expected_umber = read_binary_fixture("pdf", case, "umber.pdf");
     assert_eq!(
         actual, expected_umber,
         "deterministic Umber PDF bytes changed"
     );
 
-    let reference = read_binary_fixture("pdf", case, "ref.pdf");
-    let expected_structure = read_fixture("pdf", case, "structure");
     assert_eq!(
         normalize_structure(&reference).expect("normalize reference PDF"),
         expected_structure
@@ -140,7 +220,6 @@ fn assert_committed_case(case: &str) {
         expected_structure
     );
 
-    let raster = read_binary_fixture("pdf", case, "pgm");
     assert!(
         raster.starts_with(b"P5\n") && raster.windows(5).any(|bytes| bytes == b"\n255\n"),
         "unexpected raster header for pdf/{case}"
@@ -152,10 +231,15 @@ fn assert_committed_case(case: &str) {
         digest(&raster),
     );
     assert_eq!(
-        read_fixture("pdf", case, "render"),
-        expected_attestation,
+        render, expected_attestation,
         "committed renderer attestation is stale for pdf/{case}"
     );
+    PDF_PARITY_CHANNELS_PER_CASE
+}
+
+fn closed_pdf_case(case: &str) -> ClosedCase {
+    ClosedCase::discover(format!("tests/corpus/pdf/{case}"))
+        .unwrap_or_else(|error| panic!("pdf/{case} is not a closed fixture case: {error:#}"))
 }
 
 #[test]
