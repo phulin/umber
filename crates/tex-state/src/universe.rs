@@ -1900,7 +1900,10 @@ impl Universe {
                     4 => PageMark::SplitBot,
                     _ => return None,
                 };
-                Some(token_list(self.page_mark(mark)))
+                Some(
+                    self.page_mark_value(mark)
+                        .map_or(DependencyValue::Absent, token_list),
+                )
             }
             DependencyKey::PageMarkClass { mark, class } => {
                 let mark = match mark {
@@ -1911,7 +1914,10 @@ impl Universe {
                     4 => PageMark::SplitBot,
                     _ => return None,
                 };
-                Some(token_list(self.page_mark_class(mark, class)))
+                Some(
+                    self.page_mark_class_value(mark, class)
+                        .map_or(DependencyValue::Absent, token_list),
+                )
             }
             DependencyKey::Engine(DependencyEngineField::GroupLevel) => Some(
                 DependencyValue::Unsigned(u64::from(self.execution_group_depth())),
@@ -5765,12 +5771,22 @@ impl Universe {
         self.page.set_mark(mark, value);
         self.dependencies
             .mark_changed(DependencyKey::PageMark(mark.index()));
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class: 0,
+            });
     }
 
     pub fn clear_page_mark(&mut self, mark: PageMark) {
         self.page.clear_mark(mark);
         self.dependencies
             .mark_changed(DependencyKey::PageMark(mark.index()));
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class: 0,
+            });
     }
 
     #[must_use]
@@ -5791,6 +5807,10 @@ impl Universe {
                 mark: mark.index(),
                 class,
             });
+        if class == 0 {
+            self.dependencies
+                .mark_changed(DependencyKey::PageMark(mark.index()));
+        }
     }
 
     pub fn clear_page_mark_class(&mut self, mark: PageMark, class: u16) {
@@ -5800,6 +5820,10 @@ impl Universe {
                 mark: mark.index(),
                 class,
             });
+        if class == 0 {
+            self.dependencies
+                .mark_changed(DependencyKey::PageMark(mark.index()));
+        }
     }
 
     pub fn page_mark_classes(&self) -> impl Iterator<Item = u16> + '_ {

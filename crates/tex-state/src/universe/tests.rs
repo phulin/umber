@@ -14,7 +14,7 @@ use crate::input::{
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
-use crate::page::{PageDimension, PageInteger};
+use crate::page::{PageDimension, PageInteger, PageMark};
 use crate::provenance::{
     InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
 };
@@ -2614,6 +2614,109 @@ fn rollback_restores_page_builder_state_and_hash() {
     );
     assert_eq!(universe.page_integer(PageInteger::InsertPenalties), 0);
     assert!(universe.page_fire_up().is_none());
+}
+
+#[test]
+fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
+    use crate::{DependencyKey, DependencyValue};
+
+    let marks = [
+        PageMark::Top,
+        PageMark::First,
+        PageMark::Bot,
+        PageMark::SplitFirst,
+        PageMark::SplitBot,
+    ];
+    let mut universe = Universe::new();
+
+    for (ordinal, mark) in marks.into_iter().enumerate() {
+        let direct = DependencyKey::PageMark(mark.index());
+        let class_zero = DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class: 0,
+        };
+        let sparse_class = u16::try_from(ordinal + 1).expect("bounded class");
+        let sparse = DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class: sparse_class,
+        };
+        let snapshot = universe.snapshot();
+
+        for key in [direct, class_zero, sparse] {
+            assert_eq!(
+                universe.semantic_dependency_value(key),
+                Some(DependencyValue::Absent)
+            );
+        }
+
+        universe.begin_dependency_region();
+        for key in [direct, class_zero, sparse] {
+            universe.record_dependency(key, DependencyValue::Absent);
+        }
+        let observations = universe.finish_dependency_region();
+
+        universe.set_page_mark(mark, TokenListId::EMPTY);
+        universe.set_page_mark_class(mark, sparse_class, TokenListId::EMPTY);
+        let empty = universe
+            .semantic_dependency_value(direct)
+            .expect("direct mark dependency");
+        assert_ne!(empty, DependencyValue::Absent);
+        assert_eq!(
+            universe.semantic_dependency_value(class_zero),
+            Some(empty.clone())
+        );
+        assert_eq!(universe.semantic_dependency_value(sparse), Some(empty));
+
+        for observation in observations {
+            let key = observation.key;
+            assert_eq!(
+                universe.validate_dependencies_with_failure_readonly(
+                    std::slice::from_ref(&observation),
+                    |key| universe
+                        .semantic_dependency_value(key)
+                        .expect("page mark dependency"),
+                ),
+                Some(key),
+                "absent-to-present-empty must reject checkpoint reuse for {key:?}"
+            );
+        }
+
+        universe.begin_dependency_region();
+        for key in [direct, class_zero, sparse] {
+            universe.record_dependency(
+                key,
+                universe
+                    .semantic_dependency_value(key)
+                    .expect("page mark dependency"),
+            );
+        }
+        let observations = universe.finish_dependency_region();
+
+        universe.clear_page_mark_class(mark, 0);
+        universe.clear_page_mark_class(mark, sparse_class);
+        for observation in observations {
+            let key = observation.key;
+            assert_eq!(
+                universe.validate_dependencies_with_failure_readonly(
+                    std::slice::from_ref(&observation),
+                    |key| universe
+                        .semantic_dependency_value(key)
+                        .expect("page mark dependency"),
+                ),
+                Some(key),
+                "present-empty-to-absent must reject checkpoint reuse for {key:?}"
+            );
+        }
+
+        universe.rollback(&snapshot);
+        for key in [direct, class_zero, sparse] {
+            assert_eq!(
+                universe.semantic_dependency_value(key),
+                Some(DependencyValue::Absent),
+                "rollback must restore absence for {key:?}"
+            );
+        }
+    }
 }
 
 #[test]
