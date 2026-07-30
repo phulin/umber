@@ -41,12 +41,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 19, "expected": "", "actual": "! Missing { inserted." }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "! Missing { inserted." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 36, "expected": "", "actual": "! Missing { inserted." }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -91,8 +95,20 @@
       "channels": {
         "events": 57,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -144,7 +160,7 @@
         "command:mkern:99",
         "command:left_right:31",
         "command:left_right:31",
-        "artifact:77c84c480d76982957f871ff25500243147a4d5c5f5025da9103e74265cff7e0"
+        "artifact:007caa842d14008da82ff9ca6db6746b28046728c76f2a55a6c212416025b42d"
       ],
       "channels": {
         "events": 106,
@@ -152,12 +168,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -210,7 +230,7 @@
         "command:math_comp:18",
         "command:math_comp:18",
         "command:math_comp:19",
-        "artifact:b4824d213091cc63cf3d9f32e47cfa0e1130c5e7a74913b925ccbb06e9c891bf"
+        "artifact:4150443b19bd34071fe7b93d1c32d06eceb5a9ab735e3db10a1312030b0b3d51"
       ],
       "channels": {
         "events": 80,
@@ -218,12 +238,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -289,7 +313,7 @@
         "command:math_comp:17",
         "command:math_comp:17",
         "command:limit_switch:2",
-        "artifact:67288a034cc316198db30d774cc1515a86bd4ad06002ab3d8cce655bd6652b2f"
+        "artifact:0d0201d60025b7555a4c86f3a990d35fd8410d3f6654abcf4f86604ac392c9e3"
       ],
       "channels": {
         "events": 76,
@@ -297,19 +321,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 14,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
-          }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 23,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
           }
         },
         "dvi": {
@@ -356,7 +376,7 @@
         "command:math_comp:20",
         "command:math_comp:23",
         "command:math_comp:21",
-        "artifact:c555b67c4a5aa73fad55888ada4540828f2b409389ebe7fe53f597b8240ff3a2"
+        "artifact:91facd2628c76d35cae82daf8cee176d6800b0c54b2a2d30b42581342a522846"
       ],
       "channels": {
         "events": 86,
@@ -364,12 +384,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -426,7 +450,7 @@
         "mode:math",
         "mode:horizontal",
         "mode:vertical",
-        "artifact:23efe7c3ae17f2f6c8591b39ad746164ce2daa0703805cf454dd2e57505f5230"
+        "artifact:f0c5a5ee57493ab3ab6f501163b9306afc17ffc70d0c7cbda404476d9c0ea78f"
       ],
       "channels": {
         "events": 88,
@@ -434,12 +458,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 15, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 22, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 5, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "dvi": {
           "kind": "xfail",
@@ -509,12 +533,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 8, "expected": "", "actual": "! Missing $ inserted." }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -561,7 +589,7 @@
         "command:math_style:4",
         "command:math_comp:17",
         "command:limit_switch:1",
-        "artifact:56db5c3fa002531a1df3412a4701a2fae75103b06350fc9fbca76ba5c2d885de"
+        "artifact:73382f3e10e515f8c18b43bd1a859658792e3d107f98c314b551ccb077f09380"
       ],
       "channels": {
         "events": 110,
@@ -569,15 +597,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 8, "expected": "", "actual": "! Missing $ inserted." }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
           "mismatch": {
-            "line": 23,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
           }
         },
         "dvi": {
@@ -678,7 +706,7 @@
         "command:mkern:99",
         "command:mkern:99",
         "command:mkern:99",
-        "artifact:dce97a2baf5e8adeeb6af182d4cd4bbbe8207c7b0a77a4986afb48388fadd64c"
+        "artifact:d6f308c693a89801ceaa6af75ab0917a9115b3b24dba04ccf39a06c88e9438b0"
       ],
       "channels": {
         "events": 216,
@@ -686,12 +714,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -750,7 +782,7 @@
         "command:above:1",
         "command:mkern:99",
         "command:left_right:31",
-        "artifact:4061461c728dde99bf4df8da834a3b4f03c0d4120f959deaf002e3394a92c93a"
+        "artifact:e43d5e850e661da89bb3818dfd23807e33e48130c1b5f16a0c8d8692025b57c2"
       ],
       "channels": {
         "events": 142,
@@ -758,12 +790,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -819,7 +855,7 @@
         "mode:math",
         "mode:horizontal",
         "mode:vertical",
-        "artifact:e8ae28c2636ee046f06d66b155bd45fa48d5fa84815c51dbccd173f6e1779ab0"
+        "artifact:9731133afd027f349d9cbe971da6334730526883b0b505b32fc34f1d86a5d279"
       ],
       "channels": {
         "events": 88,
@@ -827,12 +863,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 15, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 22, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 5, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "dvi": {
           "kind": "xfail",
@@ -1663,8 +1699,16 @@
       "channels": {
         "events": 604,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.5 \\showbox1", "actual": "! OK (see the transcript file)." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.5 \\showbox1", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1701,8 +1745,16 @@
       "channels": {
         "events": 454,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.5 \\showbox1", "actual": " )" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.5 \\showbox1", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1743,8 +1795,16 @@
       "channels": {
         "events": 125,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.6 \\showbox40", "actual": " )" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.6 \\showbox40", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1848,8 +1908,16 @@
       "channels": {
         "events": 533,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.8 \\showbox34", "actual": "! OK (see the transcript file)." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.8 \\showbox34", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1891,8 +1959,16 @@
       "channels": {
         "events": 132,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.6 \\showbox36", "actual": " )" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.6 \\showbox36", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -1937,8 +2013,16 @@
       "channels": {
         "events": 188,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.7 \\showbox32", "actual": "! OK (see the transcript file)." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 9, "expected": "l.7 \\showbox32", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

@@ -2,6 +2,8 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **errmessage-help.tex
 (./errmessage-help.tex
 ! bad.
+l.2 ...topmode\errhelp={user help}\errmessage{bad}
+                                                  
 user help
 
  )

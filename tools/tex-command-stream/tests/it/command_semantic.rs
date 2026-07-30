@@ -105,7 +105,7 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
     // declares a channel contract. Growing this list again is a regression to
     // argue for, not a convenience.
     assert_eq!(exempt, [] as [String; 0], "the exempt set moved");
-    assert_eq!(cases.len(), 194, "the corpus changed size");
+    assert_eq!(cases.len(), 197, "the corpus changed size");
 }
 
 #[test]

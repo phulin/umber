@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./mag-error-context.tex
+! Illegal magnification has been changed to 1000 (32769).
+<to be read again> 
+                   =
+l.1 \font\oversized=cmr10 scaled 32769=
+                                       
+[1000] )
+(see the transcript file for additional information)
+Output written on mag-error-context.dvi (1 page, 128 bytes).
+Transcript written on mag-error-context.log.

@@ -1,0 +1,23 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+entering extended mode
+**etex-outer-validity-eof.tex
+(./etex-outer-validity-eof.tex)
+! Incomplete \iffalse; all text was ignored after line 2.
+<inserted text> 
+                \fi 
+<*> etex-outer-validity-eof.tex
+                               
+The file ended while I was skipping conditional text.
+This kind of error happens when you say `\if...' and forget
+the matching `\fi'. I've inserted a `\fi'; this might work.
+
+
+*
+(Please type a command or say `\end')
+*
+! Emergency stop.
+<*> 
+    
+End of file on the terminal!
+
+No pages of output.

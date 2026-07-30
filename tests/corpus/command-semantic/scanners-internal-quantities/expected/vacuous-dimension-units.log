@@ -1,17 +1,29 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **vacuous-dimension-units.tex
+(./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
+<to be read again> 
+                   p
+l.1 \dimen0=p
+             t
 A number should have been here; I inserted `0'.
 (If you can't figure out why I needed to see a number,
 look up `weird error' in the index to The TeXbook.)
 
-(./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
+<to be read again> 
+                   x
+l.2 \dimen1=x
+              pt
 A number should have been here; I inserted `0'.
 (If you can't figure out why I needed to see a number,
 look up `weird error' in the index to The TeXbook.)
 
 ! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   x
+l.2 \dimen1=x
+              pt
 Dimensions can be in units of em, ex, in, pt, pc,
 cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
 I'll assume that you meant to say pt, for printer's points.

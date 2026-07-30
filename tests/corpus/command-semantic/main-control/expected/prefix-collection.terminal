@@ -1,6 +1,9 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./prefix-collection.tex
 ! You can't use `\long' or `\outer' with `\count'.
-(./prefix-collection.tex )
+l.1 \long\count
+               0=1
+ )
 (see the transcript file for additional information)
 No pages of output.
 Transcript written on prefix-collection.log.

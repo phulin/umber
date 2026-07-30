@@ -1,7 +1,11 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
 **preamble-global-prefix.tex
 (./preamble-global-prefix.tex
-! You can't use a prefix with `y'.
+! You can't use a prefix with `the letter y'.
+<to be read again> 
+                   y
+l.3 \halign{#&\global\tabskip=2pt#\cr x&y
+                                         \cr}
 I'll pretend you didn't say \long or \outer or \global.
 
 [1] )

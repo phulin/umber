@@ -1,6 +1,10 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./font-parameters.tex
 ! Font \nullfont has only 7 fontdimen parameters.
+<recently read> \nullfont 
+                          
+l.1 \fontdimen0\nullfont
+                        =1pt
  )
 (see the transcript file for additional information)
 No pages of output.

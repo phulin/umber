@@ -621,8 +621,16 @@
       "channels": {
         "events": 130,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "> A {B} \\boom #### x.", "actual": "" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "> A {B} \\boom #### x.", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -655,15 +663,23 @@
         ]
       },
       "expected": [
-        "effect:showifs:\n\n### level 2: \\iffalse\\else entered on line 3\n### level 1: \\iftrue entered on line 2",
+        "effect:showifs:### level 2: \\iffalse\\else entered on line 3\n### level 1: \\iftrue entered on line 2",
         "effect:terminate:engine\u0000",
         "count:0=1"
       ],
       "channels": {
         "events": 46,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "l.4 \\showifs", "actual": " )" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 10, "expected": "l.4 \\showifs", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -703,15 +719,15 @@
       "channels": {
         "events": 45,
         "status": "clean",
-        "terminal": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "l.2 \\showgroups", "actual": "! OK (see the transcript file)." }
+        },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.17",
-          "mismatch": {
-            "line": 25,
-            "expected": "I'll pretend you didn't say \\long or \\outer or \\global or \\protected.",
-            "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
-          }
+          "mismatch": { "line": 9, "expected": "l.2 \\showgroups", "actual": "" }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -797,12 +813,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 9, "expected": "", "actual": "! Missing { inserted." }
+          "mismatch": { "line": 5, "expected": "<to be read again> ", "actual": "! Missing { inserted." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": { "line": 89, "expected": "<*> etex-glue-component-enquiries.tex", "actual": "<*> " }
+          "mismatch": {
+            "line": 6,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -917,12 +937,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 14, "expected": "", "actual": "! You can't use `\\end' in internal vertical mode." }
+          "mismatch": { "line": 5, "expected": "<to be read again> ", "actual": "! Missing { inserted." }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 37, "expected": "<*> etex-expressions.tex", "actual": "<*> " }
+          "mismatch": {
+            "line": 6,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -964,8 +988,20 @@
       "channels": {
         "events": 72,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "<to be read again> ", "actual": "" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 6,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

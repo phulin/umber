@@ -1,8 +1,16 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./remove-last-node.tex
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.1 \setbox0=\hbox{
+                   \unskip\unkern\unpenalty}
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.2 \end
+        
  )
 (see the transcript file for additional information)
 No pages of output.

@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./missing-number-error-context.tex
+! Missing number, treated as zero.
+<to be read again> 
+                   x
+l.1 \count0=x
+             
+[0] )
+(see the transcript file for additional information)
+Output written on missing-number-error-context.dvi (1 page, 128 bytes).
+Transcript written on missing-number-error-context.log.

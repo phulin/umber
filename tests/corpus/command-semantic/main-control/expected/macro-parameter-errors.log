@@ -2,25 +2,45 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **macro-parameter-errors.tex
 (./macro-parameter-errors.tex
 ! Parameters must be numbered consecutively.
+<to be read again> 
+                   2
+l.2 \def\named#2
+                {N}
 I've inserted the digit you should have used after the #.
 Type `1' to delete what you did use.
 
 ! Illegal parameter number in definition of \body.
+<to be read again> 
+                   x
+l.3 \def\body{#x
+                }
 You meant to type ## instead of #, right?
 Or maybe a } was forgotten somewhere earlier, and things
 are all screwed up? I'm going to assume that you meant ##.
 
 ! Illegal parameter number in definition of ~.
+<to be read again> 
+                   x
+l.5 \def~{{#x
+             }}
 You meant to type ## instead of #, right?
 Or maybe a } was forgotten somewhere earlier, and things
 are all screwed up? I'm going to assume that you meant ##.
 
 ! Illegal parameter number in definition of \local.
+<to be read again> 
+                   x
+l.6 {\def\local{#x
+                  }}
 You meant to type ## instead of #, right?
 Or maybe a } was forgotten somewhere earlier, and things
 are all screwed up? I'm going to assume that you meant ##.
 
 ! Illegal parameter number in definition of \global.
+<to be read again> 
+                   x
+l.7 {\global\def\global{#x
+                          }}
 You meant to type ## instead of #, right?
 Or maybe a } was forgotten somewhere earlier, and things
 are all screwed up? I'm going to assume that you meant ##.

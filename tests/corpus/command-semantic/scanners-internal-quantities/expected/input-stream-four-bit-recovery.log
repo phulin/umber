@@ -4,13 +4,13 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 ! Bad number (-1).
 <to be read again> 
                    =
-l.1 \openin-1=
+l.2 \openin-1=
               missing
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
 
 ! Bad number (16).
-l.2 \closein16
+l.3 \closein16
               
 Since I expected to read a number between 0 and 15,
 I changed this one to zero.
@@ -18,7 +18,7 @@ I changed this one to zero.
 
 \ordinary=ordinary
 ! Undefined control sequence.
-l.4 \readline
+l.5 \readline
              15 to \verbatim
 The control sequence at the end of the top line
 of your error message was never \def'ed. If you have
@@ -27,7 +27,7 @@ spelling (e.g., `I\hbox'). Otherwise just continue,
 and I'll forget about whatever was undefined.
 
 ! Undefined control sequence.
-l.4 \readline15 to \verbatim
+l.5 \readline15 to \verbatim
                             
 The control sequence at the end of the top line
 of your error message was never \def'ed. If you have

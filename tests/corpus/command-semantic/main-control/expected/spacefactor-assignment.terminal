@@ -1,41 +1,68 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./spacefactor-assignment.tex
 ! You can't use `\spacefactor' in vertical mode.
-Sorry, but I'm not programmed to handle this case;
-I'll just pretend that you didn't ask for it.
-If you're in the wrong mode, you might be able to
-return to the right one by typing `I}' or `I$' or `I\par'.
+l.4 \spacefactor
+                \global\count0=1
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.5 \vbox{
+          \spacefactor\global\count1=1}
 ! Missing number, treated as zero.
-
+<to be read again> 
+                   \global 
+l.5 \vbox{\spacefactor\global
+                             \count1=1}
 ! Bad space factor (0).
-I allow only values in the range 1..32767 here.
+<to be read again> 
+                   \global 
+l.5 \vbox{\spacefactor\global
+                             \count1=1}
 ! Missing number, treated as zero.
-
+<to be read again> 
+                   \global 
+l.6 $\spacefactor\global
+                        \count2=1$
 ! Bad space factor (0).
-I allow only values in the range 1..32767 here.
+<to be read again> 
+                   \global 
+l.6 $\spacefactor\global
+                        \count2=1$
 ! Missing number, treated as zero.
-
+<to be read again> 
+                   \global 
+l.7 $$\spacefactor\global
+                         \count3=1$$
 ! Bad space factor (0).
-I allow only values in the range 1..32767 here.
-
+<to be read again> 
+                   \global 
+l.7 $$\spacefactor\global
+                         \count3=1$$
 ! Bad space factor (0).
-I allow only values in the range 1..32767 here.
-
+l.17 \spacefactor=0
+                   
 ! Bad space factor (-1).
-I allow only values in the range 1..32767 here.
-
+l.19 \spacefactor=-1
+                    
 ! Bad space factor (32768).
-I allow only values in the range 1..32767 here.
+l.21 \spacefactor=32768
+                       
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.23 \setbox0=\hbox{
+                    
 ! Missing } inserted.
-
+<inserted text> 
+                }
+...
+l.31 \end
+         
 ! You can't use `\end' in internal vertical mode.
-Sorry, but I'm not programmed to handle this case;
-I'll just pretend that you didn't ask for it.
-If you're in the wrong mode, you might be able to
-return to the right one by typing `I}' or `I$' or `I\par'.
+<recently read> \end 
+                     
+l.31 \end
+         
 )
 *(Please type a command or say `\end')
 *

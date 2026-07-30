@@ -27,6 +27,22 @@
         "terminal-check:x=true",
         "count:0=0"
       ],
+      "channels": {
+        "events": 49,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.22",
+          "mismatch": {
+            "line": 1,
+            "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+          }
+        },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -59,12 +75,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 4, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 29, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
+          "mismatch": { "line": 5, "expected": "<inserted text> ", "actual": "<inserted text>" }
         },
         "dvi": {
           "kind": "xfail",
@@ -170,7 +186,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 143,
+        "events": 146,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -242,12 +258,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 4, "expected": "l.5 \\count2", "actual": "l.5 \\count2=" }
+          "mismatch": { "line": 4, "expected": "l.5 \\count2", "actual": "[1.10] )" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 5, "expected": "l.5 \\count2", "actual": "l.5 \\count2=" }
+          "mismatch": {
+            "line": 5,
+            "expected": "l.5 \\count2",
+            "actual": "The control sequence at the end of the top line"
+          }
         },
         "dvi": {
           "kind": "xfail",
@@ -292,8 +312,20 @@
       "channels": {
         "events": 59,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": {
+            "line": 5,
+            "expected": "<to be read again> ",
+            "actual": "A left brace was mandatory here, so I've put one in."
+          }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -336,14 +368,18 @@
       "channels": {
         "events": 200,
         "status": "clean",
-        "terminal": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 14, "expected": "<to be read again> ", "actual": "[7] )" }
+        },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.20",
           "mismatch": {
-            "line": 28,
-            "expected": "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!",
-            "actual": "cm, mm, dd, cc, bp, or sp; but yours is a new one!"
+            "line": 23,
+            "expected": "<to be read again> ",
+            "actual": "Dimensions can be in units of em, ex, in, pt, pc,"
           }
         },
         "dvi": {

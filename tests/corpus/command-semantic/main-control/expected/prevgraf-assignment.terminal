@@ -1,18 +1,31 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./prevgraf-assignment.tex
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.9 \vbox{
+          \prevgraf=3 \ifnum\prevgraf=3 \global\count3=1 \fi}
 ! Missing { inserted.
-
+<to be read again> 
+                   {
+l.10 \hbox{
+           \prevgraf=4 \ifnum\prevgraf=4 \global\count4=1 \fi}
 ! Bad \prevgraf (-1).
-I allow only nonnegative values here.
-
+<to be read again> 
+                   \global 
+l.13 \prevgraf=-1\global
+                        \count7=1
 ! Missing } inserted.
-
+<inserted text> 
+                }
+...
+l.15 \end
+         
 ! You can't use `\end' in internal vertical mode.
-Sorry, but I'm not programmed to handle this case;
-I'll just pretend that you didn't ask for it.
-If you're in the wrong mode, you might be able to
-return to the right one by typing `I}' or `I$' or `I\par'.
+<recently read> \end 
+                     
+l.15 \end
+         
 )
 *(Please type a command or say `\end')
 *

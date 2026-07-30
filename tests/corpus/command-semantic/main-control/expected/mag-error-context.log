@@ -1,0 +1,12 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**mag-error-context.tex
+(./mag-error-context.tex
+! Illegal magnification has been changed to 1000 (32769).
+<to be read again> 
+                   =
+l.1 \font\oversized=cmr10 scaled 32769=
+                                       
+The magnification ratio must be between 1 and 32768.
+
+[1000] )
+Output written on mag-error-context.dvi (1 page, 128 bytes).

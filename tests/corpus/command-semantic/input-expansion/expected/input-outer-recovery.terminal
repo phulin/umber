@@ -9,6 +9,8 @@ Runaway definition?
 l.2 \outer\def\boom{}\def\a{\boom
                                  }
 ! Too many }'s.
+l.2 \outer\def\boom{}\def\a{\boom}
+                                  
 )
 *(Please type a command or say `\end')
 *

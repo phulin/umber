@@ -3,17 +3,17 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 ! Bad number (-1).
 <to be read again> 
                    =
-l.1 \openin-1=
+l.2 \openin-1=
               missing
 ! Bad number (16).
-l.2 \closein16
+l.3 \closein16
               
 
 \ordinary=! Undefined control sequence.
-l.4 \readline
+l.5 \readline
              15 to \verbatim
 ! Undefined control sequence.
-l.4 \readline15 to \verbatim
+l.5 \readline15 to \verbatim
                             
 [1] )
 (see the transcript file for additional information)

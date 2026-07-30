@@ -1,0 +1,14 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**missing-number-error-context.tex
+(./missing-number-error-context.tex
+! Missing number, treated as zero.
+<to be read again> 
+                   x
+l.1 \count0=x
+             
+A number should have been here; I inserted `0'.
+(If you can't figure out why I needed to see a number,
+look up `weird error' in the index to The TeXbook.)
+
+[0] )
+Output written on missing-number-error-context.dvi (1 page, 128 bytes).

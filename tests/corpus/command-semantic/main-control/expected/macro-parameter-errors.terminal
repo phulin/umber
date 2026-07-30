@@ -1,10 +1,30 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./macro-parameter-errors.tex
 ! Parameters must be numbered consecutively.
+<to be read again> 
+                   2
+l.2 \def\named#2
+                {N}
 ! Illegal parameter number in definition of \body.
+<to be read again> 
+                   x
+l.3 \def\body{#x
+                }
 ! Illegal parameter number in definition of ~.
+<to be read again> 
+                   x
+l.5 \def~{{#x
+             }}
 ! Illegal parameter number in definition of \local.
+<to be read again> 
+                   x
+l.6 {\def\local{#x
+                  }}
 ! Illegal parameter number in definition of \global.
+<to be read again> 
+                   x
+l.7 {\global\def\global{#x
+                          }}
  )
 (see the transcript file for additional information)
 No pages of output.

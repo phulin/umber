@@ -3,6 +3,8 @@ entering extended mode
 **etex-showtokens.tex
 (./etex-showtokens.tex
 > A {B} \boom #### x.
+l.4 \showtokens{A {B} \boom ##  x}
+                                  
 
  )
 No pages of output.

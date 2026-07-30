@@ -2,6 +2,8 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **font-definition.tex
 (./font-definition.tex
 ! Illegal magnification has been changed to 1000 (0).
+l.1 \font\f=cmr10 scaled 0
+                          
 The magnification ratio must be between 1 and 32768.
 
  )

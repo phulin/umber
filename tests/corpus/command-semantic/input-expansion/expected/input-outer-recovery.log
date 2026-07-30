@@ -15,6 +15,11 @@ I'll try to recover; but if the error is serious,
 you'd better type `E' or `X' now and fix your file.
 
 ! Too many }'s.
+l.2 \outer\def\boom{}\def\a{\boom}
+                                  
+You've closed more groups than you opened.
+Such booboos are generally harmless, so keep going.
+
 )
 *
 (Please type a command or say `\end')

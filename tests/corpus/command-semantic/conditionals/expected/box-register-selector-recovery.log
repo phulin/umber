@@ -2,8 +2,13 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **box-register-selector-recovery.tex
 (./box-register-selector-recovery.tex
 ! Bad register code (256).
+<to be read again> 
+                   \count 
+l.3 \ifhbox256\count
+                    0=1\else\count0=9\fi
 A register number must be between 0 and 255.
 I changed this one to zero.
+
 )
 *
 (Please type a command or say `\end')

@@ -1,6 +1,6 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./preamble-global-prefix.tex
-! You can't use a prefix with `y'.
+! You can't use a prefix with `the letter y'.
 <to be read again> 
                    y
 l.3 \halign{#&\global\tabskip=2pt#\cr x&y

@@ -193,8 +193,16 @@
       "channels": {
         "events": 4,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.1 \\showlists", "actual": ")" }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 10, "expected": "l.1 \\showlists", "actual": "" }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -485,6 +493,30 @@
         "recovery:inserted-token:cs:fi",
         "scanner-status:skipping>normal"
       ],
+      "channels": {
+        "events": 53,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 4,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
+            "actual": "*(Please type a command or say `\\end')"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 5,
+            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
+            "actual": "*"
+          }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" }
     },
     {
@@ -610,12 +642,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 4, "expected": "l.1 \\undefined", "actual": "<to be read again> " }
+          "mismatch": { "line": 4, "expected": "l.1 \\undefined", "actual": ")" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 5, "expected": "l.1 \\undefined", "actual": "<to be read again> " }
+          "mismatch": {
+            "line": 5,
+            "expected": "l.1 \\undefined",
+            "actual": "The control sequence at the end of the top line"
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -721,7 +757,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 45,
+        "events": 46,
         "status": "clean",
         "terminal": {
           "kind": "xfail",

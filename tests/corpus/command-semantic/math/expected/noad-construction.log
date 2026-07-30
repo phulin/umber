@@ -2,15 +2,21 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **noad-construction.tex
 (./noad-construction.tex
 ! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \shipout\hbox{
+                  $\mathop{}\nolimits$}\end
 A left brace was mandatory here, so I've put one in.
 You might want to delete and/or insert some corrections
 so that I will find a matching right brace soon.
 (If you're confused by all this, try typing `I}' now.)
 
-
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{$\mathop
+                          {}\nolimits$}\end
 I've inserted a begin-math/end-math symbol since I think
 you left one out. Proceed, with fingers crossed.
 
@@ -20,8 +26,11 @@ l.1 \shipout\hbox{$\mathop{}\nolimits
 I'm ignoring this misplaced \limits or \nolimits command.
 
 ! Missing $ inserted.
-<inserted text>
-<to be read again>
+<inserted text> 
+                $
+...
+l.1 \shipout\hbox{$\mathop{}\nolimits$}\end
+                                           
 I've inserted a begin-math/end-math symbol since I think
 you left one out. Proceed, with fingers crossed.
 
@@ -36,5 +45,16 @@ and \scriptfont 2 and \scriptscriptfont 2 have all
 the \fontdimen values needed in math symbol fonts.
 
 ! Missing } inserted.
+<inserted text> 
+                }
+...
+l.1 \shipout\hbox{$\mathop{}\nolimits$}\end
+                                           
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
 [0] )
 Output written on noad-construction.dvi (1 page, 128 bytes).

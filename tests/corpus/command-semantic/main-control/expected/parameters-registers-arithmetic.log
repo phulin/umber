@@ -2,6 +2,8 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **parameters-registers-arithmetic.tex
 (./parameters-registers-arithmetic.tex
 ! Arithmetic overflow.
+l.2 \multiply\count0 by2
+                        
 I can't carry out that multiplication or division,
 since the result is out of range.
 

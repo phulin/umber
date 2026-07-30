@@ -1,6 +1,8 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
 (./errmessage-help.tex
 ! bad.
+l.2 ...topmode\errhelp={user help}\errmessage{bad}
+                                                  
  )
 (see the transcript file for additional information)
 No pages of output.

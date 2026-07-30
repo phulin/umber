@@ -1,10 +1,10 @@
 This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
 <to be read again> 
                    p
 l.1 \dimen0=p
              t
-(./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
 <to be read again> 
                    x

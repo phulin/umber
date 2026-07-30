@@ -7,6 +7,8 @@ entering extended mode
 ### level 1: \iftrue entered on line 2
 
 ! OK.
+l.4 \showifs
+            
 
  )
 No pages of output.

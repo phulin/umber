@@ -2,6 +2,8 @@ This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-C
 **show-value.tex
 (./show-value.tex
 > 17.
+l.1 \count0=17\showthe\count0
+                             
 
  )
 No pages of output.

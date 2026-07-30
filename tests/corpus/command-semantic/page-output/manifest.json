@@ -611,7 +611,7 @@
         "artifact:84aca043614872a2c3a7dea8593bb985078d9563f1bc9192915e4121119b5655"
       ],
       "channels": {
-        "events": 256,
+        "events": 257,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -1523,11 +1523,7 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "<write> BEFORE \\endwrite ",
-            "actual": "l.3 \\immediate\\write16{BEFORE \\endwrite AFTER}"
-          }
+          "mismatch": { "line": 4, "expected": "<write> BEFORE \\endwrite ", "actual": "BEFORE AFTER" }
         },
         "log": {
           "kind": "xfail",
@@ -1535,7 +1531,7 @@
           "mismatch": {
             "line": 5,
             "expected": "<write> BEFORE \\endwrite ",
-            "actual": "l.3 \\immediate\\write16{BEFORE \\endwrite AFTER}"
+            "actual": "The control sequence at the end of the top line"
           }
         },
         "dvi": { "kind": "empty" },
