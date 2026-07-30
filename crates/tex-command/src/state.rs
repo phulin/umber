@@ -71,7 +71,7 @@ pub struct CommandState {
 }
 
 /// A recoverable command-owned semantic diagnostic awaiting executor output.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CommandSemanticDiagnostic {
     /// TeX82 §370's undefined-control-sequence expansion error.
     UndefinedControlSequence,
@@ -79,7 +79,12 @@ pub enum CommandSemanticDiagnostic {
     MacroPrefixMismatch(tex_state::interner::Symbol),
     /// TeX82 §415's missing-number recovery, deferred only when an earlier
     /// command-owned diagnostic is already waiting for executor output.
-    MissingNumber,
+    ///
+    /// §82 renders `show_context` when `error` completes, while §415 has
+    /// already used §325's `back_error` to put the offending token back.
+    /// The command stack is the sole owner of that backed-up level, so its
+    /// display crosses the deferred-report boundary with the diagnostic.
+    MissingNumber { context: String },
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.

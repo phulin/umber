@@ -1579,6 +1579,12 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §415's `back_error` before the scanner publishes zero.
     fn missing_number_error(&mut self) {
+        // TeX82 §82 completes every error with `show_context`, and §415
+        // reaches it only after §325's `back_error` has installed the
+        // offending token as a `backed_up` level. CommandState, rather than
+        // Universe, owns that level, so capture its display while it is live
+        // for both immediate and deferred reporting.
+        let context = self.command.output_open_context(&self.state);
         // §380 performs an undefined-control-sequence expansion before
         // §444 reaches its vacuous constant. The command core cannot render
         // §370 until the borrowed processor episode returns to the executor;
@@ -1588,15 +1594,17 @@ impl CommandProcessor<'_> {
         if !self.command.semantic_diagnostics.is_empty() {
             self.command
                 .semantic_diagnostics
-                .push(crate::CommandSemanticDiagnostic::MissingNumber);
+                .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
             return;
         }
         let mut report = self.state.print_err("Missing number, treated as zero");
-        report.help(&[
-            "A number should have been here; I inserted `0'.",
-            "(If you can't figure out why I needed to see a number,",
-            "look up `weird error' in the index to The TeXbook.)",
-        ]);
+        report
+            .help(&[
+                "A number should have been here; I inserted `0'.",
+                "(If you can't figure out why I needed to see a number,",
+                "look up `weird error' in the index to The TeXbook.)",
+            ])
+            .context(context);
         report.error();
     }
 

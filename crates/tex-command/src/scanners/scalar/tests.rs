@@ -480,6 +480,33 @@ fn vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order() {
 }
 
 #[test]
+fn missing_number_report_displays_the_backed_up_offender() {
+    // TeX82 §§82, 415: §415's `back_error` performs §325 `back_input`
+    // before §82 completes the report with `show_context`.
+    let mut command = CommandState::default();
+    push(&mut command, scanner_tokens("x"));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let scanned = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .scan_integer()
+    .expect("missing integer recovers");
+    assert_eq!(scanned.value, 0);
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains("\n<to be read again> \n                   x"),
+        "the live command-owned backup is displayed: {diagnostics}"
+    );
+}
+
+#[test]
 fn integer_scanner_accepts_chardef_values() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

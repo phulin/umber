@@ -13468,13 +13468,17 @@ fn report_pending_diagnostics(
                 ]);
                 report.error();
             }
-            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber) => {
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {
+                context,
+            }) => {
                 let mut report = stores.print_err("Missing number, treated as zero");
-                report.help(&[
-                    "A number should have been here; I inserted `0'.",
-                    "(If you can't figure out why I needed to see a number,",
-                    "look up `weird error' in the index to The TeXbook.)",
-                ]);
+                report
+                    .help(&[
+                        "A number should have been here; I inserted `0'.",
+                        "(If you can't figure out why I needed to see a number,",
+                        "look up `weird error' in the index to The TeXbook.)",
+                    ])
+                    .context(context);
                 report.error();
             }
             PendingDiagnostic::RestrictedInteger(recovery) => {
