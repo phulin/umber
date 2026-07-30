@@ -936,9 +936,8 @@ bootstrap_tex82_oracle_fixture() {
 
   backup_dir="${fixture_parent}/.${fixture_name}.pre-bootstrap.$$"
   [[ ! -e "$backup_dir" ]] || die "bootstrap backup path exists: ${backup_dir}"
-  mv "$fixture_dir" "$backup_dir"
-  if ! mv "$candidate_dir" "$fixture_dir"; then
-    mv "$backup_dir" "$fixture_dir"
+  if ! scripts/atomic-directory-swap.sh \
+    "$fixture_dir" "$candidate_dir" "$backup_dir"; then
     rm -f "$contract_candidate"
     die 'failed to publish derived fixture candidate'
   fi
