@@ -2815,6 +2815,24 @@ impl World {
         }
     }
 
+    /// tex.web §71's `term_input` after `input_ln` has succeeded.
+    ///
+    /// §71 does two things the read itself does not. `term_offset:=0` records
+    /// that "the user's line ended with <return>": the prompt is still on the
+    /// screen, but the cursor is at the left margin, so the next `print_nl`
+    /// must not break. Then `decr(selector)` echoes the line the user typed to
+    /// the *transcript alone* -- the terminal already showed it as it was
+    /// typed -- and ends that transcript line.
+    ///
+    /// This is why a prompt and the message after it share one terminal line
+    /// while the transcript shows the prompt, the answer, and the message on
+    /// three.
+    pub fn echo_terminal_input(&mut self, line: &str) {
+        self.stream_bufs_mut().terminal_partial_line.clear();
+        self.write_text(PrintSink::Log, line);
+        self.write_text(PrintSink::Log, "\n");
+    }
+
     /// tex.web §54's `wterm`/`wlog`: a direct write to the terminal or the
     /// transcript that bypasses §58's print primitives entirely.
     ///

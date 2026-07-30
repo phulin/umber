@@ -855,9 +855,9 @@ pub enum InputStreamRequest {
     /// collection is part of scanning `\\read` and belongs to the command
     /// core. Replay only installs the parameterless macro §482 built.
     Read {
+        /// §1225's plain `scan_int`, unrestricted: §482 maps anything outside
+        /// `0..=15` onto stream 16 (the terminal) without diagnosing it.
         stream: i32,
-        scanned: i32,
-        recovered: bool,
         target: Symbol,
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
@@ -1871,28 +1871,35 @@ impl CommandProcessor<'_> {
     ) -> Result<InputStreamRequest, CommandError> {
         use tex_state::meaning::UnexpandablePrimitive;
 
-        // TeX82 §435's `scan_four_bit_int` is the selector scan shared by
-        // §1225's read_to_cs and §§1272-1275's in_stream command. Recovery is
-        // complete before any request is committed; the raw value crosses
-        // the apply seam only so §435's `int_error` can report it first.
-        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
-        let stream = scanned.value;
         match primitive {
+            // §§1272--1275's `in_stream` command scans §435's
+            // `scan_four_bit_int`. Recovery is complete before the request is
+            // committed; the raw value crosses the apply seam only so §435's
+            // `int_error` can report it first.
             UnexpandablePrimitive::OpenIn => {
+                let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
                 let _ = self.scan_optional_equals()?;
                 Ok(InputStreamRequest::Open {
-                    stream,
+                    stream: scanned.value,
                     scanned: scanned.scanned,
                     recovered: scanned.recovered,
                     file_name: self.scan_file_name()?,
                 })
             }
-            UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close {
-                stream,
-                scanned: scanned.scanned,
-                recovered: scanned.recovered,
-            }),
+            UnexpandablePrimitive::CloseIn => {
+                let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
+                Ok(InputStreamRequest::Close {
+                    stream: scanned.value,
+                    scanned: scanned.scanned,
+                    recovered: scanned.recovered,
+                })
+            }
             UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
+                // §1225's `read_to_cs` scans a plain `scan_int`, *not*
+                // §435's four-bit selector: §482 answers an out-of-range
+                // stream with `if (n<0)or(n>15) then m:=16`, reading from the
+                // terminal, and no error is reported at all.
+                let stream = self.scan_integer()?.value;
                 // tex.web §1225 reports a missing `to` and inserts it, then
                 // runs `get_r_token` regardless: the keyword is recovered,
                 // not required.
@@ -1913,8 +1920,6 @@ impl CommandProcessor<'_> {
                     self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
                 Ok(InputStreamRequest::Read {
                     stream,
-                    scanned: scanned.scanned,
-                    recovered: scanned.recovered,
                     target,
                     global: read_global,
                     missing_to,

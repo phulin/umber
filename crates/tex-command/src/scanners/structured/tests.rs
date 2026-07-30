@@ -2783,15 +2783,20 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     assert_eq!((delimiter.code, delimiter.recovered), (0, true));
 }
 
-/// TeX82 §435 supplies the one selector scan used by §1225's
-/// `read_to_cs` and §§1272-1275's `in_stream` command. Every consumer sees
-/// `cur_val=0` after an invalid selector, while `int_error` retains the
-/// original value and the ordinary integer observation precedes the request.
+/// TeX82 §435's `scan_four_bit_int` is §§1272--1275's `in_stream` selector
+/// scan, and only that: `\\openin`/`\\closein` see `cur_val=0` after an
+/// invalid selector, while `int_error` retains the original value and the
+/// ordinary integer observation precedes the request.
+///
+/// §1225's `read_to_cs` deliberately does *not* share it -- it scans a plain
+/// `scan_int` and lets §482's `if (n<0)or(n>15) then m:=16` send an
+/// out-of-range stream to the terminal with no diagnostic at all, which
+/// `read_stream_selector_is_unrestricted` covers.
 #[test]
 fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
-    for primitive in [P::OpenIn, P::CloseIn, P::Read, P::ReadLine] {
+    for primitive in [P::OpenIn, P::CloseIn] {
         for (source, expected, recovered) in [
             ("-1", 0, true),
             ("15", 15, false),
@@ -2804,23 +2809,9 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
             let mut capabilities = CommandHostCapabilities::default();
             universe.intern("readtarget");
             let suffix = match primitive {
-                P::OpenIn => "=fixture ".to_owned(),
-                P::CloseIn => String::new(),
-                P::Read | P::ReadLine => {
-                    if primitive == P::ReadLine {
-                        universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
-                    }
-                    universe
-                        .world_mut()
-                        .push_memory_terminal_line(if primitive == P::ReadLine {
-                            ""
-                        } else {
-                            "body"
-                        })
-                        .expect("terminal line queues");
-                    " to \\readtarget ".to_owned()
-                }
-                _ => unreachable!(),
+                P::OpenIn => "=fixture ",
+                P::CloseIn => "",
+                _ => unreachable!("only the in_stream primitives are scanned here"),
             };
             let input = format!("{source} {suffix}");
             let input_source = command
@@ -2854,13 +2845,10 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
                     stream,
                     scanned,
                     recovered,
-                }
-                | InputStreamRequest::Read {
-                    stream,
-                    scanned,
-                    recovered,
-                    ..
                 } => (stream, scanned, recovered),
+                InputStreamRequest::Read { .. } => {
+                    unreachable!("only the in_stream primitives are scanned here")
+                }
             };
             assert_eq!(
                 (stream, scanned, did_recover),
@@ -2886,6 +2874,60 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
                 integer_events.first().copied(),
                 Some(source),
                 "{primitive:?} observes the raw integer before request commit",
+            );
+        }
+    }
+}
+
+/// TeX82 §1225's `read_to_cs` scans a plain `scan_int`, so an out-of-range
+/// `\\read` stream reaches the request unchanged and §482's
+/// `if (n<0)or(n>15) then m:=16` reads it from the terminal. Routing it
+/// through §435 instead would report a `Bad number` the reference engine never
+/// prints.
+#[test]
+fn read_stream_selector_is_unrestricted() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for primitive in [P::Read, P::ReadLine] {
+        for source in ["-1", "15", "16", "1000000"] {
+            let mut command = CommandState::default();
+            let mut runtime = CommandRuntime::default();
+            let mut universe = Universe::new_with_plain_catcodes();
+            let mut capabilities = CommandHostCapabilities::default();
+            universe.intern("readtarget");
+            if primitive == P::ReadLine {
+                universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+            }
+            universe
+                .world_mut()
+                .push_memory_terminal_line(if primitive == P::ReadLine { "" } else { "body" })
+                .expect("terminal line queues");
+            let input = format!("{source} to \\readtarget ");
+            let input_source = command
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(input.into_bytes()),
+                ))
+                .expect("operand source registers");
+            command
+                .open_registered_source(input_source)
+                .expect("operand source opens");
+            let request = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .scan_input_stream_request(primitive, false)
+            .unwrap_or_else(|error| panic!("{primitive:?} selector {source} scans: {error}"));
+
+            let InputStreamRequest::Read { stream, .. } = request else {
+                unreachable!("\\read scans a Read request")
+            };
+            assert_eq!(
+                stream,
+                source.parse::<i32>().expect("decimal case"),
+                "{primitive:?} selector {source} reaches §482 unrecovered",
             );
         }
     }

@@ -3931,9 +3931,12 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
 }
 
 #[test]
-fn input_stream_recovery_reports_raw_selector_before_recovered_read_commit() {
-    // TeX82 §§435/1225: `scan_four_bit_int` observes 16, reports it, and
-    // substitutes zero before `read_toks` and the target definition.
+fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
+    // TeX82 §1225 scans `\\read`'s stream with a plain `scan_int`, not §435's
+    // `scan_four_bit_int`, and §482 answers `(n<0)or(n>15)` with `m:=16` --
+    // the never-open stream whose §483 branch is the terminal. Stream 16 is
+    // therefore an ordinary terminal read, not a recovered zero, and nothing
+    // is reported.
     let mut stores = Universe::new_with_plain_catcodes();
     stores
         .world_mut()
@@ -3961,8 +3964,7 @@ fn input_stream_recovery_reports_raw_selector_before_recovered_read_commit() {
         }
     );
     let terminal = terminal_text(&stores);
-    assert!(terminal.contains("! Bad number (16)."));
-    assert!(terminal.contains("I changed this one to zero."));
+    assert!(!terminal.contains("Bad number"), "{terminal}");
     let integer = observations
         .0
         .iter()

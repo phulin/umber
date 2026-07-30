@@ -439,7 +439,11 @@ impl CommandContext<'_> {
                         .world_mut()
                         .write_text(crate::world::PrintSink::TerminalAndLog, prompt);
                 }
-                self.universe.world_mut().read_terminal_line()
+                let line = self.universe.world_mut().read_terminal_line();
+                if let Ok(Some(line)) = &line {
+                    self.universe.world_mut().echo_terminal_input(line);
+                }
+                line
             }
             CommandLineSource::Stream(stream) => self.universe.world_mut().read_stream_line(stream),
         };

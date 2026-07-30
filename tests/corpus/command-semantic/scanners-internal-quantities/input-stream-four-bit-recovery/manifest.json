@@ -33,22 +33,14 @@
       "expected": [
         "terminal-check:! Bad number (-1).=true",
         "terminal-check:! Bad number (16).=true",
-        "terminal-check:! Bad number (1000000).=true",
+        "terminal-check:! Bad number (1000000).=false",
         "count:0=1"
       ],
       "channels": {
         "events": 145,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 12, "expected": "\\ordinary=! Undefined control sequence.", "actual": "\\ordinary=" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 19, "expected": "\\ordinary=ordinary", "actual": "\\ordinary=" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },
