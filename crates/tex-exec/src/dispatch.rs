@@ -26,6 +26,7 @@ pub struct ExecutionStats {
     pub dvi_pages: Vec<DviPagePlan>,
     pub(crate) prepared_dvi_pages: Vec<PreparedDviPage>,
     pub dumped_format: bool,
+    pub format_dump_receipt: Option<crate::FormatDumpReceipt>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

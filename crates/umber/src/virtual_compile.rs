@@ -529,6 +529,7 @@ pub struct AcceptedFinalization {
     pub stores: Universe,
     pub prepared_pages: Option<tex_state::PreparedPageSuffix>,
     pub dumped_format: bool,
+    pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     pub expansion_stats: tex_lex::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
 }
@@ -984,6 +985,7 @@ impl VirtualCompileSession {
             CompileError::Incremental("the accepted incremental session is missing".to_owned())
         })?;
         let dumped_format = session.accepted_dumped_format();
+        let format_dump_receipt = session.accepted_format_dump_receipt().cloned();
         let expansion_stats = session.accepted_expansion_stats();
         let tex_incr::AcceptedUniverseFinalization {
             universe: stores,
@@ -995,6 +997,7 @@ impl VirtualCompileSession {
             stores,
             prepared_pages,
             dumped_format,
+            format_dump_receipt,
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,
         })

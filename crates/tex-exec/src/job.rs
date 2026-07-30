@@ -95,6 +95,33 @@ pub struct PreloadedFormat {
     pub day: i32,
 }
 
+/// Engine-owned receipt for TeX82 §1328's successful INITEX dump transition.
+///
+/// The host must not render the announcement until it has successfully
+/// created and published the format file. The receipt owns the exact
+/// `format_ident` established by the transition; the host supplies only the
+/// canonical filename it actually published.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormatDumpReceipt {
+    pub format_ident: PreloadedFormat,
+    publication_confirmed: bool,
+}
+
+impl FormatDumpReceipt {
+    #[must_use]
+    pub fn new(name: String, year: i32, month: i32, day: i32) -> Self {
+        Self {
+            format_ident: PreloadedFormat {
+                name,
+                year,
+                month,
+                day,
+            },
+            publication_confirmed: false,
+        }
+    }
+}
+
 /// tex.web §61's `format_ident` as it reaches the *terminal*.
 ///
 /// web2c replaces §61's stock `if format_ident=0 then wterm_ln(' (no format
@@ -445,27 +472,31 @@ pub(crate) fn finish_job(stores: &mut Universe, job_name: &str, dvi: Option<DviJ
 
 /// TeX82 §1328's format-file announcement and newly built `format_ident`.
 ///
-/// The serialized format bytes remain a host concern, but these two lines are
-/// engine-visible output produced synchronously by `store_fmt_file`.  Keeping
-/// the print here also gives every canonical INITEX driver the same behavior
-/// without making format publication a prerequisite for observing it.
-pub(crate) fn print_format_dump_header(stores: &mut Universe, job_name: &str) {
-    let year = stores.int_param(IntParam::YEAR);
-    let month = stores.int_param(IntParam::MONTH);
-    let day = stores.int_param(IntParam::DAY);
+/// The serialized bytes and displayed output name are host concerns. The host
+/// calls this only after atomic publication succeeds, matching §1328's
+/// successful-open ordering and preventing a failed output from claiming a
+/// dump that did not happen.
+pub fn confirm_format_dump_publication(
+    stores: &mut Universe,
+    receipt: &mut FormatDumpReceipt,
+    displayed_file_name: &str,
+) {
+    if std::mem::replace(&mut receipt.publication_confirmed, true) {
+        return;
+    }
+    let ident = &receipt.format_ident;
     let mut printer = stores.printer();
     printer
         .print_nl("Beginning to dump on file ")
-        .print(job_name)
-        .print(".fmt")
+        .print(displayed_file_name)
         .print_nl(" (preloaded format=")
-        .print(job_name)
+        .print(&ident.name)
         .print_char(' ')
-        .print_int(year)
+        .print_int(ident.year)
         .print_char('.')
-        .print_int(month)
+        .print_int(ident.month)
         .print_char('.')
-        .print_int(day)
+        .print_int(ident.day)
         .print_char(')');
 }
 

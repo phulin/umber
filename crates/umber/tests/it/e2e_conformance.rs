@@ -327,13 +327,20 @@ fn run_file_in_process_captured(
         Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
     };
     let format = if run.dumped_format {
-        Some(stores.dump_format().map_err(|error| error.to_string())?)
+        let bytes = stores.dump_format().map_err(|error| error.to_string())?;
+        let mut receipt = run
+            .format_dump_receipt
+            .clone()
+            .ok_or_else(|| "dumped format is missing its engine receipt".to_owned())?;
+        let displayed = format!("{}.fmt", receipt.format_ident.name);
+        tex_exec::confirm_format_dump_publication(&mut stores, &mut receipt, &displayed);
+        Some(bytes)
     } else {
         None
     };
     let provenance = stores.provenance_stats();
     let macro_provenance = stores.macro_invocation_provenance_stats();
-    let (terminal, log) = transcript_channels(&run.effects);
+    let (terminal, log) = transcript_channels(stores.world().effect_records());
     Ok(InProcessRun {
         dvi,
         format,

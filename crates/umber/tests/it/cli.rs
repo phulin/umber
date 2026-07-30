@@ -811,7 +811,58 @@ fn run_publishes_a_dumped_format_from_the_resource_session() {
         "format dump failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!fs::read(format).expect("read dumped format").is_empty());
+    assert!(!fs::read(&format).expect("read dumped format").is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("Beginning to dump on file {}", format.display()))
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_publishes_dump_to_default_tex82_name_before_announcing_it() {
+    let temp_dir = tempfile::tempdir().expect("create format output temp dir");
+    let source = temp_dir.path().join("plain.tex");
+    fs::write(&source, "\\dump\n").expect("write format source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .current_dir(temp_dir.path())
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "plain.tex"])
+        .output()
+        .expect("run default format dump");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !fs::read(temp_dir.path().join("plain.fmt"))
+            .expect("read default dumped format")
+            .is_empty()
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Beginning to dump on file plain.fmt")
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn failed_format_publication_never_announces_success() {
+    let temp_dir = tempfile::tempdir().expect("create format output temp dir");
+    let source = temp_dir.path().join("plain.tex");
+    fs::write(&source, "\\dump\n").expect("write format source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--format-out", "/proc/umber-unwritable.fmt"])
+        .arg(&source)
+        .output()
+        .expect("run failed format publication");
+
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Beginning to dump on file"));
 }
 
 #[test]

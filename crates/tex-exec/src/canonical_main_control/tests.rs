@@ -4506,7 +4506,7 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
 }
 
 #[test]
-fn initex_dump_prints_format_file_and_identifier_header() {
+fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::YEAR, 2026);
     stores.set_int_param(IntParam::MONTH, 7);
@@ -4520,9 +4520,13 @@ fn initex_dump_prints_format_file_and_identifier_header() {
     run_to_end(&mut control, &mut stores);
 
     assert!(control.dumped_format());
+    assert_eq!(terminal_text(&stores), "");
+    let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
+    assert_eq!(receipt.format_ident.name, "bounded-dump");
+    crate::confirm_format_dump_publication(&mut stores, &mut receipt, "alternate-name.fmt");
     assert_eq!(
         terminal_text(&stores),
-        "Beginning to dump on file bounded-dump.fmt\n (preloaded format=bounded-dump 2026.7.9)"
+        "Beginning to dump on file alternate-name.fmt\n (preloaded format=bounded-dump 2026.7.9)"
     );
 }
 
@@ -5094,6 +5098,8 @@ fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     run_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.count(0), 1);
+    assert!(!control.dumped_format());
+    assert!(control.format_dump_receipt().is_none());
     let output = terminal_text(&stores);
     assert!(output.contains("! Too late for \\patterns."), "{output}");
     assert!(

@@ -416,6 +416,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             committed_artifacts: run_committed.to_vec(),
             effects: self.stores.world().effect_records().to_vec(),
             dumped_format: self.canonical.dumped_format(),
+            format_dump_receipt: self.canonical.format_dump_receipt().cloned(),
         })
     }
 
@@ -435,6 +436,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
                 .to_vec(),
             effects: self.stores.world().effect_records().to_vec(),
             dumped_format: stats.dumped_format,
+            format_dump_receipt: stats.format_dump_receipt,
         }
     }
 
@@ -863,6 +865,7 @@ pub struct RunResult {
     /// Effects committed by this successful execution, in World receipt order.
     pub effects: Vec<EffectRecord>,
     pub dumped_format: bool,
+    pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
 }
 
 /// A fully prepared downstream file that has not been materialized.

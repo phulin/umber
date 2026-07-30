@@ -1539,6 +1539,20 @@ impl ExecutionRun {
                 self.lifecycle = ExecutionLifecycle::Finishing;
             }
             MainControlExit::End { .. } => {
+                if self.stats.dumped_format {
+                    self.stats.format_dump_receipt = Some(crate::FormatDumpReceipt::new(
+                        self.job_name.clone(),
+                        services
+                            .stores
+                            .int_param(tex_state::env::banks::IntParam::YEAR),
+                        services
+                            .stores
+                            .int_param(tex_state::env::banks::IntParam::MONTH),
+                        services
+                            .stores
+                            .int_param(tex_state::env::banks::IntParam::DAY),
+                    ));
+                }
                 self.next_step = ExecutionStep::FinishEnd;
                 self.lifecycle = ExecutionLifecycle::Finishing;
             }

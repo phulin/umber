@@ -256,6 +256,7 @@ pub struct PendingRevision {
     substrate: PendingSubstrate,
     reuse: ReuseMetrics,
     dumped_format: bool,
+    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     expansion_stats: tex_lex::ExpansionStats,
     candidate_memo: Option<tex_state::PureMemoRuntime>,
 }
@@ -608,6 +609,7 @@ pub struct Session {
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
     dumped_format: bool,
+    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     utf8_input_as_bytes: bool,
     dvi_output: bool,
     root_source_is_byte_projection: bool,
@@ -742,6 +744,7 @@ impl Session {
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
             dumped_format: false,
+            format_dump_receipt: None,
             utf8_input_as_bytes: false,
             dvi_output: true,
             root_source_is_byte_projection,
@@ -1182,6 +1185,7 @@ impl Session {
         let ExecutionStats {
             dvi_pages,
             dumped_format,
+            format_dump_receipt,
             delivered_tokens,
             main_control_dispatches,
             macro_text_span_tokens,
@@ -1225,6 +1229,7 @@ impl Session {
             substrate: PendingSubstrate::Replaced(substrate),
             reuse,
             dumped_format,
+            format_dump_receipt,
             expansion_stats,
             candidate_memo: Some(memo),
         })
@@ -1481,6 +1486,7 @@ impl Session {
             reuse,
             dumped_format,
             expansion_stats,
+            format_dump_receipt: None,
             candidate_memo: Some(memo),
         })
     }
@@ -1558,6 +1564,11 @@ impl Session {
     #[must_use]
     pub const fn accepted_dumped_format(&self) -> bool {
         self.dumped_format
+    }
+
+    #[must_use]
+    pub fn accepted_format_dump_receipt(&self) -> Option<&tex_exec::FormatDumpReceipt> {
+        self.format_dump_receipt.as_ref()
     }
 
     #[must_use]
@@ -1884,6 +1895,7 @@ impl Session {
                 substrate: PendingSubstrate::Replaced(run.substrate),
                 reuse,
                 dumped_format: run.dumped_format,
+                format_dump_receipt: run.format_dump_receipt,
                 expansion_stats: run.expansion_stats,
                 candidate_memo: None,
             });
@@ -2130,6 +2142,7 @@ impl Session {
             substrate: pending_substrate,
             reuse,
             dumped_format: advance.dumped_format,
+            format_dump_receipt: advance.format_dump_receipt,
             expansion_stats: advance.expansion_stats,
             candidate_memo: None,
         })
@@ -2173,6 +2186,7 @@ impl Session {
             substrate,
             reuse,
             dumped_format,
+            format_dump_receipt,
             expansion_stats,
             candidate_memo,
             ..
@@ -2235,6 +2249,7 @@ impl Session {
         self.dvi_pages = dvi_pages;
         self.history = history;
         self.dumped_format = dumped_format;
+        self.format_dump_receipt = format_dump_receipt;
         self.expansion_stats = expansion_stats;
         if let Some(candidate_memo) = candidate_memo {
             self.pure_memo = candidate_memo;
@@ -2309,6 +2324,7 @@ impl Session {
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
         self.dumped_format = run.dumped_format;
+        self.format_dump_receipt = run.format_dump_receipt;
         self.expansion_stats = run.expansion_stats;
         self.substrate = Some(run.substrate);
         self.accepted_retention = Some(retention);
@@ -2409,6 +2425,7 @@ struct RevisionRun {
     output_bytes: usize,
     substrate: GenerationSubstrate,
     dumped_format: bool,
+    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     expansion_stats: tex_lex::ExpansionStats,
     executed_bytes: usize,
     executed_tokens: usize,
@@ -2452,6 +2469,7 @@ fn finish_cold_candidate(
     let ExecutionStats {
         dvi_pages,
         dumped_format,
+        format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
         macro_text_span_tokens,
@@ -2468,6 +2486,7 @@ fn finish_cold_candidate(
             substrate: candidate.universe.freeze_generation(),
             dumped_format,
             expansion_stats,
+            format_dump_receipt,
             executed_bytes: source_len,
             executed_tokens: delivered_tokens,
             executed_commands: main_control_dispatches,
@@ -2550,6 +2569,7 @@ fn execute_revision(
     let ExecutionStats {
         dvi_pages,
         dumped_format,
+        format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
         macro_text_span_tokens,
@@ -2576,6 +2596,7 @@ fn execute_revision(
         substrate,
         dumped_format,
         expansion_stats,
+        format_dump_receipt,
         executed_bytes: source.len(),
         executed_tokens: delivered_tokens,
         executed_commands: main_control_dispatches,
@@ -2606,6 +2627,7 @@ struct AdvanceRun {
     executor_latency: Duration,
     reexecution_latency: Duration,
     dumped_format: bool,
+    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     expansion_stats: tex_lex::ExpansionStats,
     output_snapshot_latency: Duration,
 }
@@ -2802,6 +2824,7 @@ fn execute_advance(
     let ExecutionStats {
         dvi_pages,
         dumped_format,
+        format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
         macro_text_span_tokens,
@@ -2859,6 +2882,7 @@ fn execute_advance(
         reexecution_latency,
         dumped_format,
         expansion_stats,
+        format_dump_receipt,
         output_snapshot_latency,
     })
 }

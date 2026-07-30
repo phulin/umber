@@ -112,7 +112,7 @@ pub struct CanonicalMainControl {
     ///
     /// This is a committed termination receipt for the host boundary; it is
     /// not format serialization itself.
-    dumped_format: bool,
+    dumped_format: Option<crate::job::FormatDumpReceipt>,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     page_output_observations: Vec<CommandObservation>,
@@ -570,7 +570,13 @@ impl CanonicalMainControl {
     /// retired executor without inspecting command delivery.
     #[must_use]
     pub const fn dumped_format(&self) -> bool {
-        self.dumped_format
+        self.dumped_format.is_some()
+    }
+
+    /// Returns §1328's engine-owned identity after a successful INITEX dump.
+    #[must_use]
+    pub fn format_dump_receipt(&self) -> Option<&crate::job::FormatDumpReceipt> {
+        self.dumped_format.as_ref()
     }
 
     /// Captures a quiescent named checkpoint for this command processor.
@@ -689,18 +695,14 @@ impl CanonicalMainControl {
         crate::job::close_open_parens(&mut self.job, stores);
         report_incomplete_conditions(stores, incomplete_conditions);
         crate::job::print_history_note(stores);
-        if dump {
+        if dump && !self.initex {
             // TeX82 §§1328/1335: INITEX enters `store_fmt_file`, whose first
             // observable transition is the format-file announcement and new
             // `format_ident`. The production binary instead keeps only the
             // `print_nl` that says dumping is unavailable.
-            if self.initex {
-                crate::job::print_format_dump_header(stores, self.capabilities.job_name());
-            } else {
-                stores
-                    .printer()
-                    .print_nl("(\\dump is performed only by INITEX)");
-            }
+            stores
+                .printer()
+                .print_nl("(\\dump is performed only by INITEX)");
         }
     }
 
@@ -1230,7 +1232,14 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
-        self.dumped_format |= dumped_format;
+        if dumped_format {
+            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
+                self.capabilities.job_name().to_owned(),
+                stores.int_param(IntParam::YEAR),
+                stores.int_param(IntParam::MONTH),
+                stores.int_param(IntParam::DAY),
+            ));
+        }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
@@ -1697,7 +1706,14 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
-        self.dumped_format |= dumped_format;
+        if dumped_format {
+            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
+                self.capabilities.job_name().to_owned(),
+                stores.int_param(IntParam::YEAR),
+                stores.int_param(IntParam::MONTH),
+                stores.int_param(IntParam::DAY),
+            ));
+        }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
@@ -2997,7 +3013,12 @@ impl CanonicalMainControl {
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
-            self.dumped_format = true;
+            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
+                self.capabilities.job_name().to_owned(),
+                stores.int_param(IntParam::YEAR),
+                stores.int_param(IntParam::MONTH),
+                stores.int_param(IntParam::DAY),
+            ));
         }
         if let (
             Ok(ReplayStep::End),

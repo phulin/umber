@@ -723,6 +723,7 @@ impl<'a> CanonicalEngineSession<'a> {
                 .to_vec(),
             effects,
             dumped_format: self.control.dumped_format(),
+            format_dump_receipt: self.control.format_dump_receipt().cloned(),
         }))
     }
 }

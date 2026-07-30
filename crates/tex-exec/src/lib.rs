@@ -52,7 +52,9 @@ pub use executor::{
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
 };
-pub use job::{BANNER, DviJobOutput, PreloadedFormat};
+pub use job::{
+    BANNER, DviJobOutput, FormatDumpReceipt, PreloadedFormat, confirm_format_dump_publication,
+};
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,

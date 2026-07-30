@@ -33,6 +33,27 @@ fn log_text(stores: &Universe) -> String {
     })
 }
 
+#[test]
+fn format_dump_publication_confirmation_obeys_selector_and_is_one_shot() {
+    let cases = [
+        (InteractionMode::ErrorStop, true),
+        (InteractionMode::Scroll, true),
+        (InteractionMode::Nonstop, true),
+        (InteractionMode::Batch, false),
+    ];
+    for (interaction, terminal) in cases {
+        let mut stores = Universe::new();
+        stores.set_interaction_mode(interaction);
+        let mut receipt = FormatDumpReceipt::new("plain".into(), 2026, 7, 30);
+        confirm_format_dump_publication(&mut stores, &mut receipt, "published-name.fmt");
+        confirm_format_dump_publication(&mut stores, &mut receipt, "duplicate.fmt");
+        let expected =
+            "Beginning to dump on file published-name.fmt\n (preloaded format=plain 2026.7.30)";
+        assert_eq!(terminal_text(&stores), if terminal { expected } else { "" });
+        assert_eq!(log_text(&stores), expected);
+    }
+}
+
 /// Runs a source through a fresh INITEX session to `\end`/end-of-input and
 /// returns the resulting `Universe`, for tests that need a real committed
 /// page count (`Universe::world().artifact_commits()` is populated only by

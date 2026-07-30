@@ -222,6 +222,7 @@ fn finalize_run(
     let mut stores = finalization.stores;
     let prepared_pages = finalization.prepared_pages;
     let dumped_format = finalization.dumped_format;
+    let mut format_dump_receipt = finalization.format_dump_receipt;
     #[cfg_attr(not(feature = "profiling"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
     let mut committed_artifacts = stores.world().committed_artifacts().to_vec();
@@ -419,11 +420,17 @@ fn finalize_run(
         }
         driver_files.push(DriverFile::new(html_path.clone(), html.clone()));
     }
-    if dumped_format {
-        let output = opts
-            .format_out
-            .as_ref()
-            .ok_or(CliError::Usage("\\dump requires --format-out <path>"))?;
+    let format_output = dumped_format.then(|| {
+        opts.format_out.clone().unwrap_or_else(|| {
+            PathBuf::from(
+                opts.input
+                    .file_stem()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("texput")),
+            )
+            .with_extension("fmt")
+        })
+    });
+    if let Some(output) = &format_output {
         let format = stores.dump_format()?;
         driver_files.push(DriverFile::new(output.clone(), format));
     }
@@ -462,6 +469,11 @@ fn finalize_run(
         }
     };
     committed.materialize(&mut stores)?;
+    if let (Some(receipt), Some(path)) = (&mut format_dump_receipt, &format_output) {
+        tex_exec::confirm_format_dump_publication(&mut stores, receipt, &path.to_string_lossy());
+        let receipt_effect_pos = stores.world().effect_pos();
+        stores.commit_effects(receipt_effect_pos)?;
+    }
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
             "PDF_DRIVER_TELEMETRY font_resources_ns={} materialize_ns={} run_wall_ns={}",
