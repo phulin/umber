@@ -177,10 +177,27 @@ fn run_file_in_process(
     run_file_in_process_captured(path, &source_name, format, engine, &mut failure)
 }
 
+fn startup_job_name(canonical_source_name: &str) -> &str {
+    Path::new(canonical_source_name)
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("texput")
+}
+
+#[test]
+fn canonical_source_identity_selects_job_name_independently_of_staging() {
+    assert_eq!(startup_job_name("etrip.tex"), "etrip");
+    assert_eq!(
+        startup_job_name("inputs/annual.report.tex"),
+        "annual.report"
+    );
+    assert_eq!(startup_job_name(""), "texput");
+}
+
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
 fn run_file_in_process_captured(
     path: &Path,
-    _canonical_source_name: &str,
+    canonical_source_name: &str,
     format: Option<&[u8]>,
     engine: EngineMode,
     failure: &mut Option<LiveCapture>,
@@ -210,10 +227,10 @@ fn run_file_in_process_captured(
         .parent()
         .ok_or_else(|| format!("input has no parent: {}", path.display()))?
         .to_owned();
-    let job_name = path
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("texput");
+    // TeX82 §529 derives `job_name` from the driver-selected startup name.
+    // The staged path may deliberately differ (e-TRIP is locally renamed),
+    // just as Web2C's `-jobname` differs from its input filename.
+    let job_name = startup_job_name(canonical_source_name);
     let mut session = if format.is_some() {
         CanonicalEngineSession::new(&mut stores, engine.command_profile())
     } else {
@@ -253,7 +270,7 @@ fn run_file_in_process_captured(
             let (terminal, log) = transcript_channels(session.stores().world().effect_records());
             *failure = Some(LiveCapture {
                 root: LiveSource {
-                    name: _canonical_source_name.to_owned(),
+                    name: canonical_source_name.to_owned(),
                     source: root_source,
                     bytes: root_bytes,
                 },
@@ -300,7 +317,7 @@ fn run_file_in_process_captured(
         log: log.clone(),
         capture: LiveCapture {
             root: LiveSource {
-                name: _canonical_source_name.to_owned(),
+                name: canonical_source_name.to_owned(),
                 source: root_source,
                 bytes: root_bytes,
             },
