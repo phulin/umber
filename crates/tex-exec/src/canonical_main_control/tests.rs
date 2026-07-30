@@ -5117,6 +5117,56 @@ fn bad_patterns_reports_the_live_section_961_source_context() {
 }
 
 #[test]
+fn pattern_nonletter_prompts_at_the_live_section_962_source_context() {
+    // TeX82 §962 calls §82's `error` before the next `get_x_token`, while
+    // the nonletter and the source cursor immediately after it are live.
+    // Delaying this report until the whole group has scanned makes the
+    // interaction consume its response after unrelated pattern input.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts the error response");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\patterns{ab!cd ef1gh}\\count0=1\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1, "interactive recovery resumes input");
+    let output = terminal_text(&stores);
+    let context = output
+        .find("! Nonletter.\nl.1 \\patterns{ab!\n")
+        .expect("§962 reports the live nonletter context");
+    let prompt = output.find("? ").expect("§82 interactive prompt");
+    assert!(context < prompt, "{output}");
+    assert_eq!(
+        output.matches("! Nonletter.").count(),
+        1,
+        "apply time must not report §962's already-reported error again: {output}"
+    );
+}
+
+#[test]
+fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
+    // TeX82 §962's `digit_sensed=false` branch treats the first ASCII digit
+    // as a hyphen level and therefore never consults its zero `\lccode`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\patterns{ab1cd}\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    assert!(
+        !terminal_text(&stores).contains("! Nonletter."),
+        "a hyphen-level digit is the negative control"
+    );
+}
+
+#[test]
 fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
     // TeX82 §1293's `common_ending: ...; error`, whose §83 dialog prompts
     // `?␣` and whose §86 `S` answer switches to scroll mode.

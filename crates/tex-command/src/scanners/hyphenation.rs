@@ -46,6 +46,9 @@ pub enum HyphenationDataKind {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ScannedHyphenationData {
     pub words: Vec<Vec<char>>,
+    /// Number of TeX82 §962 `Nonletter` errors already reported at the live
+    /// `get_x_token` boundary.
+    pub reported_nonletters: usize,
 }
 
 impl CommandProcessor<'_> {
@@ -71,6 +74,8 @@ impl CommandProcessor<'_> {
         self.scan_left_brace(true)?;
         let mut words: Vec<Vec<char>> = Vec::new();
         let mut current: Vec<char> = Vec::new();
+        let mut pattern_digit_sensed = false;
+        let mut reported_nonletters = 0;
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let character = match command.meaning() {
@@ -78,7 +83,27 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     ch,
                     cat: Catcode::Letter | Catcode::Other,
-                } => Some(ch),
+                } => {
+                    if kind == HyphenationDataKind::Patterns {
+                        // TeX82 §962 diagnoses an invalid `\lccode` while
+                        // this command and its source cursor are still live;
+                        // postponing it until the whole group has scanned
+                        // lets §82's interaction consume terminal input at
+                        // the wrong point. Digits are hyphen levels unless
+                        // the preceding character was a digit, in which case
+                        // §962 deliberately treats the second digit as a
+                        // letter and checks its `\lccode`.
+                        if (pattern_digit_sensed || !ch.is_ascii_digit())
+                            && ch != '.'
+                            && self.state.lccode(ch) == 0
+                        {
+                            self.report_pattern_nonletter();
+                            reported_nonletters += 1;
+                        }
+                        pattern_digit_sensed = ch.is_ascii_digit() && !pattern_digit_sensed;
+                    }
+                    Some(ch)
+                }
                 // §935's `char_given`, which §961 does not accept.
                 Meaning::CharGiven(ch) if kind == HyphenationDataKind::Exceptions => Some(ch),
                 // §935's `char_num`: `scan_char_num` selects the character and
@@ -93,7 +118,10 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                } => None,
+                } => {
+                    pattern_digit_sensed = false;
+                    None
+                }
                 Meaning::CharToken {
                     cat: Catcode::EndGroup,
                     ..
@@ -101,7 +129,10 @@ impl CommandProcessor<'_> {
                     if !current.is_empty() {
                         words.push(current);
                     }
-                    return Ok(ScannedHyphenationData { words });
+                    return Ok(ScannedHyphenationData {
+                        words,
+                        reported_nonletters,
+                    });
                 }
                 // §§936/961: diagnose and resume with the offending command
                 // consumed. In particular, this does not end or reset the
@@ -120,6 +151,14 @@ impl CommandProcessor<'_> {
                 }
             }
         }
+    }
+
+    fn report_pattern_nonletter(&mut self) {
+        let context = self.command.output_open_context(&self.state);
+        let mut report = self.state.print_err("Nonletter");
+        report.help(&["(See Appendix H.)"]);
+        report.context(context);
+        report.error();
     }
 
     fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {

@@ -30,6 +30,7 @@
           "Bad \\patterns",
           "l.5 \\patterns{a\\relax",
           "Nonletter",
+          "l.5 \\patterns{a\\relax b a!",
           "Duplicate pattern",
           "(See Appendix H.)"
         ],
@@ -43,6 +44,7 @@
         "terminal-check:Bad \\patterns=true",
         "terminal-check:l.5 \\patterns{a\\relax=true",
         "terminal-check:Nonletter=true",
+        "terminal-check:l.5 \\patterns{a\\relax b a!=true",
         "terminal-check:Duplicate pattern=true",
         "terminal-check:(See Appendix H.)=true",
         "count:0=1"

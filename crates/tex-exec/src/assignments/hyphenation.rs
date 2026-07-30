@@ -15,7 +15,7 @@ pub(super) fn execute_patterns(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let words = scan_hyphenation_words(input, stores, execution, "\\patterns")?;
-    let diagnostics = apply_patterns(stores, words);
+    let diagnostics = apply_patterns(stores, words, true);
     report_apply_diagnostics(stores, diagnostics);
     Ok(())
 }
@@ -70,15 +70,18 @@ pub(crate) fn report_apply_diagnostics(
 pub(crate) fn apply_patterns(
     stores: &mut Universe,
     words: Vec<Vec<char>>,
+    report_nonletters: bool,
 ) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
     let mut diagnostics = Vec::new();
     for word in words {
         let (pattern, nonletters) = parse_pattern_word(stores, &word);
-        diagnostics.extend(std::iter::repeat_n(
-            HyphenationApplyDiagnostic::Nonletter,
-            nonletters,
-        ));
+        if report_nonletters {
+            diagnostics.extend(std::iter::repeat_n(
+                HyphenationApplyDiagnostic::Nonletter,
+                nonletters,
+            ));
+        }
         if stores.add_hyphenation_pattern_for_language(language, pattern) {
             diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
         }

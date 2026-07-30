@@ -3946,6 +3946,7 @@ enum ScannedStep {
         words: Vec<Vec<char>>,
         patterns: bool,
         too_late: bool,
+        reported_nonletters: usize,
     },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
@@ -6779,20 +6780,21 @@ fn scan_command(
                     words: Vec::new(),
                     patterns: true,
                     too_late: true,
+                    reported_nonletters: 0,
                 });
             }
-            let words = processor
+            let scanned = processor
                 .scan_hyphenation_data(if patterns {
                     HyphenationDataKind::Patterns
                 } else {
                     HyphenationDataKind::Exceptions
                 })
-                .map_err(command_error)?
-                .words;
+                .map_err(command_error)?;
             Ok(ScannedStep::HyphenationData {
-                words,
+                words: scanned.words,
                 patterns,
                 too_late: false,
+                reported_nonletters: scanned.reported_nonletters,
             })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
@@ -11353,6 +11355,7 @@ fn apply_scanned_step(
             words,
             patterns,
             too_late,
+            reported_nonletters,
         } => {
             // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
             // "Patterns can be loaded only by INITEX", flushes the braced
@@ -11365,7 +11368,7 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let diagnostics = if patterns {
-                crate::assignments::apply_patterns(stores, words)
+                crate::assignments::apply_patterns(stores, words, reported_nonletters == 0)
             } else {
                 crate::assignments::apply_hyphenation_exceptions(stores, words)
             };
