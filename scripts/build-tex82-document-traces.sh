@@ -23,6 +23,7 @@ texmfcnf="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}/s
 document_root="${repo_root}/tests/tex82-documents"
 fixture_root="${repo_root}/tests/corpus/command/tex82-documents"
 contract="${repo_root}/tests/tex82-document-trace-manifest.txt"
+publication_root="${oracle_dir}/documents/publish-candidate"
 corpus="${repo_root}/third_party/corpus"
 hyphen="${repo_root}/third_party/hyphen/hyphen.tex"
 fonts="${repo_root}/third_party/fonts"
@@ -200,17 +201,33 @@ build_document() {
   mkdir -p "$template_dir"
   sed "s/\"distribution_sha256\":\"[0-9a-f]*\"/\"distribution_sha256\":\"${font_identity}\"/" \
     "${document_root}/${name}/template-manifest.json" >"${template_dir}/manifest.json"
+  local source source_names=()
+  for source in "${instrumented_dir}"/*.tex; do
+    source_names+=("${source##*/}")
+  done
+  local source_closure="${source_names[0]}"
+  for source in "${source_names[@]:1}"; do
+    source_closure+=" and ${source}"
+  done
+  printf 'document|source closure|%s|full-document trace|\"event\":\n' \
+    "$source_closure" >"${template_dir}/semantic-matrix.txt"
 
   local candidate="${base}/candidate"
   rm -rf "$candidate"
   cargo run -q -p tex-oracle --bin tex-oracle-bootstrap -- \
     --template "$template_dir" \
     --live-directory "$instrumented_dir" \
+    --semantic-matrix "${template_dir}/semantic-matrix.txt" \
     --event-stream "${instrumented_dir}/tex82-events.jsonl" \
     --build-record "$build_record" \
     --output "$candidate"
 
-  local published="${fixture_root}/${name}"
+  local published
+  if [[ "$publish_contract" -eq 1 ]]; then
+    published="${publication_root}/${name}"
+  else
+    published="${fixture_root}/${name}"
+  fi
   rm -rf "$published"
   mkdir -p "$fixture_root"
   mv "$candidate" "$published"
@@ -245,6 +262,9 @@ fi
 
 records=()
 document_record=""
+if [[ "$publish_contract" -eq 1 ]]; then
+  rm -rf "$publication_root"
+fi
 for document in "${selected[@]}"; do
   printf 'building %s document trace\n' "$document" >&2
   build_document "$document"
@@ -261,6 +281,7 @@ done
   fail "generated ${#records[@]} of ${#selected[@]} selected document trace(s)"
 
 if [[ "$publish_contract" -eq 1 ]]; then
+  contract_candidate="${oracle_dir}/documents/trace-manifest-candidate.txt"
   {
     printf '# Pinned identities for generated-on-demand TeX82 full-document semantic traces.\n'
     printf '# Regenerate with scripts/build-tex82-document-traces.sh; the traces themselves are\n'
@@ -271,7 +292,26 @@ if [[ "$publish_contract" -eq 1 ]]; then
     printf '#   document NAME ROOT-SOURCE FIXTURE-MANIFEST-SHA256 EVENTS FONT-SET-SHA256\n'
     printf 'contract-schema 1\n'
     printf '%s\n' "${records[@]}"
-  } >"$contract"
+  } >"$contract_candidate"
+  previous_fixture_root="${oracle_dir}/documents/published-previous"
+  previous_contract="${oracle_dir}/documents/trace-manifest-previous.txt"
+  rm -rf "$previous_fixture_root"
+  rm -f "$previous_contract"
+  mv "$fixture_root" "$previous_fixture_root"
+  if ! mv "$publication_root" "$fixture_root"; then
+    mv "$previous_fixture_root" "$fixture_root"
+    fail "could not publish the staged document trace tree"
+  fi
+  cp "$contract" "$previous_contract"
+  if ! mv "$contract_candidate" "$contract"; then
+    rm -rf "$publication_root"
+    mv "$fixture_root" "$publication_root"
+    mv "$previous_fixture_root" "$fixture_root"
+    cp "$previous_contract" "$contract"
+    fail "could not publish the staged document trace contract"
+  fi
+  rm -rf "$previous_fixture_root"
+  rm -f "$previous_contract"
   printf 'regenerated %s document trace(s); wrote %s\n' \
     "${#records[@]}" "${contract#"${repo_root}/"}" >&2
 else
