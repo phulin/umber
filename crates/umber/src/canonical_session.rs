@@ -10,14 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    CommandProfile, FontLoadRequest, FontResource, PdfImageRequest, PdfImageResource,
-    RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    CommandDialect, CommandProfile, FontLoadRequest, FontResource, PdfImageRequest,
+    PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
     CanonicalMainControl, CanonicalResourceNeed, CanonicalStepResult, CheckpointSink,
     EngineBoundary, ExecutionBudgetCounters, MainControlStep,
 };
 use tex_out::dvi::DviPagePlan;
+use tex_state::print::{Printer, Selector};
 use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
 
 use crate::RunResult;
@@ -196,6 +197,7 @@ impl From<tex_exec::ExecError> for CanonicalSessionError {
 pub struct CanonicalEngineSession<'a> {
     stores: &'a mut Universe,
     control: CanonicalMainControl,
+    initex: bool,
     root_registered: bool,
     started: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
@@ -213,6 +215,7 @@ impl<'a> CanonicalEngineSession<'a> {
             effect_cursor: stores.world().effect_records().len(),
             stores,
             control: CanonicalMainControl::with_profile(profile),
+            initex: false,
             root_registered: false,
             started: false,
             terminated: false,
@@ -232,6 +235,7 @@ impl<'a> CanonicalEngineSession<'a> {
             effect_cursor: stores.world().effect_records().len(),
             control: CanonicalMainControl::tex82_initex(stores),
             stores,
+            initex: true,
             root_registered: false,
             started: false,
             terminated: false,
@@ -248,6 +252,7 @@ impl<'a> CanonicalEngineSession<'a> {
             effect_cursor: stores.world().effect_records().len(),
             control: CanonicalMainControl::prepared_initex(profile),
             stores,
+            initex: true,
             root_registered: false,
             started: false,
             terminated: false,
@@ -355,6 +360,7 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         if !self.started {
             self.started = true;
+            self.print_startup_headline();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
         if self.terminated {
@@ -376,6 +382,29 @@ impl<'a> CanonicalEngineSession<'a> {
         }
     }
 
+    /// Prints TeX82 §1332's process headline before the first command.
+    ///
+    /// This is deliberately terminal-only. The transcript is not open at
+    /// this boundary; §534 later catches it up with a dated banner after the
+    /// startup input has established the job name.
+    fn print_startup_headline(&mut self) {
+        if !self.initex {
+            return;
+        }
+        let banner = match self.command_profile().dialect() {
+            CommandDialect::Tex82 => "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)",
+            CommandDialect::Etex26 => {
+                "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2025) (INITEX)"
+            }
+            CommandDialect::Pdftex14027 => {
+                "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)"
+            }
+        };
+        Printer::new(self.stores, Selector::TermOnly)
+            .print(banner)
+            .print_ln();
+    }
+
     /// Observed variant of [`Self::advance_until_waiting`].
     ///
     /// This drives the same retained production control and differs only by
@@ -392,6 +421,7 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         if !self.started {
             self.started = true;
+            self.print_startup_headline();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
         if self.terminated {
@@ -1083,6 +1113,35 @@ mod tests {
         assert!(boundaries.contains(&EngineBoundary::JobStart));
         assert!(boundaries.contains(&EngineBoundary::OuterParagraphEnd));
         assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
+    }
+
+    #[test]
+    fn initex_prints_tex82_startup_headline_before_the_first_command() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        session.set_fuel_limit(64).expect("finite fuel");
+        session
+            .register_authored_root("headline.tex", Arc::from(&b"\\end"[..]))
+            .expect("INITEX root registers");
+
+        session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("bounded INITEX source completes");
+
+        let first = session
+            .stores()
+            .world()
+            .effect_records()
+            .first()
+            .expect("startup headline is the first effect");
+        assert_eq!(
+            first,
+            &tex_state::EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Terminal,
+                text: "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)".into(),
+            },
+            "TeX82 §1332 writes the process headline to the terminal before main_control"
+        );
     }
 
     #[test]
