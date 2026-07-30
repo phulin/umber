@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, fs, path::PathBuf, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Component, Path, PathBuf},
+    process::Command,
+};
 
 use sha2::{Digest, Sha256};
 use test_support::{
@@ -125,21 +130,21 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
         let invocation =
             BibInvocationCase::parse(&case.read_to_string("invocation.case").expect("metadata"));
         let temp = tempfile::tempdir().expect("create isolated bibliography output directory");
-        let actual_artifact = invocation
-            .artifact
-            .as_ref()
-            .map(|(name, _)| temp.path().join(name));
+        let resolved = invocation
+            .resolve(&case, temp.path())
+            .expect("validate bibliography invocation roles");
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
         command.arg("bib");
         for argument in &invocation.argv {
             if argument == "{output}" {
                 command.arg(
-                    actual_artifact
+                    resolved
+                        .artifact
                         .as_ref()
                         .expect("output placeholder artifact"),
                 );
-            } else if invocation.inputs.contains(argument) {
-                command.arg(repository.join(&case_relative).join(argument));
+            } else if let Some(input) = resolved.inputs.get(argument) {
+                command.arg(input);
             } else {
                 command.arg(argument);
             }
@@ -158,7 +163,7 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
         );
         if let Some((_, expected)) = &invocation.artifact {
             assert_eq!(
-                fs::read(actual_artifact.as_ref().expect("artifact path"))
+                fs::read(resolved.artifact.as_ref().expect("artifact path"))
                     .expect("generated bibliography artifact"),
                 case.read(expected).expect("expected bibliography artifact"),
                 "{name} artifact"
@@ -178,6 +183,11 @@ struct BibInvocationCase {
     artifact: Option<(String, String)>,
 }
 
+struct ResolvedBibInvocation {
+    inputs: BTreeMap<String, PathBuf>,
+    artifact: Option<PathBuf>,
+}
+
 impl BibInvocationCase {
     fn parse(metadata: &str) -> Self {
         let mut lines = metadata.lines();
@@ -192,12 +202,25 @@ impl BibInvocationCase {
             let (key, value) = line.split_once('=').expect("keyed invocation metadata");
             match key {
                 "argv" => argv.push(value.to_owned()),
-                "status" => status = Some(value.parse().expect("numeric invocation status")),
+                "status" => {
+                    assert!(status.is_none(), "duplicate status role");
+                    status = Some(value.parse().expect("numeric invocation status"));
+                }
                 "input" => assert!(inputs.insert(value.to_owned()), "duplicate input role"),
-                "stdout" => stdout = Some(value.to_owned()),
-                "stderr" => stderr = Some(value.to_owned()),
-                "artifact" if value == "none" => artifact = Some(None),
+                "stdout" => {
+                    assert!(stdout.is_none(), "duplicate stdout role");
+                    stdout = Some(value.to_owned());
+                }
+                "stderr" => {
+                    assert!(stderr.is_none(), "duplicate stderr role");
+                    stderr = Some(value.to_owned());
+                }
+                "artifact" if value == "none" => {
+                    assert!(artifact.is_none(), "duplicate artifact role");
+                    artifact = Some(None);
+                }
                 "artifact" => {
+                    assert!(artifact.is_none(), "duplicate artifact role");
                     let (actual, expected) = value
                         .split_once(':')
                         .expect("artifact actual:expected roles");
@@ -223,6 +246,142 @@ impl BibInvocationCase {
             case.read(authority).expect("declared channel authority")
         }
     }
+
+    fn resolve(
+        &self,
+        case: &ClosedCase,
+        output_root: &Path,
+    ) -> Result<ResolvedBibInvocation, String> {
+        let inputs = self
+            .inputs
+            .iter()
+            .map(|role| {
+                case.payload_path(role)
+                    .map(|path| (role.clone(), path))
+                    .map_err(|error| format!("invalid input role {role:?}: {error:#}"))
+            })
+            .collect::<Result<_, _>>()?;
+        for (channel, role) in [("stdout", &self.stdout), ("stderr", &self.stderr)] {
+            if role != "empty" {
+                case.payload_path(role)
+                    .map_err(|error| format!("invalid {channel} role {role:?}: {error:#}"))?;
+            }
+        }
+        let output_placeholders = self
+            .argv
+            .iter()
+            .filter(|argument| argument.as_str() == "{output}")
+            .count();
+        let artifact = match &self.artifact {
+            Some((actual, expected)) => {
+                if output_placeholders != 1 {
+                    return Err(format!(
+                        "artifact invocation requires exactly one output placeholder, found {output_placeholders}"
+                    ));
+                }
+                case.payload_path(expected).map_err(|error| {
+                    format!("invalid expected artifact role {expected:?}: {error:#}")
+                })?;
+                Some(safe_artifact_path(output_root, actual)?)
+            }
+            None => {
+                if output_placeholders != 0 {
+                    return Err("artifact-free invocation contains an output placeholder".into());
+                }
+                None
+            }
+        };
+        Ok(ResolvedBibInvocation { inputs, artifact })
+    }
+}
+
+fn safe_artifact_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(name);
+    let mut components = relative.components();
+    let Some(Component::Normal(file_name)) = components.next() else {
+        return Err(format!(
+            "artifact name must be a normalized relative filename: {name:?}"
+        ));
+    };
+    if components.next().is_some()
+        || matches!(name, "case.inventory" | "invocation.case" | "{output}")
+    {
+        return Err(format!(
+            "artifact name must be a non-reserved relative filename: {name:?}"
+        ));
+    }
+    let metadata =
+        fs::symlink_metadata(root).map_err(|error| format!("inspect output root: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("artifact output root is not a non-symlink directory".into());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize output root: {error}"))?;
+    let output = root.join(file_name);
+    if output.parent() != Some(root.as_path()) {
+        return Err(format!("artifact output escapes isolated root: {name:?}"));
+    }
+    if fs::symlink_metadata(&output).is_ok() {
+        return Err(format!(
+            "artifact output collides with an existing path: {}",
+            output.display()
+        ));
+    }
+    Ok(output)
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Hermetic adversarial output-root construction.
+fn bibliography_artifact_names_reject_authority_escapes_and_collisions() {
+    let temp = tempfile::tempdir().expect("artifact output root");
+    for name in [
+        "/tmp/ambient.bbl",
+        "../ambient.bbl",
+        ".",
+        "./result.bbl",
+        "nested/result.bbl",
+        "case.inventory",
+        "invocation.case",
+        "{output}",
+    ] {
+        assert!(
+            safe_artifact_path(temp.path(), name).is_err(),
+            "unsafe artifact name accepted: {name}"
+        );
+    }
+    fs::write(temp.path().join("result.bbl"), "occupied").expect("collision");
+    assert!(safe_artifact_path(temp.path(), "result.bbl").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn bibliography_artifact_names_reject_symlink_outputs_and_roots() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("artifact output root");
+    symlink(
+        "/tmp/ambient-bibliography-output",
+        temp.path().join("result.bbl"),
+    )
+    .expect("artifact symlink");
+    assert!(safe_artifact_path(temp.path(), "result.bbl").is_err());
+
+    let parent = tempfile::tempdir().expect("symlink root parent");
+    symlink(temp.path(), parent.path().join("output")).expect("output root symlink");
+    assert!(safe_artifact_path(&parent.path().join("output"), "result.bbl").is_err());
+}
+
+#[test]
+fn bibliography_artifact_name_accepts_a_fresh_safe_filename() {
+    let temp = tempfile::tempdir().expect("artifact output root");
+    assert_eq!(
+        safe_artifact_path(temp.path(), "result.bbl").expect("safe artifact"),
+        temp.path()
+            .canonicalize()
+            .expect("canonical output root")
+            .join("result.bbl")
+    );
 }
 
 #[test]

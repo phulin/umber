@@ -94,11 +94,36 @@ impl ClosedCase {
 
     /// Reads a declared payload after validation.
     pub fn read(&self, name: &str) -> Result<Vec<u8>> {
+        let path = self.payload_path(name)?;
+        fs::read(&path).with_context(|| format!("read fixture payload {}", path.display()))
+    }
+
+    /// Resolves a declared payload to its validated local regular-file path.
+    ///
+    /// Role-bearing metadata must use this method instead of joining an
+    /// untrusted role onto a case root. Closed-case payloads are deliberately
+    /// single-component names, so absolute, dot, traversal, and nested paths
+    /// are rejected before inventory membership and file type are checked.
+    pub fn payload_path(&self, name: &str) -> Result<PathBuf> {
+        let path = checked_relative(Path::new(name))
+            .with_context(|| format!("invalid closed fixture payload role {name:?}"))?;
+        ensure!(
+            path.components().count() == 1,
+            "closed fixture payload role must be a single filename: {name}"
+        );
         ensure!(
             self.payloads.contains(name),
             "undeclared closed fixture payload: {name}"
         );
-        fs::read(self.root.join(name)).with_context(|| format!("read fixture payload {name}"))
+        let path = self.root.join(path);
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect fixture payload {}", path.display()))?;
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "fixture payload is not a regular file: {}",
+            path.display()
+        );
+        Ok(path)
     }
 
     /// Reads a declared UTF-8 payload after validation.

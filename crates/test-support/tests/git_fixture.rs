@@ -41,6 +41,49 @@ fn accepts_a_closed_tracked_case() {
     let temp = fixture();
     let case = ClosedCase::discover_at(temp.path(), "tests/corpus/example/only").expect("case");
     assert_eq!(case.read("input.txt").expect("payload"), b"exact bytes\n");
+    assert_eq!(
+        case.payload_path("input.txt")
+            .expect("declared payload path"),
+        temp.path()
+            .canonicalize()
+            .expect("repository")
+            .join("tests/corpus/example/only/input.txt")
+    );
+}
+
+#[test]
+fn payload_roles_reject_absolute_parent_dot_nested_and_undeclared_authority() {
+    let temp = fixture();
+    let case = ClosedCase::discover_at(temp.path(), "tests/corpus/example/only").expect("case");
+    for role in [
+        "/tmp/input.txt",
+        "../input.txt",
+        ".",
+        "./input.txt",
+        "nested/input.txt",
+        "ambient.txt",
+    ] {
+        assert!(
+            case.payload_path(role).is_err(),
+            "unsafe payload role accepted: {role}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn payload_roles_reject_a_symlink_substituted_after_discovery() {
+    use std::os::unix::fs::symlink;
+
+    let temp = fixture();
+    let case = ClosedCase::discover_at(temp.path(), "tests/corpus/example/only").expect("case");
+    let input = temp.path().join("tests/corpus/example/only/input.txt");
+    fs::remove_file(&input).expect("remove payload");
+    symlink("/tmp/ambient-bibliography-input", &input).expect("replace payload with symlink");
+    let error = case
+        .payload_path("input.txt")
+        .expect_err("symlink payload accepted");
+    assert!(format!("{error:#}").contains("not a regular file"));
 }
 
 #[test]

@@ -10,6 +10,10 @@ case root is inspected without following links, so alternate-checkout,
 before canonical traversal.
 Unmanifested minifixtures use the same validator with Git itself as the exact
 inventory. Family inventory tests own only enumeration and census.
+Metadata roles resolve through
+`ClosedCase::payload_path`, which accepts only declared single-filename
+payloads and rechecks the selected entry's regular-file type before returning
+its local path.
 
 ## Crate Role
 

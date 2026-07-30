@@ -79,7 +79,12 @@ deterministically through `test_support::git_fixture::ClosedCase`, writes
 generated artifacts only to an isolated temporary directory, and compares
 every applicable channel byte-for-byte. Shared BCF, BibTeX, and stdout bytes
 are duplicated identically into their owning cases rather than read from an
-area-level authority.
+area-level authority. Every metadata input and expected-output role resolves
+through the case's declared single-filename inventory and is rechecked as a
+regular non-symlink file before execution. Generated artifact names are also
+single, non-reserved filenames: absolute, dot, traversal, nested, symlink, and
+pre-existing collision targets are rejected while the output directory is
+still untouched.
 
 ## Goals
 
