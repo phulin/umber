@@ -3,7 +3,7 @@ use crate::{EngineMode, ResourceRequest};
 use super::*;
 
 const PRIMITIVE_GENERATED: &[u8] =
-    include_bytes!("../../../../tests/corpus/stabilization/primitive-generated.tex");
+    include_bytes!("../../../../tests/corpus/stabilization/primitive-generated/source.tex");
 
 fn options() -> EditorSessionOptions {
     EditorSessionOptions {

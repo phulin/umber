@@ -123,8 +123,10 @@ fn editor_stabilization_resumes_the_retained_resource_wait() {
 #[wasm_bindgen_test]
 fn editor_fixed_point_outputs_and_failures_match_native() {
     let fixtures = [
-        include_bytes!("../../../tests/corpus/stabilization/primitive-generated.tex").as_slice(),
-        include_bytes!("../../../tests/corpus/stabilization/latex-references.tex").as_slice(),
+        include_bytes!("../../../tests/corpus/stabilization/primitive-generated/source.tex")
+            .as_slice(),
+        include_bytes!("../../../tests/corpus/stabilization/latex-references/source.tex")
+            .as_slice(),
     ];
     for source in fixtures {
         let native = native_stabilize(source, FixedPointLimits::default())

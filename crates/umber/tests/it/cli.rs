@@ -1558,10 +1558,9 @@ fn lex_invalid_character_fixture() -> String {
 
 fn lexer_fixture(case: &str) -> (Lexer, Universe) {
     let path = test_support::repository_root()
-        .join("crates/umber")
-        .join("../..")
         .join("tests/corpus/lexer_dynamic")
-        .join(format!("{case}.tex"));
+        .join(case)
+        .join("source.tex");
     let mut stores = Universe::with_world(World::real());
     let content = stores
         .world_mut()

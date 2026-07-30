@@ -548,12 +548,8 @@ fn e2e_conformance_story_canonical() {
 fn canonical_ligature_group_boundaries_match_reference_dvi() {
     let setup = test_support::dvi::DviCaseSetup::new("canonical-dvi", "ligature_group_boundaries");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
-    let expected = fs::read(
-        test_support::corpus_root()
-            .join("canonical-dvi")
-            .join("ligature_group_boundaries.expected.dvi"),
-    )
-    .expect("reference DVI");
+    let expected =
+        test_support::read_binary_fixture("canonical-dvi", "ligature_group_boundaries", "dvi");
     assert_eq!(
         normalized_dvi_for_comparison(&actual).expect("normalize actual"),
         normalized_dvi_for_comparison(&expected).expect("normalize reference")
@@ -565,12 +561,8 @@ fn canonical_ligature_group_boundaries_match_reference_dvi() {
 fn canonical_rule_space_factor_reset_matches_reference_dvi() {
     let setup = test_support::dvi::DviCaseSetup::new("canonical-dvi", "rule_space_factor_reset");
     let actual = run_file_in_process_canonical(setup.source_path()).expect("canonical DVI");
-    let expected = fs::read(
-        test_support::corpus_root()
-            .join("canonical-dvi")
-            .join("rule_space_factor_reset.expected.dvi"),
-    )
-    .expect("reference DVI");
+    let expected =
+        test_support::read_binary_fixture("canonical-dvi", "rule_space_factor_reset", "dvi");
     assert_eq!(
         normalized_dvi_for_comparison(&actual).expect("normalize actual"),
         normalized_dvi_for_comparison(&expected).expect("normalize reference")

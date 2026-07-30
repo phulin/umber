@@ -186,18 +186,20 @@ preamble-comment-normalized, otherwise byte-identical DVI.
 ## Corpus Layout
 
 The bounded execution minifixture families `exec`, `etex_exec`, `typeset`,
-`math`, `align`, `tex_exec`, `tex_exec_io`, and `expand` use closed,
+`math`, `align`, `tex_exec`, `tex_exec_io`, and `expand`, plus `hello`,
+`lexer`, `lexer_dynamic`, `stabilization`, and `canonical-dvi`, use closed
 self-contained case directories:
 
 ```text
 tests/corpus/<area>/<case>/
-  <case>.tex
+  <case>.tex or source.tex
   expected.<channel>
   <case-local support inputs>
 ```
 
 Every exact runtime input and applicable committed output belongs in that
-directory. There are no area-level support files or expected-output trees for
+directory. The five lexical/session families use `source.tex`, and
+`stabilization` cases are source-only. There are no area-level support files or expected-output trees for
 these families. Discovery is lexicographic by case name. The `test-support`
 inventory gate equates the filesystem with Git's tracked regular-file
 inventory and rejects non-directory cases, missing sources, untracked or
@@ -239,17 +241,14 @@ run directory, runs `tools/refexec` against the live reference engine, and
 rewrites `expected.dvi` only when the preamble-comment-only DVI comparison
 detects a real byte change.
 
-`tests/corpus/canonical-dvi` holds the two source/`.expected.dvi` pairs that
+`tests/corpus/canonical-dvi` holds two closed `source.tex`/`expected.dvi` pairs that
 the canonical-divergence regression tests in
 `crates/umber/tests/it/e2e_conformance.rs` read. It is deliberately not a
 regenerated DVI area: those tests pin a specific past divergence, so the
-fixtures must not track the reference engine. These two cases temporarily keep
-their legacy flat layout under `umber2-johp.354.3`; shared DVI setup must route
-only the eight already-migrated execution families through closed case
-directories until that issue migrates `canonical-dvi`.
+fixtures must not track the reference engine.
 
-`tests/corpus/stabilization` contains hermetic generated-input fixed-point
-fixtures shared by native and WebAssembly conformance tests. These sources use
+`tests/corpus/stabilization` contains two closed, source-only generated-input
+fixed-point cases shared by native and WebAssembly conformance tests. These sources use
 only engine primitives and repository-owned TFM data; the LaTeX-surface case
 defines its compact document-command vocabulary in the source so the default
 test tier does not depend on a live TeX installation or a generated format.
@@ -355,8 +354,8 @@ its broader official transcript and output-artifact gate remains separate.
 Other, non-directory corpus families retain the flat
 `<case>.expected.<kind>` convention.
 
-For example, `tests/corpus/hello/hello.expected.log` is the normalized
-reference log for `tests/corpus/hello/hello.tex`.
+For example, `tests/corpus/hello/hello/expected.log` is the normalized
+reference log for `tests/corpus/hello/hello/source.tex`.
 
 ## Fixture Updates
 

@@ -8,6 +8,8 @@ on-disk file sets. Every directory component from that checkout through the
 case root is inspected without following links, so alternate-checkout,
 `target`/generated/scratch, symlink, and non-regular authority are forbidden
 before canonical traversal.
+Unmanifested minifixtures use the same validator with Git itself as the exact
+inventory. Family inventory tests own only enumeration and census.
 
 ## Crate Role
 

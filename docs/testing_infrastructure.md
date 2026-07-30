@@ -31,13 +31,15 @@ how that set is established. What they do _not_ run -- the browser adapter, the
 opt-in host tools, and the C HarfBuzz cross-check -- is covered by three named
 tiers described in [Deferred Test Tiers](#deferred-test-tiers), and both
 commands print what each of those tiers last did.
-Generated-input stabilization uses the hermetic shared fixtures under
+Generated-input stabilization uses two closed source-only cases under
 `tests/corpus/stabilization`: native unit tests consume them directly, while
 the wasm-bindgen browser suite runs the same bytes and compares binary output,
 generated files, pass counts, and typed fixed-point failures with the native
 surface.
 
 The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,align,tex_exec,tex_exec_io,expand}`
+and lexical/session corpora under
+`tests/corpus/{hello,lexer,lexer_dynamic,stabilization,canonical-dvi}`
 use one closed Git directory per case. Each directory owns its named `.tex`
 source, every exact local support input, and each applicable
 `expected.<channel>` output. `tools/fixturegen --migrate-layout --plan` is the
@@ -844,14 +846,12 @@ byte-identical in both areas) spread across `page-output`, `math`, and
 `alignments` by what each actually exercises rather than by which area it sat
 in.
 
-`tests/corpus/canonical-dvi` is what survives of that retirement: two sources
-whose `.expected.dvi` pairs back the canonical-divergence regression tests in
+`tests/corpus/canonical-dvi` is what survives of that retirement: two closed
+case directories whose `source.tex`/`expected.dvi` pairs back the
+canonical-divergence regression tests in
 `crates/umber/tests/it/e2e_conformance.rs`. It is a static copy, deliberately
 outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
-They temporarily retain their legacy flat loader path under
-`umber2-johp.354.3`; this does not relax the closed-directory loader or tracked
-inventory gate for the eight migrated execution families.
 
 DVI regeneration runs the live reference engine through `tools/refexec`,
 copies the pinned local CM TFMs and case-local support files, uses INITEX for the math

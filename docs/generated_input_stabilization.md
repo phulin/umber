@@ -339,8 +339,9 @@ cannot change any accepted observable relative to cold execution.
 The exit criterion is satisfied: label/reference and table-of-contents fixtures
 become stable after bounded off-hot-path passes without delaying the
 provisional result.
-**Implemented:** hermetic `tests/corpus/stabilization` fixtures cover primitive
-generated macros plus `\label`, `\ref`, `\pageref`, and `\tableofcontents`;
+**Implemented:** hermetic closed source-only cases under
+`tests/corpus/stabilization` cover primitive generated macros plus `\label`,
+`\ref`, `\pageref`, and `\tableofcontents`;
 native and wasm-bindgen tests compare exact stabilized artifacts and fixed-point
 failure categories.
 

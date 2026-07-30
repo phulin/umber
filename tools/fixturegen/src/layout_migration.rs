@@ -53,6 +53,7 @@ pub struct FamilySpec {
     pub shared_files: &'static [SharedFile],
 }
 
+#[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
 const EXECUTION_CASE_FILES: &[CaseFile] = &[
     CaseFile {
         source_suffix: ".tex",
@@ -78,6 +79,7 @@ const OWNER_MARKER: &str = "owner";
 const COMMITTED_MARKER: &str = "committed";
 const TRANSACTION_SCHEMA: &str = "umber-fixture-layout-transaction-v1";
 
+#[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
 pub const EXECUTION_FAMILIES: &[FamilySpec] = &[
     execution_family("align", NO_OWNED, NO_SHARED),
     execution_family(
@@ -115,6 +117,78 @@ pub const EXECUTION_FAMILIES: &[FamilySpec] = &[
     execution_family("typeset", NO_OWNED, NO_SHARED),
 ];
 
+const SOURCE_TEX: CaseFile = CaseFile {
+    source_suffix: ".tex",
+    destination_suffix: "source.tex",
+    destination_keeps_case: false,
+    captures_tail: false,
+    role: FileRole::Source,
+    required: true,
+};
+const EXPECTED_TOKENS: CaseFile = CaseFile {
+    source_suffix: ".expected.tokens",
+    destination_suffix: "expected.tokens",
+    destination_keeps_case: false,
+    captures_tail: false,
+    role: FileRole::Output,
+    required: true,
+};
+const EXPECTED_LOG: CaseFile = CaseFile {
+    source_suffix: ".expected.log",
+    destination_suffix: "expected.log",
+    destination_keeps_case: false,
+    captures_tail: false,
+    role: FileRole::Output,
+    required: true,
+};
+const EXPECTED_DVI: CaseFile = CaseFile {
+    source_suffix: ".expected.dvi",
+    destination_suffix: "expected.dvi",
+    destination_keeps_case: false,
+    captures_tail: false,
+    role: FileRole::Output,
+    required: true,
+};
+
+pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
+    FamilySpec {
+        area: "canonical-dvi",
+        case_discovery_suffix: ".tex",
+        case_files: &[SOURCE_TEX, EXPECTED_DVI],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+    },
+    FamilySpec {
+        area: "hello",
+        case_discovery_suffix: ".tex",
+        case_files: &[SOURCE_TEX, EXPECTED_LOG],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+    },
+    FamilySpec {
+        area: "lexer",
+        case_discovery_suffix: ".tex",
+        case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+    },
+    FamilySpec {
+        area: "lexer_dynamic",
+        case_discovery_suffix: ".tex",
+        case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+    },
+    FamilySpec {
+        area: "stabilization",
+        case_discovery_suffix: ".tex",
+        case_files: &[SOURCE_TEX],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+    },
+];
+
+#[allow(dead_code)] // Builds the retained completed-cohort specification above.
 const fn execution_family(
     area: &'static str,
     case_owned_files: &'static [CaseOwnedFile],

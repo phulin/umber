@@ -106,6 +106,15 @@ impl ClosedCase {
         String::from_utf8(self.read(name)?)
             .with_context(|| format!("fixture payload is not UTF-8: {name}"))
     }
+
+    /// Returns a validated payload path for consumers that require a host path.
+    pub fn path(&self, name: &str) -> Result<PathBuf> {
+        ensure!(
+            self.payloads.contains(name),
+            "undeclared closed fixture payload: {name}"
+        );
+        Ok(self.root.join(name))
+    }
 }
 
 fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>)> {

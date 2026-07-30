@@ -6,7 +6,7 @@ mod imp {
 
     use anyhow::{Context, Result};
 
-    use crate::corpus_root;
+    use crate::{corpus_root, git_fixture::ClosedCase};
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct CorpusCase {
@@ -61,10 +61,10 @@ mod imp {
                     .and_then(OsStr::to_str)
                     .with_context(|| format!("corpus case has invalid name: {}", path.display()))?
                     .to_owned();
-                let source = path.join(format!("{name}.tex"));
-                if !source.is_file() {
-                    anyhow::bail!("corpus case lacks regular source {}", source.display());
-                }
+                let closed =
+                    ClosedCase::discover_tracked(Path::new("tests/corpus").join(area).join(&name))
+                        .with_context(|| format!("{area}/{name} is not a closed fixture case"))?;
+                let source = closed.path(&case_source_name(area, &name))?;
                 (name, source)
             } else {
                 if path.extension().and_then(OsStr::to_str) != Some("tex") {
@@ -142,7 +142,12 @@ mod imp {
     pub fn is_directory_case_area(area: &str) -> bool {
         matches!(
             area,
-            "exec"
+            "canonical-dvi"
+                | "hello"
+                | "lexer"
+                | "lexer_dynamic"
+                | "stabilization"
+                | "exec"
                 | "etex_exec"
                 | "typeset"
                 | "math"
@@ -152,8 +157,20 @@ mod imp {
                 | "expand"
         )
     }
+
+    pub fn case_source_name(area: &str, case: &str) -> String {
+        if matches!(
+            area,
+            "canonical-dvi" | "hello" | "lexer" | "lexer_dynamic" | "stabilization"
+        ) {
+            "source.tex".to_owned()
+        } else {
+            format!("{case}.tex")
+        }
+    }
 }
 
 pub use imp::{
-    CorpusCase, copy_case_support_files, corpus_area, corpus_cases, is_directory_case_area,
+    CorpusCase, case_source_name, copy_case_support_files, corpus_area, corpus_cases,
+    is_directory_case_area,
 };

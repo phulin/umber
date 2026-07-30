@@ -66,10 +66,11 @@ mod imp {
 
     pub fn fixture_path(area: &str, case: &str, kind: &str) -> PathBuf {
         if crate::is_directory_case_area(area) {
-            corpus_root()
-                .join(area)
-                .join(case)
-                .join(format!("expected.{kind}"))
+            crate::git_fixture::ClosedCase::discover_tracked(
+                Path::new("tests/corpus").join(area).join(case),
+            )
+            .and_then(|closed| closed.path(&format!("expected.{kind}")))
+            .unwrap_or_else(|error| panic!("{area}/{case} is not a closed fixture case: {error:#}"))
         } else {
             corpus_root()
                 .join(area)
@@ -806,7 +807,8 @@ mod imp {
 
 pub use compile_fail::{CompileFailDependency, assert_compile_fail};
 pub use corpus::{
-    CorpusCase, copy_case_support_files, corpus_area, corpus_cases, is_directory_case_area,
+    CorpusCase, case_source_name, copy_case_support_files, corpus_area, corpus_cases,
+    is_directory_case_area,
 };
 pub use imp::{
     assert_matches_fixture, corpus_root, corpus_root_at, fixture_path, normalize, pl,

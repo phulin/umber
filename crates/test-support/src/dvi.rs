@@ -102,7 +102,10 @@ mod imp {
     use tempfile::TempDir;
 
     use super::{DviComparison, compare_dvi_bytes};
-    use crate::{copy_case_support_files, corpus_root, is_directory_case_area};
+    use crate::{
+        case_source_name, copy_case_support_files, corpus_root, git_fixture::ClosedCase,
+        is_directory_case_area,
+    };
 
     const PINNED_CM_TFMS: &[&str] = &["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"];
 
@@ -122,7 +125,8 @@ mod imp {
             let temp_dir = tempfile::tempdir().context("failed to create DVI fixture temp dir")?;
             let area_root = corpus_root().join(area);
             let source = if is_directory_case_area(area) {
-                area_root.join(case).join(format!("{case}.tex"))
+                ClosedCase::discover_tracked(Path::new("tests/corpus").join(area).join(case))?
+                    .path(&case_source_name(area, case))?
             } else {
                 area_root.join(format!("{case}.tex"))
             };

@@ -63,8 +63,11 @@ fn run() -> Result<()> {
                 _ => bail!("--migrate-layout requires --plan or --apply"),
             };
             ensure_no_extra_args(args)?;
-            let report =
-                layout_migration::run(&corpus_root(), layout_migration::EXECUTION_FAMILIES, mode)?;
+            let report = layout_migration::run(
+                &corpus_root(),
+                layout_migration::LEXICAL_SESSION_FAMILIES,
+                mode,
+            )?;
             print!("{report}");
             Ok(())
         }
@@ -582,7 +585,7 @@ fn source_path(area: &str, case: &str) -> PathBuf {
         corpus_root()
             .join(area)
             .join(case)
-            .join(format!("{case}.tex"))
+            .join(test_support::case_source_name(area, case))
     } else {
         corpus_root().join(area).join(format!("{case}.tex"))
     }
