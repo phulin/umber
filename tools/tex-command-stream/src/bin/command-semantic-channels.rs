@@ -67,6 +67,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -164,7 +165,12 @@ fn run() -> Result<String, String> {
             .join(domain);
         for (case_id, plan) in cases_by_id {
             let fixture_dir = domain_dir.join(case_id);
-            rewrite_fixture_atomically(&fixture_dir, plan, cases_by_id)?;
+            rewrite_fixture_atomically(
+                &|from, to| fs::rename(from, to),
+                &fixture_dir,
+                plan,
+                cases_by_id,
+            )?;
             rewritten += 1;
         }
     }
@@ -440,6 +446,7 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
 /// swaps it into place. A failed derivation therefore cannot leave a fixture
 /// with new channel bytes and old metadata (or the reverse).
 fn rewrite_fixture_atomically(
+    rename: &impl Fn(&Path, &Path) -> io::Result<()>,
     fixture_dir: &Path,
     plan: &CasePlan,
     cases: &BTreeMap<String, CasePlan>,
@@ -486,15 +493,26 @@ fn rewrite_fixture_atomically(
         return Err(error);
     }
 
-    fs::rename(fixture_dir, &backup)
+    rename(fixture_dir, &backup)
         .map_err(|error| format!("{} -> {}: {error}", fixture_dir.display(), backup.display()))?;
-    if let Err(error) = fs::rename(&staging, fixture_dir) {
-        let _ = fs::rename(&backup, fixture_dir);
-        return Err(format!(
-            "{} -> {}: {error}",
-            staging.display(),
-            fixture_dir.display()
-        ));
+    if let Err(install_error) = rename(&staging, fixture_dir) {
+        return match rename(&backup, fixture_dir) {
+            Ok(()) => Err(format!(
+                "{} -> {}: {install_error}; restored original fixture from {}",
+                staging.display(),
+                fixture_dir.display(),
+                backup.display()
+            )),
+            Err(restore_error) => Err(format!(
+                "{} -> {}: {install_error}; restoring authoritative backup {} -> {} also failed: \
+                 {restore_error}; original fixture remains recoverable at {}",
+                staging.display(),
+                fixture_dir.display(),
+                backup.display(),
+                fixture_dir.display(),
+                backup.display()
+            )),
+        };
     }
     fs::remove_dir_all(&backup).map_err(|error| format!("{}: {error}", backup.display()))
 }
@@ -676,6 +694,7 @@ fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn regeneration_replaces_one_complete_fixture_directory() {
@@ -712,8 +731,13 @@ mod tests {
             },
         };
         let plans = BTreeMap::from([("case-a".to_owned(), plan)]);
-        rewrite_fixture_atomically(&fixture, plans.get("case-a").expect("plan"), &plans)
-            .expect("atomic rewrite");
+        rewrite_fixture_atomically(
+            &|from, to| fs::rename(from, to),
+            &fixture,
+            plans.get("case-a").expect("plan"),
+            &plans,
+        )
+        .expect("atomic rewrite");
 
         assert_eq!(
             fs::read(fixture.join("case-a.tex")).expect("preserved source"),
@@ -724,5 +748,99 @@ mod tests {
         assert!(manifest.contains("\"events\": 2"));
         assert!(!temporary.path().join(".case-a.regen-staging").exists());
         assert!(!temporary.path().join(".case-a.regen-backup").exists());
+    }
+
+    fn fixture_and_plans(parent: &Path) -> (PathBuf, BTreeMap<String, CasePlan>) {
+        let fixture = parent.join("case-a");
+        fs::create_dir(&fixture).expect("fixture directory");
+        fs::write(fixture.join("case-a.tex"), b"\\end\n").expect("source");
+        fs::write(
+            fixture.join("manifest.json"),
+            concat!(
+                "{\n  \"cases\": [{\n",
+                "    \"id\": \"case-a\",\n",
+                "    \"expectation\": { \"kind\": \"pass\" }\n",
+                "  }]\n}\n",
+            ),
+        )
+        .expect("manifest");
+        let plan = CasePlan {
+            expected: Some(vec!["new".to_owned()]),
+            channels: ChannelsPlan {
+                events: 2,
+                status: "clean".to_owned(),
+                channels: std::array::from_fn(|_| ChannelPlan::Empty),
+            },
+        };
+        (fixture, BTreeMap::from([("case-a".to_owned(), plan)]))
+    }
+
+    #[test]
+    fn install_failure_restores_original_fixture_and_reports_recovery() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let (fixture, plans) = fixture_and_plans(temporary.path());
+        let calls = Cell::new(0);
+        let rename = |from: &Path, to: &Path| {
+            let call = calls.get();
+            calls.set(call + 1);
+            if call == 1 {
+                Err(io::Error::other("injected candidate install failure"))
+            } else {
+                fs::rename(from, to)
+            }
+        };
+
+        let error = rewrite_fixture_atomically(
+            &rename,
+            &fixture,
+            plans.get("case-a").expect("plan"),
+            &plans,
+        )
+        .expect_err("candidate install must fail");
+
+        assert!(error.contains("injected candidate install failure"));
+        assert!(error.contains("restored original fixture"));
+        assert_eq!(
+            fs::read(fixture.join("case-a.tex")).expect("restored source"),
+            b"\\end\n"
+        );
+        assert!(!temporary.path().join(".case-a.regen-backup").exists());
+        assert!(temporary.path().join(".case-a.regen-staging").exists());
+    }
+
+    #[test]
+    fn install_and_restore_failure_preserves_backup_and_reports_both_errors() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let (fixture, plans) = fixture_and_plans(temporary.path());
+        let calls = Cell::new(0);
+        let rename = |from: &Path, to: &Path| {
+            let call = calls.get();
+            calls.set(call + 1);
+            match call {
+                0 => fs::rename(from, to),
+                1 => Err(io::Error::other("injected candidate install failure")),
+                2 => Err(io::Error::other("injected backup restore failure")),
+                _ => unreachable!("unexpected rename call"),
+            }
+        };
+
+        let error = rewrite_fixture_atomically(
+            &rename,
+            &fixture,
+            plans.get("case-a").expect("plan"),
+            &plans,
+        )
+        .expect_err("candidate install and restoration must fail");
+
+        assert!(error.contains("injected candidate install failure"));
+        assert!(error.contains("injected backup restore failure"));
+        assert!(error.contains("original fixture remains recoverable at"));
+        let backup = temporary.path().join(".case-a.regen-backup");
+        assert_eq!(
+            fs::read(backup.join("case-a.tex")).expect("recoverable source"),
+            b"\\end\n"
+        );
+        assert!(!fixture.exists());
+        assert!(temporary.path().join(".case-a.regen-staging").exists());
     }
 }
