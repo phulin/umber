@@ -27,6 +27,12 @@ shared authority may target either every discovered case or an explicit
 nonempty subset; the latter keeps overlapping scenario groups declarative
 without introducing duplicate flat authorities.
 
+`fixturegen --migrate-pdf-layout --plan` inventories the fixed 15-case bounded
+PDF cohort, including derived TrueType bytes and exact font, encoding, PK, and
+included-PDF inputs. `--apply` stages and seals every complete candidate before
+one reusable cohort Plan/Apply handoff; repeating apply validates the installed
+closed cohort without consulting former shared authority.
+
 `fixturegen --cohort-transaction --plan PLAN.json` and `--apply PLAN.json`
 reuse that transaction engine for generators that already hold a complete
 multi-case cohort. The versioned JSON plan names the Git checkout, each

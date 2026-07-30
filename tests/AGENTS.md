@@ -310,9 +310,11 @@ The cargo test runs each case against its committed DVI fixture, and
 `scripts/regen-fixtures.sh` runs the same area with the same pinned CM TFMs as
 the other DVI corpora; keep cases primitive-only.
 
-`tests/corpus/pdf` contains primitive-only minimal PDF inputs, pinned pdfTeX
-reference PDFs, exact Umber PDFs, canonical structure projections, grayscale
-PGM renders, and renderer/hash attestations. Regeneration uses pdfTeX 1.40.27
+`tests/corpus/pdf` contains 15 closed primitive-only minimal PDF case
+directories. Each co-locates its `source.tex`, pinned pdfTeX reference PDF,
+exact Umber PDF, canonical structure projections, grayscale PGM renders,
+renderer/hash attestations, and every exact font, encoding, PK, or included-PDF
+input it opens. Regeneration uses pdfTeX 1.40.27
 and Poppler `pdftoppm` 25.08.0 only through `scripts/regen-fixtures.sh`; cargo
 tests remain hermetic by rebuilding Umber bytes and checking the committed
 structure, byte, render, and digest chain without invoking either tool. The

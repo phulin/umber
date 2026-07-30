@@ -95,7 +95,7 @@ if [[ -n "$qpdf" ]]; then
     dct-jpeg
   )
   for case_name in "${committed_cases[@]}"; do
-    pdf="tests/corpus/pdf/${case_name}.expected.umber.pdf"
+    pdf="tests/corpus/pdf/${case_name}/expected.umber.pdf"
     [[ -f "$pdf" ]] || { printf 'PDF external gate: missing %s\n' "$pdf" >&2; exit 1; }
     "$qpdf" --check "$pdf"
   done

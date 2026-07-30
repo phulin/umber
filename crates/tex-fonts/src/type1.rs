@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn permits_a_subset_whose_only_requested_glyph_is_notdef() {
-        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb");
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
         let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
         let glyphs = [b".notdef".to_vec()].into_iter().collect::<BTreeSet<_>>();
 
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn subsets_committed_cmr_charstrings_and_matches_pdftex_tag() {
-        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb");
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
         let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
         let glyphs = [b"A".to_vec(), b"B".to_vec(), b"C".to_vec()]
             .into_iter()

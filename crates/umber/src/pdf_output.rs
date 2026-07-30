@@ -6342,7 +6342,7 @@ mod tests {
         stores
             .provide_pdf_type1_program(
                 b"cmr10.pfb".to_vec(),
-                include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+                include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
             )
             .expect("committed PFB");
         let mut encoding = b"/TaggedSpacingEncoding [".to_vec();
@@ -6715,7 +6715,7 @@ mod tests {
                 include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
             )
             .expect("seed TFM");
-        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb");
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
         stores
             .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), pfb)
             .expect("committed PFB");
@@ -6765,7 +6765,7 @@ mod tests {
         stores
             .provide_pdf_type1_program(
                 b"cmr10.pfb".to_vec(),
-                include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+                include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
             )
             .expect("committed PFB");
         let run_result = run_in(
@@ -6840,7 +6840,7 @@ mod tests {
             stores
                 .provide_pdf_type1_program(
                     b"cmr10.pfb".to_vec(),
-                    include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+                    include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
                 )
                 .expect("committed PFB");
             let source = format!(

@@ -161,7 +161,7 @@ fn assert_committed_case(case: &str) {
 #[test]
 #[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
 fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
-    let source = fs::read_to_string(corpus_root().join("pdf/object_dictionaries.tex"))
+    let source = fs::read_to_string(corpus_root().join("pdf/object_dictionaries/source.tex"))
         .expect("read object dictionary parity source");
     let mut stores = Universe::default();
     umber::prepare_pdftex_run_stores(&mut stores);
@@ -214,7 +214,7 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
 fn navigation_fixture_replays_graph_bytes_and_state() {
-    let source = fs::read_to_string(corpus_root().join("pdf/navigation_structures.tex"))
+    let source = fs::read_to_string(corpus_root().join("pdf/navigation_structures/source.tex"))
         .expect("read navigation parity source");
     let mut stores = Universe::default();
     umber::prepare_pdftex_run_stores(&mut stores);
@@ -245,7 +245,7 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
 fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
-    let source = fs::read_to_string(corpus_root().join("pdf/form_xobjects.tex"))
+    let source = fs::read_to_string(corpus_root().join("pdf/form_xobjects/source.tex"))
         .expect("read Form XObject parity source");
     let source = format!(
         "\\font\\sym=cmsy10 \\font\\ext=cmex10 \
@@ -348,19 +348,19 @@ fn check_embedded_font_case(case: &str) {
     let distribution = write_empty_distribution(temp.path());
     let source_name = format!("{case}.tex");
     fs::copy(
-        corpus_root().join("pdf").join(&source_name),
+        corpus_root().join("pdf").join(case).join("source.tex"),
         temp.path().join(&source_name),
     )
     .expect("stage embedded-font source");
     fs::copy(
-        corpus_root().join("../../crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+        corpus_root().join("pdf").join(case).join("cmr10.tfm"),
         temp.path().join("cmr10.tfm"),
     )
     .expect("stage cmr10 TFM");
     if case.starts_with("pk_bitmap_") {
         let dpi = case.trim_start_matches("pk_bitmap_");
         fs::copy(
-            corpus_root().join("pdf").join(format!("cmr10.{dpi}pk")),
+            corpus_root().join("pdf").join(case).join(format!("cmr10.{dpi}pk")),
             temp.path().join(format!("cmr10.{dpi}pk")),
         )
         .expect("stage committed PK program");
@@ -373,13 +373,13 @@ fn check_embedded_font_case(case: &str) {
             | "embedded_subset_controls_negative"
     ) {
         fs::copy(
-            corpus_root().join("pdf/embedded_type1.pfb"),
+            corpus_root().join("pdf").join(case).join("cmr10.pfb"),
             temp.path().join("cmr10.pfb"),
         )
         .expect("stage committed Type1 program");
         if case == "embedded_tagged_spacing" {
             fs::copy(
-                corpus_root().join("pdf/tagged_spacing.enc"),
+                corpus_root().join("pdf").join(case).join("tagged_spacing.enc"),
                 temp.path().join("tagged_spacing.enc"),
             )
             .expect("stage tagged-spacing encoding");
@@ -388,20 +388,20 @@ fn check_embedded_font_case(case: &str) {
             // discovery. Any valid staged Type-1 program satisfies that
             // discovery without changing the generated fallback object.
             fs::copy(
-                corpus_root().join("pdf/embedded_type1.pfb"),
+                corpus_root().join("pdf").join(case).join("pdftexspace.pfb"),
                 temp.path().join("pdftexspace.pfb"),
             )
             .expect("stage fallback map resource");
         }
     } else {
-        let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
-        let program = tex_fonts::PdfTrueTypeProgram::from_woff2(woff2)
-            .expect("decode committed TrueType fixture");
-        fs::write(temp.path().join("cmu-serif.ttf"), program.bytes())
-            .expect("stage decoded TrueType program");
+        fs::copy(
+            corpus_root().join("pdf").join(case).join("cmu-serif.ttf"),
+            temp.path().join("cmu-serif.ttf"),
+        )
+        .expect("stage closed-case TrueType program");
         if case == "embedded_subset_truetype" {
             fs::copy(
-                corpus_root().join("pdf/fixture.enc"),
+                corpus_root().join("pdf").join(case).join("fixture.enc"),
                 temp.path().join("fixture.enc"),
             )
             .expect("stage subset encoding");

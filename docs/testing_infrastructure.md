@@ -895,8 +895,9 @@ same format-loaded state, and their committed corpora rely on it.
 
 ## Committed PDF Corpus
 
-`tests/corpus/pdf` commits minimal primitive-only sources, pinned reference
-PDFs, deterministic Umber PDFs, normalized catalog/page/resource/content
+`tests/corpus/pdf` commits 15 Git-validated closed case directories containing
+minimal primitive-only sources, pinned reference PDFs, deterministic Umber
+PDFs, normalized catalog/page/resource/content
 structure, exact 72-dpi grayscale PGM renders, and renderer/hash attestations.
 Synthetic PDF parser and importer inputs use the dependency-free
 `test_support::pdf_fixture` classic-xref writer. It deterministically checks

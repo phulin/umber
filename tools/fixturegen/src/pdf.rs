@@ -35,9 +35,9 @@ pub(super) fn check_raster_attestations() -> Result<()> {
 
     for case in corpus_cases("pdf") {
         let name = case.name();
-        let fixture_root = corpus_root().join("pdf");
-        let pdf = fixture_root.join(format!("{name}.expected.umber.pdf"));
-        let expected_pgm = fixture_root.join(format!("{name}.expected.pgm"));
+        let fixture_root = corpus_root().join("pdf").join(name);
+        let pdf = fixture_root.join("expected.umber.pdf");
+        let expected_pgm = fixture_root.join("expected.pgm");
         if !pdf.is_file() || !expected_pgm.is_file() {
             continue;
         }
@@ -54,7 +54,7 @@ pub(super) fn check_raster_attestations() -> Result<()> {
             bail!("rendered Umber pixels differ from the attested raster for pdf/{name}");
         }
         if font_case {
-            let expected_extract = fixture_root.join(format!("{name}.expected.extract"));
+            let expected_extract = fixture_root.join("expected.extract");
             let expected = fs::read(&expected_extract)
                 .with_context(|| format!("failed to read {}", expected_extract.display()))?;
             if extract(&extractor, &pdf)? != expected {
@@ -67,7 +67,8 @@ pub(super) fn check_raster_attestations() -> Result<()> {
 }
 
 pub(super) fn regenerate_case(case: &str) -> Result<()> {
-    let source = corpus_root().join("pdf").join(format!("{case}.tex"));
+    let case_root = corpus_root().join("pdf").join(case);
+    let source = case_root.join("source.tex");
     if !source.is_file() {
         bail!("missing PDF fixture source {}", source.display());
     }
@@ -82,14 +83,7 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     let source_name = format!("{case}.tex");
     fs::copy(&source, temp.path().join(&source_name))
         .context("failed to stage PDF fixture source")?;
-    stage_font_resources(case, temp.path())?;
-    if case == "external_pdf_page" {
-        fs::copy(
-            corpus_root().join("pdf/minimal_rule.expected.ref.pdf"),
-            temp.path().join("minimal_rule.expected.ref.pdf"),
-        )
-        .context("failed to stage included PDF page")?;
-    }
+    stage_case_resources(&case_root, temp.path())?;
 
     let reference_pdf = temp.path().join(format!("{case}.pdf"));
     let reference = Command::new(&pdftex)
@@ -176,101 +170,21 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     write_fixture(case, "render", attestation.as_bytes())
 }
 
-fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
-    if !case.starts_with("embedded_") && !case.starts_with("pk_bitmap_") {
-        return Ok(());
-    }
-    let corpus = corpus_root();
-    let root = corpus
-        .parent()
-        .and_then(Path::parent)
-        .context("corpus root has no repository parent")?;
-    fs::copy(
-        root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
-        directory.join("cmr10.tfm"),
-    )
-    .context("failed to stage cmr10.tfm")?;
-    if let Some(dpi) = case.strip_prefix("pk_bitmap_") {
-        let name = format!("cmr10.{dpi}pk");
-        let committed = corpus_root().join("pdf").join(&name);
-        if !committed.is_file() {
-            let output = Command::new("kpsewhich")
-                .args(["--dpi", dpi, "--format=pk", "cmr10"])
-                .output()
-                .context("failed to locate pinned PK font with kpsewhich")?;
-            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-            if !output.status.success() || !path.is_file() {
-                bail!("kpsewhich did not locate {name}");
-            }
-            fs::copy(path, &committed).with_context(|| format!("failed to pin {name}"))?;
+fn stage_case_resources(case_root: &Path, directory: &Path) -> Result<()> {
+    for entry in fs::read_dir(case_root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "source.tex" || name == "case.inventory" || name.starts_with("expected.") {
+            continue;
         }
-        fs::copy(committed, directory.join(name)).context("failed to stage PK font")?;
-        return Ok(());
-    }
-    match case {
-        "embedded_type1"
-        | "embedded_tagged_spacing"
-        | "embedded_subset_type1"
-        | "embedded_subset_omit"
-        | "embedded_subset_controls_negative" => {
-            let committed = corpus_root().join("pdf/embedded_type1.pfb");
-            if !committed.is_file() {
-                let output = Command::new("kpsewhich")
-                    .arg("cmr10.pfb")
-                    .output()
-                    .context("failed to locate cmr10.pfb with kpsewhich")?;
-                let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-                if !output.status.success() || !path.is_file() {
-                    bail!("kpsewhich did not locate cmr10.pfb");
-                }
-                fs::copy(&path, &committed).context("failed to pin cmr10.pfb")?;
-            }
-            fs::copy(committed, directory.join("cmr10.pfb"))
-                .context("failed to stage cmr10.pfb")?;
-            if case == "embedded_tagged_spacing" {
-                fs::copy(
-                    corpus_root().join("pdf/tagged_spacing.enc"),
-                    directory.join("tagged_spacing.enc"),
-                )
-                .context("failed to stage tagged-spacing encoding")?;
-                let tfm = locate_kpse_resource("pdftexspace.tfm")?;
-                let pfb = locate_kpse_resource("pdftexspace.pfb")?;
-                fs::copy(tfm, directory.join("customspace.tfm"))
-                    .context("failed to stage custom space TFM")?;
-                fs::copy(pfb, directory.join("pdftexspace.pfb"))
-                    .context("failed to stage custom space Type-1 program")?;
-            }
+        if !entry.file_type()?.is_file() {
+            bail!("PDF closed case contains non-file resource {}", entry.path().display());
         }
-        "embedded_truetype" | "embedded_subset_truetype" => {
-            let woff2 = fs::read(root.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"))
-                .context("failed to read committed CMU Serif WOFF2")?;
-            let program = tex_fonts::PdfTrueTypeProgram::from_woff2(&woff2)
-                .context("failed to decode committed CMU Serif WOFF2")?;
-            fs::write(directory.join("cmu-serif.ttf"), program.bytes())
-                .context("failed to stage decoded CMU Serif TTF")?;
-            if case == "embedded_subset_truetype" {
-                fs::copy(
-                    corpus_root().join("pdf/fixture.enc"),
-                    directory.join("fixture.enc"),
-                )
-                .context("failed to stage subset encoding")?;
-            }
-        }
-        _ => {}
+        fs::copy(entry.path(), directory.join(name.as_ref()))
+            .with_context(|| format!("stage closed-case PDF resource {name}"))?;
     }
     Ok(())
-}
-
-fn locate_kpse_resource(name: &str) -> Result<PathBuf> {
-    let output = Command::new("kpsewhich")
-        .arg(name)
-        .output()
-        .with_context(|| format!("failed to locate {name} with kpsewhich"))?;
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    if !output.status.success() || !path.is_file() {
-        bail!("kpsewhich did not locate {name}");
-    }
-    Ok(path)
 }
 
 fn locate_tool(variable: &str, fallback: &str) -> Result<PathBuf> {
@@ -348,9 +262,7 @@ fn pixels_within(left: &[u8], right: &[u8], delta: u8) -> bool {
 }
 
 fn write_fixture(case: &str, kind: &str, bytes: &[u8]) -> Result<()> {
-    let path = corpus_root()
-        .join("pdf")
-        .join(format!("{case}.expected.{kind}"));
+    let path = corpus_root().join("pdf").join(case).join(format!("expected.{kind}"));
     if fs::read(&path).ok().as_deref() == Some(bytes) {
         eprintln!("fixture unchanged: {}", path.display());
         return Ok(());

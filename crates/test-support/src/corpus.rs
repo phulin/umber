@@ -155,13 +155,14 @@ mod imp {
                 | "tex_exec"
                 | "tex_exec_io"
                 | "expand"
+                | "pdf"
         )
     }
 
     pub fn case_source_name(area: &str, case: &str) -> String {
         if matches!(
             area,
-            "canonical-dvi" | "hello" | "lexer" | "lexer_dynamic" | "stabilization"
+            "canonical-dvi" | "hello" | "lexer" | "lexer_dynamic" | "stabilization" | "pdf"
         ) {
             "source.tex".to_owned()
         } else {

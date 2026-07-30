@@ -5,6 +5,7 @@ mod cohort_transaction;
 mod fonts;
 mod layout_migration;
 mod pdf;
+mod pdf_layout_migration;
 
 use std::env;
 use std::fs;
@@ -69,6 +70,7 @@ fn run() -> Result<()> {
             print!("{report}");
             Ok(())
         }
+        Some("--migrate-pdf-layout") => pdf_layout_migration::run_cli(args.collect()),
         Some("--cohort-transaction") => cohort_transaction::run_cli(args.collect()),
         Some("--seal-classic-bibtex-case") => {
             let root = args.next().context("missing classic case directory")?;
@@ -103,7 +105,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --migrate-pdf-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }
