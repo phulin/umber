@@ -1,5 +1,7 @@
 //! Git-backed validation for closed, repository-owned fixture directories.
 
+#![allow(clippy::disallowed_methods)] // host-only fixture authority and payload reads
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};

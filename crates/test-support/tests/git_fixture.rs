@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)] // hermetic host-only fixture construction
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
