@@ -867,6 +867,40 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Retires a depleted §325 right-brace backup before synchronous output.
+    ///
+    /// TeX82 §1085's box-group closer can synchronously reach §1025's output
+    /// hand-off through `box_end` and `build_page`. The consumed closer's
+    /// one-token backup has ended before that hand-off and must be retired
+    /// without fetching whatever lies beneath it.
+    pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
+        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last() else {
+            return Ok(());
+        };
+        if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+            || self.next_stored_token(cursor).is_some()
+            || !matches!(
+                &cursor.payload,
+                TokenPayload::BackedUp(buffer)
+                    if matches!(
+                        buffer.get(0).map(|token| token.spelling.semantic_token()),
+                        Some(Token::Char {
+                            cat: Catcode::EndGroup,
+                            ..
+                        })
+                    )
+            )
+        {
+            return Ok(());
+        }
+        match self.retire_and_restart(cursor.identity)? {
+            RetirementRestart::Continue => Ok(()),
+            RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
+                Err(CommandError::input_invariant())
+            }
+        }
+    }
+
     /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
     /// `closing` holds the one or more tokens §1065 prepares to match the
@@ -3163,6 +3197,56 @@ mod tests {
                 ch: 'x',
                 cat: Catcode::Letter,
             }
+        );
+    }
+
+    #[test]
+    fn output_entry_retires_a_depleted_backup_before_its_push() {
+        // TeX82 §1025 enters `output_text` only after the contributing
+        // command. If that command came from a one-token §325 backup, the
+        // depleted backup must retire before the selected output is pushed.
+        let mut command = CommandState::default();
+        command.push_token_level(
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                spelling: right_brace(),
+                source_provenance: None,
+            }])),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        processor
+            .get_next()
+            .expect("backup token delivers")
+            .expect("backup is live");
+        processor
+            .retire_completed_right_brace_backup()
+            .expect("completed box closer retires");
+        processor
+            .begin_selected_output_routine()
+            .expect("output input begins");
+
+        assert!(
+            matches!(
+                recorder.0.as_slice(),
+                [
+                    CommandObservation::Command(_),
+                    CommandObservation::Input(retirement),
+                    CommandObservation::Input(output),
+                ] if retirement.transition == InputTransition::Retire
+                    && retirement.reason == InputReason::Backup
+                    && output.transition == InputTransition::Push
+                    && output.reason == InputReason::OutputRoutine
+            ),
+            "output must not hide a depleted backup: {:?}",
+            recorder.0
         );
     }
 
