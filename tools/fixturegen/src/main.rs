@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_methods)] // host-side fixture regeneration tool.
 
 mod classic_bibtex;
+mod cohort_transaction;
 mod fonts;
 mod layout_migration;
 mod pdf;
@@ -68,6 +69,7 @@ fn run() -> Result<()> {
             print!("{report}");
             Ok(())
         }
+        Some("--cohort-transaction") => cohort_transaction::run_cli(args.collect()),
         Some("--case") => {
             let first = args.next().context("missing case after --case")?;
             let (area, case) = if let Some((area, case)) = first.split_once('/') {
@@ -95,7 +97,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }

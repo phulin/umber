@@ -10,6 +10,8 @@ anyhow = "1"
 bib-engine = { path = "../../crates/bib-engine" }
 pdf-writer = "=0.15.0"
 refexec = { path = "../refexec" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 test-support = { path = "../../crates/test-support" }

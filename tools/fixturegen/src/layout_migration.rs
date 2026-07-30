@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use sha2::{Digest, Sha256};
 
+use crate::cohort_transaction::CohortCase;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)] // Metadata is part of the reusable schema; this cohort has none.
 pub enum FileRole {
@@ -314,6 +316,122 @@ pub fn run(corpus: &Path, specs: &[FamilySpec], mode: Mode) -> Result<String> {
     run_with_fs(corpus, specs, mode, &RealFs)
 }
 
+pub(crate) fn run_staged_cohort(
+    repository: &Path,
+    cases: &[CohortCase],
+    mode: Mode,
+) -> Result<String> {
+    run_staged_cohort_with_fs(repository, cases, mode, &RealFs)
+}
+
+pub(crate) fn run_staged_cohort_with_fs(
+    repository: &Path,
+    cases: &[CohortCase],
+    mode: Mode,
+    io: &dyn MigrationFs,
+) -> Result<String> {
+    let mut planned = Vec::new();
+    let mut destinations = BTreeSet::new();
+    let mut authorities = BTreeSet::new();
+    ensure!(!cases.is_empty(), "cohort plan has no cases");
+    for case in cases {
+        validate_relative(&case.staged)?;
+        validate_relative(&case.destination)?;
+        ensure!(
+            destinations.insert(case.destination.clone()),
+            "duplicate cohort destination {}",
+            case.destination
+        );
+        for other in destinations
+            .iter()
+            .filter(|other| *other != &case.destination)
+        {
+            ensure!(
+                !Path::new(other).starts_with(&case.destination)
+                    && !Path::new(&case.destination).starts_with(other),
+                "nested cohort destinations collide: {} and {}",
+                case.destination,
+                other
+            );
+        }
+        let staged = repository.join(&case.staged);
+        let inventory = crate::cohort_transaction::validate_staged_case(&staged)?;
+        let destination = repository.join(&case.destination);
+        let destination_parent = destination
+            .parent()
+            .context("cohort destination has no parent")?;
+        let parent_metadata = fs::symlink_metadata(destination_parent).with_context(|| {
+            format!(
+                "inspect cohort destination parent {}",
+                destination_parent.display()
+            )
+        })?;
+        ensure!(
+            parent_metadata.is_dir() && !parent_metadata.file_type().is_symlink(),
+            "cohort destination parent is not a real directory"
+        );
+        let complete =
+            destination.is_dir() && read_regular_inventory_recursive(&destination)? == inventory;
+        let mut case_authorities = Vec::new();
+        if !complete {
+            for authority in &case.authorities {
+                validate_relative(authority)?;
+                ensure!(
+                    authorities.insert(authority.clone()),
+                    "authority {authority} appears more than once"
+                );
+                crate::cohort_transaction::validate_git_authority(repository, authority)?;
+                case_authorities.push(repository.join(authority));
+            }
+            ensure!(
+                !destination.exists() || case_authorities.contains(&destination),
+                "existing destination {} must be a named authority",
+                case.destination
+            );
+        }
+        let parent = destination_parent.to_owned();
+        let name = file_name(&destination)?;
+        planned.push(PlannedCase {
+            area: parent,
+            case: name,
+            display_area: Path::new(&case.destination)
+                .parent()
+                .context("cohort destination has no parent")?
+                .to_string_lossy()
+                .into_owned(),
+            layout: if complete {
+                Layout::Directory
+            } else {
+                Layout::Flat
+            },
+            inventory,
+            authorities: case_authorities,
+        });
+    }
+    let plan = MigrationPlan { cases: planned };
+    let report = plan.report();
+    if mode == Mode::Apply {
+        let digest = plan.transaction_digest();
+        let retained = retained_transactions(repository, &digest)?;
+        let complete = plan
+            .cases
+            .iter()
+            .all(|case| case.layout == Layout::Directory);
+        if complete {
+            for root in retained.committed {
+                garbage_collect(io, &root)?;
+            }
+        } else {
+            ensure!(
+                retained.committed.is_empty(),
+                "owned committed transaction exists but installed cohort is incomplete"
+            );
+            Transaction::new(repository, plan, digest, io)?.apply()?;
+        }
+    }
+    Ok(report)
+}
+
 fn run_with_fs(
     corpus: &Path,
     specs: &[FamilySpec],
@@ -361,7 +479,7 @@ enum Layout {
 struct PlannedCase {
     area: PathBuf,
     case: String,
-    display_area: &'static str,
+    display_area: String,
     layout: Layout,
     inventory: BTreeMap<String, Vec<u8>>,
     authorities: Vec<PathBuf>,
@@ -401,7 +519,7 @@ impl MigrationPlan {
                 planned.push(PlannedCase {
                     area: area.clone(),
                     case,
-                    display_area: spec.area,
+                    display_area: spec.area.to_owned(),
                     layout,
                     inventory,
                     authorities,
@@ -953,7 +1071,7 @@ fn committed_marker(digest: &str) -> String {
     format!("{TRANSACTION_SCHEMA}\nplan-sha256={digest}\nstate=committed\n")
 }
 
-trait MigrationFs {
+pub(crate) trait MigrationFs {
     fn create_dir(&self, path: &Path) -> Result<()>;
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<()>;
@@ -963,7 +1081,7 @@ trait MigrationFs {
     fn remove_dir(&self, path: &Path) -> Result<()>;
 }
 
-struct RealFs;
+pub(crate) struct RealFs;
 
 impl MigrationFs for RealFs {
     fn create_dir(&self, path: &Path) -> Result<()> {
