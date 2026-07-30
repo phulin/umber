@@ -17,7 +17,7 @@
         "kind": "state",
         "count_registers": [0, 1]
       },
-      "expected": ["count:0=1", "count:1=0"],
+      "expected": ["count:0=1", "count:1=1"],
       "expectation": { "kind": "pass" }
     },
     {

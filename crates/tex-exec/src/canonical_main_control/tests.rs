@@ -62,6 +62,40 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
 }
 
 #[test]
+fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
+    // e-TeX 2.6 change section [27.465] implements `\unexpanded` through
+    // `the_toks`, whose `ins_list` result re-enters the enclosing expansion
+    // loop. Protection suppresses expansion only while an expanded token
+    // list is being built; it is not persistent replay metadata.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\protected\def\p{\global\advance\count0 by1}\unexpanded{\p}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let p_deliveries = observations
+        .0
+        .iter()
+        .filter_map(|event| match event {
+            CommandObservation::Command(command)
+                if command.boundary == tex_command::CommandDeliveryBoundary::Raw
+                    && command.spelling
+                        == tex_command::ObservedToken::ControlSequence("p".into()) =>
+            {
+                Some(command.command.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(p_deliveries, ["undefined_cs", "call", "call"]);
+    assert_eq!(stores.count(0), 1, "terminal: {}", terminal_text(&stores));
+}
+
+#[test]
 fn hbox_group_type_respects_box_context_and_vertical_mode() {
     // TeX82 §1083: a register-bound hbox uses hbox_group (e-TeX code 2),
     // even in vertical mode. The neighboring bare hbox is append-like and

@@ -140,9 +140,6 @@ pub(crate) struct BackedUpToken {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TokenBehavior {
     Ordinary,
-    /// e-TeX 2.6 §27.465's `\unexpanded` result: every control-sequence
-    /// token returned by `the_toks` bypasses expansion on this traversal.
-    Unexpanded,
     /// A TeX recovery insertion that must retire before a scanner backs its
     /// consumed token up for ordinary replay.
     Recovery,

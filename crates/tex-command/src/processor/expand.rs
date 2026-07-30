@@ -1002,11 +1002,11 @@ impl CommandProcessor<'_> {
     /// choosing its own token type. `first` is the inserted list's leading
     /// token: §323's trace seam reports the current token of the level it just
     /// pushed, and an empty inserted list has none to report.
-    fn insert_expansion_list(&mut self, payload: TokenPayload, first: Option<Token>) {
+    pub(crate) fn insert_expansion_list(&mut self, payload: TokenPayload, first: Option<Token>) {
         self.insert_expansion_list_with_behavior(payload, first, TokenBehavior::Recovery);
     }
 
-    pub(crate) fn insert_expansion_list_with_behavior(
+    fn insert_expansion_list_with_behavior(
         &mut self,
         payload: TokenPayload,
         first: Option<Token>,

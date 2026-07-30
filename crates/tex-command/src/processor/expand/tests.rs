@@ -156,9 +156,11 @@ fn frozen_end_template_delivers_endv_fresh_and_after_format_load() {
 }
 
 #[test]
-fn etex_unexpanded_returns_each_balanced_token_without_expanding_it() {
+fn etex_unexpanded_reenters_the_current_expansion_loop() {
     // e-TeX 2.6 etex.ch §27.465 routes `\unexpanded` through
     // `scan_general_text`, then returns its token list through `the_toks`.
+    // Outside an expanded token-list collector, that list is ordinary
+    // `ins_list` input and the enclosing `get_x_token` expands it normally.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -195,12 +197,18 @@ fn etex_unexpanded_returns_each_balanced_token_without_expanding_it() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_fuel(&mut fuel);
 
-    let literal = processor
+    let expanded = processor
         .get_x_token()
         .expect("unexpanded scan succeeds")
-        .expect("literal token is returned");
-    assert_eq!(literal.spelling().semantic_token(), Token::Cs(payload));
-    assert!(!is_expandable_command(&literal));
+        .expect("expanded token is returned");
+    assert_eq!(
+        expanded.spelling().semantic_token(),
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        }
+    );
+    assert!(!is_expandable_command(&expanded));
     assert_eq!(rendered(&mut processor), "X");
     assert!(fuel.burned() <= 32);
 }

@@ -21,7 +21,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor, RegisteredSourceKind, SourceRegistration};
 use tex_state::CommandLineSource;
 
-use crate::input::{SharedTokenBuffer, TokenBehavior, TokenPayload};
+use crate::input::{SharedTokenBuffer, TokenPayload};
 use crate::observation::{CommandObservation, DiagnosticRecord, TokenListRecord};
 
 /// The two canonical `scan_toks` collection forms.
@@ -670,11 +670,7 @@ impl CommandProcessor<'_> {
     pub(crate) fn expand_unexpanded(&mut self) -> Result<(), CommandError> {
         let raw = self.scan_unexpanded_general_text()?;
         let first = raw.first().map(|token| token.semantic_token());
-        self.insert_expansion_list_with_behavior(
-            TokenPayload::Transient(SharedTokenBuffer::new(raw)),
-            first,
-            TokenBehavior::Unexpanded,
-        );
+        self.insert_expansion_list(TokenPayload::Transient(SharedTokenBuffer::new(raw)), first);
         Ok(())
     }
 
