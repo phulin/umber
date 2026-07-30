@@ -102,7 +102,7 @@ mod imp {
     use tempfile::TempDir;
 
     use super::{DviComparison, compare_dvi_bytes};
-    use crate::{copy_case_support_files, corpus_root};
+    use crate::{copy_case_support_files, corpus_root, is_directory_case_area};
 
     const PINNED_CM_TFMS: &[&str] = &["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"];
 
@@ -120,10 +120,12 @@ mod imp {
 
         fn try_new(area: &str, case: &str) -> Result<Self> {
             let temp_dir = tempfile::tempdir().context("failed to create DVI fixture temp dir")?;
-            let source = corpus_root()
-                .join(area)
-                .join(case)
-                .join(format!("{case}.tex"));
+            let area_root = corpus_root().join(area);
+            let source = if is_directory_case_area(area) {
+                area_root.join(case).join(format!("{case}.tex"))
+            } else {
+                area_root.join(format!("{case}.tex"))
+            };
             let source_path = temp_dir.path().join(format!("{case}.tex"));
             fs::copy(&source, &source_path).with_context(|| {
                 format!(
@@ -219,7 +221,7 @@ pub use imp::{DviCaseSetup, assert_dvi_matches};
 mod tests {
     use anyhow::Result;
 
-    use super::{DviComparison, compare_dvi_bytes};
+    use super::{DviCaseSetup, DviComparison, compare_dvi_bytes};
 
     #[test]
     fn comparison_normalizes_only_the_preamble_comment_payload() -> Result<()> {
@@ -238,5 +240,17 @@ mod tests {
         };
         assert_eq!(diff.offset, 18);
         Ok(())
+    }
+
+    #[test]
+    fn explicitly_unmigrated_canonical_dvi_cases_keep_flat_loading() {
+        for case in ["ligature_group_boundaries", "rule_space_factor_reset"] {
+            let setup = DviCaseSetup::new("canonical-dvi", case);
+            assert_eq!(
+                setup.source_file_name(),
+                format!("{case}.tex"),
+                "legacy flat source remains loadable"
+            );
+        }
     }
 }

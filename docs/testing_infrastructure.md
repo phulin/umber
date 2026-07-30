@@ -839,6 +839,9 @@ whose `.expected.dvi` pairs back the canonical-divergence regression tests in
 `crates/umber/tests/it/e2e_conformance.rs`. It is a static copy, deliberately
 outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
+They temporarily retain their legacy flat loader path under
+`umber2-johp.354.3`; this does not relax the closed-directory loader or tracked
+inventory gate for the eight migrated execution families.
 
 DVI regeneration runs the live reference engine through `tools/refexec`,
 copies the pinned local CM TFMs and case-local support files, uses INITEX for the math

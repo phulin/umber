@@ -243,7 +243,10 @@ detects a real byte change.
 the canonical-divergence regression tests in
 `crates/umber/tests/it/e2e_conformance.rs` read. It is deliberately not a
 regenerated DVI area: those tests pin a specific past divergence, so the
-fixtures must not track the reference engine.
+fixtures must not track the reference engine. These two cases temporarily keep
+their legacy flat layout under `umber2-johp.354.3`; shared DVI setup must route
+only the eight already-migrated execution families through closed case
+directories until that issue migrates `canonical-dvi`.
 
 `tests/corpus/stabilization` contains hermetic generated-input fixed-point
 fixtures shared by native and WebAssembly conformance tests. These sources use
