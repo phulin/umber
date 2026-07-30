@@ -53,6 +53,8 @@ pub struct SelectedSharedFile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FamilySpec {
     pub area: &'static str,
+    /// Repository-corpus-relative base for shared authorities.
+    pub shared_area: &'static str,
     /// The suffix of the authority file that discovers and names a flat case.
     pub case_discovery_suffix: &'static str,
     /// Per-case mappings. `source_suffix` and `destination_suffix` are appended
@@ -63,6 +65,9 @@ pub struct FamilySpec {
     pub shared_files: &'static [SharedFile],
     /// Shared authorities copied only into the named cases, then consumed once.
     pub selected_shared_files: &'static [SelectedSharedFile],
+    /// Rebuild an existing legacy case directory so shared inputs and closed
+    /// metadata become part of the case's own authority.
+    pub close_existing_directories: bool,
 }
 
 #[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
@@ -166,43 +171,53 @@ const EXPECTED_DVI: CaseFile = CaseFile {
 pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
     FamilySpec {
         area: "canonical-dvi",
+        shared_area: "canonical-dvi",
         case_discovery_suffix: ".tex",
         case_files: &[SOURCE_TEX, EXPECTED_DVI],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     },
     FamilySpec {
         area: "hello",
+        shared_area: "hello",
         case_discovery_suffix: ".tex",
         case_files: &[SOURCE_TEX, EXPECTED_LOG],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     },
     FamilySpec {
         area: "lexer",
+        shared_area: "lexer",
         case_discovery_suffix: ".tex",
         case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     },
     FamilySpec {
         area: "lexer_dynamic",
+        shared_area: "lexer_dynamic",
         case_discovery_suffix: ".tex",
         case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     },
     FamilySpec {
         area: "stabilization",
+        shared_area: "stabilization",
         case_discovery_suffix: ".tex",
         case_files: &[SOURCE_TEX],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     },
 ];
 
@@ -283,11 +298,55 @@ pub const ALL_FAMILIES: &[FamilySpec] = &[
     LEXICAL_SESSION_FAMILIES[4],
     FamilySpec {
         area: "bib/invocation",
+        shared_area: "bib/invocation",
         case_discovery_suffix: ".invocation",
         case_files: BIB_INVOCATION_CASE_FILES,
         case_owned_files: BIB_INVOCATION_OWNED,
         shared_files: NO_SHARED,
         selected_shared_files: BIB_INVOCATION_SHARED,
+        close_existing_directories: false,
+    },
+    FamilySpec {
+        area: "bibtex/cases",
+        shared_area: "bibtex/styles",
+        case_discovery_suffix: ".aux",
+        case_files: &[],
+        case_owned_files: NO_OWNED,
+        shared_files: NO_SHARED,
+        selected_shared_files: CLASSIC_BIBTEX_STYLES,
+        close_existing_directories: true,
+    },
+];
+
+const CLASSIC_BIBTEX_STYLES: &[SelectedSharedFile] = &[
+    SelectedSharedFile {
+        cases: &["plain"],
+        source: "plain.bst",
+        destination: "plain.bst",
+        role: FileRole::Input,
+    },
+    SelectedSharedFile {
+        cases: &["apalike", "xampl"],
+        source: "apalike.bst",
+        destination: "apalike.bst",
+        role: FileRole::Input,
+    },
+    SelectedSharedFile {
+        cases: &[
+            "elsarticle-article",
+            "elsarticle-book",
+            "elsarticle-month",
+            "elsarticle-names",
+        ],
+        source: "elsarticle-num.bst",
+        destination: "elsarticle-num.bst",
+        role: FileRole::Input,
+    },
+    SelectedSharedFile {
+        cases: &["ieeetran"],
+        source: "IEEEtran.bst",
+        destination: "IEEEtran.bst",
+        role: FileRole::Input,
     },
 ];
 
@@ -298,11 +357,13 @@ const fn execution_family(
 ) -> FamilySpec {
     FamilySpec {
         area,
+        shared_area: area,
         case_discovery_suffix: ".tex",
         case_files: EXECUTION_CASE_FILES,
         case_owned_files,
         shared_files,
         selected_shared_files: NO_SELECTED_SHARED,
+        close_existing_directories: false,
     }
 }
 
@@ -314,6 +375,23 @@ pub enum Mode {
 
 pub fn run(corpus: &Path, specs: &[FamilySpec], mode: Mode) -> Result<String> {
     run_with_fs(corpus, specs, mode, &RealFs)
+}
+
+pub fn seal_classic_case(root: &Path, case: &str) -> Result<()> {
+    validate_component(case)?;
+    let mut inventory = read_regular_inventory_recursive(root)?;
+    inventory.remove("case.inventory");
+    inventory.remove("case.json");
+    let metadata = classic_case_metadata(case, &inventory)?;
+    inventory.insert("case.json".to_owned(), metadata.clone());
+    let mut closed = String::from("closed-case-v1\n");
+    for name in inventory.keys() {
+        closed.push_str(name);
+        closed.push('\n');
+    }
+    fs::write(root.join("case.json"), metadata)?;
+    fs::write(root.join("case.inventory"), closed)?;
+    Ok(())
 }
 
 pub(crate) fn run_staged_cohort(
@@ -547,9 +625,16 @@ impl MigrationPlan {
             if cases.is_empty() {
                 bail!("{} has no flat or directory cases", area.display());
             }
-            for (case, layout) in cases {
+            for (case, mut layout) in cases {
                 validate_component(&case)?;
-                let (inventory, authorities) = inventory_for_case(&area, spec, &case, layout)?;
+                let needs_closing = layout == Layout::Directory
+                    && spec.close_existing_directories
+                    && !area.join(&case).join("case.inventory").is_file();
+                let (inventory, authorities) =
+                    inventory_for_case(corpus, &area, spec, &case, layout)?;
+                if needs_closing {
+                    layout = Layout::Flat;
+                }
                 for authority in &authorities {
                     if let Some(owner) =
                         authority_owner.insert(authority.clone(), format!("{}/{case}", spec.area))
@@ -657,12 +742,15 @@ fn discover_cases(area: &Path, discovery_suffix: &str) -> Result<BTreeMap<String
 }
 
 fn inventory_for_case(
+    corpus: &Path,
     area: &Path,
     spec: &FamilySpec,
     case: &str,
     layout: Layout,
 ) -> Result<(BTreeMap<String, Vec<u8>>, Vec<PathBuf>)> {
-    if layout == Layout::Directory {
+    if layout == Layout::Directory
+        && (!spec.close_existing_directories || area.join(case).join("case.inventory").is_file())
+    {
         return Ok((
             read_regular_inventory_recursive(&area.join(case))?,
             Vec::new(),
@@ -670,6 +758,10 @@ fn inventory_for_case(
     }
     let mut inventory = BTreeMap::new();
     let mut authorities = Vec::new();
+    if layout == Layout::Directory {
+        inventory = read_regular_inventory_recursive(&area.join(case))?;
+        authorities.push(area.join(case));
+    }
     for mapping in spec.case_files {
         let source_prefix = format!("{case}{}", mapping.source_suffix);
         let matches = matching_files(
@@ -714,7 +806,7 @@ fn inventory_for_case(
             &mut inventory,
             &mut authorities,
             mapping.destination.to_owned(),
-            area.join(mapping.source),
+            corpus.join(spec.shared_area).join(mapping.source),
         )?;
     }
     for mapping in spec
@@ -726,20 +818,62 @@ fn inventory_for_case(
             &mut inventory,
             &mut authorities,
             mapping.destination.to_owned(),
-            area.join(mapping.source),
+            corpus.join(spec.shared_area).join(mapping.source),
         )?;
+    }
+    if spec.close_existing_directories {
+        let metadata = classic_case_metadata(case, &inventory)?;
+        inventory.insert("case.json".to_owned(), metadata);
+        let mut names = inventory.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        let mut closed = String::from("closed-case-v1\n");
+        for name in names {
+            closed.push_str(&name);
+            closed.push('\n');
+        }
+        inventory.insert("case.inventory".to_owned(), closed.into_bytes());
     }
     Ok((inventory, authorities))
 }
 
+fn classic_case_metadata(case: &str, inventory: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+    let mut files = Vec::new();
+    for (name, bytes) in inventory {
+        let role = match Path::new(name).extension().and_then(|value| value.to_str()) {
+            Some("aux" | "bib" | "bst") => "input",
+            Some("bbl" | "blg" | "terminal") => "output",
+            _ => bail!("classic BibTeX case {case} has unclassified payload {name}"),
+        };
+        files.push(serde_json::json!({
+            "path": name,
+            "role": role,
+            "bytes": bytes.len(),
+            "sha256": format!("{:x}", Sha256::digest(bytes)),
+        }));
+    }
+    let value = serde_json::json!({
+        "schema": "classic-bibtex-closed-case-v1",
+        "case": case,
+        "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+        "files": files,
+    });
+    let mut bytes = serde_json::to_vec_pretty(&value)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 fn is_shared_authority(spec: &FamilySpec, area: &Path, authority: &Path) -> bool {
+    let corpus = area
+        .ancestors()
+        .nth(Path::new(spec.area).components().count())
+        .expect("validated family area has a corpus ancestor");
     spec.shared_files
         .iter()
-        .any(|file| area.join(file.source) == authority)
+        .any(|file| corpus.join(spec.shared_area).join(file.source) == authority)
         || spec
             .selected_shared_files
             .iter()
-            .any(|file| area.join(file.source) == authority)
+            .any(|file| corpus.join(spec.shared_area).join(file.source) == authority)
 }
 
 fn matching_files(
@@ -789,6 +923,7 @@ fn add_mapping(
 
 fn validate_spec(spec: &FamilySpec) -> Result<()> {
     validate_relative(spec.area)?;
+    validate_relative(spec.shared_area)?;
     if spec.case_discovery_suffix.is_empty() {
         bail!("{} has an empty case discovery suffix", spec.area);
     }

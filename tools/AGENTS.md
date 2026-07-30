@@ -46,9 +46,9 @@ post-commit cleanup failures both report `committed=true` and the exact owned
 retained transaction root, whether cleanup made zero or partial progress. The command
 prints one `umber-fixture-cohort-result-v1` JSON object on success and exits
 nonzero without a success object on validation, transaction, rollback, or
-garbage-collection failure. This is the Rust transaction interface intended
-for a future `scripts/regen-fixtures.sh` cohort handoff; the script does not yet
-invoke it.
+garbage-collection failure. The classic BibTeX regeneration path stages and
+seals all nine complete closed candidate directories, then invokes this
+interface once for the cohort.
 
 Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
 of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of

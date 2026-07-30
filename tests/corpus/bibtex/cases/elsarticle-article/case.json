@@ -1,0 +1,43 @@
+{
+  "case": "elsarticle-article",
+  "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+  "files": [
+    {
+      "bytes": 66,
+      "path": "elsarticle-article.aux",
+      "role": "input",
+      "sha256": "60a816e8c7aeeb87b5bdb798a7193e515b5badb682ac58f137f9667cf5a0c675"
+    },
+    {
+      "bytes": 565,
+      "path": "elsarticle-article.bbl",
+      "role": "output",
+      "sha256": "69e00503dd817d988174c46349c600fd29a19d558ea17e81e8e3eb0bf06c4d08"
+    },
+    {
+      "bytes": 883,
+      "path": "elsarticle-article.blg",
+      "role": "output",
+      "sha256": "305b1eada73d2479d344b85ff5e5bcf29f2d8a93227f9f9ecbfdc1b7cebc858b"
+    },
+    {
+      "bytes": 167,
+      "path": "elsarticle-article.terminal",
+      "role": "output",
+      "sha256": "301057f70c118719809016567d7d8584cd284f870fda772bb63634356c28d371"
+    },
+    {
+      "bytes": 29462,
+      "path": "elsarticle-num.bst",
+      "role": "input",
+      "sha256": "08d06d24a533fbe0c6e29d5bd5e7134781ab41a3c6640d73ad63112d4851b301"
+    },
+    {
+      "bytes": 263,
+      "path": "references.bib",
+      "role": "input",
+      "sha256": "089c3e666de05dd0ce258ac2e658b9c82d9d64af263c01e347e023e9ae01c138"
+    }
+  ],
+  "schema": "classic-bibtex-closed-case-v1"
+}

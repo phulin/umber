@@ -11,6 +11,21 @@ use bib_engine::{
     VirtualPath,
 };
 
+macro_rules! classic_bytes {
+    ($case:literal, $name:literal) => {{
+        let case = test_support::git_fixture::ClosedCase::discover(concat!(
+            "tests/corpus/bibtex/cases/",
+            $case
+        ))
+        .expect("closed classic BibTeX case");
+        Box::leak(
+            case.read($name)
+                .expect("closed classic BibTeX payload")
+                .into_boxed_slice(),
+        ) as &'static [u8]
+    }};
+}
+
 #[test]
 fn public_result_is_detached_and_preserves_output_order() {
     let configuration =
@@ -274,7 +289,7 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
     provisioner
         .register_user(
             VirtualPath::user("smoke.aux").expect("fixture path"),
-            include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.aux").to_vec(),
+            classic_bytes!("smoke", "smoke.aux").to_vec(),
         )
         .expect("fixture input");
     let job = ClassicBibJob::new(
@@ -292,12 +307,8 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
     provisioner.expect(&needs);
     for request in &needs.required {
         let bytes = match request.key().kind() {
-            FileKind::ClassicBibData => {
-                include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bib").to_vec()
-            }
-            FileKind::BibStyle => {
-                include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bst").to_vec()
-            }
+            FileKind::ClassicBibData => classic_bytes!("smoke", "smoke.bib").to_vec(),
+            FileKind::BibStyle => classic_bytes!("smoke", "smoke.bst").to_vec(),
             kind => panic!("unexpected resource kind: {kind:?}"),
         };
         provisioner
@@ -323,7 +334,7 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
             .find(|file| file.path().as_str() == "/job/smoke.bbl")
             .expect("BBL")
             .bytes(),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bbl"),
+        classic_bytes!("smoke", "smoke.bbl"),
     );
     assert_eq!(
         first
@@ -331,7 +342,7 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
             .find(|file| file.path().as_str() == "/job/smoke.blg")
             .expect("BLG")
             .bytes(),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.blg"),
+        classic_bytes!("smoke", "smoke.blg"),
     );
     let second = match session.process(&BibliographyJob::Classic(job), &provisioner.snapshot()) {
         BibliographyAttempt::Finished(result) => result,
@@ -347,10 +358,10 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
 fn classic_plain_executes_through_the_public_session() {
     execute_standard_style(
         "plain",
-        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.aux"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.bbl"),
+        classic_bytes!("plain", "plain.aux"),
+        classic_bytes!("plain", "references.bib"),
+        classic_bytes!("plain", "plain.bst"),
+        classic_bytes!("plain", "plain.bbl"),
         BibliographyHistory::Spotless,
     );
 }
@@ -359,10 +370,10 @@ fn classic_plain_executes_through_the_public_session() {
 fn classic_apalike_executes_through_the_public_session() {
     execute_standard_style(
         "apalike",
-        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/apalike.aux"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/apalike.bst"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/apalike.bbl"),
+        classic_bytes!("apalike", "apalike.aux"),
+        classic_bytes!("apalike", "references.bib"),
+        classic_bytes!("apalike", "apalike.bst"),
+        classic_bytes!("apalike", "apalike.bbl"),
         BibliographyHistory::Spotless,
     );
 }
@@ -371,10 +382,10 @@ fn classic_apalike_executes_through_the_public_session() {
 fn classic_tex_live_xampl_executes_through_the_public_session() {
     execute_standard_style(
         "exampl",
-        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/exampl.aux"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/xampl.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/apalike.bst"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/exampl.bbl"),
+        classic_bytes!("xampl", "exampl.aux"),
+        classic_bytes!("xampl", "xampl.bib"),
+        classic_bytes!("xampl", "apalike.bst"),
+        classic_bytes!("xampl", "exampl.bbl"),
         BibliographyHistory::Warning,
     );
 }
@@ -383,14 +394,12 @@ fn classic_tex_live_xampl_executes_through_the_public_session() {
 fn classic_real_world_elsarticle_book_has_exact_public_command_parity() {
     execute_real_world_command(
         "elsarticle-book",
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.aux"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg"),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal"
-        ),
+        classic_bytes!("elsarticle-book", "elsarticle-book.aux"),
+        classic_bytes!("elsarticle-book", "references.bib"),
+        classic_bytes!("elsarticle-book", "elsarticle-num.bst"),
+        classic_bytes!("elsarticle-book", "elsarticle-book.bbl"),
+        classic_bytes!("elsarticle-book", "elsarticle-book.blg"),
+        classic_bytes!("elsarticle-book", "elsarticle-book.terminal"),
     );
 }
 
@@ -398,20 +407,12 @@ fn classic_real_world_elsarticle_book_has_exact_public_command_parity() {
 fn classic_real_world_elsarticle_article_has_exact_public_command_parity() {
     execute_real_world_command(
         "elsarticle-article",
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.aux"
-        ),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-article/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal"
-        ),
+        classic_bytes!("elsarticle-article", "elsarticle-article.aux"),
+        classic_bytes!("elsarticle-article", "references.bib"),
+        classic_bytes!("elsarticle-article", "elsarticle-num.bst"),
+        classic_bytes!("elsarticle-article", "elsarticle-article.bbl"),
+        classic_bytes!("elsarticle-article", "elsarticle-article.blg"),
+        classic_bytes!("elsarticle-article", "elsarticle-article.terminal"),
     );
 }
 
@@ -419,20 +420,12 @@ fn classic_real_world_elsarticle_article_has_exact_public_command_parity() {
 fn classic_real_world_elsarticle_names_has_exact_public_command_parity() {
     execute_real_world_command(
         "elsarticle-names",
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.aux"
-        ),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-names/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.bbl"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.blg"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.terminal"
-        ),
+        classic_bytes!("elsarticle-names", "elsarticle-names.aux"),
+        classic_bytes!("elsarticle-names", "references.bib"),
+        classic_bytes!("elsarticle-names", "elsarticle-num.bst"),
+        classic_bytes!("elsarticle-names", "elsarticle-names.bbl"),
+        classic_bytes!("elsarticle-names", "elsarticle-names.blg"),
+        classic_bytes!("elsarticle-names", "elsarticle-names.terminal"),
     );
 }
 
@@ -440,20 +433,12 @@ fn classic_real_world_elsarticle_names_has_exact_public_command_parity() {
 fn classic_real_world_elsarticle_month_has_exact_public_command_parity() {
     execute_real_world_command(
         "elsarticle-month",
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.aux"
-        ),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-month/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.bbl"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.blg"
-        ),
-        include_bytes!(
-            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.terminal"
-        ),
+        classic_bytes!("elsarticle-month", "elsarticle-month.aux"),
+        classic_bytes!("elsarticle-month", "references.bib"),
+        classic_bytes!("elsarticle-month", "elsarticle-num.bst"),
+        classic_bytes!("elsarticle-month", "elsarticle-month.bbl"),
+        classic_bytes!("elsarticle-month", "elsarticle-month.blg"),
+        classic_bytes!("elsarticle-month", "elsarticle-month.terminal"),
     );
 }
 
@@ -461,12 +446,12 @@ fn classic_real_world_elsarticle_month_has_exact_public_command_parity() {
 fn classic_real_world_ieeetran_has_exact_public_command_parity() {
     execute_real_world_command(
         "ieeetran",
-        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.aux"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/references.bib"),
-        include_bytes!("../../../../tests/corpus/bibtex/styles/IEEEtran.bst"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.bbl"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.blg"),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.terminal"),
+        classic_bytes!("ieeetran", "ieeetran.aux"),
+        classic_bytes!("ieeetran", "references.bib"),
+        classic_bytes!("ieeetran", "IEEEtran.bst"),
+        classic_bytes!("ieeetran", "ieeetran.bbl"),
+        classic_bytes!("ieeetran", "ieeetran.blg"),
+        classic_bytes!("ieeetran", "ieeetran.terminal"),
     );
 }
 

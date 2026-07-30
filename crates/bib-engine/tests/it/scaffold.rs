@@ -190,13 +190,13 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
             &standard_styles[0],
             "plain",
             "TeX Live 2025 texmf-dist/bibtex/bst/base/plain.bst",
-            "styles/plain.bst",
+            "cases/plain/plain.bst",
         ),
         (
             &standard_styles[1],
             "apalike",
             "TeX Live 2025 texmf-dist/bibtex/bst/base/apalike.bst",
-            "styles/apalike.bst",
+            "cases/apalike/apalike.bst",
         ),
     ] {
         assert_eq!(style["name"], name);
@@ -466,7 +466,53 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
             );
         }
     }
-    assert_eq!(declared, imported_paths(&root.join("cases")));
+    assert_eq!(
+        declared.len(),
+        40,
+        "family inventory covers legacy payloads"
+    );
+    let case_names = [
+        "apalike",
+        "elsarticle-article",
+        "elsarticle-book",
+        "elsarticle-month",
+        "elsarticle-names",
+        "ieeetran",
+        "plain",
+        "smoke",
+        "xampl",
+    ];
+    let present = fs::read_dir(root.join("cases"))
+        .expect("classic case directory")
+        .map(|entry| {
+            entry
+                .expect("classic case entry")
+                .file_name()
+                .into_string()
+                .expect("UTF-8 case ID")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(present, case_names.into_iter().map(str::to_owned).collect());
+    for name in case_names {
+        let closed = test_support::git_fixture::ClosedCase::discover(format!(
+            "tests/corpus/bibtex/cases/{name}"
+        ))
+        .expect("closed classic case");
+        let metadata: Value =
+            serde_json::from_slice(&closed.read("case.json").expect("case metadata"))
+                .expect("valid case metadata");
+        assert_eq!(metadata["schema"], "classic-bibtex-closed-case-v1");
+        assert_eq!(metadata["case"], name);
+        for file in metadata["files"].as_array().expect("case files") {
+            assert_file_identity(
+                &closed
+                    .payload_path(file["path"].as_str().expect("payload path"))
+                    .expect("validated payload"),
+                file["bytes"].as_u64().expect("payload bytes"),
+                file["sha256"].as_str().expect("payload hash"),
+            );
+        }
+    }
 
     let inventory: Value = read_json(&root.join("inventory.json"));
     assert_eq!(inventory["schema"], 1);
@@ -658,8 +704,19 @@ fn read_json(path: &Path) -> Value {
 }
 
 fn assert_file_identity(path: &Path, expected_bytes: u64, expected_sha256: &str) {
-    let bytes =
-        fs::read(path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let relative = path
+        .strip_prefix(test_support::repository_root())
+        .expect("classic fixture is repository-relative");
+    let parent = relative.parent().expect("classic fixture has a case");
+    let name = relative
+        .file_name()
+        .and_then(|value| value.to_str())
+        .expect("classic fixture filename is UTF-8");
+    let closed = test_support::git_fixture::ClosedCase::discover(parent)
+        .unwrap_or_else(|error| panic!("invalid closed case {}: {error:#}", parent.display()));
+    let bytes = closed
+        .read(name)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error:#}", path.display()));
     assert_eq!(
         bytes.len() as u64,
         expected_bytes,

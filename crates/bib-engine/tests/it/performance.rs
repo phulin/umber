@@ -5,6 +5,13 @@ use bib_engine::{
     FileProvisioner, ResolvedFile, VfsLimits, VirtualPath,
 };
 
+fn plain_payload(name: &str) -> Vec<u8> {
+    test_support::git_fixture::ClosedCase::discover("tests/corpus/bibtex/cases/plain")
+        .expect("closed plain case")
+        .read(name)
+        .expect("plain payload")
+}
+
 #[test]
 #[ignore = "explicit classic BST performance tier"]
 // A performance budget is measured against the host clock by definition, so
@@ -19,7 +26,7 @@ fn classic_native_session_performance_budget() {
     provisioner
         .register_user(
             VirtualPath::user("plain.aux").expect("AUX path"),
-            include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.aux").to_vec(),
+            plain_payload("plain.aux"),
         )
         .expect("AUX");
     let job = ClassicBibJob::new(
@@ -36,13 +43,8 @@ fn classic_native_session_performance_budget() {
     provisioner.expect(&resources);
     for request in &resources.required {
         let bytes = match request.key().kind() {
-            FileKind::ClassicBibData => {
-                include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib")
-                    .to_vec()
-            }
-            FileKind::BibStyle => {
-                include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst").to_vec()
-            }
+            FileKind::ClassicBibData => plain_payload("references.bib"),
+            FileKind::BibStyle => plain_payload("plain.bst"),
             kind => panic!("unexpected classic resource kind: {kind:?}"),
         };
         provisioner

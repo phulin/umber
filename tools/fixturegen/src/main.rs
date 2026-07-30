@@ -70,6 +70,12 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("--cohort-transaction") => cohort_transaction::run_cli(args.collect()),
+        Some("--seal-classic-bibtex-case") => {
+            let root = args.next().context("missing classic case directory")?;
+            let case = args.next().context("missing classic case ID")?;
+            ensure_no_extra_args(args)?;
+            layout_migration::seal_classic_case(Path::new(&root), &case)
+        }
         Some("--case") => {
             let first = args.next().context("missing case after --case")?;
             let (area, case) = if let Some((area, case)) = first.split_once('/') {

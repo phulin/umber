@@ -18,6 +18,13 @@ REVERSE { emit }
 SORT
 "#;
 
+fn classic_payload(case: &str, name: &str) -> Vec<u8> {
+    test_support::git_fixture::ClosedCase::discover(format!("tests/corpus/bibtex/cases/{case}"))
+        .expect("closed classic BibTeX case")
+        .read(name)
+        .expect("closed classic BibTeX payload")
+}
+
 #[test]
 fn compiles_all_top_level_commands() {
     let result = compile(VALID, CompileLimits::default());
@@ -43,18 +50,18 @@ fn compiles_all_top_level_commands() {
 
 #[test]
 fn compiles_committed_smoke_style() {
-    let source = include_bytes!("../../../tests/corpus/bibtex/cases/smoke/smoke.bst");
-    let result = compile(source, CompileLimits::default());
+    let source = classic_payload("smoke", "smoke.bst");
+    let result = compile(&source, CompileLimits::default());
     assert!(result.is_success(), "{:?}", result.diagnostics());
 }
 
 #[test]
 fn compiles_imported_standard_styles() {
     for source in [
-        include_bytes!("../../../tests/corpus/bibtex/styles/plain.bst").as_slice(),
-        include_bytes!("../../../tests/corpus/bibtex/styles/apalike.bst").as_slice(),
+        classic_payload("plain", "plain.bst"),
+        classic_payload("apalike", "apalike.bst"),
     ] {
-        let result = compile(source, CompileLimits::default());
+        let result = compile(&source, CompileLimits::default());
         assert!(result.is_success(), "{:?}", result.diagnostics());
     }
 }
@@ -186,12 +193,12 @@ fn classic_compilation_and_cache_performance_budgets() {
     const CACHE_BYTES: usize = 512 * 1024;
 
     let sources = [
-        include_bytes!("../../../tests/corpus/bibtex/styles/plain.bst").as_slice(),
-        include_bytes!("../../../tests/corpus/bibtex/styles/apalike.bst").as_slice(),
+        classic_payload("plain", "plain.bst"),
+        classic_payload("apalike", "apalike.bst"),
     ];
     let cold_start = Instant::now();
     for _ in 0..COLD_COMPILES {
-        for source in sources {
+        for source in &sources {
             assert!(compile(source, CompileLimits::default()).is_success());
         }
     }
@@ -202,12 +209,12 @@ fn classic_compilation_and_cache_performance_budgets() {
     );
 
     let mut cache = CompilationCache::new(8, CACHE_BYTES);
-    for source in sources {
+    for source in &sources {
         assert!(cache.compile(source, CompileLimits::default()).is_success());
     }
     let cache_start = Instant::now();
     for _ in 0..CACHE_HITS {
-        for source in sources {
+        for source in &sources {
             assert!(
                 cache
                     .compile(source, CompileLimits::default())

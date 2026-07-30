@@ -1,0 +1,43 @@
+{
+  "case": "smoke",
+  "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+  "files": [
+    {
+      "bytes": 57,
+      "path": "smoke.aux",
+      "role": "input",
+      "sha256": "b4377927e18f9b3df69b07367f3f61d148f8cbf0fce5348dde8a25aa3cef0d65"
+    },
+    {
+      "bytes": 20,
+      "path": "smoke.bbl",
+      "role": "output",
+      "sha256": "754a6bf82c311ae019065ebc2bd06206a9f11976b9f78072f096c480dc9d20c0"
+    },
+    {
+      "bytes": 86,
+      "path": "smoke.bib",
+      "role": "input",
+      "sha256": "d86c76a15f4a5e2a74c626c9578b8bebe87eb03968fc95d80907c1e872089363"
+    },
+    {
+      "bytes": 946,
+      "path": "smoke.blg",
+      "role": "output",
+      "sha256": "e58185f6fba1ad83009197161f678767b06aa326525c3d41bc71962a0b0ee118"
+    },
+    {
+      "bytes": 230,
+      "path": "smoke.bst",
+      "role": "input",
+      "sha256": "db90996ffee267b2bbcb197c8db5c00d61a323321db1904dc8cb126e2eb1b763"
+    },
+    {
+      "bytes": 246,
+      "path": "smoke.terminal",
+      "role": "output",
+      "sha256": "49fc85a65c39304924bb5c27970c9e1fc5ae77553d24491d4d20902691e584e6"
+    }
+  ],
+  "schema": "classic-bibtex-closed-case-v1"
+}

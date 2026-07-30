@@ -45,11 +45,13 @@ const SELECTED_SHARED: &[SelectedSharedFile] = &[SelectedSharedFile {
 }];
 const SPEC: &[FamilySpec] = &[FamilySpec {
     area: "sample",
+    shared_area: "sample",
     case_discovery_suffix: ".src",
     case_files: FILES,
     case_owned_files: OWNED,
     shared_files: SHARED,
     selected_shared_files: SELECTED_SHARED,
+    close_existing_directories: false,
 }];
 
 fn fixture() -> tempfile::TempDir {
@@ -95,11 +97,13 @@ fn declarative_non_tex_nonconventional_names_apply_and_repeat() {
 fn declarative_family_area_may_be_a_normalized_nested_path() {
     const NESTED: &[FamilySpec] = &[FamilySpec {
         area: "group/sample",
+        shared_area: "group/sample",
         case_discovery_suffix: ".src",
         case_files: FILES,
         case_owned_files: &[],
         shared_files: &[],
         selected_shared_files: &[],
+        close_existing_directories: false,
     }];
     let temp = tempfile::tempdir().expect("temp");
     let area = temp.path().join("group/sample");
@@ -110,6 +114,56 @@ fn declarative_family_area_may_be_a_normalized_nested_path() {
     assert_eq!(
         std::fs::read(area.join("only/program.input")).expect("migrated source"),
         b"nested"
+    );
+}
+
+#[test]
+fn classic_regenerator_hands_one_complete_nine_case_cohort_to_fixturegen() {
+    let script = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/regen-fixtures.sh"),
+    )
+    .expect("script");
+    let body = script
+        .split_once("regen_bibtex_area() {")
+        .expect("classic function")
+        .1
+        .split_once("\n}\n")
+        .expect("classic function end")
+        .0;
+    assert_eq!(
+        body.matches("--cohort-transaction --apply").count(),
+        1,
+        "classic regeneration must make one authority-mutating handoff"
+    );
+    assert_eq!(
+        body.matches("--cohort-transaction --plan").count(),
+        1,
+        "the complete cohort must be validated before commit"
+    );
+    let cases = body
+        .split_once("local cases=(")
+        .expect("nine-case declaration")
+        .1
+        .split_once(')')
+        .expect("case declaration end")
+        .0
+        .split_whitespace()
+        .filter(|value| *value != "\\")
+        .collect::<Vec<_>>();
+    assert_eq!(cases.len(), 9);
+    let candidate = body.find("candidate_root=").expect("candidate staging");
+    let generation = body
+        .find("\"$executable\" smoke")
+        .expect("first reference generation");
+    let commit = body
+        .find("--cohort-transaction --apply")
+        .expect("cohort commit");
+    assert!(candidate < generation && generation < commit);
+    let before_commit = &body[..commit];
+    assert!(
+        !before_commit
+            .contains("mv \"$candidate_root\" \"${repo_root}/tests/corpus/bibtex/cases\""),
+        "generation failure must not mutate fixture authority"
     );
 }
 

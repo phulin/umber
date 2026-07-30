@@ -1,0 +1,31 @@
+{
+  "case": "xampl",
+  "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+  "files": [
+    {
+      "bytes": 24636,
+      "path": "apalike.bst",
+      "role": "input",
+      "sha256": "96b7f47340d473f21fe586dba22fa202da8bc655d803a5f34f244b4ec0f009de"
+    },
+    {
+      "bytes": 1904,
+      "path": "exampl.aux",
+      "role": "input",
+      "sha256": "4ebba6975890936e5d8aa3dda2a7183cb05c4d2d4fe674dbbb6761b4a6a3bb81"
+    },
+    {
+      "bytes": 8305,
+      "path": "exampl.bbl",
+      "role": "output",
+      "sha256": "3034164758da7ef484eaf53b5f972ddcd94cccc4f16fba0fad9fe121e4ba9d52"
+    },
+    {
+      "bytes": 9894,
+      "path": "xampl.bib",
+      "role": "input",
+      "sha256": "b4f16c2019b029b2f44452a62cbe7888ab8ae4679c4c446a5c233fa140950b7c"
+    }
+  ],
+  "schema": "classic-bibtex-closed-case-v1"
+}

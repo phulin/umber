@@ -350,10 +350,14 @@ exact expected terminal/error byte fixtures. These exercise the in-process
 command adapter and must not invoke the live reference implementation.
 
 `tests/corpus/bibtex` contains the classic BibTeX 0.99d Web2C compatibility
-inventory, source/configuration/executable manifest, and committed BBL, BLG,
-and terminal bytes. The compact smoke style executes all ten BST commands;
-the BLG enumerates all 37 built-ins. The `bib-engine` scaffold verifies every
-owner and byte identity hermetically. Regenerate only with
+inventory, source/configuration/executable manifest, and nine closed cases.
+Every case co-locates its AUX, BIB, BST, applicable BBL/BLG/terminal bytes,
+`case.json` provenance and identities, and `case.inventory`; shared styles are
+duplicated byte-identically and are never family-level payload authority.
+The root JSON files are implementation coverage and provenance inventories,
+not payload loaders. Consumers validate `ClosedCase` again on every access.
+The compact smoke style executes all ten BST commands; the BLG enumerates all
+37 built-ins. Regenerate only with
 `scripts/regen-fixtures.sh --area bibtex`, which builds and verifies the pinned
 merged `bibtex.web` plus `bibtex.ch` executable before running it in an empty
 environment.

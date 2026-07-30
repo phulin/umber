@@ -6,5 +6,8 @@ description = "Bounded classic BibTeX BST style compiler for Umber"
 
 [dependencies]
 
+[dev-dependencies]
+test-support = { path = "../test-support" }
+
 [lints]
 workspace = true

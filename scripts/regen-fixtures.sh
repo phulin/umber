@@ -57,9 +57,8 @@ Fixture areas:
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
 Reference tools:
-  fixturegen also exposes a noninteractive --cohort-transaction JSON
-  plan/apply interface for a future whole-cohort handoff. This script does not
-  invoke that helper yet.
+  fixturegen exposes a noninteractive --cohort-transaction JSON plan/apply
+  interface. Classic BibTeX regeneration uses it for one nine-case handoff.
 
   Text and DVI reference regeneration requires pdftex or tex on PATH, or
   UMBER_REF_TEX=/absolute/path/to/pdftex. Text/native regeneration builds and
@@ -316,7 +315,7 @@ regen_dvi_case() {
   [[ -f "$source" ]] || die "missing DVI source: tests/corpus/${area}/${case}.tex"
 
   build_refexec_once
-  tmp_root="$(mktemp -d)"
+  tmp_root="$(mktemp -d "${repo_root}/.classic-bibtex-candidates.XXXXXX")"
   case_dir="${tmp_root}/${area}-${case}"
   mkdir -p "$case_dir"
   dvi_extra_inputs=()
@@ -1097,7 +1096,8 @@ regen_bibtex_area() {
   local build_dir="${cache_root}/build"
   local archive="${cache_root}/texlive-20250308-source.tar.xz"
   local executable="${build_dir}/texk/web2c/bibtex"
-  local fixture_dir="${repo_root}/tests/corpus/bibtex/cases/smoke"
+  local fixture_dir
+  local candidate_root
   local tmp_root
   local case_dir
   local exit_status
@@ -1155,6 +1155,10 @@ regen_bibtex_area() {
       --reference "$executable" --texmfcnf "${source_dir}/texk/kpathsea"
 
   tmp_root="$(mktemp -d)"
+  candidate_root="${tmp_root}/candidate"
+  mkdir -p "$candidate_root"
+  cp -R "${repo_root}/tests/corpus/bibtex/cases/." "$candidate_root/"
+  fixture_dir="${candidate_root}/smoke"
   case_dir="${tmp_root}/smoke"
   mkdir -p "$case_dir"
   cp "${fixture_dir}/smoke.aux" "${fixture_dir}/smoke.bib" \
@@ -1181,9 +1185,9 @@ regen_bibtex_area() {
   for style in plain apalike; do
     case_dir="${tmp_root}/${style}"
     mkdir -p "$case_dir"
-    cp "${repo_root}/tests/corpus/bibtex/cases/${style}/${style}.aux" \
-      "${repo_root}/tests/corpus/bibtex/cases/${style}/references.bib" \
-      "${repo_root}/tests/corpus/bibtex/styles/${style}.bst" "$case_dir/"
+    cp "${candidate_root}/${style}/${style}.aux" \
+      "${candidate_root}/${style}/references.bib" \
+      "${candidate_root}/${style}/${style}.bst" "$case_dir/"
     (
       cd "$case_dir"
       env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -1192,11 +1196,11 @@ regen_bibtex_area() {
     )
     file="${style}.bbl"
     if ! cmp -s "${case_dir}/${file}" \
-      "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}"; then
+      "${candidate_root}/${style}/${file}"; then
       cp "${case_dir}/${file}" \
-        "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}.tmp"
-      mv "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}.tmp" \
-        "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}"
+        "${candidate_root}/${style}/${file}.tmp"
+      mv "${candidate_root}/${style}/${file}.tmp" \
+        "${candidate_root}/${style}/${file}"
       printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/%s/%s\n' \
         "$style" "$file" >&2
     fi
@@ -1205,7 +1209,7 @@ regen_bibtex_area() {
   mkdir -p "$case_dir"
   cp "${source_dir}/texk/web2c/tests/exampl.aux" "$case_dir/exampl.aux"
   cp "${source_dir}/texk/web2c/tests/xampl.bib" "$case_dir/xampl.bib"
-  cp "${repo_root}/tests/corpus/bibtex/styles/apalike.bst" "$case_dir/apalike.bst"
+  cp "${candidate_root}/xampl/apalike.bst" "$case_dir/apalike.bst"
   (
     cd "$case_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -1214,11 +1218,11 @@ regen_bibtex_area() {
   )
   for file in exampl.aux xampl.bib exampl.bbl; do
     if ! cmp -s "${case_dir}/${file}" \
-      "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}"; then
+      "${candidate_root}/xampl/${file}"; then
       cp "${case_dir}/${file}" \
-        "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}.tmp"
-      mv "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}.tmp" \
-        "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}"
+        "${candidate_root}/xampl/${file}.tmp"
+      mv "${candidate_root}/xampl/${file}.tmp" \
+        "${candidate_root}/xampl/${file}"
       printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/xampl/%s\n' \
         "$file" >&2
     fi
@@ -1230,9 +1234,9 @@ regen_bibtex_area() {
     if [[ "$case" == "ieeetran" ]]; then
       style=IEEEtran
     fi
-    cp "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.aux" \
-      "${repo_root}/tests/corpus/bibtex/cases/${case}/references.bib" \
-      "${repo_root}/tests/corpus/bibtex/styles/${style}.bst" "$case_dir/"
+    cp "${candidate_root}/${case}/${case}.aux" \
+      "${candidate_root}/${case}/references.bib" \
+      "${candidate_root}/${case}/${style}.bst" "$case_dir/"
     set +e
     (
       cd "$case_dir"
@@ -1248,16 +1252,41 @@ regen_bibtex_area() {
       file="${case}.${extension}"
       [[ -f "${case_dir}/${file}" ]] || die "classic BibTeX did not produce ${file}"
       if ! cmp -s "${case_dir}/${file}" \
-        "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}"; then
+        "${candidate_root}/${case}/${file}"; then
         cp "${case_dir}/${file}" \
-          "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}.tmp"
-        mv "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}.tmp" \
-          "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}"
+          "${candidate_root}/${case}/${file}.tmp"
+        mv "${candidate_root}/${case}/${file}.tmp" \
+          "${candidate_root}/${case}/${file}"
         printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/%s/%s\n' \
           "$case" "$file" >&2
       fi
     done
   done
+  local cohort_plan="${tmp_root}/cohort.json"
+  local staged_relative="${candidate_root#${repo_root}/}"
+  local cases=(apalike elsarticle-article elsarticle-book elsarticle-month \
+    elsarticle-names ieeetran plain smoke xampl)
+  for case in "${cases[@]}"; do
+    "$fixturegen_bin" --seal-classic-bibtex-case "${candidate_root}/${case}" "$case"
+  done
+  jq -n \
+    --arg repository "$repo_root" \
+    --arg staged "$staged_relative" \
+    --argjson cases "$(printf '%s\n' "${cases[@]}" | jq -R . | jq -s .)" \
+    '{
+      schema: "umber-fixture-cohort-plan-v1",
+      repository: $repository,
+      cases: ($cases | map({
+        staged: ($staged + "/" + .),
+        destination: ("tests/corpus/bibtex/cases/" + .),
+        authorities: [("tests/corpus/bibtex/cases/" + .)]
+      }))
+    }' > "$cohort_plan"
+  run_command 'Validating complete classic BibTeX candidate cohort' \
+    "$fixturegen_bin" --cohort-transaction --plan "$cohort_plan"
+  run_command 'Committing complete classic BibTeX candidate cohort' \
+    "$fixturegen_bin" --cohort-transaction --apply "$cohort_plan"
+  candidate_root="${repo_root}/tests/corpus/bibtex/cases"
   manifest_tmp="${tmp_root}/manifest.json"
   jq \
     --arg bbl_bytes "$(wc -c < "${fixture_dir}/smoke.bbl" | tr -d ' ')" \
@@ -1266,28 +1295,28 @@ regen_bibtex_area() {
     --arg blg_sha256 "$(sha256_file "${fixture_dir}/smoke.blg")" \
     --arg terminal_bytes "$(wc -c < "${fixture_dir}/smoke.terminal" | tr -d ' ')" \
     --arg terminal_sha256 "$(sha256_file "${fixture_dir}/smoke.terminal")" \
-    --arg plain_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/plain/plain.bbl" | tr -d ' ')" \
-    --arg plain_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/plain/plain.bbl")" \
-    --arg apalike_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl" | tr -d ' ')" \
-    --arg apalike_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl")" \
-    --arg xampl_aux_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.aux" | tr -d ' ')" \
-    --arg xampl_aux_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.aux")" \
-    --arg xampl_bib_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/xampl.bib" | tr -d ' ')" \
-    --arg xampl_bib_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/xampl.bib")" \
-    --arg xampl_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl" | tr -d ' ')" \
-    --arg xampl_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl")" \
-    --arg elsarticle_book_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl" | tr -d ' ')" \
-    --arg elsarticle_book_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl")" \
-    --arg elsarticle_book_blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg" | tr -d ' ')" \
-    --arg elsarticle_book_blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg")" \
-    --arg elsarticle_book_terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal" | tr -d ' ')" \
-    --arg elsarticle_book_terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal")" \
-    --arg elsarticle_article_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl" | tr -d ' ')" \
-    --arg elsarticle_article_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl")" \
-    --arg elsarticle_article_blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg" | tr -d ' ')" \
-    --arg elsarticle_article_blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg")" \
-    --arg elsarticle_article_terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal" | tr -d ' ')" \
-    --arg elsarticle_article_terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal")" \
+    --arg plain_bbl_bytes "$(wc -c < "${candidate_root}/plain/plain.bbl" | tr -d ' ')" \
+    --arg plain_bbl_sha256 "$(sha256_file "${candidate_root}/plain/plain.bbl")" \
+    --arg apalike_bbl_bytes "$(wc -c < "${candidate_root}/apalike/apalike.bbl" | tr -d ' ')" \
+    --arg apalike_bbl_sha256 "$(sha256_file "${candidate_root}/apalike/apalike.bbl")" \
+    --arg xampl_aux_bytes "$(wc -c < "${candidate_root}/xampl/exampl.aux" | tr -d ' ')" \
+    --arg xampl_aux_sha256 "$(sha256_file "${candidate_root}/xampl/exampl.aux")" \
+    --arg xampl_bib_bytes "$(wc -c < "${candidate_root}/xampl/xampl.bib" | tr -d ' ')" \
+    --arg xampl_bib_sha256 "$(sha256_file "${candidate_root}/xampl/xampl.bib")" \
+    --arg xampl_bbl_bytes "$(wc -c < "${candidate_root}/xampl/exampl.bbl" | tr -d ' ')" \
+    --arg xampl_bbl_sha256 "$(sha256_file "${candidate_root}/xampl/exampl.bbl")" \
+    --arg elsarticle_book_bbl_bytes "$(wc -c < "${candidate_root}/elsarticle-book/elsarticle-book.bbl" | tr -d ' ')" \
+    --arg elsarticle_book_bbl_sha256 "$(sha256_file "${candidate_root}/elsarticle-book/elsarticle-book.bbl")" \
+    --arg elsarticle_book_blg_bytes "$(wc -c < "${candidate_root}/elsarticle-book/elsarticle-book.blg" | tr -d ' ')" \
+    --arg elsarticle_book_blg_sha256 "$(sha256_file "${candidate_root}/elsarticle-book/elsarticle-book.blg")" \
+    --arg elsarticle_book_terminal_bytes "$(wc -c < "${candidate_root}/elsarticle-book/elsarticle-book.terminal" | tr -d ' ')" \
+    --arg elsarticle_book_terminal_sha256 "$(sha256_file "${candidate_root}/elsarticle-book/elsarticle-book.terminal")" \
+    --arg elsarticle_article_bbl_bytes "$(wc -c < "${candidate_root}/elsarticle-article/elsarticle-article.bbl" | tr -d ' ')" \
+    --arg elsarticle_article_bbl_sha256 "$(sha256_file "${candidate_root}/elsarticle-article/elsarticle-article.bbl")" \
+    --arg elsarticle_article_blg_bytes "$(wc -c < "${candidate_root}/elsarticle-article/elsarticle-article.blg" | tr -d ' ')" \
+    --arg elsarticle_article_blg_sha256 "$(sha256_file "${candidate_root}/elsarticle-article/elsarticle-article.blg")" \
+    --arg elsarticle_article_terminal_bytes "$(wc -c < "${candidate_root}/elsarticle-article/elsarticle-article.terminal" | tr -d ' ')" \
+    --arg elsarticle_article_terminal_sha256 "$(sha256_file "${candidate_root}/elsarticle-article/elsarticle-article.terminal")" \
     '(.cases[] | select(.name == "smoke") | .files[] | select(.role == "bbl-output")) |=
        (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
      (.cases[] | select(.name == "smoke") | .files[] | select(.role == "blg-output")) |=
@@ -1332,12 +1361,12 @@ regen_bibtex_area() {
   for case in elsarticle-names elsarticle-month ieeetran; do
     jq \
       --arg case "$case" \
-      --arg bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.bbl" | tr -d ' ')" \
-      --arg bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.bbl")" \
-      --arg blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.blg" | tr -d ' ')" \
-      --arg blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.blg")" \
-      --arg terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.terminal" | tr -d ' ')" \
-      --arg terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.terminal")" \
+      --arg bbl_bytes "$(wc -c < "${candidate_root}/${case}/${case}.bbl" | tr -d ' ')" \
+      --arg bbl_sha256 "$(sha256_file "${candidate_root}/${case}/${case}.bbl")" \
+      --arg blg_bytes "$(wc -c < "${candidate_root}/${case}/${case}.blg" | tr -d ' ')" \
+      --arg blg_sha256 "$(sha256_file "${candidate_root}/${case}/${case}.blg")" \
+      --arg terminal_bytes "$(wc -c < "${candidate_root}/${case}/${case}.terminal" | tr -d ' ')" \
+      --arg terminal_sha256 "$(sha256_file "${candidate_root}/${case}/${case}.terminal")" \
       '(.real_world_execution_cases[] | select(.name == $case) | .files[] |
          select(.role == "bbl-output")) |=
          (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |

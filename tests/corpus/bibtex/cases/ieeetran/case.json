@@ -1,0 +1,43 @@
+{
+  "case": "ieeetran",
+  "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+  "files": [
+    {
+      "bytes": 57748,
+      "path": "IEEEtran.bst",
+      "role": "input",
+      "sha256": "314f0ece704568faf827011bac498650691b2b5ee06320720830e782416d5a5f"
+    },
+    {
+      "bytes": 95,
+      "path": "ieeetran.aux",
+      "role": "input",
+      "sha256": "18e2b9da2d127b6a315f063332d9bf9969fdc2e3f3a8d363c58a7fde2854b9f3"
+    },
+    {
+      "bytes": 1407,
+      "path": "ieeetran.bbl",
+      "role": "output",
+      "sha256": "8ff101db66508918910e9c059239db203abd115e554566d5d0c6652484e702c3"
+    },
+    {
+      "bytes": 1449,
+      "path": "ieeetran.blg",
+      "role": "output",
+      "sha256": "f12bdcf776b84750373d6ec874b2a24645e3a0be3db8651f05a9d4567fb27f33"
+    },
+    {
+      "bytes": 401,
+      "path": "ieeetran.terminal",
+      "role": "output",
+      "sha256": "4add9113a2e8928ea6bed964d6b6a7e4fa88bced92e7b239a77080980b1006f3"
+    },
+    {
+      "bytes": 804,
+      "path": "references.bib",
+      "role": "input",
+      "sha256": "bb0a9f583197fd9c11b893e8aca84ee6be3739e712624e02ac3170e1f667b951"
+    }
+  ],
+  "schema": "classic-bibtex-closed-case-v1"
+}
