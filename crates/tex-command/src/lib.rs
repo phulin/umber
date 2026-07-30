@@ -80,8 +80,8 @@ pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,
     EffectRecord, GeometryRecord, InputReason, InputRecord, InputTransition, MacroRecord,
-    MutationRecord, ObservedToken, ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord,
-    ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
+    MutationRecord, ObservedToken, OpenedSourceSnapshot, ParameterClass, RecoveryKind,
+    RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
     parameter_mutation_key_for_dialect,
 };
 pub use processor::{

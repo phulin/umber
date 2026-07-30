@@ -678,6 +678,7 @@ fn engine_termination_observation() -> tex_command::CommandObservation {
     tex_command::CommandObservation::Effect(tex_command::EffectRecord {
         kind: "terminate",
         detail: "engine\0".into(),
+        source: None,
         tokens: None,
     })
 }

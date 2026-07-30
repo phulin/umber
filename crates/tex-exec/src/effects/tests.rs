@@ -132,11 +132,13 @@ fn deferred_stream_effect_cursor_preserves_exact_records_and_write_order() {
                 ObservedEffect {
                     kind: "write",
                     detail: "stream:1\0".into(),
+                    source: None,
                     tokens: Some(observed_text_tokens("one")),
                 },
                 ObservedEffect {
                     kind: "write",
                     detail: "stream:1\0".into(),
+                    source: None,
                     tokens: Some(observed_text_tokens("two")),
                 },
             ],
@@ -189,16 +191,19 @@ fn deferred_stream_effect_cursor_preserves_exact_records_and_write_order() {
                 ObservedEffect {
                     kind: "open",
                     detail: "stream:1\0trace.out".into(),
+                    source: None,
                     tokens: None,
                 },
                 ObservedEffect {
                     kind: "close",
                     detail: "stream:1\0".into(),
+                    source: None,
                     tokens: None,
                 },
                 ObservedEffect {
                     kind: "shipout",
                     detail: "dvi\0".to_owned() + "1",
+                    source: None,
                     tokens: None,
                 },
             ]
@@ -216,16 +221,19 @@ fn immediate_stream_effects_keep_exact_write_tokens_without_shipout_receipt() {
             ObservedEffect {
                 kind: "open",
                 detail: "stream:1\0trace.out".into(),
+                source: None,
                 tokens: None,
             },
             ObservedEffect {
                 kind: "write",
                 detail: "stream:1\0".into(),
+                source: None,
                 tokens: Some(observed_text_tokens("Ready!")),
             },
             ObservedEffect {
                 kind: "close",
                 detail: "stream:1\0".into(),
+                source: None,
                 tokens: None,
             },
         ]
@@ -247,11 +255,13 @@ fn deferred_stream_write_observation_has_the_full_expanded_payload_exactly_once(
             ObservedEffect {
                 kind: "open",
                 detail: "stream:1\0trace.out".into(),
+                source: None,
                 tokens: None,
             },
             ObservedEffect {
                 kind: "write",
                 detail: "stream:1\0".into(),
+                source: None,
                 tokens: Some(vec![
                     ObservedToken::ControlSequence("endgroup".into()),
                     ObservedToken::Character {
@@ -264,11 +274,13 @@ fn deferred_stream_write_observation_has_the_full_expanded_payload_exactly_once(
             ObservedEffect {
                 kind: "close",
                 detail: "stream:1\0".into(),
+                source: None,
                 tokens: None,
             },
             ObservedEffect {
                 kind: "shipout",
                 detail: "dvi\0".to_owned() + "1",
+                source: None,
                 tokens: None,
             },
         ]

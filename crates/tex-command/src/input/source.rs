@@ -110,6 +110,12 @@ impl SourceRegistration {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    /// Returns shared ownership of the exact immutable physical backing.
+    #[must_use]
+    pub fn shared_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
 }
 
 /// Allocates backing identity for a line acquired while tokenizing.

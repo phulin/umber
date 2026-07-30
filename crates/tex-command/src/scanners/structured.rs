@@ -4,6 +4,8 @@
 //! canonical filename termination only.  Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
+use std::sync::Arc;
+
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -924,6 +926,7 @@ impl WriteStreamSelector {
 pub struct RegisteredInput {
     pub file_name: ScannedFileName,
     pub source: SourceId,
+    pub bytes: Arc<[u8]>,
 }
 
 /// The typed result of TeX82's `init_col` entry lookahead.
@@ -3376,6 +3379,7 @@ impl CommandProcessor<'_> {
                 unresolved |= !self.host.input_is_unavailable(&attempted_name);
                 continue;
             };
+            let bytes = registration.shared_bytes();
             let source = self
                 .command
                 .register_source(registration)
@@ -3391,7 +3395,11 @@ impl CommandProcessor<'_> {
             if attempted_name != packed_name {
                 file_name.components.area = "TeXinputs:".to_owned();
             }
-            return Ok(RegisteredInput { file_name, source });
+            return Ok(RegisteredInput {
+                file_name,
+                source,
+                bytes,
+            });
         }
         if unresolved || self.state.interaction_permits_terminal_input() {
             Err(CommandError::MissingInput(packed_name))

@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tex_command::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, ObservedToken,
+    EffectRecord, ObservedToken, OpenedSourceSnapshot,
 };
 use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_oracle::{
@@ -29,7 +28,6 @@ fn translator() -> LiveSessionTranslator {
             source: SourceId::new(1),
             bytes: Arc::from(&b"X\n"[..]),
         },
-        BTreeMap::new(),
     )
 }
 
@@ -75,6 +73,7 @@ fn normal_stable_projection_is_byte_identical() {
         CommandObservation::Effect(EffectRecord {
             kind: "shipout",
             detail: "dvi\0".to_owned() + "1",
+            source: None,
             tokens: None,
         }),
         CommandObservation::Input(tex_command::InputRecord {
@@ -94,6 +93,7 @@ fn normal_stable_projection_is_byte_identical() {
         CommandObservation::Effect(EffectRecord {
             kind: "terminate",
             detail: "engine\0".into(),
+            source: None,
             tokens: None,
         }),
     ];
@@ -130,6 +130,7 @@ fn captured_observations_are_not_replayed_or_duplicated() {
     translator.translate_captured([CommandObservation::Effect(EffectRecord {
         kind: "message",
         detail: "once".into(),
+        source: None,
         tokens: None,
     })]);
     let streams = translator
@@ -198,6 +199,172 @@ fn command_source_location_and_provenance_are_retained() {
             line: 1,
             byte: 0,
         })
+    );
+}
+
+#[test]
+fn input_effect_source_identity_resolves_after_unobserved_source_allocations() {
+    // TeX82 §537's selected text-file source can follow arbitrary generated
+    // pseudo-files. The observer must carry its real identity instead of
+    // guessing that source identities are consecutive input opens.
+    let mut translator = LiveSessionTranslator::for_root(
+        SchemaVersion::V1,
+        "terminal",
+        LiveSource {
+            name: "etrip.tex".into(),
+            source: SourceId::new(1),
+            bytes: Arc::from(&b""[..]),
+        },
+    );
+    translator.translate_captured([
+        CommandObservation::Effect(EffectRecord {
+            kind: "input",
+            detail: "etrip.out".into(),
+            source: Some(OpenedSourceSnapshot {
+                id: SourceId::new(41),
+                bytes: Arc::from(&b"\\endgroup\n"[..]),
+            }),
+            tokens: None,
+        }),
+        CommandObservation::Command(CommandDeliveryRecord {
+            boundary: CommandDeliveryBoundary::Raw,
+            spelling: ObservedToken::ControlSequence("endgroup".into()),
+            command: "end_group".into(),
+            command_operand: Some(0),
+            provenance: CommandProvenance {
+                input_level: 9,
+                position: 0,
+                delivery_sequence: 7,
+                has_origin: true,
+                origin: OriginId::UNKNOWN,
+                source_range: None,
+                source_location: Some(tex_command::SourceLocation::new(SourceId::new(41), 8)),
+            },
+        }),
+    ]);
+
+    let streams = translator
+        .finish(
+            header(),
+            LiveSessionOutcome::Failed {
+                diagnostic: "bounded".into(),
+                detail: "after command".into(),
+            },
+        )
+        .expect("stream");
+    let stream = ObservationStream::from_canonical_json_lines(&streams.diagnostic).expect("valid");
+    let Event::Command(command) = &stream.events[1].semantic else {
+        panic!("source push is followed by the input command");
+    };
+    assert_eq!(
+        command.command.location,
+        Some(SourceLocation {
+            source: "etrip.out".into(),
+            line: 1,
+            byte: 8,
+        })
+    );
+}
+
+#[test]
+fn repeated_packed_name_uses_each_opened_source_snapshot_until_its_retirement() {
+    fn command(source: SourceId, byte: u64, character: char) -> CommandObservation {
+        CommandObservation::Command(CommandDeliveryRecord {
+            boundary: CommandDeliveryBoundary::Raw,
+            spelling: ObservedToken::Character {
+                character,
+                catcode: tex_state::token::Catcode::Letter,
+            },
+            command: "letter".into(),
+            command_operand: Some(i64::from(u32::from(character))),
+            provenance: CommandProvenance {
+                input_level: 1,
+                position: byte,
+                delivery_sequence: byte,
+                has_origin: true,
+                origin: OriginId::UNKNOWN,
+                source_range: None,
+                source_location: Some(tex_command::SourceLocation::new(source, byte)),
+            },
+        })
+    }
+
+    let opened = |id, bytes: &'static [u8]| {
+        CommandObservation::Effect(EffectRecord {
+            kind: "input",
+            detail: "same.tex".into(),
+            source: Some(OpenedSourceSnapshot {
+                id: SourceId::new(id),
+                bytes: Arc::from(bytes),
+            }),
+            tokens: None,
+        })
+    };
+    let retired = || {
+        CommandObservation::Input(tex_command::InputRecord {
+            transition: tex_command::InputTransition::Retire,
+            reason: tex_command::InputReason::Source,
+            source_name: Some(tex_command::SourceNameClass::File),
+            level: 1,
+            position: 0,
+        })
+    };
+
+    let mut translator = translator();
+    translator.translate_captured([
+        opened(17, b"A\n"),
+        command(SourceId::new(17), 0, 'A'),
+        opened(93, b"\nB\n"),
+        command(SourceId::new(93), 1, 'B'),
+        retired(),
+        command(SourceId::new(17), 0, 'A'),
+        retired(),
+        opened(211, b"xxC\n"),
+        command(SourceId::new(211), 2, 'C'),
+        retired(),
+    ]);
+    let streams = translator
+        .finish(
+            header(),
+            LiveSessionOutcome::Failed {
+                diagnostic: "bounded".into(),
+                detail: "after repeated opens".into(),
+            },
+        )
+        .expect("stream");
+    let stream = ObservationStream::from_canonical_json_lines(&streams.diagnostic).expect("valid");
+    let locations = stream
+        .events
+        .iter()
+        .filter_map(|observed| match &observed.semantic {
+            Event::Command(command) => command.command.location.clone(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        locations,
+        [
+            SourceLocation {
+                source: "same.tex".into(),
+                line: 1,
+                byte: 0,
+            },
+            SourceLocation {
+                source: "same.tex".into(),
+                line: 2,
+                byte: 0,
+            },
+            SourceLocation {
+                source: "same.tex".into(),
+                line: 1,
+                byte: 0,
+            },
+            SourceLocation {
+                source: "same.tex".into(),
+                line: 1,
+                byte: 2,
+            },
+        ]
     );
 }
 

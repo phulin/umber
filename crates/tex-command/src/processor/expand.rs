@@ -902,6 +902,10 @@ impl CommandProcessor<'_> {
             CommandObservation::Effect(EffectRecord {
                 kind: "input",
                 detail: _input.file_name.packed(),
+                source: Some(crate::observation::OpenedSourceSnapshot {
+                    id: _input.source,
+                    bytes: _input.bytes,
+                }),
                 tokens: None,
             }),
         );

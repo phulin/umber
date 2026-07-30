@@ -250,11 +250,13 @@ mod tests {
         observer.committed(CommandObservation::Effect(EffectRecord {
             kind: "message",
             detail: "not stable".into(),
+            source: None,
             tokens: None,
         }));
         observer.committed(CommandObservation::Effect(EffectRecord {
             kind: "shipout",
             detail: "dvi\0\u{31}".into(),
+            source: None,
             tokens: None,
         }));
         observer.committed(CommandObservation::Input(InputRecord {
@@ -267,6 +269,7 @@ mod tests {
         observer.committed(CommandObservation::Effect(EffectRecord {
             kind: "terminate",
             detail: "engine\0".into(),
+            source: None,
             tokens: None,
         }));
         let expected = oracle();

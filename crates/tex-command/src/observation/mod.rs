@@ -6,6 +6,8 @@
 //! In particular, an observer is non-fallible and never participates in
 //! command state, snapshots, delivery, expansion, or scanner control flow.
 
+use std::sync::Arc;
+
 use tex_state::meaning::Meaning;
 
 use crate::command::{CommandIdentity, CurrentCommand};
@@ -589,9 +591,23 @@ pub struct MutationRecord {
 pub struct EffectRecord {
     pub kind: &'static str,
     pub detail: String,
+    /// Exact source selected by TeX82 §537's successful `start_input`.
+    ///
+    /// Identity and immutable bytes are captured together at the successful
+    /// open boundary. Detached observers must not reacquire the backing later
+    /// from the packed name or mutable aggregate world state. Non-input
+    /// effects leave this absent.
+    pub source: Option<OpenedSourceSnapshot>,
     /// The frozen expanded token payload for token-oriented effects such as
     /// TeX82 `\\write`; textual effects leave this absent.
     pub tokens: Option<Vec<ObservedToken>>,
+}
+
+/// Immutable source identity and backing captured by a successful file open.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenedSourceSnapshot {
+    pub id: tex_state::SourceId,
+    pub bytes: Arc<[u8]>,
 }
 
 /// Finalized dimensions from one canonical packing or shipout commit.

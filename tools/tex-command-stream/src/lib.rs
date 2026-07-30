@@ -895,7 +895,7 @@ impl CanonicalStartup {
                 },
             );
         }
-        let mut recorder = Recorder::new("terminal", self.input_capabilities, self.schema);
+        let mut recorder = Recorder::new("terminal", self.schema);
         let scanned = control
             .scan_startup_file_name(&mut universe, &mut recorder)
             .map_err(|error| {
@@ -1005,8 +1005,6 @@ pub struct LiveSessionStreams {
 /// the engine has returned, including after an early failure.
 pub struct LiveSessionTranslator {
     sources: Vec<ActiveSource>,
-    registered_inputs: BTreeMap<String, Arc<[u8]>>,
-    next_registered_source: u32,
     alignment_nesting: AlignmentNesting,
     events: Vec<ObservedEvent>,
     geometry: bool,
@@ -1029,11 +1027,7 @@ struct ActiveSource {
 }
 
 impl LiveSessionTranslator {
-    fn new(
-        source: impl Into<String>,
-        registered_inputs: BTreeMap<String, Arc<[u8]>>,
-        schema: SchemaVersion,
-    ) -> Self {
+    fn new(source: impl Into<String>, schema: SchemaVersion) -> Self {
         Self {
             sources: vec![ActiveSource {
                 name: source.into(),
@@ -1041,8 +1035,6 @@ impl LiveSessionTranslator {
                 bytes: Arc::from(&b""[..]),
                 line_starts: Arc::from([0]),
             }],
-            registered_inputs,
-            next_registered_source: 2,
             alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
             geometry: schema == SchemaVersion::V2,
@@ -1056,12 +1048,9 @@ impl LiveSessionTranslator {
         schema: SchemaVersion,
         terminal_name: impl Into<String>,
         root: LiveSource,
-        registered_inputs: BTreeMap<String, Arc<[u8]>>,
     ) -> Self {
-        let next_registered_source = root.source.raw().saturating_add(1);
-        let mut translator = Self::new(terminal_name, registered_inputs, schema);
+        let mut translator = Self::new(terminal_name, schema);
         translator.preserve_macro_reference_operands = true;
-        translator.next_registered_source = next_registered_source;
         translator.activate_source(root.name, root.source, root.bytes);
         translator
     }
@@ -1184,12 +1173,7 @@ impl LiveSessionTranslator {
         });
     }
 
-    fn activate_registered_input(&mut self, name: &str) {
-        let Some(bytes) = self.registered_inputs.get(name).cloned() else {
-            return;
-        };
-        let source = SourceId::new(self.next_registered_source);
-        self.next_registered_source += 1;
+    fn activate_registered_input(&mut self, name: &str, source: SourceId, bytes: Arc<[u8]>) {
         self.record_source_open(CANONICAL_ROOT_PUSH_NAME, name, source);
         self.activate_source(name.to_owned(), source, bytes);
     }
@@ -1246,12 +1230,13 @@ impl CommandObserver for Recorder {
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
+            source: Some(source),
             ..
         }) = &observation
         {
             // The effect carries the command-core capability hand-off, while
             // the portable trace observes only the resulting source push.
-            self.activate_registered_input(detail);
+            self.activate_registered_input(detail, source.id, Arc::clone(&source.bytes));
             return;
         }
         let (source_name, source_id, source_bytes, source_line_starts) = {
@@ -2164,6 +2149,7 @@ mod tests {
             translate_effect(EffectRecord {
                 kind: "message",
                 detail: "READY".into(),
+                source: None,
                 tokens: None,
             }),
             Event::Effect(EffectEvent {
@@ -2180,22 +2166,24 @@ mod tests {
         // diagnostic ending. The canonical reference observer has no events
         // at those print-only seams, so the host translation must not invent
         // any that displace the following command transitions.
-        let mut translator =
-            LiveSessionTranslator::new("terminal", BTreeMap::new(), SchemaVersion::V1);
+        let mut translator = LiveSessionTranslator::new("terminal", SchemaVersion::V1);
         for record in [
             EffectRecord {
                 kind: "showgroups",
                 detail: "\n\n### bottom level".into(),
+                source: None,
                 tokens: None,
             },
             EffectRecord {
                 kind: "showifs",
                 detail: "\n### no active conditionals".into(),
+                source: None,
                 tokens: None,
             },
             EffectRecord {
                 kind: "showtokens",
                 detail: "A".into(),
+                source: None,
                 tokens: Some(vec![ObservedToken::Character {
                     character: 'A',
                     catcode: Catcode::Letter,
@@ -2210,16 +2198,19 @@ mod tests {
             EffectRecord {
                 kind: "message",
                 detail: "READY".into(),
+                source: None,
                 tokens: None,
             },
             EffectRecord {
                 kind: "open",
                 detail: "stream:1\0result.log".into(),
+                source: None,
                 tokens: None,
             },
             EffectRecord {
                 kind: "write",
                 detail: "stream:1\0".into(),
+                source: None,
                 tokens: Some(vec![ObservedToken::Character {
                     character: 'W',
                     catcode: Catcode::Letter,
@@ -2228,11 +2219,13 @@ mod tests {
             EffectRecord {
                 kind: "shipout",
                 detail: "dvi\0".to_owned() + "1",
+                source: None,
                 tokens: None,
             },
             EffectRecord {
                 kind: "terminate",
                 detail: "engine\0".into(),
+                source: None,
                 tokens: None,
             },
         ] {
@@ -2285,6 +2278,7 @@ mod tests {
             translate_effect(EffectRecord {
                 kind: "shipout",
                 detail: "dvi\x001".into(),
+                source: None,
                 tokens: None,
             }),
             Event::Effect(EffectEvent {

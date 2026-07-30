@@ -8809,6 +8809,7 @@ fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<Effec
         .map(|committed| EffectRecord {
             kind: "shipout",
             detail: format!("dvi\0{}", committed.saturating_add(1)),
+            source: None,
             tokens: None,
         })
         .collect()
@@ -8847,11 +8848,13 @@ fn stream_effect_observation(record: &tex_state::EffectRecord) -> Option<EffectR
         tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
             kind: "open",
             detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+            source: None,
             tokens: None,
         }),
         tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
             kind: "close",
             detail: format!("stream:{}\0", slot.raw()),
+            source: None,
             tokens: None,
         }),
         _ => None,
@@ -8880,11 +8883,13 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
             // expansion through `\noexpand` and must retain `print_cs`'s
             // spelling and separator.
             detail: message_text(stores, tokens.token_list()),
+            source: None,
             tokens: None,
         }),
         ScannedStep::ShowTokens { tokens } => Some(EffectRecord {
             kind: "showtokens",
             detail: message_text(stores, tokens.token_list()),
+            source: None,
             tokens: Some(
                 stores
                     .tokens(tokens.token_list())
@@ -8897,6 +8902,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::ShowIfs { conditions } => Some(EffectRecord {
             kind: "showifs",
             detail: render_showifs(conditions),
+            source: None,
             tokens: None,
         }),
         ScannedStep::ShowGroups {
@@ -8904,6 +8910,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         } => Some(EffectRecord {
             kind: "showgroups",
             detail: crate::diagnostics::render_showgroups(diagnostic),
+            source: None,
             tokens: None,
         }),
         ScannedStep::ShowGroups { diagnostic: None } => None,
@@ -8911,6 +8918,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
             Some(EffectRecord {
                 kind: "write",
                 detail: format!("stream:{}\0", stream.normalized_number()),
+                source: None,
                 tokens: Some(
                     stores
                         .tokens(tokens.token_list())
@@ -8928,6 +8936,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::End { .. } => Some(EffectRecord {
             kind: "terminate",
             detail: "engine\0".into(),
+            source: None,
             tokens: None,
         }),
         _ => None,
@@ -8980,6 +8989,7 @@ fn shipout_replay_box(
                     .push(CommandObservation::Effect(EffectRecord {
                         kind: "write",
                         detail: write_effect_detail(sink),
+                        source: None,
                         tokens: Some(
                             stores
                                 .tokens(expanded.tokens.token_list())

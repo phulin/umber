@@ -1,8 +1,8 @@
 use std::env;
 use std::fs;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::{collections::BTreeMap, mem};
 
 use parity_harness::run_named_fixture_document;
 use parity_harness::{
@@ -59,7 +59,6 @@ struct InProcessRun {
 
 struct LiveCapture {
     root: LiveSource,
-    registered_inputs: BTreeMap<String, Arc<[u8]>>,
     observations: Vec<tex_command::CommandObservation>,
     outcome: LiveSessionOutcome,
     terminal: Vec<u8>,
@@ -83,39 +82,9 @@ impl LiveCapture {
         let header = ObservationStream::from_canonical_json_lines(oracle)
             .expect("oracle stream validates")
             .header;
-        let mut translator = LiveSessionTranslator::for_root(
-            SchemaVersion::V1,
-            "terminal",
-            self.root.clone(),
-            self.registered_inputs.clone(),
-        );
-        let mut observations = Vec::with_capacity(self.observations.len());
-        for observation in self.observations.iter().cloned() {
-            // TeX82 §537 observes `begin_file_reading` before assigning the
-            // opened file's name. The production command boundary publishes
-            // the successful capability hand-off as an effect; reconstruct
-            // the reference observer's immediately preceding source push at
-            // this detached full-document trace boundary.
-            if matches!(
-                observation,
-                tex_command::CommandObservation::Effect(tex_command::EffectRecord {
-                    kind: "input",
-                    ..
-                })
-            ) {
-                observations.push(tex_command::CommandObservation::Input(
-                    tex_command::InputRecord {
-                        transition: tex_command::InputTransition::Push,
-                        reason: tex_command::InputReason::Source,
-                        source_name: Some(tex_command::SourceNameClass::Terminal),
-                        level: 0,
-                        position: 0,
-                    },
-                ));
-            }
-            observations.push(observation);
-        }
-        translator.translate_captured(observations);
+        let mut translator =
+            LiveSessionTranslator::for_root(SchemaVersion::V1, "terminal", self.root.clone());
+        translator.translate_captured(self.observations.clone());
         translator
             .finish(header, self.outcome.clone())
             .expect("live observations translate")
@@ -317,18 +286,6 @@ fn run_file_in_process_captured(
     let root_source = session
         .register_world_root(job_name, content)
         .map_err(|error| error.to_string())?;
-    let registered_inputs = fs::read_dir(&base_dir)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry.path() != path && entry.path().extension().is_some_and(|ext| ext == "tex")
-        })
-        .filter_map(|entry| {
-            let name = entry.path().file_stem()?.to_str()?.to_owned();
-            let bytes = fs::read(entry.path()).ok()?;
-            Some((name, Arc::from(bytes)))
-        })
-        .collect::<BTreeMap<_, _>>();
     let mut host = StagedDirResourceHost { base_dir };
     let mut observers = TripObservers::default();
     let run = match session.run_with_observer(&mut host, &mut NoCheckpoints, &mut observers) {
@@ -342,7 +299,6 @@ fn run_file_in_process_captured(
                     source: root_source,
                     bytes: root_bytes,
                 },
-                registered_inputs,
                 observations: mem::take(&mut observers).into_captured(),
                 outcome: LiveSessionOutcome::Failed {
                     diagnostic: "canonical_session_error".into(),
@@ -389,7 +345,6 @@ fn run_file_in_process_captured(
                 source: root_source,
                 bytes: root_bytes,
             },
-            registered_inputs,
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
             terminal: terminal.clone(),
