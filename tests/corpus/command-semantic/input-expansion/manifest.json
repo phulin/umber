@@ -11,14 +11,32 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [465]
+        "sections": [
+          465
+        ]
       },
       "projection": {
         "kind": "state",
-        "count_registers": [0, 1]
+        "count_registers": [
+          0,
+          1
+        ]
       },
-      "expected": ["count:0=1", "count:1=1"],
-      "expectation": { "kind": "pass" }
+      "expected": [
+        "count:0=1",
+        "count:1=1"
+      ],
+      "channels": {
+        "events": 135,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-noexpand-undefined",
@@ -589,8 +607,16 @@
       "channels": {
         "events": 13,
         "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.1 \\undefined", "actual": "<to be read again> " }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "l.1 \\undefined", "actual": "<to be read again> " }
+        },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
@@ -626,6 +652,30 @@
       "expected": [
         "diagnostic:error:missing_font_identifier:"
       ],
+      "channels": {
+        "events": 37,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./expansion-conversions.tex",
+            "actual": "(./expansion-conversions.tex)"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.13",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./expansion-conversions.tex",
+            "actual": "(./expansion-conversions.tex)"
+          }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -780,6 +830,30 @@
         "command:raw:char:letter:78:letter:78",
         "command:expanded:char:letter:78:letter:78"
       ],
+      "channels": {
+        "events": 33,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.18",
+          "mismatch": {
+            "line": 2,
+            "expected": "(./input-start-file.tex (./nested.tex))",
+            "actual": "(./input-start-file.tex (nested.tex))"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.18",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./input-start-file.tex (./nested.tex))",
+            "actual": "(./input-start-file.tex (nested.tex))"
+          }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },

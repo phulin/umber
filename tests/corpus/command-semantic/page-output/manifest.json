@@ -562,7 +562,7 @@
         "command:leader_ship:101",
         "command:leader_ship:102",
         "command:leader_ship:99",
-        "artifact:426052e4392e83a8a331039b7204dc76cab01ea62a6a6490c61a3d5dad979c77"
+        "artifact:9e17e6a4ef55f2be21803d0f31645165c42bc01eaa314ffd45a8b6dfeeb1592a"
       ],
       "channels": {
         "events": 1175,
@@ -575,7 +575,7 @@
           "mismatch": {
             "line": 1,
             "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\f\u0000\u0000�\u0000\f\u0000\u0000\u0000\u001e\u0000\u0000�\u0007�\u0005��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��\u0005\u0000\u0000��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\f\u0000\u0000�\u0000\f\u0000\u0000\u0000\u001e\u0000\u0000�\u0005�\u0005��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��\u0005\u0000\u0000��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��\b���\u0000\u0006\u0000\u0000\u0000\u0005\u0000\u0000��\u0006\u0000\u0002��\u0000\u0006\u0000\u0000\u0000\u0005\u0000\u0000����\u0000\u0006\u0000\u0000\u0000\u0005\u0000\u0000���\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u00000\u0000\u0000\u0000\u001e\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000�\u0002����"
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�����\f\u0000\u0000�\u0000\f\u0000\u0000\u0000\u001e\u0000\u0000�\u0007�\u0005��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��\u0005\u0000\u0000��\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000����\u0001\u0000\u0000�\u0000\u0005\u0000\u0000\u0000\u0003\u0000\u0000��"
           }
         },
         "effects": { "kind": "empty" }
@@ -1514,7 +1514,7 @@
       "expected": [
         "terminal-check:MEANING=[undefined]=true",
         "terminal-check:! Undefined control sequence.=true",
-        "terminal-check:BEFORE AFTER=false",
+        "terminal-check:BEFORE AFTER=true",
         "terminal-check:REPLAYED=true"
       ],
       "channels": {
@@ -1524,18 +1524,18 @@
           "kind": "xfail",
           "bug": "umber2-alfh.13",
           "mismatch": {
-            "line": 2,
-            "expected": "(./endwrite-stopper-sentinel.tex MEANING=[undefined]",
-            "actual": "(./endwrite-stopper-sentinel.tex MEANING=[undefined]BEFORE \\endwrite AFTER"
+            "line": 4,
+            "expected": "<write> BEFORE \\endwrite ",
+            "actual": "l.3 \\immediate\\write16{BEFORE \\endwrite AFTER}"
           }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
           "mismatch": {
-            "line": 3,
-            "expected": "(./endwrite-stopper-sentinel.tex MEANING=[undefined]",
-            "actual": "(./endwrite-stopper-sentinel.tex MEANING=[undefined]BEFORE \\endwrite AFTER"
+            "line": 5,
+            "expected": "<write> BEFORE \\endwrite ",
+            "actual": "l.3 \\immediate\\write16{BEFORE \\endwrite AFTER}"
           }
         },
         "dvi": { "kind": "empty" },

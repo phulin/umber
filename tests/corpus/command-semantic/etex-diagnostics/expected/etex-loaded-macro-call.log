@@ -1,0 +1,15 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>
+entering extended mode
+**etex-loaded-macro-call.tex
+(./etex-loaded-macro-call.tex
+! Undefined control sequence.
+l.1 \formatmacro
+                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+ )
+No pages of output.

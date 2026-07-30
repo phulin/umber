@@ -59,20 +59,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 29,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 29, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -250,12 +242,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 6, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
+          "mismatch": { "line": 4, "expected": "l.5 \\count2", "actual": "l.5 \\count2=" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 13, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
+          "mismatch": { "line": 5, "expected": "l.5 \\count2", "actual": "l.5 \\count2=" }
         },
         "dvi": {
           "kind": "xfail",

@@ -96,6 +96,14 @@
       "expected": [
         "count:0=1"
       ],
+      "channels": {
+        "events": 221,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       }
@@ -388,7 +396,7 @@
         "count:0=0"
       ],
       "channels": {
-        "events": 7163,
+        "events": 6908,
         "status": "fatal:confusion(256 spans)",
         "terminal": {
           "kind": "xfail",

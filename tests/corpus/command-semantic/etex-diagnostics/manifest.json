@@ -11,18 +11,52 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [341, 1221, 1309]
+        "sections": [
+          341,
+          1221,
+          1309
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["call"],
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "call"
+        ],
         "count_registers": []
       },
       "expected": [
         "command:raw:cs:formatmacro:call:249985"
       ],
-      "expectation": { "kind": "pass" }
+      "channels": {
+        "events": 11,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": "<end of channel>"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.15",
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": "<end of channel>"
+          }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-penalty-array-assignments",
@@ -32,13 +66,26 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [1248, 6336, 6361]
+        "sections": [
+          1248,
+          6336,
+          6361
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["set_shape"],
-        "count_registers": [0, 1, 2, 3]
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "set_shape"
+        ],
+        "count_registers": [
+          0,
+          1,
+          2,
+          3
+        ]
       },
       "expected": [
         "command:raw:cs:interlinepenalties:set_shape:25324",
@@ -62,7 +109,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-loaded-code-reassignment",
@@ -72,12 +121,20 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [277, 278, 1337]
+        "sections": [
+          277,
+          278,
+          1337
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["mutation"],
-        "count_registers": [0]
+        "kinds": [
+          "mutation"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "count:0=0"
@@ -106,7 +163,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-loaded-meaning-reassignment",
@@ -116,12 +175,19 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [277, 1221]
+        "sections": [
+          277,
+          1221
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["mutation"],
-        "count_registers": [0]
+        "kinds": [
+          "mutation"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "mutation:catcode:-:123=1:local",
@@ -152,7 +218,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-loaded-state-reset",
@@ -162,12 +230,18 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [1307]
+        "sections": [
+          1307
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["scanner"],
-        "count_registers": [0]
+        "kinds": [
+          "scanner"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "scanner:integer:0:-",
@@ -199,7 +273,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-interaction-mode-read",
@@ -209,12 +285,20 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [417, 419, 3736]
+        "sections": [
+          417,
+          419,
+          3736
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["scanner"],
-        "count_registers": [20]
+        "kinds": [
+          "scanner"
+        ],
+        "count_registers": [
+          20
+        ]
       },
       "expected": [
         "scanner:integer:20:-",
@@ -231,7 +315,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-macro-call",
@@ -241,12 +327,18 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [382]
+        "sections": [
+          382
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["call"],
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "call"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -260,7 +352,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-def-code-profile",
@@ -270,12 +364,19 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [230]
+        "sections": [
+          230
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["def_code", "def_family"],
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "def_code",
+          "def_family"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -302,7 +403,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-code-reassignment",
@@ -312,11 +415,15 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [275]
+        "sections": [
+          275
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["mutation"],
+        "kinds": [
+          "mutation"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -338,7 +445,9 @@
         },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-zero-glue-reassignment",
@@ -348,11 +457,16 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [277, 278]
+        "sections": [
+          277,
+          278
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["mutation"],
+        "kinds": [
+          "mutation"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -367,7 +481,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-register-selector-profile",
@@ -377,12 +493,21 @@
       "provenance": {
         "authority": "etex.ch + synctex-e-mem.ch1",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [230, 236, 1224]
+        "sections": [
+          230,
+          236,
+          1224
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["assign_dimen", "assign_int"],
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "assign_dimen",
+          "assign_int"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -399,7 +524,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-int-parameter-profile",
@@ -409,12 +536,18 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [236]
+        "sections": [
+          236
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["command"],
-        "commands": ["assign_int"],
+        "kinds": [
+          "command"
+        ],
+        "commands": [
+          "assign_int"
+        ],
         "count_registers": []
       },
       "expected": [
@@ -447,7 +580,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-showtokens",
@@ -457,12 +592,25 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [3623, 3630, 3635, 3662, 3664, 3667, 3671]
+        "sections": [
+          3623,
+          3630,
+          3635,
+          3662,
+          3664,
+          3667,
+          3671
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0, 7]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0,
+          7
+        ]
       },
       "expected": [
         "effect:showtokens:A {B} \\boom #### x",
@@ -478,7 +626,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-showifs",
@@ -488,12 +638,21 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [3703, 3715, 3720, 3732]
+        "sections": [
+          3703,
+          3715,
+          3720,
+          3732
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "effect:showifs:\n\n### level 2: \\iffalse\\else entered on line 3\n### level 1: \\iftrue entered on line 2",
@@ -508,7 +667,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-showgroups",
@@ -518,12 +679,19 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [1292, 1293]
+        "sections": [
+          1292,
+          1293
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "effect:showgroups:\n\n### bottom level",
@@ -548,7 +716,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-font-character-dimensions",
@@ -558,12 +728,23 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [3413, 3417, 3423, 3439, 3442, 3453]
+        "sections": [
+          3413,
+          3417,
+          3423,
+          3439,
+          3442,
+          3453
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "effect:terminate:engine\u0000",
@@ -577,7 +758,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-glue-component-enquiries",
@@ -587,17 +770,46 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [5363, 5367, 5373, 5389, 5397, 5404]
+        "sections": [
+          5363,
+          5367,
+          5373,
+          5389,
+          5397,
+          5404
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "count:0=8191"
       ],
-      "expectation": { "kind": "pass" }
+      "channels": {
+        "events": 1161,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": { "line": 9, "expected": "", "actual": "! Missing { inserted." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.26",
+          "mismatch": { "line": 89, "expected": "<*> etex-glue-component-enquiries.tex", "actual": "<*> " }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-loaded-glue-component-enquiries",
@@ -607,33 +819,54 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [5363, 5367, 5373, 5389, 5397, 5404]
+        "sections": [
+          5363,
+          5367,
+          5373,
+          5389,
+          5397,
+          5404
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0
+        ]
       },
       "expected": [
         "count:0=8191"
       ],
       "channels": {
-        "events": 983,
+        "events": 1161,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 9, "expected": "", "actual": "! Missing { inserted." }
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded)",
+            "actual": ""
+          }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.14",
-          "mismatch": { "line": 37, "expected": "<*> etex-glue-component-enquiries.tex", "actual": "<*> " }
+          "mismatch": {
+            "line": 1,
+            "expected": "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=etex-loaded 2026.7.9) <HOST-CLOCK>",
+            "actual": ""
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-expressions",
@@ -643,12 +876,33 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [4945, 5002, 5065, 5138, 5173, 5185, 5194, 5212, 5227, 5242, 5250, 5404]
+        "sections": [
+          4945,
+          5002,
+          5065,
+          5138,
+          5173,
+          5185,
+          5194,
+          5212,
+          5227,
+          5242,
+          5250,
+          5404
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["effect"],
-        "count_registers": [0, 1, 2, 3, 4]
+        "kinds": [
+          "effect"
+        ],
+        "count_registers": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
       },
       "expected": [
         "count:0=14",
@@ -673,7 +927,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "etex-text-directions",
@@ -683,11 +939,18 @@
       "provenance": {
         "authority": "etex.ch",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [3822, 3847, 3856, 3873]
+        "sections": [
+          3822,
+          3847,
+          3856,
+          3873
+        ]
       },
       "projection": {
         "kind": "execution-boundaries",
-        "box_registers": [0],
+        "box_registers": [
+          0
+        ],
         "node_depth": 1
       },
       "expected": [
@@ -698,7 +961,17 @@
         "box:0/0/3:direction",
         "box:0/0/4:glue"
       ],
-      "expectation": { "kind": "pass" }
+      "channels": {
+        "events": 72,
+        "status": "clean",
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

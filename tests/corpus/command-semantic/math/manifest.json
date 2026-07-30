@@ -36,7 +36,7 @@
         "count:2=1"
       ],
       "channels": {
-        "events": 500,
+        "events": 522,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -152,20 +152,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -173,7 +165,7 @@
           "mismatch": {
             "line": 1,
             "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
           }
         },
         "effects": { "kind": "empty" }
@@ -226,20 +218,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -380,20 +364,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -458,20 +434,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 15,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 15, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 22,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 22, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -546,11 +514,7 @@
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -622,7 +586,7 @@
           "mismatch": {
             "line": 1,
             "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
           }
         },
         "effects": { "kind": "empty" }
@@ -666,12 +630,20 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.25",
-          "mismatch": { "line": 2, "expected": "(./choice-groups.tex", "actual": "(./choice-groups.tex )" }
+          "mismatch": {
+            "line": 4,
+            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
+            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
+          }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.25",
-          "mismatch": { "line": 3, "expected": "(./choice-groups.tex", "actual": "(./choice-groups.tex )" }
+          "mismatch": {
+            "line": 5,
+            "expected": "l.2 \\setbox0=\\hbox{$\\mathchoice{}{}{}{}$",
+            "actual": "Sorry, but I can't typeset math unless \\textfont 2"
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
@@ -714,20 +686,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -794,20 +758,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 20,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 20, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 32,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "! Missing } inserted."
-          }
+          "mismatch": { "line": 32, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -815,7 +771,7 @@
           "mismatch": {
             "line": 1,
             "expected": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b TeX output 2026.07.09:1336�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����",
-            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0004\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
+            "actual": "�\u0002\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u001b  Umber DVI 1970.01.01:0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000������\u0000\u0000\u0000*\u0001���\u001c;\u0000\u0000\u0000\u0000\u0003�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001�\u0000\u0000\u0000X\u0002�����"
           }
         },
         "effects": { "kind": "empty" }
@@ -871,20 +827,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 15,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 15, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 22,
-            "expected": "! Math formula deleted: Insufficient symbol fonts.",
-            "actual": "[0] )"
-          }
+          "mismatch": { "line": 22, "expected": "! Math formula deleted: Insufficient symbol fonts.", "actual": "" }
         },
         "dvi": {
           "kind": "xfail",
@@ -1898,7 +1846,7 @@
         "box:35/0/3:discretionary"
       ],
       "channels": {
-        "events": 545,
+        "events": 533,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

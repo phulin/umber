@@ -1,0 +1,14 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./read-to-definition.tex
+! Undefined control sequence.
+l.1 \read-1 \line
+                 
+! Missing `to' inserted.
+<to be read again> 
+                   \count 
+l.2 \count
+          0=1\end
+[0] )
+(see the transcript file for additional information)
+Output written on read-to-definition.dvi (1 page, 128 bytes).
+Transcript written on read-to-definition.log.

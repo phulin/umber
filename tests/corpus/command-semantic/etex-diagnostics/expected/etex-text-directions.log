@@ -1,0 +1,28 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+entering extended mode
+**etex-text-directions.tex
+(./etex-text-directions.tex
+! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \setbox0=\hbox{
+                   \TeXXeTstate=1\beginL\endL\beginR\endR}
+A left brace was mandatory here, so I've put one in.
+You might want to delete and/or insert some corrections
+so that I will find a matching right brace soon.
+(If you're confused by all this, try typing `I}' now.)
+
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.2 \end
+        
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+ )
+No pages of output.

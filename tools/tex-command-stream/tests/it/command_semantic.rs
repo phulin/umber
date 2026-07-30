@@ -98,16 +98,14 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
         exempt.push(format!("{}/{}", declared.domain, declared.case.id));
     }
     exempt.sort();
-    assert_eq!(
-        exempt,
-        [
-            "input-expansion/expansion-conversions",
-            "input-expansion/input-start-file",
-            "main-control/read-to-definition",
-        ],
-        "the exempt set moved"
-    );
-    assert_eq!(cases.len(), 185, "the corpus changed size");
+    // Empty, and that is the point of the ledger: the three cases that used to
+    // sit here -- `input-expansion/expansion-conversions`,
+    // `input-expansion/input-start-file`, and `main-control/read-to-definition`
+    // -- all reach the end of their run now, so every case in the corpus
+    // declares a channel contract. Growing this list again is a regression to
+    // argue for, not a convenience.
+    assert_eq!(exempt, [] as [String; 0], "the exempt set moved");
+    assert_eq!(cases.len(), 194, "the corpus changed size");
 }
 
 #[test]

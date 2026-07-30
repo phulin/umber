@@ -1,0 +1,18 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+entering extended mode
+(./etex-text-directions.tex
+! Missing { inserted.
+<to be read again> 
+                   {
+l.1 \setbox0=\hbox{
+                   \TeXXeTstate=1\beginL\endL\beginR\endR}
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.2 \end
+        
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on etex-text-directions.log.
