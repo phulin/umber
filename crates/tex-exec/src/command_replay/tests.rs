@@ -901,7 +901,7 @@ fn canonical_character_run_under_nullfont_never_reaches_the_lookahead() {
 
 /// TeX82 §581 wraps `char_warning` in §245's shared diagnostic scope, so
 /// `\tracingonline<=0` sends the warning only to the transcript. Positive
-/// `\tracingonline` restores terminal visibility, while non-positive
+/// `\tracingonline` restores terminal visibility, while exactly zero
 /// `\tracinglostchars` suppresses the warning entirely.
 #[test]
 fn canonical_missing_character_uses_the_shared_diagnostic_channel() {
@@ -920,23 +920,26 @@ fn canonical_missing_character_uses_the_shared_diagnostic_channel() {
     };
 
     let warning = "Missing character: There is no Z in font nullfont!\n";
-    for tracing_online in [0, -1] {
-        let (terminal, transcript) = run(tracing_online, 1);
-        assert!(
-            !terminal.contains(warning),
-            "\\tracingonline={tracing_online}"
-        );
-        assert!(
-            transcript.contains(warning),
-            "\\tracingonline={tracing_online}"
-        );
+    for tracing_lost_chars in [-1, 0, 1] {
+        for tracing_online in [-1, 0, 1] {
+            let (terminal, transcript) = run(tracing_online, tracing_lost_chars);
+            let warns = tracing_lost_chars != 0;
+            assert_eq!(
+                terminal.matches(warning).count(),
+                usize::from(warns && tracing_online > 0),
+                "\\tracinglostchars={tracing_lost_chars}, \\tracingonline={tracing_online}"
+            );
+            assert_eq!(
+                transcript.matches(warning).count(),
+                usize::from(warns),
+                "\\tracinglostchars={tracing_lost_chars}, \\tracingonline={tracing_online}"
+            );
+            assert!(
+                !terminal.contains("nullfont!\n\n") && !transcript.contains("nullfont!\n\n"),
+                "§581 ends the warning with exactly one newline"
+            );
+        }
     }
-    let (terminal, transcript) = run(1, 1);
-    assert!(terminal.contains(warning));
-    assert!(transcript.contains(warning));
-    let (terminal, transcript) = run(1, 0);
-    assert!(!terminal.contains(warning));
-    assert!(!transcript.contains(warning));
 }
 
 /// TeX82 §1210 lists `set_page_dimen` and `set_page_int` among

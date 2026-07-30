@@ -6,6 +6,64 @@ use tex_state::hyphenation::ExceptionSpec;
 use tex_state::node::Node;
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::TracedTokenWord;
+use tex_state::{EffectRecord, PrintSink};
+
+#[test]
+fn legacy_missing_character_uses_the_shared_diagnostic_channel() {
+    let warning = "Missing character: There is no Z in font nullfont!\n";
+    for tracing_lost_chars in [-1, 0, 1] {
+        for tracing_online in [-1, 0, 1] {
+            let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+            stores.set_int_param(IntParam::TRACING_LOST_CHARS, tracing_lost_chars);
+            stores.set_int_param(IntParam::TRACING_ONLINE, tracing_online);
+
+            let nullfont = stores.current_font();
+            report_missing_character(&mut stores, nullfont, 'Z');
+
+            let terminal: String = stores
+                .world()
+                .effect_records()
+                .iter()
+                .filter_map(|effect| match effect {
+                    EffectRecord::StreamWrite {
+                        sink: PrintSink::Terminal | PrintSink::TerminalAndLog,
+                        text,
+                    } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let transcript: String = stores
+                .world()
+                .effect_records()
+                .iter()
+                .filter_map(|effect| match effect {
+                    EffectRecord::StreamWrite {
+                        sink: PrintSink::Log | PrintSink::TerminalAndLog,
+                        text,
+                    } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let warns = tracing_lost_chars != 0;
+            assert_eq!(
+                terminal.matches(warning).count(),
+                usize::from(warns && tracing_online > 0),
+                "\\tracinglostchars={tracing_lost_chars}, \\tracingonline={tracing_online}"
+            );
+            assert_eq!(
+                transcript.matches(warning).count(),
+                usize::from(warns),
+                "\\tracinglostchars={tracing_lost_chars}, \\tracingonline={tracing_online}"
+            );
+            assert_eq!(
+                terminal.matches("nullfont!\n\n").count()
+                    + transcript.matches("nullfont!\n\n").count(),
+                0,
+                "§581 ends the warning with exactly one newline"
+            );
+        }
+    }
+}
 
 #[test]
 fn non_character_accent_lookahead_replays_the_original_traced_token() {
