@@ -84,8 +84,7 @@ fn declarative_non_tex_nonconventional_names_apply_and_repeat() {
         b"meta"
     );
     assert_eq!(
-        std::fs::read(temp.path().join("sample/first/inputs/first-only"))
-            .expect("selected shared"),
+        std::fs::read(temp.path().join("sample/first/inputs/first-only")).expect("selected shared"),
         b"first only"
     );
     assert!(!temp.path().join("sample/second/inputs/first-only").exists());

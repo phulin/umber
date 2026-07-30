@@ -389,8 +389,7 @@ impl MigrationPlan {
                     if let Some(owner) =
                         authority_owner.insert(authority.clone(), format!("{}/{case}", spec.area))
                     {
-                        if !is_shared_authority(spec, &area, authority)
-                        {
+                        if !is_shared_authority(spec, &area, authority) {
                             bail!(
                                 "authority {} is owned by both {owner} and {}/{case}",
                                 authority.display(),
