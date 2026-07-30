@@ -726,9 +726,9 @@ impl ShipoutTransaction<'_> {
             self.page.set_integer(PageInteger::DeadCycles, 0);
             self.pdf
                 .commit_page(hash, output_parameters, page_parameters, pk_mode);
-            let (bytes, render_provenance) = artifact.into_parts();
+            let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
             self.world
-                .record_artifact_commit(hash, bytes, render_provenance);
+                .record_artifact_commit(hash, bytes, render_provenance, open_out_occurrences);
             self.rollback = None;
             self.finished = true;
             return Ok(hash);
@@ -747,9 +747,9 @@ impl ShipoutTransaction<'_> {
         self.page.set_integer(PageInteger::DeadCycles, 0);
         self.pdf
             .commit_page(hash, output_parameters, page_parameters, pk_mode);
-        let (bytes, render_provenance) = artifact.into_parts();
+        let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
         self.world
-            .record_artifact_commit(hash, bytes, render_provenance);
+            .record_artifact_commit(hash, bytes, render_provenance, open_out_occurrences);
         self.rollback = None;
         self.finished = true;
         Ok(hash)

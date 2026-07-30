@@ -288,7 +288,8 @@ pub(super) fn stage_shipout(
         .expect("page shipout must record render provenance");
     Ok(StagedShipout {
         artifact: VerifiedArtifact::new(artifact_bytes)
-            .with_built_render_origins(render_origin_ends, emission.render_origins),
+            .with_built_render_origins(render_origin_ends, emission.render_origins)
+            .with_open_out_occurrences(overlay.open_out_occurrences),
         dvi_plan,
         effect_pos,
         retained_diagnostics,

@@ -75,6 +75,7 @@ pub struct CommittedArtifact {
     hash: ContentHash,
     bytes: Arc<[u8]>,
     render_provenance: ArtifactRenderProvenance,
+    open_out_occurrences: Arc<[(usize, EffectPos)]>,
 }
 
 const LIVE_RENDER_REF: u64 = 1 << 63;
@@ -344,6 +345,7 @@ pub struct VerifiedArtifact {
     hash: ContentHash,
     bytes: Vec<u8>,
     render_provenance: ArtifactRenderProvenance,
+    open_out_occurrences: Vec<(usize, EffectPos)>,
 }
 
 impl VerifiedArtifact {
@@ -354,7 +356,16 @@ impl VerifiedArtifact {
             hash,
             bytes,
             render_provenance: ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
+            open_out_occurrences: Vec::new(),
         }
+    }
+
+    /// Attaches exact ordered World occurrences to OpenOut effects.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_open_out_occurrences(mut self, occurrences: Vec<(usize, EffectPos)>) -> Self {
+        self.open_out_occurrences = occurrences;
+        self
     }
 
     /// Attaches diagnostic-only origins in artifact-node preorder.
@@ -451,8 +462,12 @@ impl VerifiedArtifact {
         self.render_provenance.live_origins()
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, ArtifactRenderProvenance) {
-        (self.bytes, self.render_provenance)
+    pub(crate) fn into_parts(self) -> (Vec<u8>, ArtifactRenderProvenance, Vec<(usize, EffectPos)>) {
+        (
+            self.bytes,
+            self.render_provenance,
+            self.open_out_occurrences,
+        )
     }
 }
 
@@ -473,6 +488,11 @@ impl CommittedArtifact {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    #[must_use]
+    pub fn open_out_occurrences(&self) -> &[(usize, EffectPos)] {
+        &self.open_out_occurrences
     }
 
     /// Replaces prepared bytes while retaining the diagnostic provenance sidecar.
@@ -610,11 +630,17 @@ impl CommittedArtifact {
             })
     }
 
-    fn new(hash: ContentHash, bytes: Vec<u8>, render_provenance: ArtifactRenderProvenance) -> Self {
+    fn new(
+        hash: ContentHash,
+        bytes: Vec<u8>,
+        render_provenance: ArtifactRenderProvenance,
+        open_out_occurrences: Vec<(usize, EffectPos)>,
+    ) -> Self {
         Self {
             hash,
             bytes: bytes.into(),
             render_provenance,
+            open_out_occurrences: open_out_occurrences.into(),
         }
     }
 }
@@ -2600,12 +2626,14 @@ impl World {
         hash: ContentHash,
         bytes: Vec<u8>,
         render_provenance: ArtifactRenderProvenance,
+        open_out_occurrences: Vec<(usize, EffectPos)>,
     ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
             render_provenance,
+            open_out_occurrences,
         ));
     }
 
@@ -2623,6 +2651,7 @@ impl World {
             hash: artifact.hash,
             bytes: artifact.bytes.as_ref().to_vec(),
             render_provenance: artifact.render_provenance.clone(),
+            open_out_occurrences: artifact.open_out_occurrences.to_vec(),
         };
         self.store_verified_artifact(&verified)
     }
@@ -2975,6 +3004,14 @@ impl World {
     #[must_use]
     pub fn effect_records(&self) -> &[EffectRecord] {
         self.effects.as_slice()
+    }
+
+    /// Absolute append-only identity of one currently retained effect.
+    #[must_use]
+    pub fn effect_position(&self, index: usize) -> Option<EffectPos> {
+        (index < self.effects.len()).then(|| {
+            EffectPos(self.effect_base.raw() + u64::try_from(index).unwrap_or(u64::MAX) + 1)
+        })
     }
 
     /// Retargets the first pending stream-open after an authoritative,

@@ -45,11 +45,13 @@ fn artifact_identity_excludes_render_provenance() {
         hash,
         bytes.clone(),
         ArtifactRenderProvenance::live(vec![1], vec![OriginId::from_raw(1)]),
+        Vec::new(),
     );
     let second = CommittedArtifact::new(
         hash,
         bytes,
         ArtifactRenderProvenance::live(vec![2], vec![OriginId::from_raw(2), OriginId::from_raw(3)]),
+        Vec::new(),
     );
 
     assert_eq!(first, second);
@@ -71,6 +73,7 @@ fn flat_artifact_render_provenance_preserves_empty_and_nonempty_spans() {
                 OriginId::from_raw(3),
             ],
         ),
+        Vec::new(),
     );
 
     let origins = artifact.render_origins().expect("eager provenance");
@@ -116,11 +119,12 @@ fn mixed_artifact_provenance_decodes_only_the_requested_source() {
     provenance.push_live(last);
     let verified = VerifiedArtifact::new(b"page artifact".to_vec())
         .with_built_render_origins(vec![1, 2, 3], provenance);
-    let (bytes, render_provenance) = verified.into_parts();
+    let (bytes, render_provenance, open_out_occurrences) = verified.into_parts();
     let artifact = CommittedArtifact::new(
         ContentHash::for_domain(ContentDomain::Artifact, &bytes),
         bytes,
         render_provenance,
+        open_out_occurrences,
     );
 
     assert_eq!(artifact.render_origin(0, 0), ArtifactOrigin::Live(first));

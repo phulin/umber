@@ -306,8 +306,9 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
         .join("replacement.out");
     let source = format!(
-        "\\shipout\\hbox{{A\\openout2={0} }}\
-         \\shipout\\hbox{{B\\openout1={0} \\openout1={0} \\write1{{second}}}}\\end",
+        "\\shipout\\hbox{{A\\openout1={0} }}\
+         \\shipout\\hbox{{B\\openout1={0} \\openout1={0}\
+         \\write16{{same}}\\write1{{same}}\\write1{{second}}}}\\end",
         target.display()
     );
     let mut session = session(&source);
@@ -357,13 +358,13 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
             effect_base.advanced_by(u64::try_from(index + 1).expect("effect index fits"))
         })
         .collect::<Vec<_>>();
-    let [_, second_open, third_open, ..] = open_positions.as_slice() else {
+    let [first_open, second_open, _third_open, ..] = open_positions.as_slice() else {
         panic!("cross-page test needs at least three opens");
     };
     finalization
         .stores
-        .export_retained_effects_through(*second_open)
-        .expect("two same-path occurrences commit");
+        .export_retained_effects_through(*first_open)
+        .expect("first same-path occurrence commits");
     std::fs::remove_file(&first_target).expect("replace first output with unavailable directory");
     std::fs::create_dir(&first_target).expect("second occurrence becomes unavailable");
 
@@ -385,7 +386,34 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
         .expect("exact failed occurrence")
         .clone();
     assert_eq!(failed.slot(), tex_state::StreamSlot::new(1));
-    assert_eq!(failed.position(), *third_open);
+    assert_eq!(failed.position(), *second_open);
+    let effects_before_missing = finalization.stores.world().effect_records().to_vec();
+    let artifacts_before_missing = finalization.stores.world().committed_artifacts().len();
+    let pdf_pages_before_missing = finalization.stores.pdf_pages().len();
+    let mut missing_plan =
+        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
+            .expect("empty missing-artifact plan");
+    assert!(
+        missing_plan
+            .retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+            .is_err(),
+        "missing prepared occurrence must fail"
+    );
+    assert_eq!(
+        finalization.stores.world().effect_records(),
+        effects_before_missing,
+        "missing occurrence cannot partially mutate World"
+    );
+    assert_eq!(
+        finalization.stores.world().committed_artifacts().len(),
+        artifacts_before_missing,
+        "missing occurrence cannot publish an artifact"
+    );
+    assert_eq!(
+        finalization.stores.pdf_pages().len(),
+        pdf_pages_before_missing,
+        "missing occurrence cannot publish PDF history"
+    );
     plan = retained;
     plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
         .expect("exact occurrence retargets");
@@ -413,19 +441,40 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     assert_eq!(
         opens,
         [
-            vec![(2, target.to_string_lossy().into_owned())],
+            vec![(1, target.to_string_lossy().into_owned())],
             vec![
-                (2, target.to_string_lossy().into_owned()),
                 (1, target.to_string_lossy().into_owned()),
                 (1, replacement.to_string_lossy().into_owned()),
+                (1, target.to_string_lossy().into_owned()),
             ],
         ]
+    );
+    let second_page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[1].bytes())
+        .expect("second prepared page parses");
+    let same_writes = second_page
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_out::PageEffect::Write { sink, text } if text == "same\n" => Some(*sink),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        same_writes,
+        [
+            tex_out::EffectSink::TerminalAndLog,
+            tex_out::EffectSink::Stream(1),
+        ],
+        "equal write text with different sinks cannot influence OpenOut identity"
     );
     let retargeted_hashes = prepared
         .artifacts()
         .iter()
         .map(tex_state::CommittedArtifact::hash)
         .collect::<Vec<_>>();
+    let effects_before_stale = finalization.stores.world().effect_records().to_vec();
+    let artifacts_before_stale = finalization.stores.world().committed_artifacts().len();
+    let pdf_pages_before_stale = finalization.stores.pdf_pages().len();
 
     assert!(
         plan.retarget_stream_open(&mut finalization.stores, &failed, Path::new("stale.out"))
@@ -442,6 +491,21 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
             .collect::<Vec<_>>(),
         retargeted_hashes,
         "stale failure is atomic for prepared history"
+    );
+    assert_eq!(
+        finalization.stores.world().effect_records(),
+        effects_before_stale,
+        "stale occurrence cannot partially mutate World"
+    );
+    assert_eq!(
+        finalization.stores.world().committed_artifacts().len(),
+        artifacts_before_stale,
+        "stale occurrence cannot publish an artifact"
+    );
+    assert_eq!(
+        finalization.stores.pdf_pages().len(),
+        pdf_pages_before_stale,
+        "stale occurrence cannot publish PDF history"
     );
     assert!(matches!(
         finalization.stores.world().effect_records().first(),

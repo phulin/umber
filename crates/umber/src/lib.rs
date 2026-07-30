@@ -895,33 +895,6 @@ pub enum FinalizationCommit {
     },
 }
 
-fn page_effect_matches_world(page: &tex_out::PageEffect, world: &tex_state::EffectRecord) -> bool {
-    match (page, world) {
-        (
-            tex_out::PageEffect::OpenOut { stream, path },
-            tex_state::EffectRecord::StreamOpen { slot, target },
-        ) => *stream == slot.raw() && Path::new(path) == target.path(),
-        (
-            tex_out::PageEffect::CloseOut { stream },
-            tex_state::EffectRecord::StreamClose { slot },
-        ) => *stream == slot.raw(),
-        (
-            tex_out::PageEffect::Write { text, .. },
-            tex_state::EffectRecord::StreamWrite {
-                text: world_text, ..
-            },
-        ) => text == world_text,
-        (
-            tex_out::PageEffect::Special { class, payload },
-            tex_state::EffectRecord::Special {
-                class: world_class,
-                payload: world_payload,
-            },
-        ) => class == world_class && payload == world_payload,
-        _ => false,
-    }
-}
-
 impl PlannedFinalization {
     pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
         let mut paths = BTreeSet::new();
@@ -956,7 +929,7 @@ impl PlannedFinalization {
         };
         let failed_path = failed.path().to_string_lossy();
         let replacement_text = replacement.to_string_lossy();
-        let effect_index = pages
+        pages
             .effects()
             .iter()
             .position(|(position, effect)| {
@@ -972,33 +945,20 @@ impl PlannedFinalization {
                     "the failed stream-open identity is absent or stale".to_owned(),
                 )
             })?;
-        let effects = pages.effects().to_vec();
         let mut retargeted = 0usize;
-        // `effect_index` is absolute within the complete prepared suffix.
-        // Keep the projection cursor across artifact boundaries: resetting it
-        // for each page makes an equal effect on a later page alias the first
-        // page's occurrence.
-        let mut world_index = 0usize;
         for artifact in pages.artifacts_mut() {
-            let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
-                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-            let mut target_page_index = None;
-            for (page_index, page_effect) in page.effects.iter().enumerate() {
-                let Some(relative) = effects[world_index..]
+            let target_page_index =
+                artifact
+                    .open_out_occurrences()
                     .iter()
-                    .position(|(_, world)| page_effect_matches_world(page_effect, world))
-                else {
-                    continue;
-                };
-                world_index += relative;
-                if world_index == effect_index {
-                    target_page_index = Some(page_index);
-                }
-                world_index += 1;
-            }
+                    .find_map(|(page_index, position)| {
+                        (*position == failed.position()).then_some(*page_index)
+                    });
             let Some(page_index) = target_page_index else {
                 continue;
             };
+            let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
+                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
             if !page.retarget_open_out_at(
                 page_index,
                 failed.slot().raw(),

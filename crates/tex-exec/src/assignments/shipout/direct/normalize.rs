@@ -5,6 +5,7 @@ use tex_lex::MemoryInput;
 pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,
     pub(super) effects: Vec<PageEffect>,
+    pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
@@ -69,9 +70,26 @@ pub(super) fn normalize_page(
         }
     }
     let pending_effect_count = effects.len();
+    let open_out_occurrences = stores
+        .world()
+        .effect_records()
+        .iter()
+        .enumerate()
+        .filter(|(_, effect)| matches!(effect, EffectRecord::StreamOpen { .. }))
+        .map(|(index, _)| {
+            (
+                index,
+                stores
+                    .world()
+                    .effect_position(index)
+                    .expect("enumerated retained effect has a position"),
+            )
+        })
+        .collect();
     let mut overlay = PageOverlay {
         pending_effect_count,
         effects,
+        open_out_occurrences,
         math: Vec::new(),
         directions: Vec::new(),
         diagnostics: Vec::new(),
@@ -288,6 +306,7 @@ fn append_whatsit_effect(
     let color_target = overlay.color_target;
     let output_open_context = overlay.output_open_context.clone();
     let effects = &mut overlay.effects;
+    let open_out_occurrences = &mut overlay.open_out_occurrences;
     let diagnostics = &mut overlay.diagnostics;
     let running_thread_depth = &mut overlay.running_thread_depth;
     match whatsit {
@@ -300,6 +319,7 @@ fn append_whatsit_effect(
             stores
                 .world_mut()
                 .set_last_stream_open_context(output_open_context);
+            open_out_occurrences.push((effects.len(), stores.world().effect_pos()));
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),
                 path,
