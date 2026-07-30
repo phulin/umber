@@ -2455,7 +2455,13 @@ impl CommandProcessor<'_> {
     /// The compulsory braces are removed and the balanced interior is
     /// retained verbatim; expansion is never entered.
     pub fn scan_showtokens(&mut self) -> Result<ScannedBalancedText, CommandError> {
-        self.scan_balanced_text(false)
+        let scanned = self.scan_toks(ScanToksMode::GeneralText {
+            purpose: "detokenize",
+        })?;
+        Ok(ScannedBalancedText {
+            tokens: scanned.replacement_text,
+            provenance: provenance(&scanned),
+        })
     }
 
     /// e-TeX 2.6 `etex.ch` [49.1296]'s extended box-register scan for

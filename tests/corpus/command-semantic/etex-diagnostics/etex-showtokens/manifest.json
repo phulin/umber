@@ -38,7 +38,7 @@
         "count:7=0"
       ],
       "channels": {
-        "events": 130,
+        "events": 128,
         "status": "clean",
         "terminal": {
           "kind": "xfail",

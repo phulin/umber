@@ -459,6 +459,72 @@ fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
 }
 
 #[test]
+fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
+    // e-TeX 2.6 etex.ch [17.3623--3671] routes \showtokens through
+    // scan_general_text: its expanded opening-brace search is observable, but
+    // the recursive absorbing scope is not a TeX82 scan_toks episode. The
+    // following \message is the negative control that still publishes the
+    // ordinary §473 absorbing transition.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let fresh_control = canonical_etex_initex(&mut initialized);
+    let format = initialized
+        .dump_format()
+        .expect("dump extended e-TeX format");
+    let loaded = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+
+    for (mut stores, mut control) in [
+        (initialized, fresh_control),
+        (
+            loaded,
+            CanonicalMainControl::with_profile(CommandProfile::ETEX26),
+        ),
+    ] {
+        control
+            .set_fuel_limit(10_000)
+            .expect("bounded canonical fuel");
+        register_source(&mut control, br"\showtokens\expandafter{X}\message{Y}\end");
+        let mut observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+        let expandafter = observations
+            .0
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Command(command)
+                        if command.boundary == tex_command::CommandDeliveryBoundary::Raw
+                            && command.command == "expand_after"
+                )
+            })
+            .expect("showtokens opener expands through expandafter");
+        let absorbing: Vec<_> = observations
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                matches!(
+                    event,
+                    CommandObservation::ScannerStatus(status)
+                        if status.from == "normal" && status.to == "absorbing"
+                )
+                .then_some(index)
+            })
+            .collect();
+        assert_eq!(
+            absorbing.len(),
+            1,
+            "only the ordinary message scan publishes absorbing status"
+        );
+        assert!(
+            expandafter < absorbing[0],
+            "showtokens must expose its opener before the negative control"
+        );
+    }
+}
+
+#[test]
 fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mode() {
     // e-TeX 2.6 etex.ch [3413--3453] registers these four read-only
     // dimensions as `last_item`. TeX82 §1048's `any_mode(last_item)` sends a
