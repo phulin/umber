@@ -307,6 +307,7 @@ fn fin_row(
         children,
         super::packaging::row_unset_kind(kind),
         1,
+        super::packaging::UnsetPackContext::Row,
     )?;
     if kind == AlignmentKind::HAlign {
         append_node_to_vertical_list(nest, stores, row)?;
@@ -555,6 +556,7 @@ fn package_cell(
         children,
         super::packaging::cell_unset_kind(kind),
         span_count,
+        super::packaging::UnsetPackContext::Cell,
     )?;
     nest.current_list_mutation().push(cell);
     let tabskip = align_state(nest, align_level)?.tabskip_for_boundary(next_boundary);

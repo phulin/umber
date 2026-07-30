@@ -4,14 +4,22 @@ mod tests;
 
 use tex_command::FatalError;
 use tex_state::node::{Node, UnsetKind, UnsetNode, UnsetNodeFields};
+use tex_typeset::PackSpec;
 use tex_typeset::measure_unset;
 
 use crate::ExecError;
 use crate::mode::AlignmentKind;
+use crate::packing_params::{hpack, hpack_params, vpack, vpack_params};
 
 /// TeX82 §110's `max_quarterword`, the largest value §797's quarterword
 /// `span_count` field can hold.
 const MAX_QUARTERWORD: u16 = 255;
+
+#[derive(Clone, Copy)]
+pub(crate) enum UnsetPackContext {
+    Cell,
+    Row,
+}
 
 /// TeX82 §796's `type(u):=unset_node; span_count(u):=n`.
 ///
@@ -26,20 +34,41 @@ const MAX_QUARTERWORD: u16 = 255;
 /// field, so the guard belongs here rather than at each individual caller --
 /// every present and future §796 packaging site inherits it.
 pub(crate) fn make_unset_node(
-    stores: &Universe,
+    stores: &mut Universe,
     children: tex_state::ids::NodeListId,
     kind: UnsetKind,
     span_count: u16,
+    context: UnsetPackContext,
 ) -> Result<Node, ExecError> {
     if span_count.saturating_sub(1) > MAX_QUARTERWORD {
         return Err(ExecError::Fatal(FatalError::confusion("256 spans")));
     }
+    // TeX82 §796 calls hpack/vpackage before changing the resulting box's
+    // type to unset_node, and §799 likewise packs the completed row before
+    // making it unset. Besides determining the retained dimensions, those
+    // calls set \badness and are canonical packing transitions in their own
+    // right; measuring the children directly silently skipped both effects.
+    let packed = match kind {
+        UnsetKind::HBox => hpack(stores, children, PackSpec::Natural, hpack_params(stores)),
+        UnsetKind::VBox => {
+            let mut params = vpack_params(stores);
+            // TeX82 §796 uses `vpackage(link(head),natural,0)` for a valign
+            // entry, whereas §799's completed valign row uses the `vpack`
+            // macro and therefore `max_dimen`. The distinction is observable
+            // whenever the entry has nonzero depth.
+            params.box_max_depth = match context {
+                UnsetPackContext::Cell => tex_state::scaled::Scaled::from_raw(0),
+                UnsetPackContext::Row => tex_state::scaled::Scaled::MAX_DIMEN,
+            };
+            vpack(stores, children, PackSpec::Natural, params)
+        }
+    };
     let metrics = measure_unset(stores, children, kind);
     Ok(Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind,
-        width: metrics.width,
-        height: metrics.height,
-        depth: metrics.depth,
+        width: packed.node.width,
+        height: packed.node.height,
+        depth: packed.node.depth,
         span_count,
         stretch: metrics.stretch,
         stretch_order: metrics.stretch_order,

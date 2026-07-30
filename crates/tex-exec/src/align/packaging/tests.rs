@@ -47,8 +47,9 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
         (AlignmentKind::VAlign, UnsetKind::VBox),
     ] {
         let expected = tex_typeset::measure_unset(&stores, children, kind);
-        let Node::Unset(cell) = make_unset_node(&stores, children, kind, 3)
-            .expect("a three-column span is far inside TeX82 \u{a7}110's max_quarterword")
+        let Node::Unset(cell) =
+            make_unset_node(&mut stores, children, kind, 3, UnsetPackContext::Row)
+                .expect("a three-column span is far inside TeX82 \u{a7}110's max_quarterword")
         else {
             panic!("alignment cell must remain unset until fin_align");
         };

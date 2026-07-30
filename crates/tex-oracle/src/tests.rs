@@ -342,7 +342,7 @@ fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
         validate_tex82_geometry_trace_fixture(repository).expect("committed geometry fixture");
     assert_eq!(fixture.selector, "tex82/geometry-v2");
     assert_eq!(fixture.stream.header.schema, SchemaVersion::V2.number());
-    assert_eq!(fixture.stream.events.len(), 7);
+    assert_eq!(fixture.stream.events.len(), 12);
     assert!(
         fixture
             .stream
