@@ -25,7 +25,7 @@ use crate::diagnostics;
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
 pub(super) type WriteExpander<'a> =
-    dyn FnMut(&mut Universe, TokenListId) -> Result<Option<String>, ExecError> + 'a;
+    dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<Option<String>, ExecError> + 'a;
 
 pub(super) struct StagedShipout {
     pub(super) artifact: VerifiedArtifact,
@@ -52,7 +52,7 @@ fn stage_form_inner(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let mut legacy_write_expander = |_: &mut Universe, _: TokenListId| Ok(None);
+    let mut legacy_write_expander = |_: &mut Universe, _: PrintSink, _: TokenListId| Ok(None);
     let root_node = stores
         .nodes(form.box_list())
         .first()

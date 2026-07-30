@@ -8858,6 +8858,18 @@ fn stream_effect_observation(record: &tex_state::EffectRecord) -> Option<EffectR
     }
 }
 
+fn write_effect_detail(sink: PrintSink) -> String {
+    let stream = match sink {
+        PrintSink::Stream(slot) => i32::from(slot.raw()),
+        // TeX82 §§1342/1370 reserve selector 16 for writes above the stream
+        // range and 17 for negative writes. `replay_write_sink` lowers those
+        // selectors to their terminal/log routing before shipout.
+        PrintSink::Terminal | PrintSink::TerminalAndLog => 16,
+        PrintSink::Log => 17,
+    };
+    format!("stream:{stream}\0")
+}
+
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
         ScannedStep::Message { tokens, .. } => Some(EffectRecord {
@@ -8936,44 +8948,61 @@ fn shipout_replay_box(
     let output_open_context = command.state.output_open_context(&stores.command_context());
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
-    let mut expand_write = |stores: &mut Universe, tokens: tex_state::ids::TokenListId| {
-        // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
-        // before moving to the next whatsit. A following write expands only
-        // after those effects have happened, so publish the committed prefix
-        // before its nested command episode contributes observations.
-        if let Some(observations) = command.observations.as_mut() {
-            observations.0.extend(
-                stores.world().effect_records()[effect_cursor..]
-                    .iter()
-                    .filter_map(stream_effect_observation)
-                    .map(CommandObservation::Effect),
-            );
-        }
-        effect_cursor = stores.world().effect_records().len();
-        let traced = stores
-            .tokens(tokens)
-            .iter()
-            .copied()
-            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-            .collect::<Vec<_>>();
-        let traced = stores.finish_traced_token_list(&traced);
-        let expanded = command
-            .processor(stores)
-            .expand_write_text(traced)
-            .map_err(command_error)?;
-        if expanded.unbalanced {
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, "\n! Unbalanced write command.\n");
-        }
-        let mut text = String::new();
-        for &token in stores.tokens(expanded.tokens.token_list()) {
-            crate::diagnostics::append_token_show_text(stores, token, &mut text);
-        }
-        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
-        text.push('\n');
-        Ok(Some(text))
-    };
+    let mut expand_write =
+        |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
+            // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
+            // before moving to the next whatsit. A following write expands only
+            // after those effects have happened, so publish the committed prefix
+            // before its nested command episode contributes observations.
+            if let Some(observations) = command.observations.as_mut() {
+                observations.0.extend(
+                    stores.world().effect_records()[effect_cursor..]
+                        .iter()
+                        .filter_map(stream_effect_observation)
+                        .map(CommandObservation::Effect),
+                );
+            }
+            effect_cursor = stores.world().effect_records().len();
+            let traced = stores
+                .tokens(tokens)
+                .iter()
+                .copied()
+                .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+                .collect::<Vec<_>>();
+            let traced = stores.finish_traced_token_list(&traced);
+            let expanded = command
+                .processor(stores)
+                .expand_write_text(traced)
+                .map_err(command_error)?;
+            if let Some(observations) = command.observations.as_mut() {
+                observations
+                    .0
+                    .push(CommandObservation::Effect(EffectRecord {
+                        kind: "write",
+                        detail: write_effect_detail(sink),
+                        tokens: Some(
+                            stores
+                                .tokens(expanded.tokens.token_list())
+                                .iter()
+                                .copied()
+                                .map(|token| observed_macro_token(token, stores))
+                                .collect(),
+                        ),
+                    }));
+            }
+            if expanded.unbalanced {
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, "\n! Unbalanced write command.\n");
+            }
+            let mut text = String::new();
+            for &token in stores.tokens(expanded.tokens.token_list()) {
+                crate::diagnostics::append_token_show_text(stores, token, &mut text);
+            }
+            let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+            text.push('\n');
+            Ok(Some(text))
+        };
     let mut receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,

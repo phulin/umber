@@ -119,14 +119,27 @@ fn observed_text_tokens(text: &str) -> Vec<ObservedToken> {
 fn deferred_stream_effect_cursor_preserves_exact_records_and_write_order() {
     // TeX82 §§1374--1375 run each `out_what` synchronously: opening the
     // stream precedes each following write expansion, and closing it follows.
-    for (source, expected_timeline) in [
+    for (source, expected_timeline, expected_writes) in [
         (
             br"\shipout\hbox{\openout1=trace.out\closeout1}".as_slice(),
             vec!["open", "close", "shipout"],
+            vec![],
         ),
         (
             br"\shipout\hbox{\openout1=trace.out\write1{one}\write1{two}\closeout1}".as_slice(),
             vec!["open", "write", "write", "close", "shipout"],
+            vec![
+                ObservedEffect {
+                    kind: "write",
+                    detail: "stream:1\0".into(),
+                    tokens: Some(observed_text_tokens("one")),
+                },
+                ObservedEffect {
+                    kind: "write",
+                    detail: "stream:1\0".into(),
+                    tokens: Some(observed_text_tokens("two")),
+                },
+            ],
         ),
     ] {
         let (_, _, observations) = observed(source);
@@ -147,6 +160,19 @@ fn deferred_stream_effect_cursor_preserves_exact_records_and_write_order() {
                 _ => None,
             });
         assert_eq!(timeline.collect::<Vec<_>>(), expected_timeline);
+        assert_eq!(
+            observations
+                .iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::Effect(effect) if effect.kind == "write" => {
+                        Some(effect.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            expected_writes,
+            "deferred writes publish exactly once with their expanded payloads"
+        );
         assert_eq!(
             observations
                 .into_iter()
@@ -203,6 +229,56 @@ fn immediate_stream_effects_keep_exact_write_tokens_without_shipout_receipt() {
                 tokens: None,
             },
         ]
+    );
+}
+
+#[test]
+fn deferred_stream_write_observation_has_the_full_expanded_payload_exactly_once() {
+    // TeX82 §§1369--1372 finish the `write_out` token-list episode before
+    // §1375 prints the result. The semantic effect therefore owns that exact
+    // expanded list and is published once, between the surrounding stream
+    // lifecycle effects.
+    let effects = observed_effect_records(
+        br"\shipout\hbox{\openout1=trace.out\write1{\noexpand\endgroup!\noexpand\fi}\closeout1}",
+    );
+    assert_eq!(
+        effects,
+        [
+            ObservedEffect {
+                kind: "open",
+                detail: "stream:1\0trace.out".into(),
+                tokens: None,
+            },
+            ObservedEffect {
+                kind: "write",
+                detail: "stream:1\0".into(),
+                tokens: Some(vec![
+                    ObservedToken::ControlSequence("endgroup".into()),
+                    ObservedToken::Character {
+                        character: '!',
+                        catcode: tex_state::token::Catcode::Other,
+                    },
+                    ObservedToken::ControlSequence("fi".into()),
+                ]),
+            },
+            ObservedEffect {
+                kind: "close",
+                detail: "stream:1\0".into(),
+                tokens: None,
+            },
+            ObservedEffect {
+                kind: "shipout",
+                detail: "dvi\0".to_owned() + "1",
+                tokens: None,
+            },
+        ]
+    );
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| effect.kind == "write")
+            .count(),
+        1
     );
 }
 

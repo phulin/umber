@@ -81,7 +81,8 @@ pub(crate) fn shipout_node(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     let input_summary = input.publication_summary(stores);
-    let mut legacy_write_expander = |_: &mut Universe, _: tex_state::ids::TokenListId| Ok(None);
+    let mut legacy_write_expander =
+        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
     shipout_node_with_input_summary(
         node,
         input_summary,
@@ -254,7 +255,8 @@ pub(crate) fn test_stage_shipout_artifact(
     stores: &mut Universe,
 ) -> Result<tex_out::PageArtifact, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
-    let mut legacy_write_expander = |_: &mut Universe, _: tex_state::ids::TokenListId| Ok(None);
+    let mut legacy_write_expander =
+        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
     let staged = direct::stage_shipout(
         node,
         tex_state::InputSummary::default(),

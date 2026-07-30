@@ -320,7 +320,7 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let text = match (expansion.write_expander)(stores, tokens)? {
+            let text = match (expansion.write_expander)(stores, sink, tokens)? {
                 Some(text) => text,
                 None => expand_write_tokens(stores, expansion.expansion, tokens)?,
             };
