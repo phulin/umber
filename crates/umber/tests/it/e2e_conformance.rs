@@ -66,6 +66,18 @@ struct LiveCapture {
     log: Vec<u8>,
 }
 
+fn command_stream_for_fixture_phase(
+    fixture_name: &str,
+    phase: &str,
+    streams: tex_command_stream::LiveSessionStreams,
+) -> Vec<u8> {
+    if fixture_name == "trip" && phase == "format-loaded" {
+        streams.stable
+    } else {
+        streams.diagnostic
+    }
+}
+
 impl LiveCapture {
     fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
         let header = ObservationStream::from_canonical_json_lines(oracle)
@@ -112,6 +124,36 @@ fn transcript_channels(effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
         }
     }
     (terminal.into_bytes(), log.into_bytes())
+}
+
+#[test]
+fn trip_observer_profile_selection_includes_fixture_and_phase_identity() {
+    const DIAGNOSTIC_MANIFEST: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const STABLE_MANIFEST: &str =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    const DIAGNOSTIC: &[u8] = b"{\"schema\":1,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    const STABLE: &[u8] = b"{\"schema\":1,\"manifest\":\"2222222222222222222222222222222222222222222222222222222222222222\"}\n";
+
+    for (fixture_name, phase, expected_manifest) in [
+        ("trip", "format-loaded", STABLE_MANIFEST),
+        ("trip", "initex", DIAGNOSTIC_MANIFEST),
+        ("etrip", "initex", DIAGNOSTIC_MANIFEST),
+        ("etrip", "format-loaded", DIAGNOSTIC_MANIFEST),
+    ] {
+        let selected = command_stream_for_fixture_phase(
+            fixture_name,
+            phase,
+            tex_command_stream::LiveSessionStreams {
+                diagnostic: DIAGNOSTIC.to_vec(),
+                stable: STABLE.to_vec(),
+            },
+        );
+        let stream = ObservationStream::from_canonical_json_lines(&selected)
+            .expect("selected observer stream has a canonical schema/header");
+        assert_eq!(stream.header.schema, SchemaVersion::V1.number());
+        assert_eq!(stream.header.manifest, expected_manifest);
+    }
 }
 
 struct NoCheckpoints;
@@ -675,7 +717,11 @@ fn compare_trip_phase(
     let actual_initialization = (phase == "format-loaded").then(|| {
         fs::read(artifact_root.join("initex-command.jsonl")).expect("INITEX command artifact")
     });
-    let actual_command = run.capture.streams(&expected_command).diagnostic;
+    let actual_command = command_stream_for_fixture_phase(
+        fixture_name,
+        phase,
+        run.capture.streams(&expected_command),
+    );
     let actual_geometry = run.capture.geometry(&expected_geometry);
     fs::write(
         artifact_root.join(format!("{phase}-command.jsonl")),
