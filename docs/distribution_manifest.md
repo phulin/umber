@@ -37,8 +37,11 @@ Every hosted record requires affirmative embedding and redistribution flags;
 missing, false, oversized, or malformed license metadata rejects the shard
 before font bytes are fetched.
 
-Rust and authored JavaScript consume the shared fixtures under
-`tests/corpus/distribution/html-font-*`. Both reject unsupported record or
+Rust and authored JavaScript consume the shared closed case under
+`tests/corpus/distribution/cross-frontend-v1/`. Its `case.inventory` is
+validated against the runtime checkout's exact Git and filesystem inventories
+before Rust reads any payload, preventing a reusable test binary from treating
+its builder checkout as fixture authority. Both frontends reject unsupported record or
 policy versions, noncanonical or duplicate request components, TFM/key drift,
 malformed Unicode maps, conflicting digest lengths, missing licenses, and
 non-embeddable records. A verified canonical shard miss remains authoritative

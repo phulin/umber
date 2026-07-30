@@ -115,7 +115,7 @@ async function fixture() {
 async function htmlFontFixture() {
 	const template = readFileSync(
 		new URL(
-			"../../../tests/corpus/distribution/html-font-shard.template.json",
+			"../../../tests/corpus/distribution/cross-frontend-v1/html-font-shard.template.json",
 			import.meta.url,
 		),
 		"utf8",

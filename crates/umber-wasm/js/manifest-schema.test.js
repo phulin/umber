@@ -20,14 +20,14 @@ import {
 
 const htmlRootFixture = readFileSync(
 	new URL(
-		"../../../tests/corpus/distribution/html-font-root.json",
+		"../../../tests/corpus/distribution/cross-frontend-v1/html-font-root.json",
 		import.meta.url,
 	),
 	"utf8",
 );
 const htmlShardTemplate = readFileSync(
 	new URL(
-		"../../../tests/corpus/distribution/html-font-shard.template.json",
+		"../../../tests/corpus/distribution/cross-frontend-v1/html-font-shard.template.json",
 		import.meta.url,
 	),
 	"utf8",

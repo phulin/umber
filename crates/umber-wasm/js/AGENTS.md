@@ -19,7 +19,7 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `source-map.js` / `source-map.d.ts`: DOM point to revision-checked rendered-source query helper.
 - `manifest-resolver.js`: validated immutable-manifest HTTP resolver.
 - `manifest-schema.js`: immutable manifest, lookup-key, path, and compatibility validation.
-- `manifest-schema.test.js`: shared Rust/JavaScript manifest-selection fixture parity.
+- `manifest-schema.test.js`: shared Rust/JavaScript manifest-selection fixture parity from the closed `tests/corpus/distribution/cross-frontend-v1` case.
 - `manifest-resolver.d.ts`: public resolver declarations.
 - `manifest-resolver.test.js`: resolver integrity, concurrency, hint, and cache tests.
 - `resource-resolver.js` / `resource-resolver.d.ts`: ordered typed provider

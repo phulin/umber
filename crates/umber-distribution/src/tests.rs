@@ -1,31 +1,56 @@
 use super::*;
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
-const MANIFEST_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/manifest.json");
-const SELECTION_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/selection.case");
-const HTML_ROOT_FIXTURE: &str =
-    include_str!("../../../tests/corpus/distribution/html-font-root.json");
-const HTML_SHARD_TEMPLATE: &str =
-    include_str!("../../../tests/corpus/distribution/html-font-shard.template.json");
+use test_support::git_fixture::ClosedCase;
+
+const CASE_PATH: &str = "tests/corpus/distribution/cross-frontend-v1";
+
+struct Fixture {
+    manifest: String,
+    selection: String,
+    html_root: String,
+    html_shard_template: String,
+}
+
+fn fixture() -> &'static Fixture {
+    static FIXTURE: OnceLock<Fixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let case = ClosedCase::discover(CASE_PATH).expect("validate distribution fixture case");
+        Fixture {
+            manifest: case.read_to_string("manifest.json").expect("manifest"),
+            selection: case.read_to_string("selection.case").expect("selection"),
+            html_root: case
+                .read_to_string("html-font-root.json")
+                .expect("HTML root"),
+            html_shard_template: case
+                .read_to_string("html-font-shard.template.json")
+                .expect("HTML shard template"),
+        }
+    })
+}
 
 fn html_shard_fixture() -> String {
     let unicode_map = std::iter::once(r#""A""#)
         .chain(std::iter::repeat_n("null", 255))
         .collect::<Vec<_>>()
         .join(",");
-    HTML_SHARD_TEMPLATE.replace(r#""__UNICODE_MAP__""#, &unicode_map)
+    fixture()
+        .html_shard_template
+        .replace(r#""__UNICODE_MAP__""#, &unicode_map)
 }
 
 #[test]
 fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
-    let manifest = Manifest::parse(MANIFEST_FIXTURE).expect("parse manifest fixture");
+    let manifest = Manifest::parse(&fixture().manifest).expect("parse manifest fixture");
     let encoded = manifest.to_json_pretty();
     assert_eq!(Manifest::parse(&encoded), Ok(manifest.clone()));
 
     let mut requests = Vec::new();
     let mut expected_jobs = Vec::new();
     let mut expected_misses = Vec::new();
-    for line in SELECTION_FIXTURE
+    for line in fixture()
+        .selection
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
@@ -86,14 +111,24 @@ fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
 
 #[test]
 fn strict_parser_rejects_unknown_duplicate_and_unsafe_fields() {
-    let unknown = MANIFEST_FIXTURE.replacen("\"schema\": 1,", "\"schema\": 1, \"extra\": true,", 1);
+    let unknown =
+        fixture()
+            .manifest
+            .replacen("\"schema\": 1,", "\"schema\": 1, \"extra\": true,", 1);
     assert!(Manifest::parse(&unknown).is_err());
-    let duplicate = MANIFEST_FIXTURE.replacen("\"schema\": 1,", "\"schema\": 1, \"schema\": 1,", 1);
+    let duplicate =
+        fixture()
+            .manifest
+            .replacen("\"schema\": 1,", "\"schema\": 1, \"schema\": 1,", 1);
     assert!(Manifest::parse(&duplicate).is_err());
     let traversal =
-        MANIFEST_FIXTURE.replacen("tex/latex/base/article.cls", "tex/../article.cls", 1);
+        fixture()
+            .manifest
+            .replacen("tex/latex/base/article.cls", "tex/../article.cls", 1);
     assert!(Manifest::parse(&traversal).is_err());
-    let absent_dependency = MANIFEST_FIXTURE.replacen("tex:latex.ltx\"]", "tex:absent.sty\"]", 1);
+    let absent_dependency = fixture()
+        .manifest
+        .replacen("tex:latex.ltx\"]", "tex:absent.sty\"]", 1);
     assert!(Manifest::parse(&absent_dependency).is_err());
 }
 
@@ -174,7 +209,7 @@ fn complete_font_and_exact_legacy_keys_round_trip_without_aliases() {
 
 #[test]
 fn html_font_shard_parses_selects_and_serializes_canonically() {
-    let root = ShardedManifestRoot::parse(HTML_ROOT_FIXTURE).expect("HTML root");
+    let root = ShardedManifestRoot::parse(&fixture().html_root).expect("HTML root");
     let fixture = html_shard_fixture();
     let shard = ManifestShard::parse(&fixture).expect("HTML shard");
     shard
