@@ -6435,6 +6435,16 @@ fn scan_command(
                 Ok(ScannedStep::BeginAlignment { vertical: true })
             }
         }
+        // TeX82 §1096: `hmode+par_end` first runs `off_save` when
+        // `align_state<0`, then retries the same `\par` after the inserted
+        // group closer. A malformed alignment entry can otherwise absorb all
+        // following vertical material into its last cell.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
+            if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+                && processor.paragraph_end_needs_alignment_recovery() =>
+        {
+            scan_off_save(processor, command, innermost_group)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ScannedStep::Paragraph),
         // TeX82 §1193 closes math only at `math_shift_group`; a `$` inside
         // any nested math group first runs §1064's `off_save`, which inserts

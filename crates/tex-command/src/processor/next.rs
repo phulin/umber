@@ -41,6 +41,15 @@ use crate::observation::{
 };
 
 impl CommandProcessor<'_> {
+    /// Reports TeX82 §1096's `hmode+par_end` recovery predicate.
+    ///
+    /// `align_state` belongs to raw command delivery, so the stomach asks
+    /// this command-owned question instead of mirroring the brace counter.
+    #[must_use]
+    pub fn paragraph_end_needs_alignment_recovery(&self) -> bool {
+        self.command.alignment.align_state < 0
+    }
+
     /// Runs TeX82 §1335's `final_cleanup` input unwinding.
     ///
     /// `main_control` returns as soon as §1054's `its_all_over` is true, so

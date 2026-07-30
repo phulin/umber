@@ -11012,6 +11012,41 @@ fn canonical_box_request_lifecycle_mode_and_recovery_matrix() {
 }
 
 #[test]
+fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
+    // TeX82 §1096 runs `off_save` before `end_graf` when `align_state<0`.
+    // The blank line closes the malformed row and alignment; the following
+    // 20pt hbox must therefore be a sibling of the finished alignment, not
+    // material captured inside its final constrained row.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\noindent{\halign to1pt{#&#&#\cr A&B&C&D&&.}
+
+        \hbox to20pt{}}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let root = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = root else {
+        panic!("setbox0 contains a vbox");
+    };
+    assert!(
+        universe.nodes(vbox.children).iter().any(|node| {
+            matches!(
+                node.to_owned(),
+                Node::HList(boxed) if boxed.width == Scaled::from_raw(20 * Scaled::UNITY)
+            )
+        }),
+        "material following the recovered alignment remains outside its row"
+    );
+    assert_eq!(vbox.width, Scaled::from_raw(20 * Scaled::UNITY));
+}
+
+#[test]
 fn canonical_paragraph_entry_exit_mode_and_recovery_matrix() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
