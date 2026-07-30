@@ -8,6 +8,9 @@ mod stack;
 mod summary;
 mod tokenizer;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
     SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceRetirement, StoredReplayReason,
@@ -48,40 +51,57 @@ pub(crate) struct InputState {
     pub(crate) force_eof: bool,
 }
 
+/// Formats TeX82 §§79--82's two pseudoprinted context lines.
+///
+/// The descriptive label has already been printed when §82 crops the
+/// pseudoprinted prefix. It therefore remains intact while only `before` is
+/// replaced by an ellipsis and its fitting suffix.
+fn clipped_context(
+    label: &str,
+    before: &str,
+    after: &str,
+    widths: tex_state::print::ErrorContextWidths,
+) -> String {
+    let label_len = label.chars().count();
+    let before_len = before.chars().count();
+    let (left, indent) = if label_len + before_len > widths.half_error_line() {
+        let suffix_len = widths
+            .half_error_line()
+            .saturating_sub(label_len)
+            .saturating_sub(3);
+        (
+            format!(
+                "{label}...{}",
+                before
+                    .chars()
+                    .skip(before_len.saturating_sub(suffix_len))
+                    .collect::<String>()
+            ),
+            widths.half_error_line(),
+        )
+    } else {
+        (
+            format!("{label}{before}"),
+            label_len.saturating_add(before_len),
+        )
+    };
+    let available = widths.error_line().saturating_sub(indent);
+    let right = if after.chars().count() > available {
+        format!(
+            "{}...",
+            after
+                .chars()
+                .take(available.saturating_sub(3))
+                .collect::<String>()
+        )
+    } else {
+        after.to_owned()
+    };
+    format!("\n{left}\n{}{right}", " ".repeat(indent))
+}
+
 impl InputState {
     pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
-        fn clipped(
-            label: &str,
-            before: &str,
-            after: &str,
-            widths: tex_state::print::ErrorContextWidths,
-        ) -> String {
-            let mut left = format!("{label}{before}");
-            let len = left.chars().count();
-            if len > widths.half_error_line() {
-                left = format!(
-                    "...{}",
-                    left.chars()
-                        .skip(len - (widths.half_error_line() - 3))
-                        .collect::<String>()
-                );
-            }
-            let indent = left.chars().count();
-            let available = widths.error_line().saturating_sub(indent);
-            let right = if after.chars().count() > available {
-                format!(
-                    "{}...",
-                    after
-                        .chars()
-                        .take(available.saturating_sub(3))
-                        .collect::<String>()
-                )
-            } else {
-                after.to_owned()
-            };
-            format!("\n{left}\n{}{right}", " ".repeat(indent))
-        }
-
         fn token_text(
             stores: &tex_state::CommandContext<'_>,
             tokens: impl Iterator<Item = tex_state::token::Token>,
@@ -112,7 +132,7 @@ impl InputState {
                     ) else {
                         continue;
                     };
-                    contexts.push(clipped(
+                    contexts.push(clipped_context(
                         &format!("l.{} ", line.physical.number()),
                         &String::from_utf8_lossy(&bytes[start..cursor]),
                         &String::from_utf8_lossy(&bytes[cursor..end]),
@@ -189,7 +209,7 @@ impl InputState {
                             )
                         }
                     };
-                    contexts.push(clipped(
+                    contexts.push(clipped_context(
                         label,
                         &before,
                         &after,
