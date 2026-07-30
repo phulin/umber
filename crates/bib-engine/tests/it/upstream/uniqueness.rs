@@ -1,7 +1,5 @@
 // Native Rust translation of the corresponding upstream Biber test at commit 74252e6.
 
-use std::path::PathBuf;
-
 use bib_engine::{
     BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
     FileProvisioner, OutputFormat, OutputRequest, ProcessedBibliography, ResolvedFile, SectionId,
@@ -30,8 +28,7 @@ fn override_scalar_option(control: &mut String, key: &str, value: &str) {
 }
 
 fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> FixtureResult {
-    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control = VirtualPath::user(control_name).expect("valid control path");
     let mut control_bytes =
         String::from_utf8(crate::fixtures::read(fixture_dir.join(control_name)))

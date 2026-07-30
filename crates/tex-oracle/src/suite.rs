@@ -397,11 +397,9 @@ fn sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT, validate_tex82_command_trace_suite};
-    use std::path::PathBuf;
-
     #[test]
     fn committed_tex82_command_trace_suite_is_complete_and_offline() {
-        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let repository = test_support::repository_root();
         let suite = validate_tex82_command_trace_suite(repository).expect("committed suite");
         // `umber2-alfh.2` split the former single 14-source `command-transitions-v1`
         // fixture into one minifixture per independent behavior (`fixtures`

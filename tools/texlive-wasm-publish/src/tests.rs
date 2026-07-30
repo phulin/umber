@@ -27,7 +27,7 @@ fn digest(bytes: &[u8]) -> String {
 
 #[test]
 fn committed_html_mvp_catalog_is_reproducible_from_exact_inputs() -> Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let fixture = TempDir::new()?;
     let output = fixture.path().join("catalog.json");
     write_html_mvp_catalog(
@@ -241,8 +241,8 @@ fn config(roots: Vec<RootConfig>) -> PublishConfig {
 fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
     let fixture = TempDir::new()?;
     let output = fixture.path().join("publish.json");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/write-latex-wasm-publish-config.sh");
+    let script = test_support::repository_root()
+        .join("scripts/write-latex-wasm-publish-config.sh");
     let status = Command::new("bash")
         .arg(script)
         .arg(&output)
@@ -277,7 +277,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     write(&second, "tex/extra.tex", b"extra\n")?;
 
     let mut config = config(vec![root("first", &first)?, root("second", &second)?]);
-    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
     config.formats.push(FormatConfig {
         path: assets.join("plain.fmt"),
         metadata: assets.join("plain-format.json"),
@@ -328,7 +328,7 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
     write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", b"tfm")?;
-    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
     let mut metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
     metadata["schema"] = 2.into();
@@ -397,7 +397,7 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
     let root_path = fixture.path().join("root");
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
-    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
     let base: serde_json::Value =
         serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
     for (label, keys) in [

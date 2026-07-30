@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, process::Command};
 
 use sha2::{Digest, Sha256};
 use test_support::{
@@ -95,8 +95,9 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/invocation");
+    let fixture = test_support::repository_root()
+        .join("crates/umber")
+        .join("../../tests/corpus/bib/invocation");
     let temp_dir = tempfile::tempdir().expect("create bib output directory");
     let output_path = temp_dir.path().join("result.bbl");
     let log_path = fixture.join("basic.blg");
@@ -157,8 +158,9 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Regression exercises the native command with pinned files.
 fn bibtex_command_runs_the_pinned_classic_smoke_case_in_process() {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bibtex/cases/smoke");
+    let fixture = test_support::repository_root()
+        .join("crates/umber")
+        .join("../../tests/corpus/bibtex/cases/smoke");
     let temp_dir = tempfile::tempdir().expect("create classic output directory");
     for extension in ["aux", "bib", "bst"] {
         fs::copy(
@@ -191,7 +193,8 @@ fn bibtex_command_runs_the_pinned_classic_smoke_case_in_process() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Regression exercises the native command with pinned files.
 fn bib_command_processes_pinned_full_bibtex_unicode_names() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let fixture = test_support::repository_root()
+        .join("crates/umber")
         .join("../../tests/corpus/bib/upstream-2.22/tdata");
     let temp_dir = tempfile::tempdir().expect("create full BibTeX output directory");
     let output_path = temp_dir.path().join("full.bib");
@@ -634,10 +637,7 @@ fn run_recovered_diagnostic_after_tfm_load_exits_successfully() {
     fs::write(&source, "\\font\\f=cmr10 \\relax\n\\input child\n").expect("write main fixture");
     fs::write(&child, "\\global X\n").expect("write diagnostic fixture");
     fs::copy(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tex-fonts/tests/fixtures/cm/cmr10.tfm"
-        ),
+        test_support::repository_root().join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
         &tfm,
     )
     .expect("copy TFM fixture");
@@ -1395,7 +1395,8 @@ fn run_resolves_area_less_tfm_through_texfonts_and_advances() {
         "\\font\\tenrm=cmr10 \\relax \\message{after-font}\\end\n",
     )
     .expect("write font search input");
-    let cmr10 = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let cmr10 = test_support::repository_root()
+        .join("crates/umber")
         .join("../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     fs::copy(cmr10, font_dir.join("cmr10.tfm")).expect("copy searched TFM");
 
@@ -1556,7 +1557,8 @@ fn lex_invalid_character_fixture() -> String {
 }
 
 fn lexer_fixture(case: &str) -> (Lexer, Universe) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = test_support::repository_root()
+        .join("crates/umber")
         .join("../..")
         .join("tests/corpus/lexer_dynamic")
         .join(format!("{case}.tex"));

@@ -12,13 +12,55 @@ pub mod pdf_probe;
 mod imp {
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
 
-    use anyhow::{Context, Result};
+    use anyhow::{Context, Result, bail};
     use similar::TextDiff;
 
+    /// Resolves the repository that owns `path` through Git's worktree
+    /// metadata.
+    ///
+    /// This is an explicit runtime contract: unlike `CARGO_MANIFEST_DIR`, the
+    /// result is not captured when Cargo builds a reusable test binary.
+    pub fn repository_root_at(path: &Path) -> Result<PathBuf> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["rev-parse", "--path-format=absolute", "--show-toplevel"])
+            .output()
+            .with_context(|| format!("resolve repository containing {}", path.display()))?;
+        if !output.status.success() {
+            bail!(
+                "git could not resolve the repository containing {}: {}",
+                path.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+            .canonicalize()
+            .with_context(|| format!("canonicalize repository containing {}", path.display()))
+    }
+
+    /// Resolves the checkout from the process's runtime working directory.
+    ///
+    /// Cargo runs tests with a package directory as their working directory,
+    /// while guarded test runners may use the repository root. Git resolves
+    /// both forms without searching for marker files or retaining a builder
+    /// worktree path.
+    pub fn repository_root() -> PathBuf {
+        let current = env::current_dir().expect("determine test process working directory");
+        repository_root_at(&current).unwrap_or_else(|error| panic!("{error:#}"))
+    }
+
     pub fn corpus_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
+        repository_root().join("tests/corpus")
+    }
+
+    /// Returns the committed corpus below an explicitly selected repository.
+    #[must_use]
+    pub fn corpus_root_at(repository: &Path) -> PathBuf {
+        repository.join("tests/corpus")
     }
 
     pub fn fixture_path(area: &str, case: &str, kind: &str) -> PathBuf {
@@ -757,8 +799,8 @@ mod imp {
 pub use compile_fail::{CompileFailDependency, assert_compile_fail};
 pub use corpus::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
 pub use imp::{
-    assert_matches_fixture, corpus_root, fixture_path, normalize, pl, read_binary_fixture,
-    read_fixture,
+    assert_matches_fixture, corpus_root, corpus_root_at, fixture_path, normalize, pl,
+    read_binary_fixture, read_fixture, repository_root, repository_root_at,
 };
 
 #[cfg(test)]

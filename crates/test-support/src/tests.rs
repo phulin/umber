@@ -10,9 +10,50 @@ fn hello_fixture_is_committed() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Host-only cross-checkout process regression.
+fn fixture_root_follows_the_runtime_checkout() {
+    const CHILD_EXPECTATION: &str = "TEST_SUPPORT_RUNTIME_ROOT_EXPECTATION";
+    if let Some(expected) = std::env::var_os(CHILD_EXPECTATION) {
+        assert_eq!(
+            read_fixture("runtime-root", "checkout", "txt"),
+            expected.to_string_lossy()
+        );
+        return;
+    }
+
+    let runtime_checkout = tempfile::tempdir().expect("create runtime checkout");
+    let fixture = runtime_checkout
+        .path()
+        .join("tests/corpus/runtime-root/checkout.expected.txt");
+    std::fs::create_dir_all(fixture.parent().expect("fixture has parent"))
+        .expect("create runtime fixture directory");
+    std::fs::write(&fixture, "selected at runtime").expect("write runtime fixture");
+    let initialized = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(runtime_checkout.path())
+        .status()
+        .expect("initialize runtime checkout");
+    assert!(initialized.success(), "initialize runtime checkout");
+
+    let status = std::process::Command::new(std::env::current_exe().expect("locate test binary"))
+        .args([
+            "--exact",
+            "tests::fixture_root_follows_the_runtime_checkout",
+        ])
+        .env(CHILD_EXPECTATION, "selected at runtime")
+        .current_dir(runtime_checkout.path())
+        .status()
+        .expect("re-execute test binary from runtime checkout");
+    assert!(
+        status.success(),
+        "reused test binary must read the runtime checkout"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // Host-only audit of committed oracle sources.
 fn every_oracle_close_effect_omits_stale_file_name_globals() {
-    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = crate::repository_root();
     for dialect in ["tex82", "etex26", "pdftex14027"] {
         let change = std::fs::read_to_string(
             repository

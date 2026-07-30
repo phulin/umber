@@ -93,6 +93,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "test-support",
  "umber-vfs",
 ]
 
@@ -1177,6 +1178,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "test-support",
  "tex-command",
  "tex-exec",
  "tex-oracle",
@@ -1264,6 +1266,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "test-support",
 ]
 
 [[package]]

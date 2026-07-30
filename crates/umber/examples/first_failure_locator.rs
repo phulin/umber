@@ -193,7 +193,8 @@ fn report_panic(
 }
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    test_support::repository_root()
+        .join("crates/umber")
         .join("../..")
         .canonicalize()
         .expect("resolve repository root")

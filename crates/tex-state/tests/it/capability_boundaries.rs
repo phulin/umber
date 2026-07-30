@@ -1,11 +1,9 @@
 #[test]
 fn expansion_capability_rejects_privileged_apis() {
-    use std::path::Path;
-
     use test_support::{CompileFailDependency, assert_compile_fail};
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-state", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-state");
+    let dependencies = [CompileFailDependency::path("tex-state", &manifest_dir)];
 
     assert_compile_fail(
         "expansion-state-input-forbidden",

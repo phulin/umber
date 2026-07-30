@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use tex_command::canonical_names;
@@ -406,7 +406,7 @@ const USAGE: &str = "expected --repository <path>, --max-divergences <n>, \
 /// grouped report can always be checked against the list it summarizes.
 pub fn run_cli() -> Result<ComparisonReport, RunnerError> {
     let mut arguments = env::args_os().skip(1);
-    let mut repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut repository = test_support::repository_root();
     let mut options = RunOptions::default();
     while let Some(argument) = arguments.next() {
         if argument == "--repository" {
@@ -2031,7 +2031,7 @@ mod tests {
     };
 
     fn committed_fixture() -> CommittedFixture {
-        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let repository = test_support::repository_root();
         CommittedFixture::load(repository.join(FIXTURE_ROOT).join("command-transitions-v1"))
             .expect("committed TeX82 fixture")
     }
@@ -2720,7 +2720,7 @@ mod tests {
     #[test]
     fn canonical_startup_matches_the_terminal_scan_before_root_delivery() {
         let fixture = committed_fixture();
-        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let repository = test_support::repository_root();
         let startup = CanonicalStartup::from_fixture(
             &repository.join(FIXTURE_ROOT).join("command-transitions-v1"),
             &fixture,

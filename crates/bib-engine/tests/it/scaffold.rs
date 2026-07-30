@@ -563,7 +563,9 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
 
 #[test]
 fn translated_suite_has_explicit_compatibility_status() {
-    let upstream = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/upstream");
+    let upstream = test_support::repository_root()
+        .join("crates/bib-engine")
+        .join("tests/it/upstream");
     let mut modules = 0;
     let mut assertions = 0;
     for entry in fs::read_dir(&upstream)
@@ -641,11 +643,11 @@ fn translated_suite_has_explicit_compatibility_status() {
 }
 
 fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/upstream-2.22")
+    test_support::repository_root().join("tests/corpus/bib/upstream-2.22")
 }
 
 fn classic_fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bibtex")
+    test_support::repository_root().join("tests/corpus/bibtex")
 }
 
 fn read_json(path: &Path) -> Value {

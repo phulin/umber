@@ -247,7 +247,7 @@ impl CommandObserver for Recorder {
 }
 
 fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    test_support::repository_root()
 }
 
 #[test]

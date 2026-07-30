@@ -1,11 +1,11 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, fs};
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn crate_dependency_direction_is_command_toward_state_only() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let command_manifest = fs::read_to_string(manifest_dir.join("Cargo.toml"))
         .unwrap_or_else(|error| panic!("failed to read tex-command manifest: {error}"));
     let state_manifest = fs::read_to_string(manifest_dir.join("../tex-state/Cargo.toml"))
@@ -32,7 +32,7 @@ fn crate_dependency_direction_is_command_toward_state_only() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn hot_character_delivery_has_no_host_lookup_surface() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     for relative in [
         "src/state.rs",
         "src/input/source.rs",
@@ -59,7 +59,7 @@ fn hot_character_delivery_has_no_host_lookup_surface() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
@@ -102,7 +102,7 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
 
@@ -134,7 +134,7 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let matcher = fs::read_to_string(manifest_dir.join("src/macro_call.rs"))
         .expect("read scalar macro matcher implementation");
 
@@ -168,7 +168,7 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
 
@@ -193,7 +193,7 @@ fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let scanner = fs::read_to_string(manifest_dir.join("src/scan_toks.rs"))
         .expect("read token-list scanner implementation");
     let collector = scanner
@@ -233,7 +233,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
         .expect("read conditional implementation");
     let input =
@@ -309,8 +309,8 @@ fn dependency_names(manifest: &str) -> BTreeSet<&str> {
 
 #[test]
 fn command_state_machines_are_private() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-command", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];
 
     assert_compile_fail(
         "command-private-modules",
@@ -331,8 +331,8 @@ fn command_state_machines_are_private() {
 
 #[test]
 fn semantic_and_runtime_fields_are_opaque() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-command", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];
 
     assert_compile_fail(
         "command-opaque-state",
@@ -349,8 +349,8 @@ fn semantic_and_runtime_fields_are_opaque() {
 
 #[test]
 fn command_profile_and_installed_mode_are_immutable() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-command", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];
 
     assert_compile_fail(
         "command-immutable-profile",
@@ -367,9 +367,9 @@ fn command_profile_and_installed_mode_are_immutable() {
 
 #[test]
 fn host_context_cannot_be_serialized() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [
-        CompileFailDependency::path("tex-command", manifest_dir),
+        CompileFailDependency::path("tex-command", &manifest_dir),
         CompileFailDependency::registry("serde", "1"),
     ];
 
@@ -389,9 +389,9 @@ fn host_context_cannot_be_serialized() {
 
 #[test]
 fn runtime_cannot_become_semantic_or_serialized_by_convenience() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [
-        CompileFailDependency::path("tex-command", manifest_dir),
+        CompileFailDependency::path("tex-command", &manifest_dir),
         CompileFailDependency::registry("serde", "1"),
     ];
 
@@ -412,9 +412,9 @@ fn runtime_cannot_become_semantic_or_serialized_by_convenience() {
 
 #[test]
 fn ephemeral_command_types_cannot_be_serialized() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [
-        CompileFailDependency::path("tex-command", manifest_dir),
+        CompileFailDependency::path("tex-command", &manifest_dir),
         CompileFailDependency::registry("serde", "1"),
     ];
 

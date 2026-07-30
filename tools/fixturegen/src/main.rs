@@ -483,7 +483,7 @@ fn source_path(area: &str, case: &str) -> PathBuf {
 }
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    test_support::repository_root()
 }
 
 fn umber_bin() -> PathBuf {

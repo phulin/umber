@@ -304,7 +304,8 @@ fn offline_local_distribution_reports_a_missing_object_distinctly_from_a_missing
 
 #[test]
 fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
-    let snapshot = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let snapshot = test_support::repository_root()
+        .join("crates/umber")
         .join("../..")
         .join("target/texlive-snapshot");
     if !snapshot.join("manifest.json").is_file() {

@@ -14,8 +14,7 @@ pub(super) fn run_fixture(stem: &str) -> BibResult {
 }
 
 pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
-    let corpus =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let corpus = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control_name = format!("{stem}.bcf");
     let control_path = VirtualPath::user(&control_name).expect("valid fixture control path");
     let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("fixture limits");

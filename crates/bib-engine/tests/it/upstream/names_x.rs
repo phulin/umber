@@ -1,7 +1,5 @@
 // Native Rust translation of the corresponding upstream Biber name test at commit 74252e6.
 
-use std::path::PathBuf;
-
 use bib_engine::{
     BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
     FileProvisioner, Name, NamePartValue, OutputFormat, OutputRequest, ProcessedBibliography,
@@ -29,8 +27,7 @@ struct FixtureResult {
 }
 
 fn process_fixture(control_name: &str, inline_bib: Option<&str>) -> FixtureResult {
-    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control = VirtualPath::user(control_name).expect("valid control path");
     let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
     provisioner

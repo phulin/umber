@@ -5,7 +5,6 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
@@ -325,7 +324,7 @@ fn fixture_manifest_rejects_a_root_source_absent_from_declared_sources() {
 
 #[test]
 fn committed_tex82_fixture_is_consumed_hermetically() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let fixture = CommittedFixture::load(
         repository.join("tests/corpus/command/tex82/command-transitions-v1"),
     )
@@ -353,7 +352,7 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
 
 #[test]
 fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let fixture =
         validate_tex82_geometry_trace_fixture(repository).expect("committed geometry fixture");
     assert_eq!(fixture.selector, "tex82/geometry-v2");
@@ -388,7 +387,7 @@ fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
 
 #[test]
 fn fixture_audit_rejects_missing_behavior_and_unowned_observations() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let fixture = CommittedFixture::load(
         repository.join("tests/corpus/command/tex82/command-transitions-v1"),
     )
@@ -451,8 +450,8 @@ fn fixture_audit_rejects_missing_behavior_and_unowned_observations() {
 
 #[test]
 fn committed_fixture_rejects_event_hash_identity_and_output_byte_drift() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/command/tex82/command-transitions-v1");
+    let source =
+        test_support::repository_root().join("tests/corpus/command/tex82/command-transitions-v1");
     let loaded = CommittedFixture::load(&source).expect("fixture");
     let temporary = std::env::temp_dir().join(format!(
         "umber-tex-oracle-fixture-{}-{}",

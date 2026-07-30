@@ -5,13 +5,11 @@
     reason = "this host-only test discovers the committed repository fixture suite"
 )]
 
-use std::path::Path;
-
 use tex_command_stream::{RunOptions, RunOutcome, run_committed_repository};
 
 #[test]
 fn committed_tex82_command_traces_are_clean() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let report = run_committed_repository(repository, RunOptions::default())
         .expect("committed TeX82 command fixture suite must be present and valid");
 

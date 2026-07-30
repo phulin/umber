@@ -64,7 +64,7 @@ struct Options {
 
 impl Options {
     fn parse() -> Result<Option<Self>, String> {
-        let mut repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut repo_root = test_support::repository_root();
         let mut iterations = DEFAULT_ITERATIONS;
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;

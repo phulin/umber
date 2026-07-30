@@ -114,10 +114,7 @@ pub struct GateAssets {
 }
 
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("resolve repository root")
+    test_support::repository_root()
 }
 
 /// Writes a line to the process's real stderr handle.

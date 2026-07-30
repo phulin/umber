@@ -26,7 +26,7 @@ impl CatalogueCensus {
 }
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    test_support::repository_root()
 }
 
 fn json(path: &Path) -> Value {

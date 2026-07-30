@@ -1,11 +1,10 @@
 use std::fs;
-use std::path::Path;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
 fn command_fuel_can_only_be_owned_by_a_session_ledger() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let tex_command_dir = manifest_dir.join("../tex-command");
     let dependencies = [CompileFailDependency::path("tex-command", &tex_command_dir)];
     assert_compile_fail(
@@ -40,11 +39,11 @@ fn session_ledger_lends_typed_fuel_without_transferring_ownership() {
 
 #[test]
 fn engine_checkpoint_cannot_be_forged_by_callers() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let tex_lex_dir = manifest_dir.join("../tex-lex");
     let tex_state_dir = manifest_dir.join("../tex-state");
     let dependencies = [
-        CompileFailDependency::path("tex-exec", manifest_dir),
+        CompileFailDependency::path("tex-exec", &manifest_dir),
         CompileFailDependency::path("tex-lex", &tex_lex_dir),
         CompileFailDependency::path("tex-state", &tex_state_dir),
     ];
@@ -58,8 +57,8 @@ fn engine_checkpoint_cannot_be_forged_by_callers() {
 
 #[test]
 fn scoped_execution_transaction_cannot_escape_public_api() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-exec", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
+    let dependencies = [CompileFailDependency::path("tex-exec", &manifest_dir)];
     assert_compile_fail(
         "execution-transaction-private",
         &manifest_dir.join("tests/ui/execution_transaction_private.rs"),
@@ -71,7 +70,7 @@ fn scoped_execution_transaction_cannot_escape_public_api() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn mode_list_mutation_capabilities_do_not_expose_mutable_aggregate_references() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let mode = fs::read_to_string(manifest_dir.join("src/mode.rs"))
         .expect("read mode-list mutation boundary");
 
@@ -116,7 +115,7 @@ fn mode_list_mutation_capabilities_do_not_expose_mutable_aggregate_references() 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_boundary() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let driver = fs::read_to_string(manifest_dir.join("src/canonical_main_control.rs"))
         .expect("read canonical main-control boundary");
 

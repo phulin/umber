@@ -1,10 +1,8 @@
-use std::path::Path;
-
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 fn assert_live_boundary(test_name: &str, expected_stderr: &[&str]) {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dependencies = [CompileFailDependency::path("tex-state", manifest_dir)];
+    let manifest_dir = test_support::repository_root().join("crates/tex-state");
+    let dependencies = [CompileFailDependency::path("tex-state", &manifest_dir)];
     assert_compile_fail(
         test_name,
         &manifest_dir.join(format!("tests/ui/{test_name}.rs")),

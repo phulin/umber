@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use test_support::pdf_fixture::{Dictionary, PdfFixture, array, name, nested_array, reference};
 
 use super::*;
@@ -133,7 +131,8 @@ fn deeply_nested_resource_values_are_rejected() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Conditional external-fixture boundary.
 fn recent_arxiv_dct_resources_import_as_encoded_streams_when_available() {
-    let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let corpus = test_support::repository_root()
+        .join("crates/umber")
         .join("../..")
         .join("third_party/arxiv-recent-sample-100/sources");
     let cases = [

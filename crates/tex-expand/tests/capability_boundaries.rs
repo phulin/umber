@@ -1,10 +1,8 @@
 #[test]
 fn scanner_helpers_cannot_open_input() {
-    use std::path::Path;
-
     use test_support::{CompileFailDependency, assert_compile_fail};
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-expand");
     let tex_state_dir = manifest_dir.join("../tex-state");
     let dependencies = [CompileFailDependency::path("tex-state", &tex_state_dir)];
 
@@ -22,11 +20,9 @@ fn scanner_helpers_cannot_open_input() {
 
 #[test]
 fn lexer_input_stack_cannot_resolve_meanings() {
-    use std::path::Path;
-
     use test_support::{CompileFailDependency, assert_compile_fail};
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = test_support::repository_root().join("crates/tex-expand");
     let tex_lex_dir = manifest_dir.join("../tex-lex");
     let tex_state_dir = manifest_dir.join("../tex-state");
     let dependencies = [

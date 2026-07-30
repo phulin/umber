@@ -8,13 +8,12 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 similar.workspace = true
+test-support = { path = "../../crates/test-support" }
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
 tex-oracle = { path = "../../crates/tex-oracle" }
 tex-out = { path = "../../crates/tex-out" }
 tex-state = { path = "../../crates/tex-state" }
-
-[dev-dependencies]
 
 [lints]
 workspace = true

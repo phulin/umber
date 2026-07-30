@@ -310,10 +310,7 @@ pub enum ExpectationError {
 }
 
 pub fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .components()
-        .collect()
+    test_support::repository_root()
 }
 
 pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {

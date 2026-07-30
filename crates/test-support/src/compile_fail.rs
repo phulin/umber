@@ -111,7 +111,7 @@ pub fn assert_compile_fail(
 }
 
 fn shared_target_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compile-fail")
+    crate::repository_root().join("target/compile-fail")
 }
 
 fn cargo_command() -> OsString {

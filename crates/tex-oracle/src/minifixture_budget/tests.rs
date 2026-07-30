@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use crate::{
     CommittedFixture, DiagnosticEvent, DiagnosticSeverity, EngineDialect, EngineIdentity, Event,
@@ -123,7 +122,7 @@ fn budget_rejects_too_many_events() {
 
 #[test]
 fn budget_accepts_every_committed_tex82_fixture() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = test_support::repository_root();
     let root = repository.join("tests/corpus/command/tex82");
     let mut checked = 0;
     for entry in std::fs::read_dir(&root).expect("fixture root") {
