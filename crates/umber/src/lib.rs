@@ -2046,8 +2046,9 @@ mod tests {
         // command-delivered `MainControlStep::End` instead.
         let result = session.execute().expect("canonical root terminates");
         // TeX82 §1280's separating space between two `\message` texts, plus
-        // §537/§362's parens bracketing the nested `\input child`.
-        assert_eq!(result.terminal_text, "report (child nested)");
+        // §537/§362's parens bracketing the nested `\input child`, named as
+        // opened (`child.tex`) the way §537's `a_make_name_string` does.
+        assert_eq!(result.terminal_text, "report (child.tex nested)");
         assert!(matches!(
             session.stores().world().input_records(),
             [record] if record.hash() == root_hash
@@ -2055,7 +2056,7 @@ mod tests {
         ));
         assert_eq!(
             uncommitted_terminal_text(session.stores()),
-            "report (child nested)"
+            "report (child.tex nested)"
         );
     }
 

@@ -4582,7 +4582,14 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         "unexpected stop recovery: {:?}",
         observations.0
     );
-    assert_eq!(terminal_text(&universe), "\n! Missing } inserted.\n");
+    // §62 puts the headline at offset 0; §§310-318's context and §336's
+    // five-line insertion help follow it, and the minifixture channel corpus
+    // pins those bytes rather than this control-flow test.
+    let terminal = terminal_text(&universe);
+    assert!(
+        terminal.starts_with("! Missing } inserted.\n"),
+        "{terminal}"
+    );
     observations.0.clear();
     assert_eq!(
         control

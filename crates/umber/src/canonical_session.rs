@@ -1143,8 +1143,11 @@ mod tests {
         assert_eq!(
             session.stores().world().memory_terminal_output(),
             // §537/§362 bracket the retried `\input child` exactly once:
-            // `(child)` with nothing between the parens, since `child`'s
-            // sole line is `\relax`, which prints nothing. Both `[0]`s are
+            // `(child.tex)` with nothing between the parens, since `child`'s
+            // sole line is `\relax`, which prints nothing. §537 prints the
+            // name as opened, extension included, which is what the pinned
+            // oracle brackets too (`(./child.tex)`; Umber's missing `./`
+            // prefix is the separately tracked umber2-alfh.18). Both `[0]`s are
             // §638's progress marker, one per shipped page (the explicit
             // `\shipout`, then TeX82 §1054's residual page ejected at
             // `\end`) -- except the first one is duplicated here, which
@@ -1158,7 +1161,7 @@ mod tests {
             // `\shipout` that already ran speculatively before the retry
             // was discovered leaves its committed marker behind and prints
             // a second one on the replay that actually commits.
-            Some(&b"once (child) [0] [0]"[..]),
+            Some(&b"once (child.tex) [0] [0]"[..]),
             "aggregate rollback must not repeat an already committed write \
              (umber2-0t8z: it currently does, for `commit_effects`-driven \
              output specifically)"
@@ -1477,8 +1480,9 @@ mod tests {
 
         // TeX82 §1280 separates the two messages with one space, because
         // the first left `term_offset` nonzero. §537/§362 additionally
-        // bracket `\input child` in parens around its own message.
-        assert_eq!(run.terminal_text, "once (child child)");
+        // bracket `\input child` in parens around its own message, naming it
+        // as opened (`child.tex`) the way §537's `a_make_name_string` does.
+        assert_eq!(run.terminal_text, "once (child.tex child)");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));
