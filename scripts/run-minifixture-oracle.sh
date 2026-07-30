@@ -177,9 +177,34 @@ dump_engine_args_for_profile() {
   esac
 }
 
+# The dumped format's contents must match what
+# `tex_command_stream::semantic`'s `execute` builds for the same profile, or a
+# case that probes the format's contents compares two differently-populated
+# formats and reports a fixture defect as an engine divergence.
+# `\formatmacro` is exactly that: `execute` defines it in the `EtexLoaded`
+# universe as a bounded format-loaded macro identity probe (TeX82 sections
+# 341/1221 expose the `def_ref` head after section 1309's format memory
+# compaction), and until it was defined here too,
+# `etex-diagnostics/etex-loaded-macro-call` pinned an
+# `! Undefined control sequence.` that only the reference engine could raise
+# (umber2-sy8o).
+#
+# The catcode dance is required, not decorative. INITEX starts every character
+# at catcode 12 except the few tex.web section 232 names, so `{` and `}` are
+# *not* grouping characters here and `\def\formatmacro{\relax}` would be a
+# runaway definition rather than a definition. They are restored to 12
+# immediately afterwards so the dumped format still carries INITEX's own
+# catcode table -- `execute` sets no catcodes before its dump either, and a
+# format that silently shipped grouping characters would be a fresh asymmetry
+# in place of the one this fixes.
 dump_source_for_profile() {
   case "$1" in
-    etex-loaded) printf '\\TeXXeTstate=1 \\dump\n' ;;
+    etex-loaded)
+      printf '%s%s%s\n' \
+        '\catcode`\{=1 \catcode`\}=2 \def\formatmacro{\relax}' \
+        '\catcode`\{=12 \catcode`\}=12 ' \
+        '\TeXXeTstate=1 \dump'
+      ;;
     production) printf '\\dump\n' ;;
     *) return 1 ;;
   esac
@@ -471,5 +496,16 @@ else
   done
 fi
 
-warn "ran $ran case(s), skipped $skipped unsupported-profile case(s)"
+warn "ran $ran case(s), skipped $skipped case(s)"
+# A skipped case captured nothing, so exiting 0 would report a run that did no
+# work as a clean one -- and it did exactly that once: a priming job that
+# failed to build its format skipped every case of that profile while this
+# script still succeeded, and the stale captures on disk from the previous run
+# made the no-op look like a successful re-capture. A skip is a failure to
+# capture, so it fails the run. `docs/testing_policy.md`'s rule that a skipped
+# case must never read as a pass applies to the capture step too.
+if [[ "$skipped" -gt 0 ]]; then
+  warn "a skipped case captured nothing; any capture already on disk for it is stale"
+  overall_status=1
+fi
 exit "$overall_status"

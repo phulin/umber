@@ -1413,6 +1413,7 @@ begin if macro_def then scanner_status:=defining
 @y
 begin if macro_def then umber_set_scanner_status(defining)
 @+else umber_set_scanner_status(absorbing);
+umber_trace_start:=null;
 @z
 
 @x [27] Mark the beginning of collected replacement text.
@@ -1433,11 +1434,17 @@ scan_toks:=p;
 @y
 found: umber_set_scanner_status(normal);
 if hash_brace<>0 then store_new_token(hash_brace);
-if macro_def then
-  umber_trace_token_list(1,3,link(umber_trace_start),null)
-else if xpand then
-  umber_trace_token_list(1,5,link(umber_trace_start),null)
-else umber_trace_token_list(1,4,link(umber_trace_start),null);
+{|umber_trace_start| stays |null| when the collection never reached its
+replacement text: section 475's missing-left-brace recovery does |goto found|
+from inside the parameter scan, and a runaway definition ends the same way.
+There is no completed replacement list to observe on those paths, and the
+local is otherwise uninitialized, so |link| of it would read outside |mem|.}
+if umber_trace_start<>null then
+  if macro_def then
+    umber_trace_token_list(1,3,link(umber_trace_start),null)
+  else if xpand then
+    umber_trace_token_list(1,5,link(umber_trace_start),null)
+  else umber_trace_token_list(1,4,link(umber_trace_start),null);
 scan_toks:=p;
 @z
 
