@@ -28,6 +28,7 @@
           "Improper \\hyphenation will be flushed",
           "Not a letter",
           "Bad \\patterns",
+          "l.5 \\patterns{a\\relax",
           "Nonletter",
           "Duplicate pattern",
           "(See Appendix H.)"
@@ -40,6 +41,7 @@
         "terminal-check:Improper \\hyphenation will be flushed=true",
         "terminal-check:Not a letter=true",
         "terminal-check:Bad \\patterns=true",
+        "terminal-check:l.5 \\patterns{a\\relax=true",
         "terminal-check:Nonletter=true",
         "terminal-check:Duplicate pattern=true",
         "terminal-check:(See Appendix H.)=true",

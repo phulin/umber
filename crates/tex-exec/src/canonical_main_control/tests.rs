@@ -5096,6 +5096,27 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
 }
 
 #[test]
+fn bad_patterns_reports_the_live_section_961_source_context() {
+    // TeX82 §961 calls §82's `error` immediately after `get_x_token`
+    // classifies the offending command. The context cursor is therefore
+    // immediately after `\relax`, before scanning resumes.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\n\\patterns{ab\\relax cd}\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! Bad \\patterns.\nl.2 \\patterns{ab\\relax\n                       cd}"),
+        "§82 must render the source cursor at §961's offending command: {output}"
+    );
+}
+
+#[test]
 fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
     // TeX82 §1293's `common_ending: ...; error`, whose §83 dialog prompts
     // `?␣` and whose §86 `S` answer switches to scroll mode.

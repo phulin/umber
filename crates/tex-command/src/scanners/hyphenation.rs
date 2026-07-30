@@ -123,6 +123,8 @@ impl CommandProcessor<'_> {
     }
 
     fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {
+        let context = (kind == HyphenationDataKind::Patterns)
+            .then(|| self.command.output_open_context(&self.state));
         let (message, help): (&str, &[&str]) = match kind {
             HyphenationDataKind::Exceptions => (
                 "Improper \\hyphenation will be flushed",
@@ -138,6 +140,12 @@ impl CommandProcessor<'_> {
         // one here inserts an event before the loop resumes `get_x_token`.
         let mut report = self.state.print_err(message);
         report.help(help);
+        if let Some(context) = context {
+            // §961 reaches §82 while the offending command is still current
+            // and the source cursor is immediately after it. `CommandState`,
+            // not `Universe`, owns that live input stack.
+            report.context(context);
+        }
         report.error();
     }
 }
