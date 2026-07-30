@@ -229,14 +229,18 @@ cargo test -q -p tex-command-stream --test it command_semantic
 
 The one Cargo integration binary discovers independent fixture directories under
 `tests/corpus/command-semantic/<domain>/<fixture>/`; adding a domain or fixture
-does not edit a shared Rust registry or add a top-level integration target. Each versioned local manifest
-binds a tiny source to its catalogue property, exact canonical authority and
-sections, projection kind, short expected observations, and either `pass` or a
-strict `xfail` expectation. Discovery rejects malformed, duplicate, unsafe, or
-unowned cases and sources, nonlocal or untracked files, symlinks, and channel
-files outside their owning fixture directory. A manifest whose short directory name differs from
-its catalogue shard declares `property_domain`; ownership validation remains
-exact.
+does not edit a shared Rust registry or add a top-level integration target. Each
+fixture directory is a closed unit containing exactly one versioned,
+singleton `manifest.json`, its declared TeX source, and every applicable
+committed channel as `expected.<channel>`. Domain directories contain neither
+case manifests nor shared expected-output trees. The local manifest binds the
+tiny source to its catalogue property, exact canonical authority and sections,
+projection kind, short expected observations, and either `pass` or a strict
+`xfail` expectation. Discovery rejects malformed, duplicate, unsafe, or unowned
+cases and sources, nonlocal or untracked files, symlinks, and channel files
+outside their owning fixture directory. A manifest whose short directory name
+differs from its catalogue shard declares `property_domain`; ownership
+validation remains exact.
 
 The corpus contract -- manifest parsing and validation, the bounded canonical
 run, and the projections -- lives in `tex_command_stream::semantic`, not in the
@@ -337,8 +341,8 @@ run produces, and the gate compares all of them alongside the projection:
   commit an Umber self-golden;
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
 - `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
-  A committed `expected/<case-id>.<channel>` file is required for the latter
-  two, and it always holds the pinned reference engine's bytes (see below).
+  A fixture-local `expected.<channel>` file is required for the latter two,
+  and it always holds the pinned reference engine's bytes (see below).
   The corpus commits 280 such files today: 127 terminal, 127 log, and 26 dvi.
   Terminal and log both grew from a minority of cases to nearly every one once
   job framing gave every run a banner, a `**` line, and a page report or
@@ -371,7 +375,7 @@ and `main-control/read-to-definition` -- and
 `only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` pins that
 set by name and re-runs each to prove it still cannot run.
 
-**Every committed `expected/<case-id>.<channel>` file holds the pinned
+**Every committed fixture-local `expected.<channel>` file holds the pinned
 reference engine's bytes -- that is the one meaning a committed channel file
 has, for `file` and `xfail` alike (`umber2-alfh.7`).** `StreamDisposition`
 therefore carries no `authority` field: there is exactly one place a
