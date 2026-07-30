@@ -3783,6 +3783,33 @@ impl OffSaveCloser {
     }
 }
 
+/// TeX82 §1069's `case cur_group of`: the group opener a stray `}` was
+/// probably standing in for.
+///
+/// This is deliberately not [`OffSaveCloser`]. §1064 inserts a closer and says
+/// what it inserted, so its `math_left_group` arm is `\right.` -- a complete
+/// command. §1069 deletes the brace and only names what was forgotten, so its
+/// arm is the bare `\right`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ForgottenGroupOpener {
+    /// `semi_simple_group`.
+    EndGroup,
+    /// `math_shift_group`.
+    MathShift,
+    /// `math_left_group`.
+    Right,
+}
+
+impl ForgottenGroupOpener {
+    fn print(self, report: &mut tex_state::print::ErrorReport<'_>) {
+        match self {
+            Self::EndGroup => report.print_esc("endgroup"),
+            Self::MathShift => report.print_char('$'),
+            Self::Right => report.print_esc("right"),
+        };
+    }
+}
+
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
@@ -4336,8 +4363,13 @@ enum ScannedStep {
     EndSimpleGroup,
     BeginSemiSimpleGroup,
     EndSemiSimpleGroup,
-    ExtraRightBrace,
-    ExtraRightBraceInSemiSimpleGroup,
+    /// TeX82 §1068's `handle_right_brace` for a brace the current group
+    /// cannot account for. `forgotten` is §1069's `case cur_group of` -- the
+    /// opener the brace was probably standing in for -- and `None` is §1068's
+    /// own `bottom_level` arm, "Too many }'s".
+    ExtraRightBrace {
+        forgotten: Option<ForgottenGroupOpener>,
+    },
     /// TeX82 §1186: the closing brace of a `math_group` opened by §1153's
     /// `push_math`, or §1174's `build_choices` closing a `math_choice_group`
     /// opened by §1172/§1174. Applying it only `unsave`s; the nested loop in
@@ -5601,16 +5633,21 @@ fn scan_command(
             cat: Catcode::BeginGroup,
             ..
         } => Ok(ScannedStep::BeginOrdinaryGroup),
+        // TeX82 §1068's `handle_right_brace` sends three of its `cur_group`
+        // cases to §1069's `extra_right_brace`, which names the group opener
+        // the brace was mistaken for; every other unmatched brace is §1068's
+        // own `bottom_level` arm.
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } if innermost_group == Some(GroupKind::SemiSimple) => {
-            Ok(ScannedStep::ExtraRightBraceInSemiSimpleGroup)
-        }
-        Meaning::CharToken {
-            cat: Catcode::EndGroup,
-            ..
-        } => Ok(ScannedStep::ExtraRightBrace),
+        } => Ok(ScannedStep::ExtraRightBrace {
+            forgotten: match innermost_group {
+                Some(GroupKind::SemiSimple) => Some(ForgottenGroupOpener::EndGroup),
+                Some(GroupKind::MathShift) => Some(ForgottenGroupOpener::MathShift),
+                Some(GroupKind::MathLeft) => Some(ForgottenGroupOpener::Right),
+                _ => None,
+            },
+        }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
             Ok(ScannedStep::BeginSemiSimpleGroup)
         }
@@ -9154,8 +9191,7 @@ fn applied_mutation_observation(
         | ScannedStep::EndSimpleGroup
         | ScannedStep::BeginSemiSimpleGroup
         | ScannedStep::EndSemiSimpleGroup
-        | ScannedStep::ExtraRightBrace
-        | ScannedStep::ExtraRightBraceInSemiSimpleGroup
+        | ScannedStep::ExtraRightBrace { .. }
         | ScannedStep::OffSave(..)
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
@@ -12349,7 +12385,7 @@ fn apply_scanned_step(
             schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ExtraRightBrace => {
+        ScannedStep::ExtraRightBrace { forgotten: None } => {
             // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
             let context = command.state.output_open_context(&stores.command_context());
             crate::error_report::report_error(
@@ -12363,24 +12399,23 @@ fn apply_scanned_step(
             );
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::ExtraRightBraceInSemiSimpleGroup => {
+        ScannedStep::ExtraRightBrace {
+            forgotten: Some(forgotten),
+        } => {
             // TeX82 §1069's `extra_right_brace` reports and discards the
-            // mismatched brace. It does not `unsave` the semisimple group.
+            // mismatched brace. It does not `unsave` the group it names.
             let context = command.state.output_open_context(&stores.command_context());
-            report_escaped_error(
-                stores,
-                "Extra }, or forgotten ",
-                "endgroup",
-                "",
-                &[
-                    "I've deleted a group-closing symbol because it seems to be",
-                    "spurious, as in `$x}$'. But perhaps the } is legitimate and",
-                    "you forgot something else, as in `\\hbox{$x}'. In such cases",
-                    "the way to recover is to insert both the forgotten and the",
-                    "deleted material, e.g., by typing `I$}'.",
-                ],
-                context,
-            );
+            let mut report = stores.print_err("Extra }, or forgotten ");
+            forgotten.print(&mut report);
+            report.help(&[
+                "I've deleted a group-closing symbol because it seems to be",
+                "spurious, as in `$x}$'. But perhaps the } is legitimate and",
+                "you forgot something else, as in `\\hbox{$x}'. In such cases",
+                "the way to recover is to insert both the forgotten and the",
+                "deleted material, e.g., by typing `I$}'.",
+            ]);
+            report.context(context);
+            report.error();
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSave(closer) => {

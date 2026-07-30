@@ -3930,6 +3930,28 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
     assert!(stores.input_stream_eof(tex_state::StreamSlot::new(3)));
 }
 
+/// TeX82 §1068's `handle_right_brace` sends `semi_simple_group`,
+/// `math_shift_group` and `math_left_group` to §1069's `extra_right_brace`,
+/// which names the opener the brace was standing in for. Only the remaining
+/// `bottom_level` case is "Too many }'s".
+#[test]
+fn a_stray_right_brace_names_the_group_opener_it_replaced() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\hbox{$x}$}\begingroup}\end");
+    run_to_end(&mut control, &mut stores);
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("! Extra }, or forgotten $."),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("! Extra }, or forgotten \\endgroup."),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("Too many }'s"), "{terminal}");
+}
+
 #[test]
 fn extra_right_brace_in_an_argument_names_the_macro() {
     // TeX82 §395: a bare `}` where an argument was expected is backed up, a
