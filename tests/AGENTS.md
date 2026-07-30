@@ -110,7 +110,11 @@ The `etex-diagnostics/` domain owns bounded e-TeX-only diagnostic command
 microfixtures. Its sessions explicitly install the e-TeX INITEX profile and
 project detached effects, selected unchanged state, and pinned e-TeX/SyncTeX eqtb register selectors.
 
-The `input-expansion` domain owns the twelve audited input and expansion semantic tiers: nine exact passes plus three strict xfails linked to their existing canonical defect beads.
+The `input-expansion/` domain's e-TeX outer-validity EOF case pins the e-TeX
+observer's argument-free §336 diagnostic separately from the TeX82 profile's
+scanner-status-bearing seam.
+
+The `input-expansion` domain owns the thirteen audited input and expansion semantic tiers: ten exact passes plus three strict xfails linked to their existing canonical defect beads.
 
 `tests/corpus/command` contains committed canonical command-core fixtures.
 Each engine/fixture directory carries a canonical contract-v1 `manifest.json`,

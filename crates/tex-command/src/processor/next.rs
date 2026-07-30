@@ -1739,13 +1739,23 @@ impl CommandProcessor<'_> {
     }
 
     fn observe_outer_validity_diagnostic(&mut self, status: &ScannerStatus, at_eof: bool) {
-        let status_name = match status {
-            ScannerStatus::Normal => "normal",
-            ScannerStatus::Skipping(_) => "skipping",
-            ScannerStatus::Defining(_) => "defining",
-            ScannerStatus::Matching(_) => "matching",
-            ScannerStatus::Aligning(_) => "aligning",
-            ScannerStatus::Absorbing(_) => "absorbing",
+        let arguments = if self.command.profile().capabilities().supports_etex() {
+            // The e-TeX 2.6 oracle's §336 seam records the outer-validity
+            // boundary without scanner metadata. Scanner status remains a
+            // separate canonical transition.
+            Vec::new()
+        } else {
+            vec![DiagnosticArgument::Name(
+                match status {
+                    ScannerStatus::Normal => "normal",
+                    ScannerStatus::Skipping(_) => "skipping",
+                    ScannerStatus::Defining(_) => "defining",
+                    ScannerStatus::Matching(_) => "matching",
+                    ScannerStatus::Aligning(_) => "aligning",
+                    ScannerStatus::Absorbing(_) => "absorbing",
+                }
+                .into(),
+            )]
         };
         self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
             severity: "error",
@@ -1754,7 +1764,7 @@ impl CommandProcessor<'_> {
             } else {
                 "outer_validity_control_sequence"
             },
-            arguments: vec![DiagnosticArgument::Name(status_name.into())],
+            arguments,
         }));
         if at_eof && matches!(status, ScannerStatus::Skipping(_)) {
             self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
