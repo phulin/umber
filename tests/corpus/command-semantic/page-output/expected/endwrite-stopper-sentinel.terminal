@@ -1,0 +1,16 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./endwrite-stopper-sentinel.tex MEANING=[undefined]
+! Undefined control sequence.
+<write> BEFORE \endwrite 
+                         AFTER
+...
+l.3 \immediate\write16{BEFORE \endwrite AFTER}
+                                              
+BEFORE AFTER
+! Undefined control sequence.
+l.4 \endwrite
+             
+REPLAYED )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on endwrite-stopper-sentinel.log.
