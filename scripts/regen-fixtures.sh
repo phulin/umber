@@ -900,6 +900,7 @@ bootstrap_tex82_oracle_fixture() {
     cargo run -q -p tex-oracle --bin tex-oracle-bootstrap -- \
       --template "$fixture_dir" \
       --live-directory "${target_dir}/tex82-oracle/${fixture#tex82/}/clean" \
+      --semantic-matrix "$semantic_matrix" \
       --event-stream "${target_dir}/tex82-oracle/${fixture#tex82/}/instrumentable/tex82-events.jsonl" \
       --build-record "${target_dir}/tex82-oracle/build-record.txt" \
       --output "$candidate_dir"
