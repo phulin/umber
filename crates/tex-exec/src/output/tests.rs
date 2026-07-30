@@ -126,6 +126,28 @@ fn fire_up_records_penalty_marks_boundary_and_packages_box255() {
 }
 
 #[test]
+fn fire_up_discards_an_empty_sparse_bot_mark_before_top_mark_assignment() {
+    // e-TeX 2.6 `etex.ch` [26.1396] `fire_up_init` turns an empty prior
+    // `botmarks` pointer into null instead of copying it to `topmarks`.
+    let mut stores = Universe::new();
+    stores.set_page_mark_class(PageMark::Bot, 1, tex_state::ids::TokenListId::EMPTY);
+    assert_eq!(
+        stores.page_mark_class_value(PageMark::Bot, 1),
+        Some(tex_state::ids::TokenListId::EMPTY)
+    );
+
+    update_page_marks_at_fire_up(&mut stores, &[]);
+
+    for mark in [PageMark::Top, PageMark::First, PageMark::Bot] {
+        assert_eq!(stores.page_mark_class_value(mark, 1), None);
+    }
+    assert!(
+        !stores.page_mark_classes().any(|class| class == 1),
+        "the empty sparse mark-class node must be released"
+    );
+}
+
+#[test]
 fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
     let mut stores = Universe::new();
     let old = boxed(&mut stores, false);

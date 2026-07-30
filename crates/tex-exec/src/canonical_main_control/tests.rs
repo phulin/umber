@@ -61,6 +61,30 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
 }
 
 #[test]
+fn etex_fire_up_discards_empty_sparse_botmark_before_enquiry_replay() {
+    // e-TeX 2.6 `etex.ch` [26.1396] discards an empty old `botmarks`
+    // pointer during `fire_up_init`; the later `topmarks` enquiry therefore
+    // must not install a `mark_text` input level.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        include_bytes!("../fixtures/etex-empty-botmark-fire-up.tex"),
+    );
+    let mut observations = ObservationRecorder::default();
+
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert!(
+        !observations.0.iter().any(|event| matches!(
+            event,
+            CommandObservation::Input(record) if record.reason == InputReason::Mark
+        )),
+        "an absent topmarks value must not push or retire a mark-text level"
+    );
+}
+
+#[test]
 fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline() {
     // TeX82 §§262 and 1370: `token_show` prints character tokens through
     // `print`, whose stream selector recognizes `newlinechar` before the

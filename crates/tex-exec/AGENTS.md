@@ -58,6 +58,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   does by latching the session's terminal state instead of returning an
   error. No other handler may recover from it or roll back over it.
 - `src/effects/tests.rs`: canonical-replay tests for stream lifecycle, immediate and deferred effects, and shipout-time special/write/open/close behavior.
+- `src/fixtures/etex-empty-botmark-fire-up.tex`: bounded e-TeX mark-class page-fire-up semantic fixture proving that an empty prior bot mark becomes absent before a later enquiry.
 - `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, runtime-only session command-fuel ownership across detached operations, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
 - `src/job.rs`: TeX's job framing -- the start-up banner (§61/§536), the `**`
   first line (§534), rendering `tex-command`'s drained §537/§362 `(name`/`)`

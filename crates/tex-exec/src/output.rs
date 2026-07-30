@@ -198,8 +198,18 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
     }
 
     for class in classes {
-        let top = stores.page_mark_class(PageMark::Bot, class);
-        stores.set_page_mark_class(PageMark::Top, class, top);
+        // e-TeX 2.6 `etex.ch` [26.1396] `fire_up_init` first discards the
+        // previous top and first marks. The previous bot mark becomes the new
+        // top mark unless its token list is empty; an empty bot mark is made
+        // null so the sparse mark-class node can eventually disappear.
+        let old_bot = stores.page_mark_class_value(PageMark::Bot, class);
+        stores.clear_page_mark_class(PageMark::Top, class);
+        stores.clear_page_mark_class(PageMark::First, class);
+        let top = old_bot.filter(|tokens| *tokens != tex_state::ids::TokenListId::EMPTY);
+        match top {
+            Some(top) => stores.set_page_mark_class(PageMark::Top, class, top),
+            None => stores.clear_page_mark_class(PageMark::Bot, class),
+        }
 
         let mut first = None;
         let mut bot = None;
@@ -223,8 +233,14 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
                 stores.set_page_mark_class(PageMark::Bot, class, bot);
             }
             _ => {
-                stores.set_page_mark_class(PageMark::First, class, top);
-                stores.set_page_mark_class(PageMark::Bot, class, top);
+                if let Some(top) = top {
+                    // e-TeX 2.6 `etex.ch` [26.1397] `fire_up_done`.
+                    stores.set_page_mark_class(PageMark::First, class, top);
+                    stores.set_page_mark_class(PageMark::Bot, class, top);
+                } else {
+                    stores.clear_page_mark_class(PageMark::First, class);
+                    stores.clear_page_mark_class(PageMark::Bot, class);
+                }
             }
         }
     }
