@@ -1,8 +1,7 @@
-bib-invocation-v1
-argv=--output-format=pdf
-argv=basic.bcf
+bib-invocation-v2
+arg=literal:--output-format=pdf
+arg=input:control
 status=2
-input=basic.bcf
+input=control:basic.bcf
 stdout=empty
 stderr=expected.stderr
-artifact=none

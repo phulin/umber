@@ -114,9 +114,10 @@ files.
 invocation cases: BCF success, tool mode, and invalid output-format
 validation. Each directory's `case.inventory` closes its local metadata,
 inputs, and exact outputs through `test_support::git_fixture::ClosedCase`.
-`invocation.case` schema `bib-invocation-v1` pins ordered argv, expected
-status, input roles, stdout/stderr authorities, and the generated
-BBL/transformed-BibTeX artifact authority. Shared source bytes are duplicated
+`invocation.case` schema `bib-invocation-v2` pins ordered typed literal,
+declared-input, and harness-owned-output arguments, expected status,
+stdout/stderr authorities, and the generated BBL/transformed-BibTeX artifact
+authority. Shared source bytes are duplicated
 byte-identically into the cases that consume them; no area-level input or
 output remains authoritative. The owning CLI test discovers only case
 directories in lexical order, executes outputs in a temporary directory, and

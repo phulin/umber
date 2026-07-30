@@ -127,28 +127,17 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
     for name in names {
         let case_relative = area_relative.join(&name);
         let case = ClosedCase::discover(&case_relative).expect("closed bibliography case");
-        let invocation =
-            BibInvocationCase::parse(&case.read_to_string("invocation.case").expect("metadata"));
+        let invocation = BibInvocationCase::parse(
+            &case.read_to_string("invocation.case").expect("metadata"),
+        )
+        .expect("valid invocation metadata");
         let temp = tempfile::tempdir().expect("create isolated bibliography output directory");
         let resolved = invocation
             .resolve(&case, temp.path())
             .expect("validate bibliography invocation roles");
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
         command.arg("bib");
-        for argument in &invocation.argv {
-            if argument == "{output}" {
-                command.arg(
-                    resolved
-                        .artifact
-                        .as_ref()
-                        .expect("output placeholder artifact"),
-                );
-            } else if let Some(input) = resolved.inputs.get(argument) {
-                command.arg(input);
-            } else {
-                command.arg(argument);
-            }
-        }
+        command.args(&resolved.argv);
         let output = command.output().expect("run native bibliography case");
         assert_eq!(output.status.code(), Some(invocation.status), "{name}");
         assert_eq!(
@@ -161,10 +150,9 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
             invocation.expected_channel(&case, &invocation.stderr),
             "{name} stderr"
         );
-        if let Some((_, expected)) = &invocation.artifact {
+        if let Some((artifact, expected)) = &resolved.artifact {
             assert_eq!(
-                fs::read(resolved.artifact.as_ref().expect("artifact path"))
-                    .expect("generated bibliography artifact"),
+                fs::read(artifact).expect("generated bibliography artifact"),
                 case.read(expected).expect("expected bibliography artifact"),
                 "{name} artifact"
             );
@@ -175,68 +163,132 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
 }
 
 struct BibInvocationCase {
-    argv: Vec<String>,
+    argv: Vec<BibArgument>,
     status: i32,
-    inputs: BTreeSet<String>,
+    inputs: BTreeMap<String, String>,
     stdout: String,
     stderr: String,
-    artifact: Option<(String, String)>,
+    outputs: BTreeMap<String, BibOutput>,
+}
+
+enum BibArgument {
+    Literal(String),
+    Input(String),
+    Output(String),
+}
+
+struct BibOutput {
+    actual: String,
+    expected: String,
 }
 
 struct ResolvedBibInvocation {
-    inputs: BTreeMap<String, PathBuf>,
-    artifact: Option<PathBuf>,
+    argv: Vec<String>,
+    artifact: Option<(PathBuf, String)>,
 }
 
 impl BibInvocationCase {
-    fn parse(metadata: &str) -> Self {
+    fn parse(metadata: &str) -> Result<Self, String> {
         let mut lines = metadata.lines();
-        assert_eq!(lines.next(), Some("bib-invocation-v1"));
+        if lines.next() != Some("bib-invocation-v2") {
+            return Err("invocation metadata must begin with bib-invocation-v2".into());
+        }
         let mut argv = Vec::new();
         let mut status = None;
-        let mut inputs = BTreeSet::new();
+        let mut inputs = BTreeMap::new();
         let mut stdout = None;
         let mut stderr = None;
-        let mut artifact = None;
+        let mut outputs = BTreeMap::new();
+        let mut output_names = BTreeSet::new();
         for line in lines {
-            let (key, value) = line.split_once('=').expect("keyed invocation metadata");
+            let (key, value) = line
+                .split_once('=')
+                .ok_or_else(|| format!("unkeyed invocation metadata: {line:?}"))?;
             match key {
-                "argv" => argv.push(value.to_owned()),
-                "status" => {
-                    assert!(status.is_none(), "duplicate status role");
-                    status = Some(value.parse().expect("numeric invocation status"));
+                "arg" => {
+                    let (kind, value) = value
+                        .split_once(':')
+                        .ok_or_else(|| format!("untyped invocation argument: {value:?}"))?;
+                    argv.push(match kind {
+                        "literal" => {
+                            validate_literal_argument(value)?;
+                            BibArgument::Literal(value.to_owned())
+                        }
+                        "input" => BibArgument::Input(checked_role("input", value)?),
+                        "output" => BibArgument::Output(checked_role("output", value)?),
+                        _ => return Err(format!("unknown invocation argument type: {kind:?}")),
+                    });
                 }
-                "input" => assert!(inputs.insert(value.to_owned()), "duplicate input role"),
+                "status" => {
+                    if status.is_some() {
+                        return Err("duplicate status role".into());
+                    }
+                    status = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("invalid invocation status: {value:?}"))?,
+                    );
+                }
+                "input" => {
+                    let (role, payload) = value
+                        .split_once(':')
+                        .ok_or_else(|| format!("input must bind role:payload: {value:?}"))?;
+                    let role = checked_role("input", role)?;
+                    if inputs.insert(role.clone(), payload.to_owned()).is_some() {
+                        return Err(format!("duplicate input role: {role}"));
+                    }
+                }
                 "stdout" => {
-                    assert!(stdout.is_none(), "duplicate stdout role");
+                    if stdout.is_some() {
+                        return Err("duplicate stdout role".into());
+                    }
                     stdout = Some(value.to_owned());
                 }
                 "stderr" => {
-                    assert!(stderr.is_none(), "duplicate stderr role");
+                    if stderr.is_some() {
+                        return Err("duplicate stderr role".into());
+                    }
                     stderr = Some(value.to_owned());
                 }
-                "artifact" if value == "none" => {
-                    assert!(artifact.is_none(), "duplicate artifact role");
-                    artifact = Some(None);
+                "output" => {
+                    let mut fields = value.split(':');
+                    let role = checked_role(
+                        "output",
+                        fields.next().ok_or("missing output role")?,
+                    )?;
+                    let actual = fields.next().ok_or("missing output artifact name")?;
+                    let expected = fields.next().ok_or("missing expected output role")?;
+                    if fields.next().is_some() {
+                        return Err(format!("output has excess fields: {value:?}"));
+                    }
+                    if outputs.contains_key(&role) {
+                        return Err(format!("duplicate output role: {role}"));
+                    }
+                    if !output_names.insert(actual.to_owned()) {
+                        return Err(format!("conflicting output artifact name: {actual}"));
+                    }
+                    outputs.insert(
+                        role,
+                        BibOutput {
+                            actual: actual.to_owned(),
+                            expected: expected.to_owned(),
+                        },
+                    );
                 }
-                "artifact" => {
-                    assert!(artifact.is_none(), "duplicate artifact role");
-                    let (actual, expected) = value
-                        .split_once(':')
-                        .expect("artifact actual:expected roles");
-                    artifact = Some(Some((actual.to_owned(), expected.to_owned())));
-                }
-                _ => panic!("unknown invocation metadata field: {line}"),
+                _ => return Err(format!("unknown invocation metadata field: {line}")),
             }
         }
-        Self {
-            argv,
-            status: status.expect("status role"),
-            inputs,
-            stdout: stdout.expect("stdout role"),
-            stderr: stderr.expect("stderr role"),
-            artifact: artifact.expect("artifact role"),
+        if argv.is_empty() {
+            return Err("invocation argv is empty".into());
         }
+        Ok(Self {
+            argv,
+            status: status.ok_or("missing status role")?,
+            inputs,
+            stdout: stdout.ok_or("missing stdout role")?,
+            stderr: stderr.ok_or("missing stderr role")?,
+            outputs,
+        })
     }
 
     fn expected_channel(&self, case: &ClosedCase, authority: &str) -> Vec<u8> {
@@ -250,49 +302,221 @@ impl BibInvocationCase {
     fn resolve(
         &self,
         case: &ClosedCase,
-        output_root: &Path,
+        workspace: &Path,
     ) -> Result<ResolvedBibInvocation, String> {
-        let inputs = self
+        let input_bytes = self
             .inputs
             .iter()
-            .map(|role| {
-                case.payload_path(role)
-                    .map(|path| (role.clone(), path))
+            .map(|(role, payload)| {
+                case.read(payload)
+                    .map(|bytes| (role.clone(), payload.clone(), bytes))
                     .map_err(|error| format!("invalid input role {role:?}: {error:#}"))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         for (channel, role) in [("stdout", &self.stdout), ("stderr", &self.stderr)] {
             if role != "empty" {
                 case.payload_path(role)
                     .map_err(|error| format!("invalid {channel} role {role:?}: {error:#}"))?;
             }
         }
-        let output_placeholders = self
+        let mut input_paths = BTreeMap::new();
+        for (role, payload, _) in &input_bytes {
+            let path = safe_artifact_path(workspace, payload)?;
+            input_paths.insert(role.clone(), path);
+        }
+        let mut output_paths = BTreeMap::new();
+        for (role, output) in &self.outputs {
+            case.payload_path(&output.expected).map_err(|error| {
+                format!(
+                    "invalid expected output role {:?}: {error:#}",
+                    output.expected
+                )
+            })?;
+            if input_bytes.iter().any(|(_, payload, _)| payload == &output.actual) {
+                return Err(format!(
+                    "output artifact collides with staged input: {}",
+                    output.actual
+                ));
+            }
+            output_paths.insert(
+                role.clone(),
+                safe_artifact_path(workspace, &output.actual)?,
+            );
+        }
+        let mut output_uses = BTreeSet::new();
+        let argv = self
             .argv
             .iter()
-            .filter(|argument| argument.as_str() == "{output}")
-            .count();
-        let artifact = match &self.artifact {
-            Some((actual, expected)) => {
-                if output_placeholders != 1 {
-                    return Err(format!(
-                        "artifact invocation requires exactly one output placeholder, found {output_placeholders}"
-                    ));
+            .map(|argument| match argument {
+                BibArgument::Literal(value) => Ok(value.clone()),
+                BibArgument::Input(role) => input_paths
+                    .get(role)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .ok_or_else(|| format!("undeclared input argument role: {role}")),
+                BibArgument::Output(role) => {
+                    if !output_uses.insert(role) {
+                        return Err(format!("duplicate output argument role: {role}"));
+                    }
+                    output_paths
+                        .get(role)
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .ok_or_else(|| format!("undeclared output argument role: {role}"))
                 }
-                case.payload_path(expected).map_err(|error| {
-                    format!("invalid expected artifact role {expected:?}: {error:#}")
-                })?;
-                Some(safe_artifact_path(output_root, actual)?)
-            }
-            None => {
-                if output_placeholders != 0 {
-                    return Err("artifact-free invocation contains an output placeholder".into());
-                }
-                None
-            }
-        };
-        Ok(ResolvedBibInvocation { inputs, artifact })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if output_uses.len() != output_paths.len() {
+            return Err("declared output role is absent from argv".into());
+        }
+        if self.outputs.len() > 1 {
+            return Err("bibliography invocation supports at most one output role".into());
+        }
+        for (role, payload, bytes) in input_bytes {
+            fs::write(
+                input_paths.get(&role).expect("validated input path"),
+                bytes,
+            )
+            .map_err(|error| format!("stage isolated input {payload:?}: {error}"))?;
+        }
+        let artifact = self.outputs.iter().next().map(|(role, output)| {
+            (
+                output_paths.get(role).expect("validated output").clone(),
+                output.expected.clone(),
+            )
+        });
+        Ok(ResolvedBibInvocation { argv, artifact })
     }
+}
+
+fn checked_role(kind: &str, role: &str) -> Result<String, String> {
+    if role.is_empty()
+        || !role
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(format!("{kind} role is not a normalized identifier: {role:?}"));
+    }
+    Ok(role.to_owned())
+}
+
+fn validate_literal_argument(value: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    let path_bearing = path.is_absolute()
+        || value.contains(['/', '\\'])
+        || value == "."
+        || value == ".."
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || (!value.starts_with('-') && path.extension().is_some());
+    if value.is_empty() || path_bearing {
+        return Err(format!(
+            "literal argument must not carry filesystem authority: {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn bibliography_typed_arguments_reject_path_authority_and_undeclared_roles() {
+    for literal in [
+        "ambient.bib",
+        "/tmp/ambient.bib",
+        "../ambient.bib",
+        "./ambient.bib",
+        "nested/ambient.bib",
+        ".",
+    ] {
+        let metadata = format!(
+            "bib-invocation-v2\narg=literal:{literal}\nstatus=0\nstdout=empty\nstderr=empty\n"
+        );
+        assert!(
+            BibInvocationCase::parse(&metadata).is_err(),
+            "path-bearing literal accepted: {literal:?}"
+        );
+    }
+
+    let case = ClosedCase::discover("tests/corpus/bib/invocation/bcf-success")
+        .expect("closed bibliography case");
+    let invocation = BibInvocationCase::parse(
+        "bib-invocation-v2\n\
+         arg=input:ambient\n\
+         status=0\n\
+         stdout=empty\n\
+         stderr=empty\n",
+    )
+    .expect("syntactically valid undeclared role");
+    let workspace = tempfile::tempdir().expect("isolated workspace");
+    assert!(
+        invocation.resolve(&case, workspace.path()).is_err(),
+        "undeclared input role accepted"
+    );
+}
+
+#[test]
+fn bibliography_typed_arguments_reject_duplicate_and_conflicting_outputs() {
+    for outputs in [
+        "output=result:one.bbl:expected.bbl\noutput=result:two.bbl:expected.bbl\n",
+        "output=first:result.bbl:expected.bbl\noutput=second:result.bbl:expected.bbl\n",
+    ] {
+        let metadata = format!(
+            "bib-invocation-v2\narg=literal:ordinary\nstatus=0\nstdout=empty\nstderr=empty\n{outputs}"
+        );
+        assert!(
+            BibInvocationCase::parse(&metadata).is_err(),
+            "duplicate/conflicting output accepted"
+        );
+    }
+}
+
+#[test]
+fn bibliography_typed_arguments_materialize_literals_and_declared_roles() {
+    let case = ClosedCase::discover("tests/corpus/bib/invocation/bcf-success")
+        .expect("closed bibliography case");
+    let invocation = BibInvocationCase::parse(
+        "bib-invocation-v2\n\
+         arg=literal:ordinary\n\
+         arg=input:control\n\
+         arg=output:artifact\n\
+         status=0\n\
+         input=control:basic.bcf\n\
+         stdout=empty\n\
+         stderr=empty\n\
+         output=artifact:result.bbl:expected.bbl\n",
+    )
+    .expect("typed invocation");
+    let workspace = tempfile::tempdir().expect("isolated workspace");
+    let resolved = invocation
+        .resolve(&case, workspace.path())
+        .expect("materialized invocation");
+    assert_eq!(resolved.argv[0], "ordinary");
+    assert_eq!(
+        Path::new(&resolved.argv[1]).parent(),
+        Some(workspace.path().canonicalize().expect("workspace").as_path())
+    );
+    assert_eq!(
+        fs::read(&resolved.argv[1]).expect("staged declared input"),
+        case.read("basic.bcf").expect("authority input")
+    );
+    assert_eq!(
+        Path::new(&resolved.argv[2]).parent(),
+        Some(workspace.path().canonicalize().expect("workspace").as_path())
+    );
+}
+
+#[test]
+fn failing_path_literal_cannot_touch_an_ambient_sentinel() {
+    let ambient = tempfile::tempdir().expect("ambient directory");
+    let sentinel = ambient.path().join("ambient.bib");
+    fs::write(&sentinel, b"untouched sentinel\n").expect("ambient sentinel");
+    let metadata = format!(
+        "bib-invocation-v2\narg=literal:{}\nstatus=0\nstdout=empty\nstderr=empty\n",
+        sentinel.display()
+    );
+
+    assert!(BibInvocationCase::parse(&metadata).is_err());
+    assert_eq!(
+        fs::read(&sentinel).expect("ambient sentinel"),
+        b"untouched sentinel\n"
+    );
 }
 
 fn safe_artifact_path(root: &Path, name: &str) -> Result<PathBuf, String> {
