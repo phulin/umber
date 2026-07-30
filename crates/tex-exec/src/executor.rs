@@ -103,18 +103,7 @@ const RUNAWAY_RECOVERY_HELP: &[&str] = &[
 /// display ends with it, which is what the help text means by "the control
 /// sequence at the end of the top line".
 pub(crate) fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
-    report_input_error(
-        input,
-        stores,
-        "Undefined control sequence",
-        &[
-            "The control sequence at the end of the top line",
-            "of your error message was never \\def'ed. If you have",
-            "misspelled it (e.g., `\\hobx'), type `I' and the correct",
-            "spelling (e.g., `I\\hbox'). Otherwise just continue,",
-            "and I'll forget about whatever was undefined.",
-        ],
-    );
+    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores);
 }
 
 /// tex.web §398's `Report an improper use of the macro and abort`.

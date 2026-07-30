@@ -9297,9 +9297,13 @@ fn canonical_illegal_prefix_reports_and_replays_the_command_once() {
 
     assert_eq!(universe.count(0), 1, "execution continues after back_error");
     let output = terminal_text(&universe);
+    // §1212's `back_error` reaches §82, whose context display echoes the
+    // source line -- so the literal `{replayed}` appears once in the echo on
+    // top of the bare word the executed `\message` writes. Counting every
+    // occurrence would count the echo as a second execution.
+    let executed = output.matches("replayed").count() - output.matches("{replayed}").count();
     assert_eq!(
-        output.matches("replayed").count(),
-        1,
+        executed, 1,
         "§1212 backs the rejected command up exactly once: {output}"
     );
     assert!(

@@ -34,20 +34,8 @@
       "channels": {
         "events": 208,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 4, "expected": "<write> BEFORE \\endwrite ", "actual": "BEFORE AFTER" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 5,
-            "expected": "<write> BEFORE \\endwrite ",
-            "actual": "The control sequence at the end of the top line"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

@@ -200,18 +200,7 @@ pub(crate) fn take_last_box(
 /// display ends the top line with it, which is what the third help line means
 /// by "the control sequence at the end of the top line".
 fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
-    crate::error_report::report_input_error(
-        input,
-        stores,
-        "Undefined control sequence",
-        &[
-            "The control sequence at the end of the top line",
-            "of your error message was never \\def'ed. If you have",
-            "misspelled it (e.g., `\\hobx'), type `I' and the correct",
-            "spelling (e.g., `I\\hbox'). Otherwise just continue,",
-            "and I'll forget about whatever was undefined.",
-        ],
-    );
+    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores);
 }
 
 /// TeX.web §1080's two `\lastbox` refusals, opened by §72's `you_cant`

@@ -1788,10 +1788,10 @@ fn frozen_undefined_control_sequence_reports_then_resumes_source_once() {
         }
     }
     assert!(universe.symbol("never").is_none());
-    assert_eq!(
-        command.take_semantic_diagnostics(),
-        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
-    );
+    assert!(matches!(
+        command.take_semantic_diagnostics().as_slice(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+    ));
     assert!(command.take_semantic_diagnostics().is_empty());
 
     let records = command_and_diagnostic_observations(&recorder.0);
@@ -1858,10 +1858,10 @@ fn etex_undefined_recovery_retires_macro_without_observer_diagnostic() {
             }
         );
     }
-    assert_eq!(
-        command.take_semantic_diagnostics(),
-        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
-    );
+    assert!(matches!(
+        command.take_semantic_diagnostics().as_slice(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+    ));
     assert!(matches!(
         command_and_diagnostic_observations(&recorder.0).as_slice(),
         [
@@ -1930,10 +1930,10 @@ fn etex_undefined_semantic_microfixture_omits_observer_diagnostic() {
             }
         );
     }
-    assert_eq!(
-        command.take_semantic_diagnostics(),
-        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
-    );
+    assert!(matches!(
+        command.take_semantic_diagnostics().as_slice(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+    ));
     assert!(matches!(
         command_and_diagnostic_observations(&recorder.0).as_slice(),
         [
@@ -1986,16 +1986,18 @@ fn undefined_semantic_diagnostic_survives_unobserved_execution_and_snapshot_retr
         command.take_semantic_diagnostics()
     };
 
-    assert_eq!(
-        run(&mut command, &mut runtime, &mut universe, &mut capabilities),
-        [crate::CommandSemanticDiagnostic::UndefinedControlSequence]
-    );
+    assert!(matches!(
+        run(&mut command, &mut runtime, &mut universe, &mut capabilities).as_slice(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+    ));
     assert!(command.take_semantic_diagnostics().is_empty());
 
     command.rollback(snapshot).expect("rollback succeeds");
-    assert_eq!(
-        run(&mut command, &mut runtime, &mut universe, &mut capabilities),
-        [crate::CommandSemanticDiagnostic::UndefinedControlSequence],
+    assert!(
+        matches!(
+            run(&mut command, &mut runtime, &mut universe, &mut capabilities).as_slice(),
+            [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+        ),
         "rollback replays the command-owned semantic diagnostic exactly once"
     );
 }

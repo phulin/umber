@@ -4939,12 +4939,16 @@ fn dispatch_main_control_command(
             // erroneous prefixes and return>`: §209's partition, not a
             // hand-listed set of assignment families.
             if !tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
-                diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
-                    tex_command::PrintCommand::from_current(&command),
-                ));
+                let printed = tex_command::PrintCommand::from_current(&command);
                 // §1212's `back_error`: the substantive command is retained
                 // and re-delivered without the discarded prefixes.
                 processor.back_input(command).map_err(command_error)?;
+                // `back_error` is `back_input` *then* `error`, so §82 renders
+                // the context with the backed-up level already on the stack.
+                diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
+                    printed,
+                    processor.error_context(),
+                ));
                 return Ok(ScannedStep::Continue);
             }
         }
@@ -4965,6 +4969,7 @@ fn dispatch_main_control_command(
         {
             diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
                 tex_command::PrintCommand::from_current(&command),
+                processor.error_context(),
             ));
         }
         // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --
@@ -11266,11 +11271,13 @@ fn apply_scanned_step(
                     ..
                 } => {
                     if missing_to {
+                        let context = command.state.output_open_context(&stores.command_context());
                         let mut report = stores.print_err("Missing `to' inserted");
                         report.help(&[
                             "You should have said `\\read<number> to \\cs'.",
                             "I'm going to look for the \\cs now.",
                         ]);
+                        report.context(context);
                         report.error();
                     }
                     let parameters = stores.intern_token_list(&[]);
@@ -11546,11 +11553,13 @@ fn apply_scanned_step(
             // so the target is provably unwritten on this path.
             match apply_arithmetic(primitive, target, operand, global, stores) {
                 Err(ExecError::ArithmeticOverflow) => {
+                    let context = command.state.output_open_context(&stores.command_context());
                     let mut report = stores.print_err("Arithmetic overflow");
                     report.help(&[
                         "I can't carry out that multiplication or division,",
                         "since the result is out of range.",
                     ]);
+                    report.context(context);
                     report.error();
                 }
                 other => other?,
@@ -11563,9 +11572,11 @@ fn apply_scanned_step(
             // to replay a pending `\afterassignment` token.
             let target = tex_command::print_cmd_chr_text(&stores.command_context(), target);
             let primitive = printed_command(stores, Meaning::UnexpandablePrimitive(primitive));
+            let context = command.state.output_open_context(&stores.command_context());
             let mut report = stores.print_err("You can't use `");
             report.print(&target).print("' after ").print(&primitive);
             report.help(&["I'm forgetting what you said and not changing anything."]);
+            report.context(context);
             report.error();
             Ok(ReplayStep::Continue)
         }
@@ -12103,11 +12114,13 @@ fn apply_scanned_step(
             }
         }
         ScannedStep::UndefinedControlSequence => {
-            crate::diagnostics::report_undefined_control_sequence(stores);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_undefined_control_sequence(stores, Some(context));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MisplacedAlignmentDelimiter { token } => {
-            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token);
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Mark { class, tokens } => {
@@ -12524,12 +12537,14 @@ fn apply_scanned_step(
                     || modes.current_list().incomplete_fraction().is_some();
                 if has_formula {
                     let primitive = if vertical { "\\valign" } else { "\\halign" };
+                    let context = command.state.output_open_context(&stores.command_context());
                     let mut report = stores.print_err(&format!("Improper {primitive} inside $$'s"));
                     report.help(&[
                         "Displays can use special alignments (like \\eqalignno)",
                         "only if nothing but the alignment itself is between $$'s.",
                         "So I've deleted the formulas that preceded this alignment.",
                     ]);
+                    report.context(context);
                     report.error();
                     let mut list = modes.current_list_mutation();
                     list.take_nodes();
@@ -14090,10 +14105,10 @@ enum PendingDiagnostic {
     /// TeX82 §§433-§437's shared `print_err`/`help2`/`int_error`.
     RestrictedInteger(tex_command::RestrictedIntegerRecovery),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
-    PrefixOnNonPrefixedCommand(tex_command::PrintCommand),
+    PrefixOnNonPrefixedCommand(tex_command::PrintCommand, String),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
     /// irrelevant>`.
-    IrrelevantLongOuterPrefix(tex_command::PrintCommand),
+    IrrelevantLongOuterPrefix(tex_command::PrintCommand, String),
 }
 
 /// tex.web §298's `print_cmd_chr` for the meanings the reports above name.
@@ -14120,8 +14135,8 @@ fn report_pending_diagnostics(
     for diagnostic in diagnostics {
         match diagnostic {
             PendingDiagnostic::Command(
-                tex_command::CommandSemanticDiagnostic::UndefinedControlSequence,
-            ) => crate::diagnostics::report_undefined_control_sequence(stores),
+                tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
+            ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context)),
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch(symbol),
             ) => {
@@ -14160,14 +14175,15 @@ fn report_pending_diagnostics(
                     &recovery.context,
                 )?;
             }
-            PendingDiagnostic::PrefixOnNonPrefixedCommand(command) => {
+            PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use a prefix with `");
                 report.print(&command).print_char('\'');
                 report.help(&["I'll pretend you didn't say \\long or \\outer or \\global."]);
+                report.context(context);
                 report.error();
             }
-            PendingDiagnostic::IrrelevantLongOuterPrefix(command) => {
+            PendingDiagnostic::IrrelevantLongOuterPrefix(command, context) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use `");
                 report
@@ -14178,6 +14194,7 @@ fn report_pending_diagnostics(
                     .print(&command)
                     .print_char('\'');
                 report.help(&["I'll pretend you didn't say \\long or \\outer here."]);
+                report.context(context);
                 report.error();
             }
         }

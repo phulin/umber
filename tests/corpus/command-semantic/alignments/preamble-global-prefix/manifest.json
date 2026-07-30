@@ -26,20 +26,8 @@
       "channels": {
         "events": 368,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 4, "expected": "<to be read again> ", "actual": "[1] )" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 5,
-            "expected": "<to be read again> ",
-            "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

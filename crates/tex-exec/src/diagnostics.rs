@@ -90,7 +90,14 @@ use crate::{ExecError, push_tokens, push_traced_tokens};
 use crate::{Mode, ModeNest};
 
 /// TeX82 §370's `Complain about an undefined macro` report.
-pub(crate) fn report_undefined_control_sequence(stores: &mut Universe) {
+///
+/// §370 reaches §82 with the offending control sequence still the last thing
+/// read, so its context display ends the top line with it -- which is what
+/// the help text means by "the control sequence at the end of the top line".
+/// A caller that cannot supply that display passes `None` rather than an
+/// empty string, so the report omits the context instead of printing a blank
+/// one.
+pub(crate) fn report_undefined_control_sequence(stores: &mut Universe, context: Option<String>) {
     let mut report = stores.print_err("Undefined control sequence");
     report.help(&[
         "The control sequence at the end of the top line",
@@ -99,11 +106,28 @@ pub(crate) fn report_undefined_control_sequence(stores: &mut Universe) {
         "spelling (e.g., `I\\hbox'). Otherwise just continue,",
         "and I'll forget about whatever was undefined.",
     ]);
+    if let Some(context) = context {
+        report.context(context);
+    }
     report.error();
 }
 
+/// [`report_undefined_control_sequence`] for a caller holding a live gullet
+/// input stack rather than the canonical command core's cursor.
+pub(crate) fn report_undefined_control_sequence_in_input(
+    input: &InputStack,
+    stores: &mut Universe,
+) {
+    let context = show_context(stores, &input.summary());
+    report_undefined_control_sequence(stores, Some(context));
+}
+
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
-pub(crate) fn report_misplaced_alignment_delimiter(stores: &mut Universe, token: Token) {
+pub(crate) fn report_misplaced_alignment_delimiter(
+    stores: &mut Universe,
+    token: Token,
+    context: Option<String>,
+) {
     let delimiter = tex_command::command_token_text(&mut stores.command_context(), token);
     let tab_mark = matches!(
         token,
@@ -131,6 +155,9 @@ pub(crate) fn report_misplaced_alignment_delimiter(stores: &mut Universe, token:
             "you're probably due for more error messages, and you",
             "might try typing `S' now just to see what is salvageable.",
         ]);
+    }
+    if let Some(context) = context {
+        report.context(context);
     }
     report.error();
 }

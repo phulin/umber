@@ -101,7 +101,12 @@ pub struct CommandState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CommandSemanticDiagnostic {
     /// TeX82 §370's undefined-control-sequence expansion error.
-    UndefinedControlSequence,
+    ///
+    /// §370 reports through §82, which renders `show_context` against the
+    /// command stack that is still live inside the borrowed processor
+    /// episode. The display therefore crosses the deferred-report boundary
+    /// with the diagnostic, exactly as [`Self::MissingNumber`]'s does.
+    UndefinedControlSequence { context: String },
     /// TeX82 §391's compulsory macro-parameter-text mismatch.
     MacroPrefixMismatch(tex_state::interner::Symbol),
     /// TeX82 §415's missing-number recovery, deferred only when an earlier

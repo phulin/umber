@@ -41,16 +41,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 4, "expected": "l.5 \\count2", "actual": "[1.10] )" }
+          "mismatch": { "line": 6, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 5,
-            "expected": "l.5 \\count2",
-            "actual": "The control sequence at the end of the top line"
-          }
+          "mismatch": { "line": 13, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
         },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }

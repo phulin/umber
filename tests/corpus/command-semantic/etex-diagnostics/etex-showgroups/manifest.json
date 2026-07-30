@@ -35,17 +35,13 @@
       "channels": {
         "events": 45,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 11, "expected": "<to be read again> ", "actual": "! OK (see the transcript file)." }
-        },
+        "terminal": { "kind": "file" },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.17",
           "mismatch": {
-            "line": 21,
-            "expected": "<to be read again> ",
+            "line": 25,
+            "expected": "I'll pretend you didn't say \\long or \\outer or \\global or \\protected.",
             "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
           }
         },

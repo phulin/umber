@@ -648,9 +648,10 @@ impl CommandProcessor<'_> {
             // inserting a replacement token; §380 then restarts its one
             // expanded-fetch loop at the following input token.
             Meaning::Undefined => {
+                let context = self.command.output_open_context(&self.state);
                 self.command
                     .semantic_diagnostics
-                    .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence);
+                    .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context });
                 if !self.command.profile().capabilities().supports_etex() {
                     // TeX82 §370 still owns the recoverable user-visible
                     // error above. The pinned e-TeX 2.6 observer has no
