@@ -83,12 +83,15 @@ enum Failure {
     Write(usize),
     Rename(usize),
     RenameFrom(usize),
+    Remove(usize),
+    RemoveFrom(usize),
 }
 
 struct InjectedFs {
     failure: Failure,
     writes: Cell<usize>,
     renames: Cell<usize>,
+    removals: Cell<usize>,
 }
 
 impl InjectedFs {
@@ -97,6 +100,7 @@ impl InjectedFs {
             failure,
             writes: Cell::new(0),
             renames: Cell::new(0),
+            removals: Cell::new(0),
         }
     }
 
@@ -111,6 +115,10 @@ impl InjectedFs {
 }
 
 impl MigrationFs for InjectedFs {
+    fn create_dir(&self, path: &Path) -> Result<()> {
+        RealFs.create_dir(path)
+    }
+
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         RealFs.create_dir_all(path)
     }
@@ -137,6 +145,17 @@ impl MigrationFs for InjectedFs {
     }
 
     fn remove_dir_all(&self, path: &Path) -> Result<()> {
+        let current = self.removals.get() + 1;
+        self.removals.set(current);
+        match self.failure {
+            Failure::Remove(at) if current == at => {
+                bail!("injected remove failure at operation {current}")
+            }
+            Failure::RemoveFrom(at) if current >= at => {
+                bail!("injected persistent remove failure at operation {current}")
+            }
+            _ => {}
+        }
         RealFs.remove_dir_all(path)
     }
 }
@@ -217,4 +236,49 @@ fn restoration_failure_reports_both_errors_and_preserves_backups() {
         .expect("retained transaction");
     assert!(transaction.join("backup/sample/first.src").is_file());
     assert!(temp.path().join("sample/first").is_dir());
+}
+
+#[test]
+fn post_commit_cleanup_failure_restores_authorities_and_retry_succeeds() {
+    let temp = fixture();
+    let error = run_with_fs(
+        temp.path(),
+        SPEC,
+        Mode::Apply,
+        &InjectedFs::new(Failure::Remove(1)),
+    )
+    .expect_err("cleanup failure");
+    let message = format!("{error:#}");
+    assert!(message.contains("cleanup failed after swaps committed"));
+    assert!(message.contains("every authority was restored"));
+    assert!(temp.path().join("sample/first.src").is_file());
+    assert!(!temp.path().join("sample/first").exists());
+    run(temp.path(), SPEC, Mode::Apply).expect("retry");
+}
+
+#[test]
+fn rollback_cleanup_failure_reports_retained_unique_root_and_retry_succeeds() {
+    let temp = fixture();
+    let error = run_with_fs(
+        temp.path(),
+        SPEC,
+        Mode::Apply,
+        &InjectedFs::new(Failure::RemoveFrom(1)),
+    )
+    .expect_err("cleanup failure");
+    let message = format!("{error:#}");
+    assert!(message.contains("recoverable transaction retained at"));
+    assert!(message.contains("remove restored transaction root"));
+    assert!(temp.path().join("sample/first.src").is_file());
+    let retained = std::fs::read_dir(temp.path())
+        .expect("corpus")
+        .map(|entry| entry.expect("entry").path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".fixture-layout-transaction-"))
+        })
+        .expect("retained unique root");
+    assert!(retained.is_dir());
+    run(temp.path(), SPEC, Mode::Apply).expect("retry beside retained root");
 }

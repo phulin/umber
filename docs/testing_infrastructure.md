@@ -44,12 +44,15 @@ source, every exact local support input, and each applicable
 read-only deterministic migration inventory. `--apply` stages and byte-checks
 the whole requested plan before mutation, then commits through recoverable
 authority backups and case-directory swaps. Any commit failure reverses all
-completed swaps; incomplete restoration retains named backups and reports the
-original and restoration failures together. The declarative mapping schema
+completed swaps, including failure to clean the transaction after its swaps.
+Transaction roots are uniquely allocated beside the corpus, so a retained
+restored root is reported but cannot collide with a retry. Incomplete
+restoration retains named backups and reports the original and restoration
+failures together. The declarative mapping schema
 does not assume TeX extensions or conventional output names. Repeating either
 mode after success or successful rollback returns the same case/byte/SHA-256
-report. The routine `test-support` gate
-also equates those directory trees with Git's regular tracked-file inventory,
+report. The routine `test-support` gate uses the shared `ClosedCase` validator
+to equate each directory with Git's regular tracked-file inventory,
 so ignored, untracked, symlinked, nonlocal, target-backed, missing, and extra
 authorities fail rather than escaping discovery.
 The WASM target reserves a 4 MiB linear-memory stack because retained compile

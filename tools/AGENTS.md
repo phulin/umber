@@ -11,8 +11,11 @@ writes. `--apply` stages and byte-verifies the entire requested plan before any
 authority mutation. Its commit renames every old authority into a named
 transaction backup and installs the staged cases; a failure reverses every
 completed rename, reports every restoration failure, and retains recoverable
-backups when restoration is incomplete. A completed apply and a successfully
-rolled-back apply are both safe to repeat. The reusable specification declares
+backups when restoration is incomplete. Transaction roots are atomically
+allocated unique siblings. Cleanup is part of commit: cleanup failure reverses
+the swaps, and a restored root that cannot be removed is reported precisely
+without blocking a retry. A completed apply and a successfully rolled-back
+apply are both safe to repeat. The reusable specification declares
 case discovery, relative sources and destinations, roles, local metadata,
 shared-input copies, and output mappings without assuming `.tex` or
 `expected.<channel>` names.

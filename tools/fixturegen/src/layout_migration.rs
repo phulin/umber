@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
@@ -404,16 +405,29 @@ struct Transaction<'a> {
 
 impl<'a> Transaction<'a> {
     fn new(corpus: &'a Path, plan: MigrationPlan, io: &'a dyn MigrationFs) -> Result<Self> {
-        let root = corpus.join(format!(
-            ".fixture-layout-transaction-{}",
-            std::process::id()
-        ));
-        if root.exists() {
-            bail!(
-                "transaction collision {}; inspect or rename its recoverable backups",
-                root.display()
-            );
+        static NEXT_TRANSACTION: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_TRANSACTION.fetch_add(1, Ordering::Relaxed);
+        let mut root = None;
+        for attempt in 0..1_000_u64 {
+            let candidate = corpus.join(format!(
+                ".fixture-layout-transaction-{}-{sequence}-{attempt}",
+                std::process::id()
+            ));
+            match io.create_dir(&candidate) {
+                Ok(()) => {
+                    root = Some(candidate);
+                    break;
+                }
+                Err(error) if candidate.exists() => continue,
+                Err(error) => return Err(error),
+            }
         }
+        let root = root.ok_or_else(|| {
+            anyhow!(
+                "could not allocate a unique fixture-layout transaction beside {}",
+                corpus.display()
+            )
+        })?;
         Ok(Self {
             corpus,
             plan,
@@ -448,25 +462,22 @@ impl<'a> Transaction<'a> {
             Ok(())
         })();
         if let Err(original) = commit {
-            let failures = self.rollback(&installed, &backed_up);
-            if failures.is_empty() {
-                let _ = self.io.remove_dir_all(&self.root);
-                return Err(
-                    original.context("migration commit failed; every authority was restored")
-                );
-            }
-            bail!(
-                "migration commit failed: {original:#}; rollback failures: {}; recoverable transaction retained at {}",
-                failures.join("; "),
-                self.root.display()
-            );
+            return Err(self.rollback_error(
+                "migration commit failed",
+                original,
+                &installed,
+                &backed_up,
+            ));
         }
-        self.io.remove_dir_all(&self.root).with_context(|| {
-            format!(
-                "migration committed, but cleanup failed; remove {}",
-                self.root.display()
-            )
-        })
+        if let Err(cleanup) = self.io.remove_dir_all(&self.root) {
+            return Err(self.rollback_error(
+                "migration cleanup failed after swaps committed",
+                cleanup,
+                &installed,
+                &backed_up,
+            ));
+        }
+        Ok(())
     }
 
     fn stage_all(&self) -> Result<()> {
@@ -502,10 +513,42 @@ impl<'a> Transaction<'a> {
             }
             Ok(())
         })();
-        if result.is_err() {
-            let _ = self.io.remove_dir_all(&self.root);
+        if let Err(original) = result {
+            return match self.io.remove_dir_all(&self.root) {
+                Ok(()) => Err(original),
+                Err(cleanup) => bail!(
+                    "migration staging failed: {original:#}; transaction cleanup failed: {cleanup:#}; recoverable transaction retained at {}",
+                    self.root.display()
+                ),
+            };
         }
-        result
+        Ok(())
+    }
+
+    fn rollback_error(
+        &self,
+        operation: &str,
+        original: anyhow::Error,
+        installed: &[(PathBuf, PathBuf)],
+        backed_up: &[(PathBuf, PathBuf)],
+    ) -> anyhow::Error {
+        let mut failures = self.rollback(installed, backed_up);
+        if failures.is_empty() {
+            match self.io.remove_dir_all(&self.root) {
+                Ok(()) => {
+                    return original.context(format!("{operation}; every authority was restored"));
+                }
+                Err(error) => failures.push(format!(
+                    "remove restored transaction root {}: {error:#}",
+                    self.root.display()
+                )),
+            }
+        }
+        anyhow!(
+            "{operation}: {original:#}; rollback failures: {}; recoverable transaction retained at {}",
+            failures.join("; "),
+            self.root.display()
+        )
     }
 
     fn rollback(
@@ -558,6 +601,7 @@ impl<'a> Transaction<'a> {
 }
 
 trait MigrationFs {
+    fn create_dir(&self, path: &Path) -> Result<()>;
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> Result<()>;
@@ -567,6 +611,9 @@ trait MigrationFs {
 struct RealFs;
 
 impl MigrationFs for RealFs {
+    fn create_dir(&self, path: &Path) -> Result<()> {
+        fs::create_dir(path).with_context(|| format!("create unique {}", path.display()))
+    }
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))
     }

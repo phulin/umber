@@ -33,6 +33,26 @@ impl ClosedCase {
     /// should use [`Self::discover`] so a test binary reused across worktrees
     /// never retains its builder checkout as fixture authority.
     pub fn discover_at(repository: &Path, case_relative: impl AsRef<Path>) -> Result<Self> {
+        Self::discover_inner(repository, case_relative.as_ref(), true)
+    }
+
+    /// Validates a closed tracked directory whose payload inventory is owned
+    /// directly by Git rather than by a `case.inventory` manifest.
+    pub fn discover_tracked(case_relative: impl AsRef<Path>) -> Result<Self> {
+        let repository = crate::repository_root_at(&std::env::current_dir()?)?;
+        Self::discover_tracked_at(&repository, case_relative)
+    }
+
+    /// Validates an unmanifested closed tracked directory in `repository`.
+    pub fn discover_tracked_at(repository: &Path, case_relative: impl AsRef<Path>) -> Result<Self> {
+        Self::discover_inner(repository, case_relative.as_ref(), false)
+    }
+
+    fn discover_inner(
+        repository: &Path,
+        case_relative: &Path,
+        has_inventory: bool,
+    ) -> Result<Self> {
         let repository = repository
             .canonicalize()
             .with_context(|| format!("canonicalize fixture authority {}", repository.display()))?;
@@ -44,7 +64,7 @@ impl ClosedCase {
             selected_root.display()
         );
 
-        let case_relative = checked_relative(case_relative.as_ref())?;
+        let case_relative = checked_relative(case_relative)?;
         let root = checked_directory_ancestry(&repository, &case_relative)?;
         ensure!(
             git_root(&root)? == repository,
@@ -52,40 +72,13 @@ impl ClosedCase {
             root.display()
         );
 
-        let inventory_path = root.join(INVENTORY_NAME);
-        let inventory = fs::read_to_string(&inventory_path)
-            .with_context(|| format!("read {}", inventory_path.display()))?;
-        let mut lines = inventory.lines();
-        ensure!(
-            lines.next() == Some(SCHEMA),
-            "{} must begin with {SCHEMA}",
-            inventory_path.display()
-        );
-        let mut payloads = BTreeSet::new();
-        for name in lines.filter(|line| !line.is_empty()) {
-            let path = checked_relative(Path::new(name))
-                .with_context(|| format!("invalid inventory entry {name:?}"))?;
-            ensure!(
-                path.components().count() == 1,
-                "inventory entry is outside the case root: {name}"
-            );
-            ensure!(
-                name != INVENTORY_NAME,
-                "{INVENTORY_NAME} is metadata, not a payload"
-            );
-            ensure!(
-                payloads.insert(name.to_owned()),
-                "duplicate inventory entry: {name}"
-            );
-        }
-        ensure!(!payloads.is_empty(), "closed fixture inventory is empty");
-
-        let declared = payloads
-            .iter()
-            .cloned()
-            .chain(std::iter::once(INVENTORY_NAME.to_owned()))
-            .collect::<BTreeSet<_>>();
         let tracked = tracked_regular_files(&repository, &case_relative)?;
+        let (payloads, declared) = if has_inventory {
+            declared_inventory(&root)?
+        } else {
+            ensure!(!tracked.is_empty(), "closed fixture directory is empty");
+            (tracked.clone(), tracked.clone())
+        };
         ensure!(
             tracked == declared,
             "closed fixture Git inventory mismatch: declared={declared:?}, tracked={tracked:?}"
@@ -113,6 +106,42 @@ impl ClosedCase {
         String::from_utf8(self.read(name)?)
             .with_context(|| format!("fixture payload is not UTF-8: {name}"))
     }
+}
+
+fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+    let inventory_path = root.join(INVENTORY_NAME);
+    let inventory = fs::read_to_string(&inventory_path)
+        .with_context(|| format!("read {}", inventory_path.display()))?;
+    let mut lines = inventory.lines();
+    ensure!(
+        lines.next() == Some(SCHEMA),
+        "{} must begin with {SCHEMA}",
+        inventory_path.display()
+    );
+    let mut payloads = BTreeSet::new();
+    for name in lines.filter(|line| !line.is_empty()) {
+        let path = checked_relative(Path::new(name))
+            .with_context(|| format!("invalid inventory entry {name:?}"))?;
+        ensure!(
+            path.components().count() == 1,
+            "inventory entry is outside the case root: {name}"
+        );
+        ensure!(
+            name != INVENTORY_NAME,
+            "{INVENTORY_NAME} is metadata, not a payload"
+        );
+        ensure!(
+            payloads.insert(name.to_owned()),
+            "duplicate inventory entry: {name}"
+        );
+    }
+    ensure!(!payloads.is_empty(), "closed fixture inventory is empty");
+    let declared = payloads
+        .iter()
+        .cloned()
+        .chain(std::iter::once(INVENTORY_NAME.to_owned()))
+        .collect();
+    Ok((payloads, declared))
 }
 
 fn checked_relative(path: &Path) -> Result<PathBuf> {
