@@ -325,6 +325,27 @@ fn font_size_recovery_carries_the_backed_up_error_context() {
 }
 
 #[test]
+fn show_context_labels_an_exhausted_backup_as_recently_read() {
+    // TeX82 §530: a backed-up token list with `loc=null` names the token just
+    // consumed, while a nonempty backup remains `<to be read again>`.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let font = universe.intern("font").symbol();
+    push(&mut command, [Token::Cs(font)]);
+
+    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_show()
+        .expect("show operand scans");
+
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<recently read> \\font \n                      "
+    );
+}
+
+#[test]
 fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

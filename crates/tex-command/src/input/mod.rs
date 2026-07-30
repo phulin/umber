@@ -140,27 +140,14 @@ impl InputState {
                     ));
                 }
                 InputLevel::Tokens(tokens) => {
-                    let label = match tokens.trace {
-                        ReplayTrace::MacroParameter { .. } => "<argument> ",
-                        ReplayTrace::MacroReplacement => "<macro> ",
-                        ReplayTrace::BackedUp => "<to be read again> ",
-                        ReplayTrace::Inserted => "<inserted text> ",
-                        ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
-                        ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
-                        ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
-                        _ => "<token list> ",
-                    };
-                    let (before, after) = match &tokens.payload {
+                    let (before, after, exhausted) = match &tokens.payload {
                         TokenPayload::Stored { tokens: list, .. } => {
                             let words = stores.tokens(*list);
                             let split = tokens.index.min(words.len());
                             (
                                 token_text(stores, words[..split].iter().copied()),
                                 token_text(stores, words[split..].iter().copied()),
+                                tokens.index >= words.len(),
                             )
                         }
                         TokenPayload::Transient(words) => {
@@ -178,6 +165,7 @@ impl InputState {
                                         words.get(index).map(|w| w.semantic_token())
                                     }),
                                 ),
+                                tokens.index >= words.len(),
                             )
                         }
                         TokenPayload::BackedUp(words) => {
@@ -187,7 +175,11 @@ impl InputState {
                             let after = (tokens.index..)
                                 .map_while(|index| words.get(index))
                                 .map(|word| word.spelling.semantic_token());
-                            (token_text(stores, before), token_text(stores, after))
+                            (
+                                token_text(stores, before),
+                                token_text(stores, after),
+                                words.get(tokens.index).is_none(),
+                            )
                         }
                         TokenPayload::ArgumentRange { buffer, range } => {
                             let start = range.start();
@@ -206,8 +198,26 @@ impl InputState {
                                         buffer.get(index).map(|w| w.semantic_token())
                                     }),
                                 ),
+                                start.saturating_add(tokens.index) >= end,
                             )
                         }
+                    };
+                    // TeX82 §530 distinguishes the exhausted one-token
+                    // `back_input` level (`loc=null`) from an unread backup.
+                    let label = match tokens.trace {
+                        ReplayTrace::MacroParameter { .. } => "<argument> ",
+                        ReplayTrace::MacroReplacement => "<macro> ",
+                        ReplayTrace::BackedUp if exhausted => "<recently read> ",
+                        ReplayTrace::BackedUp => "<to be read again> ",
+                        ReplayTrace::Inserted => "<inserted text> ",
+                        ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
+                        ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
+                        _ => "<token list> ",
                     };
                     contexts.push(clipped_context(
                         label,
