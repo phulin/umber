@@ -4352,6 +4352,30 @@ fn scan_alignment_delivery_step(
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
+            // TeX82 §1132 dispatches every right brace seen with an active
+            // `align_group` through the missing-\cr recovery, independent of
+            // `align_state`. The command-owned fast path emits a structural
+            // ClosingBrace event at the ordinary cell depth, but §1096's
+            // `off_save` can insert the brace after `align_state` is already
+            // negative. That brace must still back up behind frozen `\cr`;
+            // treating it as an ordinary extra brace makes `\par` repeat
+            // `off_save` forever while recovery input levels accumulate.
+            if innermost_group == Some(GroupKind::Align)
+                && matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::EndGroup,
+                        ..
+                    }
+                )
+            {
+                processor
+                    .recover_alignment_closing_brace(
+                        tex_command::AlignmentDeliveryEvent::ClosingBrace(command),
+                    )
+                    .map_err(command_error)?;
+                return Ok(ScannedStep::Continue);
+            }
             if matches!(command.meaning(), Meaning::EndV) {
                 // TeX82 §§1046-1047 route `mmode+endv` through
                 // `insert_dollar_sign`, just like every other command that

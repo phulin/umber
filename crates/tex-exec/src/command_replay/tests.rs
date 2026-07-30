@@ -11013,7 +11013,12 @@ fn canonical_box_request_lifecycle_mode_and_recovery_matrix() {
 
 #[test]
 fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
-    // TeX82 §1096 runs `off_save` before `end_graf` when `align_state<0`.
+    // TeX82 §§1096 and 1132 run `off_save` before `end_graf`, then route its
+    // inserted right brace through the active align_group's missing-\cr
+    // recovery even though align_state was already negative. Keeping the
+    // primitive paragraph token behind a wrapper reproduces TRIP's recovery
+    // shape: losing §1132 here repeatedly backs up \PAR and inserts `}`,
+    // growing one recovery input level per cycle.
     // The blank line closes the malformed row and alignment; the following
     // 20pt hbox must therefore be a sibling of the finished alignment, not
     // material captured inside its final constrained row.
@@ -11021,11 +11026,26 @@ fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
-        br"\setbox0=\vbox{\noindent{\halign to1pt{#&#&#\cr A&B&C&D&&.}
+        br"\let\PAR=\par\def\par{\relax\PAR}
+        \setbox0=\vbox{\noindent{\halign to1pt{#&#&#\cr A&B&C&D&&.}
 
         \hbox to20pt{}}}\end",
     );
-    run_to_end(&mut control, &mut universe);
+    let mut steps = 0;
+    loop {
+        steps += 1;
+        assert!(
+            steps <= 10_000,
+            "alignment paragraph recovery must not accumulate input levels"
+        );
+        match control
+            .step(&mut universe)
+            .expect("canonical recovery program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
 
     let root = universe
         .box_reg(0)
