@@ -230,12 +230,24 @@ impl TripProjection {
             .context("expected initialization history is not canonical schema-v1 JSONL")?;
         let actual = ObservationStream::from_canonical_json_lines(actual)
             .context("actual initialization history is not canonical schema-v1 JSONL")?;
-        if expected.events.len() != actual.events.len() {
-            return Ok(Self::default());
-        }
         for (expected, actual) in expected.events.iter().zip(&actual.events) {
             if !projection.events_match("command_events", expected, actual) {
                 return Ok(Self::default());
+            }
+        }
+        // TeX82 §1309 restores a format before the loaded job begins. A
+        // terminal observation missing after the shorter initialization
+        // stream cannot invalidate macro meanings already established by the
+        // common completed history. A one-sided meaning mutation can, so
+        // discard only the affected proof from an otherwise exact prefix.
+        for event in expected
+            .events
+            .iter()
+            .skip(actual.events.len())
+            .chain(actual.events.iter().skip(expected.events.len()))
+        {
+            if let Some((name, _)) = meaning_mutation(&event.semantic) {
+                projection.matched_macros.remove(name);
             }
         }
         Ok(projection)
@@ -814,6 +826,13 @@ mod tests {
     }
 
     fn macro_initialization_events(bodies: &[CanonicalValue]) -> Vec<u8> {
+        macro_initialization_events_with_suffix(bodies, &[])
+    }
+
+    fn macro_initialization_events_with_suffix(
+        bodies: &[CanonicalValue],
+        suffix: &[Event],
+    ) -> Vec<u8> {
         let mut normalizer = Normalizer::new();
         let mut out = format!(
             "{{\"schema\":{SCHEMA_VERSION},\"manifest\":\"{}\"}}\n",
@@ -829,6 +848,12 @@ mod tests {
             });
             out.extend_from_slice(
                 &serde_json::to_vec(&normalizer.normalize(event)).expect("event"),
+            );
+            out.push(b'\n');
+        }
+        for event in suffix {
+            out.extend_from_slice(
+                &serde_json::to_vec(&normalizer.normalize(event.clone())).expect("event"),
             );
             out.push(b'\n');
         }
@@ -1130,6 +1155,46 @@ mod tests {
             fs::read_to_string(artifact)
                 .expect("report")
                 .contains("earliest.position: event[0]")
+        );
+    }
+
+    #[test]
+    fn format_loaded_macro_call_survives_missing_initialization_termination() {
+        // TeX82 §1309: format restoration uses the completed INITEX meaning.
+        // A missing terminal observation is an envelope defect after that
+        // definition, not evidence that its allocator-owned `def_ref` differs
+        // semantically in the loaded run.
+        let temp = tempfile::tempdir().expect("temp");
+        let body = macro_body(b'a');
+        let terminal = Event::Input(tex_oracle::InputEvent {
+            transition: tex_oracle::InputTransition::Stop,
+            reason: tex_oracle::InputReason::Source,
+            name: "terminal".into(),
+        });
+        let reference_history =
+            macro_initialization_events_with_suffix(std::slice::from_ref(&body), &[terminal]);
+        let actual_history = macro_initialization_events(std::slice::from_ref(&body));
+        let reference_call =
+            macro_call_only_events(CanonicalValue::Integer(249_985), "probe", "call");
+        let actual_call = macro_call_only_events(CanonicalValue::Integer(17), "probe", "call");
+        let expected = TripTriageChannels {
+            initialization_events: Some(&reference_history),
+            command_events: Some(&reference_call),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            initialization_events: Some(&actual_history),
+            command_events: Some(&actual_call),
+            ..expected
+        };
+
+        assert!(
+            write_trip_triage_artifact(temp.path(), input(expected, actual))
+                .expect("comparison")
+                .is_none()
         );
     }
 
