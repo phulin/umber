@@ -5136,6 +5136,31 @@ fn initex_late_patterns_absorbs_its_discarded_group() {
 }
 
 #[test]
+fn initex_late_patterns_prompts_at_the_pre_scan_section_960_context() {
+    // TeX82 §960 calls §82's `error` before §473 scans and discards the
+    // braced group. A deferred executor report must therefore carry the
+    // source cursor immediately after `\patterns`, not the post-group cursor.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts the error response");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    stores.close_hyphenation_patterns();
+    register_source(&mut control, b"\\patterns{toolate}\\count0=1\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1, "interactive recovery resumes input");
+    let output = terminal_text(&stores);
+    let context = output
+        .find("! Too late for \\patterns.\nl.1 \\patterns\n")
+        .expect("§960 reports at the pre-scan source cursor");
+    let prompt = output.find("? ").expect("§82 interactive prompt");
+    assert!(context < prompt, "{output}");
+}
+
+#[test]
 fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
     // TeX82 §§936-937 and §§961-963: scanner othercases retain the
     // partially collected word; invalid lccodes are diagnosed during apply;

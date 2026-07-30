@@ -4131,7 +4131,9 @@ enum ScannedStep {
         words: Vec<Vec<char>>,
         pattern_specs: Vec<tex_state::hyphenation::PatternSpec>,
         patterns: bool,
-        too_late: bool,
+        /// TeX82 §960 reports before §473 scans and discards the group, so
+        /// §82's context must be captured at the pre-scan cursor.
+        too_late_context: Option<String>,
     },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
@@ -6961,12 +6963,13 @@ fn scan_command(
                 // discards with `scan_toks(false,false)`. Unlike §961's
                 // pattern-word loop, §473 therefore enters `absorbing`
                 // before §403 reads the opening brace.
+                let context = processor.error_context();
                 let _ = processor.scan_balanced_text(false).map_err(command_error)?;
                 return Ok(ScannedStep::HyphenationData {
                     words: Vec::new(),
                     pattern_specs: Vec::new(),
                     patterns: true,
-                    too_late: true,
+                    too_late_context: Some(context),
                 });
             }
             let scanned = processor
@@ -6980,7 +6983,7 @@ fn scan_command(
                 words: scanned.words,
                 pattern_specs: scanned.patterns,
                 patterns,
-                too_late: false,
+                too_late_context: None,
             })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
@@ -11624,15 +11627,18 @@ fn apply_scanned_step(
             words,
             pattern_specs,
             patterns,
-            too_late,
+            too_late_context,
         } => {
             // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
             // "Patterns can be loaded only by INITEX", flushes the braced
             // group, and returns with the trie unchanged; `\hyphenation`
             // stays legal in both binaries.
-            if patterns && (!command.initex || too_late) {
+            if patterns && (!command.initex || too_late_context.is_some()) {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
+                if let Some(context) = too_late_context {
+                    report.context(context);
+                }
                 report.error();
                 return Ok(ReplayStep::Continue);
             }
