@@ -5157,6 +5157,13 @@ impl Universe {
         self.stores.font_parameter_count(font)
     }
 
+    /// TeX82 §578's `find_font_dimen` decision; see
+    /// [`crate::stores::Stores::font_dimen_writable`].
+    #[must_use]
+    pub fn font_dimen_writable(&self, font: FontId, number: u32) -> bool {
+        self.stores.font_dimen_writable(font, number)
+    }
+
     pub fn set_font_dimen(
         &mut self,
         font: FontId,

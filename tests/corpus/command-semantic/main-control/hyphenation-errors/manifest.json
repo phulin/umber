@@ -54,20 +54,8 @@
       "channels": {
         "events": 154,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 4, "expected": "l.4 \\hyphenation{ab\\relax", "actual": "! Not a letter." }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 5,
-            "expected": "l.4 \\hyphenation{ab\\relax",
-            "actual": "Hyphenation exceptions must contain only letters"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

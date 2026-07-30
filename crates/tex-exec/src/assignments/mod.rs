@@ -97,9 +97,7 @@ pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word_text;
 use hyphenation::*;
-pub(crate) use hyphenation::{
-    apply_hyphenation_exceptions, apply_scanned_patterns, report_apply_diagnostics,
-};
+pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
 use macros::*;
 #[cfg(test)]
 pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;

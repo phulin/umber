@@ -42,11 +42,13 @@ pub enum HyphenationDataKind {
 
 /// The raw words one `\patterns`/`\hyphenation` group listed.
 ///
-/// Each word is the exact sequence of characters §935/§961 accepted between
-/// two word boundaries. `\lccode` normalization, §937's hyphen positions, and
-/// §962's hyphen levels are applied by the executor when the words are
-/// installed, so this scan stays free of the current `\language` and of the
-/// pattern/exception table representations.
+/// Each word is the sequence of characters §935 accepted between two word
+/// boundaries, already `\lccode`-normalized: §935 tests `lc_code(cur_chr)=0`
+/// and reports `Not a letter` inside the scanning loop, so the test has to run
+/// where §82 still sees the offending character as current. §934 sets
+/// `cur_lang` immediately after `scan_left_brace`, which is what makes the
+/// language available this early. Hyphens are kept as `-`; §937's hyphen
+/// positions and the exception table representation are still the executor's.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ScannedHyphenationData {
     pub words: Vec<Vec<char>>,
@@ -120,16 +122,33 @@ impl CommandProcessor<'_> {
                             pattern_digit_sensed = true;
                         }
                     }
-                    Some(ch)
+                    if kind == HyphenationDataKind::Exceptions {
+                        match self.exception_word_character(pattern_language, ch) {
+                            Some(normalized) => Some(normalized),
+                            // §935 ignores the character it just read.
+                            None => continue,
+                        }
+                    } else {
+                        Some(ch)
+                    }
                 }
                 // §935's `char_given`, which §961 does not accept.
-                Meaning::CharGiven(ch) if kind == HyphenationDataKind::Exceptions => Some(ch),
+                Meaning::CharGiven(ch) if kind == HyphenationDataKind::Exceptions => {
+                    match self.exception_word_character(pattern_language, ch) {
+                        Some(normalized) => Some(normalized),
+                        None => continue,
+                    }
+                }
                 // §935's `char_num`: `scan_char_num` selects the character and
                 // the scan rejoins the `char_given` case.
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     if kind == HyphenationDataKind::Exceptions =>
                 {
-                    Some(self.scan_character_number()?)
+                    let ch = self.scan_character_number()?;
+                    match self.exception_word_character(pattern_language, ch) {
+                        Some(normalized) => Some(normalized),
+                        None => continue,
+                    }
                 }
                 // §935/§961's `spacer,right_brace`: both end the current word,
                 // and only the right brace ends the scan.
@@ -192,6 +211,33 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §935's per-character test for `\hyphenation`.
+    ///
+    /// A hyphen is §937's position marker and bypasses the test; anything
+    /// whose `lc_code` is zero is diagnosed and ignored; everything else
+    /// enters the word lowercased. pdfTeX's `\savinghyphcodes` table takes
+    /// precedence over `\lccode` when the current language saved one.
+    fn exception_word_character(&mut self, language: u8, ch: char) -> Option<char> {
+        if ch == '-' {
+            return Some('-');
+        }
+        let normalized = match self.state.saved_hyphenation_code(language, ch) {
+            Some(saved) => saved,
+            None => char::from_u32(self.state.lccode(ch)).filter(|&mapped| mapped != '\0'),
+        };
+        if normalized.is_none() {
+            let context = self.command.output_open_context(&self.state);
+            let mut report = self.state.print_err("Not a letter");
+            report.help(&[
+                "Letters in \\hyphenation words must have \\lccode>0.",
+                "Proceed; I'll ignore the character I just read.",
+            ]);
+            report.context(context);
+            report.error();
+        }
+        normalized
+    }
+
     fn report_pattern_nonletter(&mut self) {
         let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Nonletter");
@@ -226,8 +272,10 @@ impl CommandProcessor<'_> {
     }
 
     fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {
-        let context = (kind == HyphenationDataKind::Patterns)
-            .then(|| self.command.output_open_context(&self.state));
+        // §936 and §961 both reach §82 while the offending command is still
+        // current and the source cursor is immediately after it, so both get a
+        // context. `CommandState`, not `Universe`, owns that live input stack.
+        let context = self.command.output_open_context(&self.state);
         let (message, help): (&str, &[&str]) = match kind {
             HyphenationDataKind::Exceptions => (
                 "Improper \\hyphenation will be flushed",
@@ -243,12 +291,7 @@ impl CommandProcessor<'_> {
         // one here inserts an event before the loop resumes `get_x_token`.
         let mut report = self.state.print_err(message);
         report.help(help);
-        if let Some(context) = context {
-            // §961 reaches §82 while the offending command is still current
-            // and the source cursor is immediately after it. `CommandState`,
-            // not `Universe`, owns that live input stack.
-            report.context(context);
-        }
+        report.context(context);
         report.error();
     }
 }

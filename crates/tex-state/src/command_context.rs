@@ -122,6 +122,15 @@ impl CommandContext<'_> {
         self.universe.lccode(ch)
     }
 
+    /// Reads one saved hyphenation code, pdfTeX's `\savinghyphcodes` table.
+    ///
+    /// `None` means the language saved no table at all, so TeX82 §935/§961's
+    /// plain `lc_code` applies; `Some(None)` is a saved code of zero.
+    #[must_use]
+    pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+        self.universe.saved_hyphenation_code(language, ch)
+    }
+
     /// Reads one uppercase code through the aggregate code-table boundary.
     #[must_use]
     pub fn uccode(&self, ch: char) -> crate::code_tables::UcCode {
@@ -511,6 +520,13 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn font_name(&self, font: FontId) -> String {
         self.universe.font_name(font)
+    }
+
+    /// TeX82 §578's `find_font_dimen` decision, made before §1253 scans
+    /// `=<dimen>`; see [`crate::stores::Stores::font_dimen_writable`].
+    #[must_use]
+    pub fn font_dimen_writable(&self, font: FontId, number: u32) -> bool {
+        self.universe.font_dimen_writable(font, number)
     }
 
     /// Reads a font's immutable external name without `\fontname`'s size

@@ -112,6 +112,21 @@ impl CommandProcessor<'_> {
     pub const fn profile(&self) -> crate::CommandProfile {
         self.command.profile()
     }
+
+    /// TeX82 §578's `find_font_dimen` decision for a scanned parameter number.
+    ///
+    /// §578 resolves `n<=0` to the same `fmem_ptr` scratch cell as an
+    /// unusable positive number, and it decides *before* §1253 scans
+    /// `=<dimen>` -- which is why the scan asks here rather than letting the
+    /// eventual write fail: §579's context is the one at this cursor, not the
+    /// one after the whole assignment has been consumed.
+    #[must_use]
+    pub fn font_dimen_writable(&self, font: tex_state::ids::FontId, number: i32) -> bool {
+        u32::try_from(number)
+            .ok()
+            .filter(|number| *number > 0)
+            .is_some_and(|number| self.state.font_dimen_writable(font, number))
+    }
 }
 
 enum ProcessorFuel<'a> {

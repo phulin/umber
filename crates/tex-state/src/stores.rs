@@ -1858,6 +1858,21 @@ impl Stores {
             .set_font_skew_char_global(font, self.env.int_param(IntParam::DEFAULT_SKEW_CHAR));
     }
 
+    /// TeX82 §578's `find_font_dimen` decision, without §580's growth.
+    ///
+    /// False is exactly the `cur_val=fmem_ptr` case §579 reports on: a number
+    /// outside the addressable range, or one past a font that is not the last
+    /// one loaded and so cannot be grown. §578 makes this decision before
+    /// §1253 scans `=<dimen>`, so a caller that has to report §579 with the
+    /// context of the moment must ask here rather than infer it from a failed
+    /// [`Self::set_font_dimen`] afterwards.
+    #[must_use]
+    pub fn font_dimen_writable(&self, font: FontId, number: u32) -> bool {
+        self.assert_live_font(font);
+        crate::env::font_dimen_index(font, number).is_ok()
+            && (number <= self.env.font_param_len(font) || font == self.last_loaded_font)
+    }
+
     fn prepare_font_dimen_write(
         &mut self,
         font: FontId,

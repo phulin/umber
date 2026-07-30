@@ -115,10 +115,26 @@ pub(crate) fn apply_hyphenation_exceptions(
     stores: &mut Universe,
     words: Vec<Vec<char>>,
 ) -> Vec<HyphenationApplyDiagnostic> {
+    install_hyphenation_exceptions(stores, words, true)
+}
+
+/// Installs exception words the canonical live scanner already normalized, so
+/// §935's `Not a letter` was reported where §82 could still show the offending
+/// character (`tex_command::ScannedHyphenationData`).
+pub(crate) fn apply_scanned_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec<char>>) {
+    let diagnostics = install_hyphenation_exceptions(stores, words, false);
+    debug_assert!(diagnostics.is_empty());
+}
+
+fn install_hyphenation_exceptions(
+    stores: &mut Universe,
+    words: Vec<Vec<char>>,
+    normalize: bool,
+) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
     let mut diagnostics = Vec::new();
     for word in words {
-        let (exception, not_letters) = parse_exception_word(stores, language, &word);
+        let (exception, not_letters) = parse_exception_word(stores, language, &word, normalize);
         diagnostics.extend(std::iter::repeat_n(
             HyphenationApplyDiagnostic::NotALetter,
             not_letters,
@@ -579,6 +595,7 @@ fn parse_exception_word(
     stores: &Universe,
     language: u8,
     word: &[char],
+    normalize: bool,
 ) -> (Option<ExceptionSpec>, usize) {
     let mut normalized = String::new();
     let mut positions = Vec::new();
@@ -586,7 +603,17 @@ fn parse_exception_word(
     for &ch in word {
         if ch == '-' {
             positions.push(normalized.chars().count());
-        } else if let Some(ch) = normalized_hyphen_code(stores, language, ch) {
+            continue;
+        }
+        // A word the live scanner produced has already had §935's `lc_code`
+        // test applied to every character, so every character left in it is a
+        // letter and nothing here can diagnose one.
+        let mapped = if normalize {
+            normalized_hyphen_code(stores, language, ch)
+        } else {
+            Some(ch)
+        };
+        if let Some(ch) = mapped {
             if normalized.chars().count() < 63 {
                 normalized.push(ch);
             }

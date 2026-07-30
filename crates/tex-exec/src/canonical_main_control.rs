@@ -2251,7 +2251,13 @@ impl CanonicalMainControl {
                         tex_command::EquationNumberSide::Right => "eqno",
                     };
                     let token = Token::Cs(stores.intern(primitive).symbol());
-                    crate::diagnostics::report_illegal_case(stores, token, Mode::Horizontal);
+                    let context = self.command.output_open_context(&stores.command_context());
+                    crate::diagnostics::report_illegal_case_with_context(
+                        stores,
+                        token,
+                        Mode::Horizontal,
+                        Some(context),
+                    );
                     return Ok(ReplayStep::Continue);
                 }
                 if self.modes.current_mode() != Mode::DisplayMath {
@@ -2265,7 +2271,13 @@ impl CanonicalMainControl {
                     };
                     let token = Token::Cs(stores.intern(primitive).symbol());
                     let mode = self.modes.current_mode();
-                    crate::diagnostics::report_illegal_case(stores, token, mode);
+                    let context = self.command.output_open_context(&stores.command_context());
+                    crate::diagnostics::report_illegal_case_with_context(
+                        stores,
+                        token,
+                        mode,
+                        Some(context),
+                    );
                 } else {
                     let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
                     stores.enter_group_with_kind_at_line(
@@ -4116,6 +4128,11 @@ enum ScannedStep {
         /// the scan must carry it rather than reject it.
         number: i32,
         value: Scaled,
+        /// §82's `show_context` at the point §578 decided the number was
+        /// unusable -- after the font identifier, before `=<dimen>`. `None`
+        /// when §578 accepted it, which is also what says no §579 report is
+        /// due.
+        recovery_context: Option<String>,
     },
     FontInteger {
         font: FontId,
@@ -6317,12 +6334,17 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
             let number = processor.scan_integer().map_err(command_error)?.value;
             let font = processor.scan_font_selector().map_err(command_error)?;
+            // §579 reports from inside `find_font_dimen`, so its `show_context`
+            // splits here -- after the font identifier and before `=<dimen>`.
+            let recovery_context =
+                (!processor.font_dimen_writable(font, number)).then(|| processor.error_context());
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
             Ok(ScannedStep::FontDimen {
                 font,
                 number,
                 value,
+                recovery_context,
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -10871,7 +10893,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalSpaceFactor { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PrevGraf { value } => {
@@ -11468,6 +11496,7 @@ fn apply_scanned_step(
             font,
             number,
             value,
+            recovery_context,
         } => {
             // tex.web §578's `find_font_dimen` resolves an unusable parameter
             // number to the scratch location `fmem_ptr`; §579 then reports
@@ -11476,17 +11505,17 @@ fn apply_scanned_step(
             // cur_val` into that scratch cell, so the font is unchanged and
             // the job continues. Only §580's grow path, which
             // `set_font_dimen` implements, can add a parameter.
-            match u32::try_from(number).ok().filter(|number| *number > 0) {
-                // §578's `if n<=0 then cur_val:=fmem_ptr`.
+            //
+            // The scan already made §578's decision and captured §579's
+            // context there, so this only writes or reports.
+            match recovery_context {
+                Some(context) => report_font_parameter_recovery(stores, font, context),
                 None => {
-                    let context = command.state.output_open_context(&stores.command_context());
-                    report_font_parameter_recovery(stores, font, context);
-                }
-                Some(number) => {
-                    if stores.set_font_dimen(font, number, value).is_err() {
-                        let context = command.state.output_open_context(&stores.command_context());
-                        report_font_parameter_recovery(stores, font, context);
-                    }
+                    let number = u32::try_from(number)
+                        .expect("a writable parameter number is a positive u32");
+                    stores
+                        .set_font_dimen(font, number, value)
+                        .expect("§578 accepted this parameter number during the scan");
                 }
             }
             Ok(ReplayStep::Continue)
@@ -11571,7 +11600,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalSetLanguage { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Arithmetic {
@@ -11727,18 +11762,14 @@ fn apply_scanned_step(
                 report.error();
                 return Ok(ReplayStep::Continue);
             }
-            let diagnostics = if patterns {
+            // Both halves of §§935/963's diagnostics were already reported by
+            // the live scan, where §82 could still show the character that
+            // caused them; installing is all that is left here.
+            if patterns {
                 crate::assignments::apply_scanned_patterns(stores, pattern_specs);
-                Vec::new()
             } else {
-                crate::assignments::apply_hyphenation_exceptions(stores, words)
-            };
-            // §§963/966 print these diagnostics while applying the collected
-            // words, but the schema-v1 TeX82 instrumentation records no
-            // semantic event at either site. Keep the diagnostic and
-            // recovery behavior below without inserting observations ahead
-            // of the command that follows the scanned group.
-            crate::assignments::report_apply_diagnostics(stores, diagnostics);
+                crate::assignments::apply_scanned_hyphenation_exceptions(stores, words);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Let {
@@ -12127,11 +12158,23 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalInsertOrAdjust { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalEqNo { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalLastItem { token, context } => {

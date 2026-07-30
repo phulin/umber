@@ -28,24 +28,8 @@
       "channels": {
         "events": 80,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 4,
-            "expected": "<recently read> \\nullfont ",
-            "actual": "l.1 \\fontdimen0\\nullfont=1pt"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": {
-            "line": 5,
-            "expected": "<recently read> \\nullfont ",
-            "actual": "l.1 \\fontdimen0\\nullfont=1pt"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
