@@ -970,6 +970,9 @@ impl CommandProcessor<'_> {
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
     fn push_mark_text(&mut self, tokens: TokenListId) {
+        if tokens == TokenListId::EMPTY {
+            return;
+        }
         let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens,

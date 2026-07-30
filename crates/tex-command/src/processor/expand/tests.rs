@@ -854,6 +854,57 @@ fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
 }
 
 #[test]
+fn empty_mark_enquiries_match_fresh_and_loaded_etex_formats() {
+    // TeX82 §386 and e-TeX 2.6 etex.ch [25.386] begin a mark-text token list
+    // only when the selected mark pointer is non-null. The class scan still
+    // backs up its nonnumeric terminator through the ordinary §325 path.
+    let mut fresh = Universe::new_with_plain_catcodes();
+    crate::primitives::install_etex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent e-TeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_etex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(include_bytes!("../fixtures/empty-marks.tex").as_slice()),
+            ))
+            .expect("microfixture registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let output = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            rendered(&mut processor)
+        };
+
+        assert_eq!(output, "X ");
+        assert!(!recorder.0.iter().any(|event| matches!(
+            event,
+            CommandObservation::Input(crate::InputRecord {
+                reason: crate::InputReason::Mark,
+                ..
+            })
+        )));
+        assert!(recorder.0.iter().any(|event| matches!(
+            event,
+            CommandObservation::Input(crate::InputRecord {
+                transition: InputTransition::Backup,
+                reason: crate::InputReason::Backup,
+                ..
+            })
+        )));
+    }
+}
+
+#[test]
 fn etex_mark_class_enquiries_share_extended_register_scan_and_recovery() {
     // e-TeX 2.6 `etex.ch` [26.1178]: all five class enquiries use the same
     // `scan_register_num` as `\marks`, including invalid-to-zero recovery.
