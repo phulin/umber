@@ -199,6 +199,7 @@ pub struct CanonicalEngineSession<'a> {
     control: CanonicalMainControl,
     initex: bool,
     root_registered: bool,
+    startup_input_name: Option<String>,
     started: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
     terminated: bool,
@@ -217,6 +218,7 @@ impl<'a> CanonicalEngineSession<'a> {
             control: CanonicalMainControl::with_profile(profile),
             initex: false,
             root_registered: false,
+            startup_input_name: None,
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
@@ -237,6 +239,7 @@ impl<'a> CanonicalEngineSession<'a> {
             stores,
             initex: true,
             root_registered: false,
+            startup_input_name: None,
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
@@ -254,6 +257,7 @@ impl<'a> CanonicalEngineSession<'a> {
             stores,
             initex: true,
             root_registered: false,
+            startup_input_name: None,
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
@@ -308,7 +312,7 @@ impl<'a> CanonicalEngineSession<'a> {
     /// policy, deliberately separate from source acquisition.
     pub fn register_retained_root(
         &mut self,
-        job_name: &str,
+        startup_input_name: &str,
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         if self.root_registered {
@@ -316,9 +320,10 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         self.control
             .capabilities_mut()
-            .set_startup_job_name(job_name);
+            .set_startup_job_name(startup_input_name);
         let source = self.control.register_root_source(source)?;
         self.root_registered = true;
+        self.startup_input_name = Some(startup_input_name.to_owned());
         Ok(source)
     }
 
@@ -326,10 +331,10 @@ impl<'a> CanonicalEngineSession<'a> {
     /// its provenance from bytes.
     pub fn register_world_root(
         &mut self,
-        job_name: &str,
+        startup_input_name: &str,
         content: FileContent,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
-        self.register_retained_root(job_name, SourceRegistration::world(content))
+        self.register_retained_root(startup_input_name, SourceRegistration::world(content))
     }
 
     /// Registers an authored in-memory root.
@@ -340,11 +345,11 @@ impl<'a> CanonicalEngineSession<'a> {
     /// discarded.
     pub fn register_authored_root(
         &mut self,
-        job_name: &str,
+        startup_input_name: &str,
         bytes: Arc<[u8]>,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         self.register_retained_root(
-            job_name,
+            startup_input_name,
             SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
         )
     }
@@ -361,6 +366,7 @@ impl<'a> CanonicalEngineSession<'a> {
         if !self.started {
             self.started = true;
             self.print_startup_headline();
+            self.print_startup_input_opening();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
         if self.terminated {
@@ -405,6 +411,23 @@ impl<'a> CanonicalEngineSession<'a> {
             .print_ln();
     }
 
+    /// Prints TeX82 §537's successful `start_input` filename opening.
+    ///
+    /// The root has already been selected and opened before the retained
+    /// session starts, but the selector-visible framing still belongs at the
+    /// same boundary as TeX's successful file open. The transcript is not
+    /// open yet, so this write is terminal-only in both INITEX and
+    /// format-loaded sessions.
+    fn print_startup_input_opening(&mut self) {
+        let startup_input_name = self
+            .startup_input_name
+            .as_deref()
+            .expect("a started canonical session has a registered root");
+        Printer::new(self.stores, Selector::TermOnly)
+            .print("(")
+            .print(startup_input_name);
+    }
+
     /// Observed variant of [`Self::advance_until_waiting`].
     ///
     /// This drives the same retained production control and differs only by
@@ -422,6 +445,7 @@ impl<'a> CanonicalEngineSession<'a> {
         if !self.started {
             self.started = true;
             self.print_startup_headline();
+            self.print_startup_input_opening();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
         if self.terminated {
@@ -855,6 +879,26 @@ mod tests {
         (stores, Arc::from(source))
     }
 
+    fn transcript_channels(stores: &Universe) -> (String, String) {
+        let mut terminal = String::new();
+        let mut log = String::new();
+        for effect in stores.world().effect_records() {
+            let tex_state::EffectRecord::StreamWrite { sink, text } = effect else {
+                continue;
+            };
+            match sink {
+                tex_state::PrintSink::Terminal => terminal.push_str(text),
+                tex_state::PrintSink::Log => log.push_str(text),
+                tex_state::PrintSink::TerminalAndLog => {
+                    terminal.push_str(text);
+                    log.push_str(text);
+                }
+                tex_state::PrintSink::Stream(_) => {}
+            }
+        }
+        (terminal, log)
+    }
+
     #[test]
     fn retained_observer_captures_fresh_and_format_loaded_production_runs() {
         let source: Arc<[u8]> = Arc::from(&b"\\message{observed}\\end"[..]);
@@ -881,7 +925,7 @@ mod tests {
                 .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
                 .expect("observed run completes");
 
-            assert_eq!(run.terminal_text, "observed");
+            assert_eq!(run.terminal_text, "(observer observed");
             assert!(
                 observations
                     .0
@@ -1098,7 +1142,7 @@ mod tests {
         assert_eq!(host.calls, 1);
         assert_eq!(
             session.stores().world().memory_terminal_output(),
-            Some(&b"once"[..]),
+            Some(&b"(job.tex once"[..]),
             "aggregate rollback must not repeat an already committed write"
         );
         // Two pages: the explicit `\shipout`, then TeX82 §1054's residual
@@ -1142,6 +1186,54 @@ mod tests {
             },
             "TeX82 §1332 writes the process headline to the terminal before main_control"
         );
+    }
+
+    #[test]
+    fn startup_input_opening_uses_terminal_only_selector_in_initex_and_loaded_sessions() {
+        const SOURCE: &[u8] = br"\end";
+        let mut format_source = Universe::new_with_plain_catcodes();
+        tex_command::install_tex82_expandable_primitives(&mut format_source);
+        tex_exec::install_unexpandable_primitives(&mut format_source);
+        let format = format_source.dump_format().expect("base format dumps");
+
+        for initex in [true, false] {
+            let mut stores = if initex {
+                Universe::new_with_plain_catcodes()
+            } else {
+                Universe::from_format(World::memory(), &format).expect("format restores")
+            };
+            if initex {
+                tex_command::install_tex82_expandable_primitives(&mut stores);
+                tex_exec::install_unexpandable_primitives(&mut stores);
+            }
+            let mut session = if initex {
+                CanonicalEngineSession::prepared_initex(&mut stores, CommandProfile::TEX82)
+            } else {
+                CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82)
+            };
+            session
+                .register_authored_root("./trip.tex", Arc::from(SOURCE))
+                .expect("root registers");
+
+            session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("bounded root completes");
+
+            let expected_terminal = if initex {
+                "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)\n(./trip.tex"
+            } else {
+                "(./trip.tex"
+            };
+            let (terminal, log) = transcript_channels(session.stores());
+            assert_eq!(
+                terminal, expected_terminal,
+                "TeX82 §§1332, 537 startup framing, initex={initex}"
+            );
+            assert_eq!(
+                log, "",
+                "§537 runs before the transcript opens, initex={initex}"
+            );
+        }
     }
 
     #[test]
@@ -1214,7 +1306,11 @@ mod tests {
             error,
             CanonicalSessionError::NoProgress { attempts: 2, .. }
         ));
-        assert!(session.stores().world().effect_records().is_empty());
+        assert_eq!(
+            transcript_channels(session.stores()),
+            ("(job.tex".into(), String::new()),
+            "only the committed §537 root opening precedes the declined child request"
+        );
     }
 
     #[test]
@@ -1363,7 +1459,7 @@ mod tests {
 
         // TeX82 §1280 separates the two messages with one space, because
         // the first left `term_offset` nonzero.
-        assert_eq!(run.terminal_text, "once child");
+        assert_eq!(run.terminal_text, "(job.tex once child");
         let records = session.stores().world().input_records();
         assert_eq!(records.len(), 1, "the selected child is recorded once");
         assert_eq!(records[0].path(), Path::new("child.tex"));

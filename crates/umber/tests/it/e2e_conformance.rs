@@ -214,21 +214,17 @@ fn run_file_in_process(
     run_file_in_process_captured(path, &source_name, format, engine, &mut failure)
 }
 
-fn startup_job_name(canonical_source_name: &str) -> &str {
-    Path::new(canonical_source_name)
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("texput")
+fn startup_input_name(canonical_source_name: &str) -> String {
+    format!("./{canonical_source_name}")
 }
 
 #[test]
-fn canonical_source_identity_selects_job_name_independently_of_staging() {
-    assert_eq!(startup_job_name("etrip.tex"), "etrip");
+fn canonical_source_identity_selects_startup_input_name_independently_of_staging() {
+    assert_eq!(startup_input_name("etrip.tex"), "./etrip.tex");
     assert_eq!(
-        startup_job_name("inputs/annual.report.tex"),
-        "annual.report"
+        startup_input_name("inputs/annual.report.tex"),
+        "./inputs/annual.report.tex"
     );
-    assert_eq!(startup_job_name(""), "texput");
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
@@ -264,10 +260,10 @@ fn run_file_in_process_captured(
         .parent()
         .ok_or_else(|| format!("input has no parent: {}", path.display()))?
         .to_owned();
-    // TeX82 §529 derives `job_name` from the driver-selected startup name.
-    // The staged path may deliberately differ (e-TRIP is locally renamed),
-    // just as Web2C's `-jobname` differs from its input filename.
-    let job_name = startup_job_name(canonical_source_name);
+    // TeX82 §§529, 537 derive the job name and print the file-opening frame
+    // from the driver-selected startup name. The staged path may deliberately
+    // differ (e-TRIP is locally renamed), so it is not an observable name.
+    let startup_input_name = startup_input_name(canonical_source_name);
     let mut session = if format.is_some() {
         CanonicalEngineSession::new(&mut stores, engine.command_profile())
     } else {
@@ -284,7 +280,7 @@ fn run_file_in_process_captured(
         "canonical e2e sessions must never run with unbounded command fuel"
     );
     let root_source = session
-        .register_world_root(job_name, content)
+        .register_world_root(&startup_input_name, content)
         .map_err(|error| error.to_string())?;
     let mut host = StagedDirResourceHost { base_dir };
     let mut observers = TripObservers::default();
