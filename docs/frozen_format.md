@@ -423,8 +423,8 @@ image rejected: ...`; WASM returns the same message in its compile diagnostic.
 Failures are deterministic and identify the rejected boundary:
 
 - wrong magic means the input is not an Umber format image;
-- any schema other than 11 reports the unsupported version, including schemas
-  9 and 10, which must be regenerated rather than upgraded in place;
+- any schema other than 11, including schemas 9 and 10, reports the unsupported
+  version and must be regenerated rather than upgraded in place;
 - ABI or lookup fingerprint mismatch means the image and runtime implement
   different schema-11 contracts;
 - checksum mismatch means the bytes changed after publication; and
