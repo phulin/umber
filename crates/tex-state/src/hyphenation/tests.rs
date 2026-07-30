@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn operationless_pattern_does_not_occupy_its_trie_path() {
-    // TeX82 §§963-964 leave trie_o at min_quarterword when every effective
-    // hyphenation value is zero.
+    // TeX82 §965 computes min_trie_op when every effective hyphenation value
+    // is zero; §963 then installs that replacement at the path boundary.
     let mut table = HyphenationTable::new();
     assert!(!table.add_pattern_for_language(
         0,

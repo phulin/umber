@@ -14,6 +14,8 @@
 //! gave `\the` the direct-splice treatment §473 reserves for token-list
 //! collection instead of the ordinary expansion `get_x_token` performs.
 
+use std::collections::BTreeMap;
+
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::PatternSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -82,6 +84,7 @@ impl CommandProcessor<'_> {
         let mut pattern_values = vec![0];
         let mut pattern_digit_sensed = false;
         let pattern_language = u8::try_from(self.state.int_param(IntParam::LANGUAGE)).unwrap_or(0);
+        let mut pending_pattern_paths = BTreeMap::<Vec<char>, bool>::new();
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let character = match command.meaning() {
@@ -141,7 +144,7 @@ impl CommandProcessor<'_> {
                         };
                         self.report_duplicate_pattern_if_needed(
                             pattern_language,
-                            &patterns,
+                            &mut pending_pattern_paths,
                             &pattern,
                         );
                         patterns.push(pattern);
@@ -163,7 +166,7 @@ impl CommandProcessor<'_> {
                         };
                         self.report_duplicate_pattern_if_needed(
                             pattern_language,
-                            &patterns,
+                            &mut pending_pattern_paths,
                             &pattern,
                         );
                         patterns.push(pattern);
@@ -200,15 +203,19 @@ impl CommandProcessor<'_> {
     fn report_duplicate_pattern_if_needed(
         &mut self,
         language: u8,
-        pending: &[PatternSpec],
+        pending: &mut BTreeMap<Vec<char>, bool>,
         pattern: &PatternSpec,
     ) {
-        let duplicate = pending
-            .iter()
-            .any(|prior| prior.letters == pattern.letters && prior.has_trie_operation())
-            || self
-                .state
-                .contains_hyphenation_pattern_for_language(language, &pattern.letters);
+        // §963 tests the current terminal `trie_o`, then replaces it with
+        // §965's newly computed `v` even after diagnosing a duplicate. Keep
+        // the pending view in that same order: its value is the current
+        // replacement, not whether any historical occurrence had an op.
+        let current = pending.entry(pattern.letters.clone()).or_insert_with(|| {
+            self.state
+                .contains_hyphenation_pattern_for_language(language, &pattern.letters)
+        });
+        let duplicate = *current;
+        *current = pattern.has_trie_operation();
         if duplicate {
             let context = self.command.output_open_context(&self.state);
             let mut report = self.state.print_err("Duplicate pattern");

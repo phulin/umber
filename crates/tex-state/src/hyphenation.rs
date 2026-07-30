@@ -87,7 +87,7 @@ impl PatternSpec {
         {
             *value = 0;
         }
-        if !self.values.iter().any(|&value| value != 0) {
+        if !self.has_trie_operation() {
             self.values.clear();
         }
     }

@@ -4,6 +4,7 @@ use tex_command::{
     CommandObservation, CommandObserver, InputReason, InputTransition, RegisteredSourceKind,
     SourceRegistration,
 };
+use tex_state::hyphenation::PatternSpec;
 use tex_state::token::{Catcode, Token};
 
 use super::*;
@@ -5194,10 +5195,38 @@ fn distinct_pattern_paths_do_not_report_section_963_duplicate() {
 }
 
 #[test]
+fn pending_pattern_duplicate_view_follows_section_963_replacement_order() {
+    // TeX82 §963 diagnoses from the path's current trie_o and then replaces
+    // it; §965 computes min_trie_op for an operationless pattern. These
+    // sequences cover both transitions through that ordered state.
+    for (patterns, expected_duplicates) in [
+        ("b1b bb b2b", 1), // real -> operationless -> real
+        ("bb b1b b2b", 1), // operationless -> real -> real
+        ("b1b b2b", 1),    // real -> real
+        ("bb bb bb", 0),   // repeated operationless
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(
+            &mut control,
+            format!("\\nonstopmode\\patterns{{{patterns}}}\\count0=1\\end").as_bytes(),
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(stores.count(0), 1, "{patterns}");
+        assert_eq!(
+            terminal_text(&stores)
+                .matches("! Duplicate pattern.")
+                .count(),
+            expected_duplicates,
+            "{patterns}"
+        );
+    }
+}
+
+#[test]
 fn operationless_pattern_path_is_not_a_section_963_duplicate() {
-    // TeX82 §§963-964: `bb` creates a trie path but computes
-    // `v=min_quarterword`, so the first pattern that gives that path a real
-    // operation is not a duplicate. A subsequent operation on the path is.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
@@ -5214,6 +5243,54 @@ fn operationless_pattern_path_is_not_a_section_963_duplicate() {
             .count(),
         1,
         "only the second real trie operation on the shared path is duplicate"
+    );
+}
+
+#[test]
+fn pattern_duplicate_paths_are_partitioned_by_language() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\language=1\\patterns{b1b}\\language=2\\patterns{b2b}\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(
+        terminal_text(&stores)
+            .matches("! Duplicate pattern.")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn committed_and_pending_pattern_paths_share_replacement_order() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    assert!(!stores.add_hyphenation_pattern_for_language(
+        0,
+        PatternSpec {
+            letters: vec!['b', 'b'],
+            values: vec![0, 1, 0],
+        },
+    ));
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\patterns{bb b2b}\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(
+        terminal_text(&stores)
+            .matches("! Duplicate pattern.")
+            .count(),
+        1,
+        "committed real is diagnosed, its operationless replacement clears the pending view, and the following real is accepted"
     );
 }
 
