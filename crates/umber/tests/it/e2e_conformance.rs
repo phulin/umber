@@ -954,8 +954,8 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
 }
 
 #[test]
-#[ignore = "manual full-document TRIP parity; run through scripts/trip.sh"]
-fn e2e_conformance_trip() {
+#[ignore = "manual direct canonical TRIP parity; run through scripts/trip.sh"]
+fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture("trip.tex", "trip.tex", false, gate);
     });

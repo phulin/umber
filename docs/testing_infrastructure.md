@@ -1712,7 +1712,7 @@ actionable report when they are not.
 ```bash
 scripts/fetch-conformance-inputs.sh
 scripts/fetch-conformance-inputs.sh --offline
-cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture
 cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
@@ -1727,8 +1727,11 @@ use the pinned canonical `trip.tfm`, then run the documented INITEX and
 format-loaded TRIP phases in process.
 
 Cargo conformance tests do not launch Umber as a subprocess. Story and Gentle
-call the engine directly through the staged fixture callback; TRIP and e-TRIP
-share one in-process two-phase format helper.
+call the engine directly through the staged fixture callback. The ignored
+`e2e_conformance_trip_canonical` probe uses retained
+`CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
+both phases without an `Executor`/`InputStack` fallback; TRIP and e-TRIP share
+the surrounding two-phase fixture helper.
 `scripts/check-and-test.sh` preflights the gitignored e2e oracles before
 starting the workspace gate and warns that absent ones will fail their gates.
 

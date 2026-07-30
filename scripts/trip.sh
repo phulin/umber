@@ -17,7 +17,7 @@ if (($# == 0)); then
     scripts/test-tex82-trip-observer.sh
     scripts/test-etex26-trip-observer.sh
     cargo test -q -p umber --test it \
-      e2e_conformance_trip -- --ignored --nocapture
+      e2e_conformance_trip_canonical -- --ignored --nocapture
     cargo test -q -p umber --test it \
       e2e_conformance_etrip -- --ignored --nocapture
   '

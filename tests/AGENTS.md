@@ -476,7 +476,7 @@ Run the fixture-backed end-to-end DVI conformance tests explicitly with:
 ```bash
 cargo test -p umber --test it e2e_conformance_story -- --nocapture
 cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
-cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture
 cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 ```
 
@@ -499,14 +499,15 @@ opcode without using the external corpus.
 The official Knuth TeX82 TRIP and e-TeX V2 e-TRIP conformance materials are
 pinned separately in `tests/trip-manifest.txt`. They are fetched into
 gitignored `third_party/trip/` by `scripts/fetch-conformance-inputs.sh`; do not
-commit the fetched CTAN files. The Cargo test returns cleanly unless both
-`trip.tex` and `trip.tfm` are present.
-The `e2e_conformance_trip` and `e2e_conformance_etrip` Cargo integration tests
-share an in-process two-phase format-create/format-load helper and then apply
+commit the fetched CTAN files. The registered Cargo gate fails with
+materialization instructions when a required source, TFM, or oracle is absent.
+The ignored `e2e_conformance_trip_canonical` direct-profile probe and
+`e2e_conformance_etrip` Cargo integration test share an in-process two-phase
+format-create/format-load helper and then apply
 the same preamble-comment-only, byte-identical final-DVI assertion used by
 Story and Gentle. They never invoke an Umber subprocess.
 Run TRIP with
-`cargo test -p umber --test it e2e_conformance_trip -- --nocapture`.
+`cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture`.
 Run the required e-TRIP DVI gate with
 `cargo test -p umber --test it e2e_conformance_etrip -- --nocapture`.
 

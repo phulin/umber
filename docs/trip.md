@@ -9,7 +9,7 @@ and Gentle. Run them with:
 ```bash
 scripts/fetch-conformance-inputs.sh
 scripts/fetch-conformance-inputs.sh --offline
-cargo test -p umber --features instrumentation --test it e2e_conformance_trip -- --ignored --nocapture
+cargo test -p umber --features instrumentation --test it e2e_conformance_trip_canonical -- --ignored --nocapture
 cargo test -p umber --features instrumentation --test it e2e_conformance_etrip -- --ignored --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
@@ -38,14 +38,18 @@ still collected into the mark or definition. TRIP page 3 exercises this with
 the numeric marks created by `\everypar`.
 
 `scripts/fetch-conformance-inputs.sh` fetches official CTAN bytes into
-gitignored `third_party/trip/` and verifies their SHA-256 hashes. The Cargo
-integration test first checks for
-`third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
-without running TRIP. When both are present it uses a shared in-process Rust
-helper for format creation and the format-loaded run, then uses the shared
-conformance library to compare against the gitignored,
-locally generated `tests/corpus/e2e/trip.expected.dvi` oracle, requiring byte-identical final
-DVI after normalizing only the preamble comment. DVItype is diagnostic for
+gitignored `third_party/trip/` and verifies their SHA-256 hashes. The ignored
+`e2e_conformance_trip_canonical` Cargo integration probe reaches its
+registered assets through the conformance gate, which fails rather than
+silently skipping when an asset is absent. It uses retained
+`CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
+format creation and the format-loaded run, with no `Executor`/`InputStack`
+fallback. The shared conformance library compares the pinned semantic,
+geometry, transcript, and log channels and requires byte-identical final DVI
+against the gitignored, locally generated
+`tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
+comment. The two-phase format-image path also retains its contract that
+provenance caches and host state are not serialized. DVItype is diagnostic for
 Umber. Fixture regeneration independently executes both TRIP phases with
 pdfTeX and installs that locally generated DVI through
 `scripts/regen-fixtures.sh`; it never copies the official third-party DVI.
