@@ -7,11 +7,15 @@
 `fixturegen --migrate-layout --plan` deterministically inventories the
 declarative execution-family specifications in `layout_migration.rs`, reports
 each case's file/byte census and domain-separated SHA-256, and performs no
-writes. `--apply` stages and byte-verifies each whole case directory before an
-atomic rename, consumes the old flat authorities only after installation, and
-is idempotent. The specification type is intentionally reusable by later
-fixture-family migrations; shared and case-owned extra inputs are explicit
-rather than inferred from file extensions.
+writes. `--apply` stages and byte-verifies the entire requested plan before any
+authority mutation. Its commit renames every old authority into a named
+transaction backup and installs the staged cases; a failure reverses every
+completed rename, reports every restoration failure, and retains recoverable
+backups when restoration is incomplete. A completed apply and a successfully
+rolled-back apply are both safe to repeat. The reusable specification declares
+case discovery, relative sources and destinations, roles, local metadata,
+shared-input copies, and output mappings without assuming `.tex` or
+`expected.<channel>` names.
 
 Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
 of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of

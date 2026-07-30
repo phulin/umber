@@ -41,9 +41,14 @@ The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,a
 use one closed Git directory per case. Each directory owns its named `.tex`
 source, every exact local support input, and each applicable
 `expected.<channel>` output. `tools/fixturegen --migrate-layout --plan` is the
-read-only deterministic migration inventory; `--apply` stages, verifies, and
-atomically installs whole directories. Repeating either mode over the migrated
-tree returns the same case/byte/SHA-256 report. The routine `test-support` gate
+read-only deterministic migration inventory. `--apply` stages and byte-checks
+the whole requested plan before mutation, then commits through recoverable
+authority backups and case-directory swaps. Any commit failure reverses all
+completed swaps; incomplete restoration retains named backups and reports the
+original and restoration failures together. The declarative mapping schema
+does not assume TeX extensions or conventional output names. Repeating either
+mode after success or successful rollback returns the same case/byte/SHA-256
+report. The routine `test-support` gate
 also equates those directory trees with Git's regular tracked-file inventory,
 so ignored, untracked, symlinked, nonlocal, target-backed, missing, and extra
 authorities fail rather than escaping discovery.
