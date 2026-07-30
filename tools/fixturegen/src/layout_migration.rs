@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +41,14 @@ pub struct SharedFile {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelectedSharedFile {
+    pub cases: &'static [&'static str],
+    pub source: &'static str,
+    pub destination: &'static str,
+    pub role: FileRole,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FamilySpec {
     pub area: &'static str,
     /// The suffix of the authority file that discovers and names a flat case.
@@ -51,6 +59,8 @@ pub struct FamilySpec {
     pub case_owned_files: &'static [CaseOwnedFile],
     /// Shared authorities are copied into every case, then consumed once.
     pub shared_files: &'static [SharedFile],
+    /// Shared authorities copied only into the named cases, then consumed once.
+    pub selected_shared_files: &'static [SelectedSharedFile],
 }
 
 #[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
@@ -74,6 +84,7 @@ const EXECUTION_CASE_FILES: &[CaseFile] = &[
 ];
 const NO_OWNED: &[CaseOwnedFile] = &[];
 const NO_SHARED: &[SharedFile] = &[];
+const NO_SELECTED_SHARED: &[SelectedSharedFile] = &[];
 const TRANSACTION_PREFIX: &str = ".fixture-layout-transaction-";
 const OWNER_MARKER: &str = "owner";
 const COMMITTED_MARKER: &str = "committed";
@@ -157,6 +168,7 @@ pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
         case_files: &[SOURCE_TEX, EXPECTED_DVI],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
+        selected_shared_files: NO_SELECTED_SHARED,
     },
     FamilySpec {
         area: "hello",
@@ -164,6 +176,7 @@ pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
         case_files: &[SOURCE_TEX, EXPECTED_LOG],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
+        selected_shared_files: NO_SELECTED_SHARED,
     },
     FamilySpec {
         area: "lexer",
@@ -171,6 +184,7 @@ pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
         case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
+        selected_shared_files: NO_SELECTED_SHARED,
     },
     FamilySpec {
         area: "lexer_dynamic",
@@ -178,6 +192,7 @@ pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
         case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
+        selected_shared_files: NO_SELECTED_SHARED,
     },
     FamilySpec {
         area: "stabilization",
@@ -185,10 +200,95 @@ pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
         case_files: &[SOURCE_TEX],
         case_owned_files: NO_OWNED,
         shared_files: NO_SHARED,
+        selected_shared_files: NO_SELECTED_SHARED,
     },
 ];
 
-#[allow(dead_code)] // Builds the retained completed-cohort specification above.
+const BIB_INVOCATION_CASE_FILES: &[CaseFile] = &[
+    CaseFile {
+        source_suffix: ".invocation",
+        destination_suffix: "invocation.case",
+        destination_keeps_case: false,
+        captures_tail: false,
+        role: FileRole::Metadata,
+        required: true,
+    },
+    CaseFile {
+        source_suffix: ".inventory",
+        destination_suffix: "case.inventory",
+        destination_keeps_case: false,
+        captures_tail: false,
+        role: FileRole::Metadata,
+        required: true,
+    },
+];
+
+const BIB_INVOCATION_OWNED: &[CaseOwnedFile] = &[
+    CaseOwnedFile {
+        case: "bcf-success",
+        source: "basic.expected.bbl",
+        destination: "expected.bbl",
+        role: FileRole::Output,
+    },
+    CaseOwnedFile {
+        case: "invalid-output-format",
+        source: "invalid.expected.stderr",
+        destination: "expected.stderr",
+        role: FileRole::Output,
+    },
+    CaseOwnedFile {
+        case: "tool-mode",
+        source: "tool.expected.bib",
+        destination: "expected.bib",
+        role: FileRole::Output,
+    },
+];
+
+const BIB_INVOCATION_SHARED: &[SelectedSharedFile] = &[
+    SelectedSharedFile {
+        cases: &["bcf-success", "invalid-output-format"],
+        source: "basic.bcf",
+        destination: "basic.bcf",
+        role: FileRole::Input,
+    },
+    SelectedSharedFile {
+        cases: &["bcf-success", "tool-mode"],
+        source: "basic.bib",
+        destination: "basic.bib",
+        role: FileRole::Input,
+    },
+    SelectedSharedFile {
+        cases: &["bcf-success", "tool-mode"],
+        source: "basic.expected.stdout",
+        destination: "expected.stdout",
+        role: FileRole::Output,
+    },
+];
+
+pub const ALL_FAMILIES: &[FamilySpec] = &[
+    EXECUTION_FAMILIES[0],
+    EXECUTION_FAMILIES[1],
+    EXECUTION_FAMILIES[2],
+    EXECUTION_FAMILIES[3],
+    EXECUTION_FAMILIES[4],
+    EXECUTION_FAMILIES[5],
+    EXECUTION_FAMILIES[6],
+    EXECUTION_FAMILIES[7],
+    LEXICAL_SESSION_FAMILIES[0],
+    LEXICAL_SESSION_FAMILIES[1],
+    LEXICAL_SESSION_FAMILIES[2],
+    LEXICAL_SESSION_FAMILIES[3],
+    LEXICAL_SESSION_FAMILIES[4],
+    FamilySpec {
+        area: "bib/invocation",
+        case_discovery_suffix: ".invocation",
+        case_files: BIB_INVOCATION_CASE_FILES,
+        case_owned_files: BIB_INVOCATION_OWNED,
+        shared_files: NO_SHARED,
+        selected_shared_files: BIB_INVOCATION_SHARED,
+    },
+];
+
 const fn execution_family(
     area: &'static str,
     case_owned_files: &'static [CaseOwnedFile],
@@ -200,6 +300,7 @@ const fn execution_family(
         case_files: EXECUTION_CASE_FILES,
         case_owned_files,
         shared_files,
+        selected_shared_files: NO_SELECTED_SHARED,
     }
 }
 
@@ -288,10 +389,7 @@ impl MigrationPlan {
                     if let Some(owner) =
                         authority_owner.insert(authority.clone(), format!("{}/{case}", spec.area))
                     {
-                        if !spec
-                            .shared_files
-                            .iter()
-                            .any(|file| area.join(file.source) == *authority)
+                        if !is_shared_authority(spec, &area, authority)
                         {
                             bail!(
                                 "authority {} is owned by both {owner} and {}/{case}",
@@ -435,7 +533,29 @@ fn inventory_for_case(
             area.join(mapping.source),
         )?;
     }
+    for mapping in spec
+        .selected_shared_files
+        .iter()
+        .filter(|mapping| mapping.cases.contains(&case))
+    {
+        add_mapping(
+            &mut inventory,
+            &mut authorities,
+            mapping.destination.to_owned(),
+            area.join(mapping.source),
+        )?;
+    }
     Ok((inventory, authorities))
+}
+
+fn is_shared_authority(spec: &FamilySpec, area: &Path, authority: &Path) -> bool {
+    spec.shared_files
+        .iter()
+        .any(|file| area.join(file.source) == authority)
+        || spec
+            .selected_shared_files
+            .iter()
+            .any(|file| area.join(file.source) == authority)
 }
 
 fn matching_files(
@@ -484,7 +604,7 @@ fn add_mapping(
 }
 
 fn validate_spec(spec: &FamilySpec) -> Result<()> {
-    validate_component(spec.area)?;
+    validate_relative(spec.area)?;
     if spec.case_discovery_suffix.is_empty() {
         bail!("{} has an empty case discovery suffix", spec.area);
     }
@@ -502,6 +622,28 @@ fn validate_spec(spec: &FamilySpec) -> Result<()> {
     for mapping in spec.shared_files {
         validate_relative(mapping.source)?;
         validate_relative(mapping.destination)?;
+    }
+    let mut selected = BTreeSet::new();
+    for mapping in spec.selected_shared_files {
+        validate_relative(mapping.source)?;
+        validate_relative(mapping.destination)?;
+        ensure!(
+            !mapping.cases.is_empty(),
+            "{} selected shared file {} has no cases",
+            spec.area,
+            mapping.source
+        );
+        selected.clear();
+        for case in mapping.cases {
+            validate_component(case)?;
+            ensure!(
+                selected.insert(*case),
+                "{} selected shared file {} repeats case {}",
+                spec.area,
+                mapping.source,
+                case
+            );
+        }
     }
     Ok(())
 }

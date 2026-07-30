@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::{Result, bail};
 
 use super::{
-    CaseFile, CaseOwnedFile, FamilySpec, FileRole, MigrationFs, Mode, RealFs, SharedFile, run,
-    run_with_fs,
+    CaseFile, CaseOwnedFile, FamilySpec, FileRole, MigrationFs, Mode, RealFs, SelectedSharedFile,
+    SharedFile, run, run_with_fs,
 };
 
 const FILES: &[CaseFile] = &[
@@ -37,12 +37,19 @@ const SHARED: &[SharedFile] = &[SharedFile {
     destination: "inputs/common",
     role: FileRole::Input,
 }];
+const SELECTED_SHARED: &[SelectedSharedFile] = &[SelectedSharedFile {
+    cases: &["first"],
+    source: "first-only.data",
+    destination: "inputs/first-only",
+    role: FileRole::Input,
+}];
 const SPEC: &[FamilySpec] = &[FamilySpec {
     area: "sample",
     case_discovery_suffix: ".src",
     case_files: FILES,
     case_owned_files: OWNED,
     shared_files: SHARED,
+    selected_shared_files: SELECTED_SHARED,
 }];
 
 fn fixture() -> tempfile::TempDir {
@@ -54,6 +61,7 @@ fn fixture() -> tempfile::TempDir {
     std::fs::write(area.join("second.src"), b"second").expect("second");
     std::fs::write(area.join("odd metadata"), b"meta").expect("metadata");
     std::fs::write(area.join("common.data"), b"common").expect("shared");
+    std::fs::write(area.join("first-only.data"), b"first only").expect("selected shared");
     temp
 }
 
@@ -75,7 +83,35 @@ fn declarative_non_tex_nonconventional_names_apply_and_repeat() {
         std::fs::read(temp.path().join("sample/second/meta/info")).expect("metadata"),
         b"meta"
     );
+    assert_eq!(
+        std::fs::read(temp.path().join("sample/first/inputs/first-only"))
+            .expect("selected shared"),
+        b"first only"
+    );
+    assert!(!temp.path().join("sample/second/inputs/first-only").exists());
     assert_eq!(run(temp.path(), SPEC, Mode::Apply).expect("retry"), applied);
+}
+
+#[test]
+fn declarative_family_area_may_be_a_normalized_nested_path() {
+    const NESTED: &[FamilySpec] = &[FamilySpec {
+        area: "group/sample",
+        case_discovery_suffix: ".src",
+        case_files: FILES,
+        case_owned_files: &[],
+        shared_files: &[],
+        selected_shared_files: &[],
+    }];
+    let temp = tempfile::tempdir().expect("temp");
+    let area = temp.path().join("group/sample");
+    std::fs::create_dir_all(&area).expect("nested area");
+    std::fs::write(area.join("only.src"), b"nested").expect("source");
+
+    run(temp.path(), NESTED, Mode::Apply).expect("nested migration");
+    assert_eq!(
+        std::fs::read(area.join("only/program.input")).expect("migrated source"),
+        b"nested"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -226,12 +262,12 @@ fn authority_commit_failure_rolls_back_and_retry_succeeds() {
 #[test]
 fn install_failure_after_prior_swap_rolls_back_everything() {
     let temp = fixture();
-    // Five unique authorities are backed up, then first is installed, then failure.
+    // Six unique authorities are backed up, then first is installed, then failure.
     let error = run_with_fs(
         temp.path(),
         SPEC,
         Mode::Apply,
-        &InjectedFs::new(Failure::Rename(7)),
+        &InjectedFs::new(Failure::Rename(8)),
     )
     .expect_err("failure");
     assert!(format!("{error:#}").contains("every authority was restored"));
@@ -290,7 +326,7 @@ fn restoration_failure_reports_both_errors_and_preserves_backups() {
         temp.path(),
         SPEC,
         Mode::Apply,
-        &InjectedFs::new(Failure::RenameFrom(7)),
+        &InjectedFs::new(Failure::RenameFrom(8)),
     )
     .expect_err("dual failure");
     let message = format!("{error:#}");
@@ -343,7 +379,7 @@ fn rollback_cleanup_failure_reports_retained_unique_root_and_retry_succeeds() {
         temp.path(),
         SPEC,
         Mode::Apply,
-        &InjectedFs::new(Failure::RenameAndRemove(7)),
+        &InjectedFs::new(Failure::RenameAndRemove(8)),
     )
     .expect_err("cleanup failure");
     let message = format!("{error:#}");

@@ -63,11 +63,8 @@ fn run() -> Result<()> {
                 _ => bail!("--migrate-layout requires --plan or --apply"),
             };
             ensure_no_extra_args(args)?;
-            let report = layout_migration::run(
-                &corpus_root(),
-                layout_migration::LEXICAL_SESSION_FAMILIES,
-                mode,
-            )?;
+            let report =
+                layout_migration::run(&corpus_root(), layout_migration::ALL_FAMILIES, mode)?;
             print!("{report}");
             Ok(())
         }

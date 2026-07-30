@@ -1,0 +1,11 @@
+bib-invocation-v1
+argv=--nolog
+argv=--output-file
+argv={output}
+argv=basic.bcf
+status=0
+input=basic.bcf
+input=basic.bib
+stdout=expected.stdout
+stderr=empty
+artifact=result.bbl:expected.bbl

@@ -1,0 +1,11 @@
+bib-invocation-v1
+argv=--tool
+argv=--nolog
+argv=--output-file
+argv={output}
+argv=basic.bib
+status=0
+input=basic.bib
+stdout=expected.stdout
+stderr=empty
+artifact=tool.bib:expected.bib

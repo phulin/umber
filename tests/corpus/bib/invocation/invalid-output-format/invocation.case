@@ -1,0 +1,8 @@
+bib-invocation-v1
+argv=--output-format=pdf
+argv=basic.bcf
+status=2
+input=basic.bcf
+stdout=empty
+stderr=expected.stderr
+artifact=none
