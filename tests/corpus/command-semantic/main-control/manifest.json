@@ -936,7 +936,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 59,
+        "events": 58,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -976,7 +976,7 @@
         "mutation:meaning:count:macro definition:local"
       ],
       "channels": {
-        "events": 61,
+        "events": 60,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -1026,7 +1026,7 @@
         "mutation:meaning:relax:macro definition:global"
       ],
       "channels": {
-        "events": 42,
+        "events": 41,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -1722,7 +1722,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 77,
+        "events": 76,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

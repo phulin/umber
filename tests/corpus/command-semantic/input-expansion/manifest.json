@@ -758,7 +758,6 @@
         "input:push:terminal",
         "input:retire:terminal",
         "scanner-status:defining>normal",
-        "token-list:complete:read:char:letter:82",
         "input:push:macro",
         "macro:activate:readvalue:0:",
         "input:retire:macro",
@@ -768,7 +767,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 46,
+        "events": 45,
         "status": "clean",
         "terminal": {
           "kind": "xfail",
@@ -818,7 +817,6 @@
         "input:push:terminal",
         "input:retire:terminal",
         "scanner-status:defining>normal",
-        "token-list:complete:read:char:other_char:82",
         "input:push:macro",
         "macro:activate:readvalue:0:",
         "input:retire:macro",
@@ -828,7 +826,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 45,
+        "events": 44,
         "status": "clean",
         "terminal": {
           "kind": "xfail",

@@ -7094,6 +7094,96 @@ impl CommandObserver for ObservationRecorder {
 }
 
 #[test]
+fn readline_observes_only_committed_macro_mutations_across_group_rollback() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut universe);
+    tex_expand::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    control.capabilities_mut().register_input(
+        "stream.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"LOCAL\nGLOBAL"[..]),
+        ),
+    );
+    register_source(
+        &mut control,
+        br"\openin1=stream.tex {\readline1 to \line}\global\readline1 to \line\closein1\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    while let ReplayStep::Continue = control
+        .step_with_observer(&mut universe, &mut observations)
+        .expect("grouped local and global readline definitions execute")
+    {}
+
+    assert!(
+        !observations.0.iter().any(|event| matches!(
+            event,
+            CommandObservation::TokenList(list) if list.purpose == "read"
+        )),
+        "tex.web §§482 and 1225 expose the definition, not an intermediate token-list completion"
+    );
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|event| match event {
+            CommandObservation::Mutation(mutation)
+                if mutation.target == "meaning" && mutation.key.as_deref() == Some("line") =>
+            {
+                Some(mutation)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 2);
+    assert!(!mutations[0].global);
+    assert!(mutations[1].global);
+    assert_eq!(
+        mutations[0].tokens.as_deref(),
+        Some(
+            [
+                ObservedToken::MacroEndMatch,
+                ObservedToken::Character {
+                    character: 'L',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+                ObservedToken::Character {
+                    character: 'O',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+                ObservedToken::Character {
+                    character: 'C',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+                ObservedToken::Character {
+                    character: 'A',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+                ObservedToken::Character {
+                    character: 'L',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+                ObservedToken::Character {
+                    character: '\r',
+                    catcode: tex_state::token::Catcode::Other,
+                },
+            ]
+            .as_slice()
+        )
+    );
+    assert_eq!(
+        mutations[1]
+            .tokens
+            .as_ref()
+            .and_then(|tokens| tokens.first()),
+        Some(&ObservedToken::MacroEndMatch)
+    );
+}
+
+#[test]
 fn replay_expands_registered_input_without_executor_source_consumption() {
     let mut universe = Universe::new_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut universe);

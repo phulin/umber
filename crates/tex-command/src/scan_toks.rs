@@ -829,20 +829,13 @@ impl CommandProcessor<'_> {
         self.command.alignment.align_state = saved_align_state;
         self.restore_scanner_status_with_observation(status, prior);
         let tokens = result?;
-        let list = self.state.finish_traced_token_list(&tokens);
-        observe!(
-            self,
-            CommandObservation::TokenList(TokenListRecord {
-                transition: "complete",
-                purpose: "read",
-                tokens: tokens
-                    .iter()
-                    .copied()
-                    .map(|token| self.observed_token(token))
-                    .collect(),
-            }),
-        );
-        Ok(list)
+        // §482 leaves the collected list in `cur_val`; §1225 immediately
+        // installs it with `define(p,call,cur_val)`. Unlike §473's
+        // `scan_toks`, this is not an independently observable completed
+        // token-list assignment. The committed observation is §1225's
+        // meaning mutation, whose macro body includes §482's leading
+        // `end_match_token`.
+        Ok(self.state.finish_traced_token_list(&tokens))
     }
 
     /// §482's `repeat <Input and store tokens from the next line> until
