@@ -20,7 +20,6 @@ const PDF_PARITY_CASES: &[PdfParityCase] = &[
     PdfParityCase::new("navigation_structures", &[]),
     PdfParityCase::new("object_dictionaries", &[]),
 ];
-const PDF_PARITY_CHANNELS_PER_CASE: usize = 5;
 
 #[derive(Clone, Copy)]
 struct PdfParityCase {
@@ -34,52 +33,66 @@ impl PdfParityCase {
     }
 }
 
-#[test]
-#[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
-fn committed_pdftex_fixtures_match_structure_and_bytes() {
-    assert!(
-        !PDF_PARITY_CASES.is_empty(),
-        "PDF parity case declaration must not be empty"
-    );
-    let mut exercised_cases = 0;
-    let mut exercised_channels = 0;
-    for declaration in PDF_PARITY_CASES {
-        exercised_channels += assert_committed_case(*declaration);
-        exercised_cases += 1;
-    }
-    assert_eq!(
-        exercised_cases,
-        PDF_PARITY_CASES.len(),
-        "fewer PDF parity cases ran than were declared"
-    );
-    assert_eq!(
-        exercised_channels,
-        PDF_PARITY_CASES.len() * PDF_PARITY_CHANNELS_PER_CASE,
-        "fewer PDF parity channels ran than were declared"
-    );
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfParityChannel {
+    ExactBytes,
+    ReferenceStructure,
+    UmberStructure,
+    Raster,
+    RenderAttestation,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PdfParityCaseSummary {
+    identity: &'static str,
+    assertions: [PdfParityChannel; 5],
 }
 
 #[test]
-fn migrated_pdftex_parity_roles_resolve_inside_closed_cases() {
-    let resolved = PDF_PARITY_CASES
-        .iter()
-        .map(|declaration| {
-            let case = closed_pdf_case(declaration.name);
-            case.payload_path("source.tex")
-                .expect("declared source role");
-            case.payload_path("expected.structure")
-                .expect("declared structure role");
-            declaration.name
-        })
-        .collect::<Vec<_>>();
+#[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
+fn committed_pdftex_fixtures_match_structure_and_bytes() {
+    let summary = run_committed_pdf_parity();
     assert_eq!(
-        resolved,
-        PDF_PARITY_CASES
-            .iter()
-            .map(|declaration| declaration.name)
-            .collect::<Vec<_>>(),
-        "migrated PDF parity discovery skipped a declared case"
+        summary,
+        [
+            expected_pdf_parity_summary("annotations_running"),
+            expected_pdf_parity_summary("external_pdf_page"),
+            expected_pdf_parity_summary("form_xobjects"),
+            expected_pdf_parity_summary("minimal_rule"),
+            expected_pdf_parity_summary("navigation_structures"),
+            expected_pdf_parity_summary("object_dictionaries"),
+        ],
+        "committed PDF parity consumer did not execute the exact case/channel matrix"
     );
+    assert_eq!(
+        summary
+            .iter()
+            .map(|case| case.assertions.len())
+            .sum::<usize>(),
+        30,
+        "committed PDF parity consumer did not execute 30 channel assertions"
+    );
+}
+
+fn run_committed_pdf_parity() -> Vec<PdfParityCaseSummary> {
+    PDF_PARITY_CASES
+        .iter()
+        .copied()
+        .map(assert_committed_case)
+        .collect()
+}
+
+fn expected_pdf_parity_summary(identity: &'static str) -> PdfParityCaseSummary {
+    PdfParityCaseSummary {
+        identity,
+        assertions: [
+            PdfParityChannel::ExactBytes,
+            PdfParityChannel::ReferenceStructure,
+            PdfParityChannel::UmberStructure,
+            PdfParityChannel::Raster,
+            PdfParityChannel::RenderAttestation,
+        ],
+    }
 }
 
 #[test]
@@ -162,7 +175,7 @@ fn annotation_projection(bytes: &[u8]) -> Vec<Vec<AnnotationProjection>> {
 }
 
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
-fn assert_committed_case(declaration: PdfParityCase) -> usize {
+fn assert_committed_case(declaration: PdfParityCase) -> PdfParityCaseSummary {
     let case = declaration.name;
     let closed = closed_pdf_case(case);
     let source = closed
@@ -234,7 +247,16 @@ fn assert_committed_case(declaration: PdfParityCase) -> usize {
         render, expected_attestation,
         "committed renderer attestation is stale for pdf/{case}"
     );
-    PDF_PARITY_CHANNELS_PER_CASE
+    PdfParityCaseSummary {
+        identity: case,
+        assertions: [
+            PdfParityChannel::ExactBytes,
+            PdfParityChannel::ReferenceStructure,
+            PdfParityChannel::UmberStructure,
+            PdfParityChannel::Raster,
+            PdfParityChannel::RenderAttestation,
+        ],
+    }
 }
 
 fn closed_pdf_case(case: &str) -> ClosedCase {
