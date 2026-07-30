@@ -1,0 +1,20 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**vbox-baselineskip-append.tex
+(./vbox-baselineskip-append.tex
+> \box1=
+\vbox(16.0+1.0)x6.0 []
+
+
+! OK.
+l.5 \showbox1
+             
+
+> \box2=
+\vbox(12.0+1.0)x6.0 []
+
+! OK.
+l.8 \showbox2
+             
+
+ )
+No pages of output.

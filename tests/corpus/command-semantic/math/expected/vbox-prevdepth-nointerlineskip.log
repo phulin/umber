@@ -1,0 +1,13 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**vbox-prevdepth-nointerlineskip.tex
+(./vbox-prevdepth-nointerlineskip.tex
+> \box1=
+\vbox(9.0+1.0)x6.0 []
+
+
+! OK.
+l.5 \showbox1
+             
+
+ )
+No pages of output.

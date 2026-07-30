@@ -1,0 +1,10 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**edef-noexpand-the-interaction.tex
+(./edef-noexpand-the-interaction.tex
+> \e=macro:
+->\a :T:7.
+l.5 \show\e
+           
+
+ )
+No pages of output.

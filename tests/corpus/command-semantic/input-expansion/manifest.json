@@ -786,6 +786,65 @@
       "inputs": {
         "nested.tex": "N"
       }
+    },
+    {
+      "id": "edef-noexpand-the-interaction",
+      "property_id": "tex82.expansion.delivery-and-primitives",
+      "source": "edef-noexpand-the-interaction.tex",
+      "provenance": {
+        "authority": "tex.web",
+        "manifest": "tests/tex82-oracle-manifest.txt",
+        "sections": [
+          366,
+          367,
+          368,
+          369,
+          370,
+          371,
+          372,
+          373,
+          374,
+          375,
+          376,
+          377,
+          378,
+          379,
+          380,
+          381
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "mutation"
+        ]
+      },
+      "expected": [
+        "mutation:catcode:-:123=1:local",
+        "mutation:catcode:-:125=2:local",
+        "mutation:meaning:a:macro definition:local",
+        "mutation:register:toks:0:tokens:local",
+        "mutation:meaning:e:macro definition:local"
+      ],
+      "channels": {
+        "events": 137,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.19",
+          "mismatch": { "line": 3, "expected": "> \\e=macro:", "actual": "> \\e=macro:->\\a :T:7." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.19",
+          "mismatch": { "line": 4, "expected": "> \\e=macro:", "actual": "> \\e=macro:->\\a :T:7." }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
+      "expectation": {
+        "kind": "pass"
+      }
     }
   ]
 }

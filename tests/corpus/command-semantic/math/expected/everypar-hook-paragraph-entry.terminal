@@ -1,0 +1,11 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./everypar-hook-paragraph-entry.tex
+Overfull \hbox (5.2778pt too wide) in paragraph at lines 5--5
+[]\tenrm x
+> 7.
+l.6 \showthe\count0
+                   
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on everypar-hook-paragraph-entry.log.

@@ -1,0 +1,14 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./showbox-breadth-depth-limits.tex
+> \box20=
+\hbox(0.0+0.0)x3.0
+.\hbox(0.0+0.0)x3.0 []
+.etc.
+
+! OK.
+l.6 \showbox20
+              
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on showbox-breadth-depth-limits.log.

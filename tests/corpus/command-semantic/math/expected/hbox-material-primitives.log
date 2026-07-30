@@ -1,0 +1,20 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX) <HOST-CLOCK>
+**hbox-material-primitives.tex
+(./hbox-material-primitives.tex
+> \box34=
+\hbox(6.94444+3.0)x14.2778 []
+
+
+! OK.
+l.8 \showbox34
+              
+
+> \box35=
+\hbox(6.94444+0.0)x15.00003 []
+
+! OK.
+l.10 \showbox35
+               
+
+ )
+No pages of output.
