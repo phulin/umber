@@ -1111,6 +1111,7 @@ impl CanonicalMainControl {
         alignment: AlignmentIdentity,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
+        self.drain_file_framing_events(stores);
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
@@ -1540,6 +1541,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         redispatch: Option<tex_command::CurrentCommand>,
     ) -> Result<ReplayStep, ExecError> {
+        self.drain_file_framing_events(stores);
         self.enter_main_control(stores);
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
@@ -2750,6 +2752,7 @@ impl CanonicalMainControl {
                 .collect();
             self.observe_committed(entry_records);
         }
+        self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
