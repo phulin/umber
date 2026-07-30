@@ -1279,7 +1279,8 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
-        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         let nodes = stores.freeze_node_list(level.list().nodes());
         let aftergroup =
             stores
@@ -1820,7 +1821,8 @@ impl CanonicalMainControl {
                 stores,
             )?;
         }
-        let level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         finish_canonical_math_list(
             level.list().nodes(),
             level.list().incomplete_fraction(),
@@ -2171,7 +2173,7 @@ impl CanonicalMainControl {
         if crate::math::reject_invalid_math_fonts(stores) {
             content = stores.freeze_node_list(&[]);
         }
-        let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let _ = crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             stores,
@@ -2194,7 +2196,8 @@ impl CanonicalMainControl {
 
     fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let mut level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         let mut eq = level
             .list_mutation()
             .take_display_eq_no()
@@ -2246,7 +2249,8 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
-        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let mut level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         let interrupt =
             level
                 .list_mutation()
@@ -2275,7 +2279,8 @@ impl CanonicalMainControl {
         if crate::math::reject_invalid_math_fonts(stores) {
             content = stores.freeze_node_list(&[]);
         }
-        let mut level = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+        let mut level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
         let interrupt =
             level
                 .list_mutation()
@@ -2391,7 +2396,11 @@ impl CanonicalMainControl {
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                let _ = crate::assignments::commit_current_list(&mut self.modes, stores)?;
+                let _ = crate::assignments::commit_current_list(
+                    &mut self.modes,
+                    stores,
+                    &mut self.fuel,
+                )?;
                 let aftergroup =
                     stores
                         .leave_group_with_kind(GroupKind::MathLeft)
@@ -9265,7 +9274,7 @@ fn begin_next_replay_alignment_cell(
             .checked_add(1)
             .ok_or(ExecError::ArithmeticOverflow)?;
     } else {
-        capture_replay_alignment_cell(active, modes, stores)?;
+        capture_replay_alignment_cell(active, modes, stores, command.fuel)?;
     }
     let next_column = match delimiter {
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
@@ -9306,7 +9315,7 @@ fn begin_next_replay_alignment_cell(
             recovered,
             AlignmentRequestResult::ExtraTabRecovered
         ));
-        finish_replay_alignment_row(active, modes, stores)?;
+        finish_replay_alignment_row(active, modes, stores, command.fuel)?;
         active.column = 0;
         // §792's extra-tab recovery rewrites `extra_info` to `cr_code`, so
         // §791's `fin_col` returns true and §1131's `do_endv` runs `fin_row`
@@ -9344,7 +9353,7 @@ fn begin_next_replay_alignment_cell(
         })?;
     match delimiter {
         AlignmentCellDelimiter::Row => {
-            finish_replay_alignment_row(active, modes, stores)?;
+            finish_replay_alignment_row(active, modes, stores, command.fuel)?;
             // TeX82 §799 `fin_row` closes with
             // `if every_cr<>null then begin_token_list(every_cr,every_cr_text);
             // align_peek`, so the hook is installed before the lookahead that
@@ -9475,6 +9484,7 @@ fn capture_replay_alignment_cell(
     active: &mut ActiveReplayAlignment,
     modes: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !active.cell_open {
         return Ok(());
@@ -9487,7 +9497,7 @@ fn capture_replay_alignment_cell(
     // otherwise the paragraph is mistaken for the cell, leaving the actual
     // cell and row levels on the mode nest after `fin_align`.
     if active.kind == AlignmentKind::VAlign {
-        crate::assignments::end_paragraph(modes, stores)?;
+        crate::assignments::end_paragraph_with_fuel(modes, stores, fuel)?;
     }
 
     // Canonical alignment packaging still defers that paragraph's lowering,
@@ -9501,7 +9511,7 @@ fn capture_replay_alignment_cell(
     {
         stores.close_hyphenation_patterns();
     }
-    let mut cell = crate::assignments::commit_current_list(modes, stores)?;
+    let mut cell = crate::assignments::commit_current_list(modes, stores, fuel)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 remove its insertions, marks, and `\vadjust` contents
@@ -9548,13 +9558,14 @@ fn finish_replay_alignment_row(
     active: &mut ActiveReplayAlignment,
     modes: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    capture_replay_alignment_cell(active, modes, stores)?;
+    capture_replay_alignment_cell(active, modes, stores, fuel)?;
     if !active.row_open {
         return Ok(());
     }
 
-    let mut row = crate::assignments::commit_current_list(modes, stores)?;
+    let mut row = crate::assignments::commit_current_list(modes, stores, fuel)?;
     let children = stores.freeze_node_list(&row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
@@ -9611,9 +9622,10 @@ fn finish_replay_alignment(
     active: &mut ActiveReplayAlignment,
     modes: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    finish_replay_alignment_row(active, modes, stores)?;
-    let mut alignment = crate::assignments::commit_current_list(modes, stores)?;
+    finish_replay_alignment_row(active, modes, stores, fuel)?;
+    let mut alignment = crate::assignments::commit_current_list(modes, stores, fuel)?;
     let rows = alignment.list_mutation().take_nodes();
     let columns = active
         .columns
@@ -10051,7 +10063,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeleteLast(primitive) => {
-            crate::assignments::execute_delete_last(primitive, modes, stores)?;
+            crate::assignments::execute_delete_last(primitive, modes, stores, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SetInteractionMode(primitive) => {
@@ -10325,6 +10337,7 @@ fn apply_scanned_step(
                     kind: GlueKind::Normal,
                     leader: None,
                 },
+                command.fuel,
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -10340,6 +10353,7 @@ fn apply_scanned_step(
                     kind: GlueKind::Normal,
                     leader: None,
                 },
+                command.fuel,
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -10357,7 +10371,7 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, indent)?;
             } else {
-                crate::assignments::indent_in_hmode(modes, stores, indent)?;
+                crate::assignments::indent_in_hmode(modes, stores, indent, command.fuel)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -11268,15 +11282,26 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
-            crate::assignments::execute_scanned_unbox(primitive, index, modes, stores)?;
+            crate::assignments::execute_scanned_unbox(
+                primitive,
+                index,
+                modes,
+                stores,
+                command.fuel,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SavedVerticalDiscards(primitive) => {
-            crate::assignments::execute_scanned_saved_vertical_discards(primitive, modes, stores)?;
+            crate::assignments::execute_scanned_saved_vertical_discards(
+                primitive,
+                modes,
+                stores,
+                command.fuel,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LastBox => {
-            let node = crate::assignments::take_last_box(modes, stores)?;
+            let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -11296,6 +11321,7 @@ fn apply_scanned_step(
                     kind,
                     leader: Some(payload),
                 },
+                command.fuel,
             )?;
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
@@ -11327,6 +11353,7 @@ fn apply_scanned_step(
                         kind,
                         leader: Some(payload),
                     },
+                    command.fuel,
                 )?;
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
@@ -11508,7 +11535,9 @@ fn apply_scanned_step(
             schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxShift(shift) => apply_box_shift(shift, command.state, modes, stores, boxes),
+        ScannedStep::BoxShift(shift) => {
+            apply_box_shift(shift, command.state, modes, stores, boxes, command.fuel)
+        }
         ScannedStep::IllegalBoxShift { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
@@ -11539,8 +11568,9 @@ fn apply_scanned_step(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
-            crate::assignments::end_paragraph(modes, stores)?;
-            let output_level = crate::assignments::commit_current_list(modes, stores)?;
+            crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
+            let output_level =
+                crate::assignments::commit_current_list(modes, stores, command.fuel)?;
             stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
@@ -11678,7 +11708,7 @@ fn apply_scanned_step(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
-                crate::assignments::end_paragraph(modes, stores)?;
+                crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
             }
             // TeX82's main-control loop appends every character (and its
             // resolved ligature/kern chain) to the current list synchronously
@@ -11698,7 +11728,7 @@ fn apply_scanned_step(
             // are dropped along with the popped mode level instead of ever
             // becoming node.
 
-            let level = crate::assignments::commit_current_list(modes, stores)?;
+            let level = crate::assignments::commit_current_list(modes, stores, command.fuel)?;
             let children = stores.freeze_node_list(level.list().nodes());
             let node = if box_state.kind.horizontal() {
                 Node::HList(crate::assignments::hpack_with_overfull_rule(
@@ -11813,7 +11843,12 @@ fn apply_scanned_step(
                 if let Some(delta) = box_state.shift {
                     crate::assignments::apply_box_shift_delta(&mut node, delta)?;
                 }
-                crate::assignments::append_box_node_to_current_list(modes, stores, node)?;
+                crate::assignments::append_box_node_to_current_list(
+                    modes,
+                    stores,
+                    node,
+                    command.fuel,
+                )?;
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
@@ -12081,7 +12116,7 @@ fn apply_scanned_step(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
-            crate::assignments::end_paragraph(modes, stores)?;
+            crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
             stores
                 .leave_group_with_kind(GroupKind::NoAlign)
                 .map_err(|_| ExecError::MissingToken {
@@ -12146,7 +12181,7 @@ fn apply_scanned_step(
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");
-            finish_replay_alignment(active, modes, stores)?;
+            finish_replay_alignment(active, modes, stores, command.fuel)?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
@@ -12713,6 +12748,7 @@ fn apply_box_shift(
     modes: &mut ModeNest,
     stores: &mut Universe,
     boxes: &mut ReplayBoxes,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     match shift.payload {
         ScannedBoxShiftPayload::Missing => {
@@ -12735,12 +12771,12 @@ fn apply_box_shift(
                 stores.pin_survivor(id);
             }
             let node = crate::assignments::first_box_node(stores, id);
-            append_shifted_box(modes, stores, node, shift.delta)?;
+            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox => {
-            let node = crate::assignments::take_last_box(modes, stores)?;
-            append_shifted_box(modes, stores, node, shift.delta)?;
+            let node = crate::assignments::take_last_box(modes, stores, fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
@@ -12751,7 +12787,7 @@ fn apply_box_shift(
                 );
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
-            append_shifted_box(modes, stores, node, shift.delta)?;
+            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
@@ -12856,7 +12892,7 @@ fn box_end(
     command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
     match context {
-        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta),
+        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command.fuel),
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(target) => {
@@ -12895,12 +12931,13 @@ fn append_shifted_box(
     stores: &mut Universe,
     node: Option<Node>,
     delta: Scaled,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(mut node) = node else {
         return Ok(());
     };
     crate::assignments::apply_box_shift_delta(&mut node, delta)?;
-    crate::assignments::append_box_node_to_current_list(modes, stores, node)?;
+    crate::assignments::append_box_node_to_current_list(modes, stores, node, fuel)?;
     crate::vertical::build_page_if_outer_vertical(modes, stores)
 }
 
@@ -13212,7 +13249,7 @@ fn finish_insert_or_adjust_group(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<ReplayStep, ExecError> {
-    crate::assignments::end_paragraph(modes, stores)?;
+    crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
@@ -13221,7 +13258,7 @@ fn finish_insert_or_adjust_group(
         .map_err(|_| ExecError::MissingToken {
             context: "insert group",
         })?;
-    let level = crate::assignments::commit_current_list(modes, stores)?;
+    let level = crate::assignments::commit_current_list(modes, stores, command.fuel)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,

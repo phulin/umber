@@ -109,7 +109,7 @@ pub(crate) fn enter_math(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
-        assignments::flush_pending_hchars(nest, stores)?;
+        assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
     }
     if display {
         crate::paragraph_memo::publish_prepared_hlist(
@@ -201,6 +201,8 @@ pub(crate) fn enter_display_after_reused_paragraph(
     let paragraph = assignments::ParagraphBreakResult {
         last_line,
         active_directions,
+        finished_nodes: Vec::new(),
+        line_count: 0,
     };
     let _ = enter_math_after_paragraph(nest, input, stores, execution, Some(paragraph))?;
     Ok(())
@@ -329,7 +331,7 @@ fn finish_math(
         // remain synchronized for checkpointing.
         stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     }
-    if close_missing_left_group(nest, stores)? {
+    if close_missing_left_group(nest, stores, execution.command_fuel())? {
         return finish_math(nest, input, stores, execution, origin);
     }
     if nest.current_mode() == Mode::Math && nest.current_list().display_eq_no().is_some() {
@@ -365,7 +367,8 @@ fn finish_math(
     if reject_invalid_math_fonts(stores) {
         content = stores.freeze_node_list(&[]);
     }
-    let mut level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     if display {
         let interrupt = level.list_mutation().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
@@ -434,7 +437,8 @@ fn finish_equation_number(
     if font_failure {
         content = stores.freeze_node_list(&[]);
     }
-    let mut eq_level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut eq_level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let mut eq_no = eq_level
         .list_mutation()
         .take_display_eq_no()
@@ -451,7 +455,8 @@ fn finish_equation_number(
     if reject_invalid_math_fonts(stores) {
         eq_no.display = stores.freeze_node_list(&[]);
     }
-    let mut display_level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut display_level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let interrupt = display_level
         .list_mutation()
         .take_display_interrupt()
@@ -945,7 +950,8 @@ fn finish_display_halign(
         let _ = nest.current_list_mutation().take_nodes();
         let _ = nest.current_list_mutation().take_display_eq_no();
     }
-    let mut level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let interrupt = level.list_mutation().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,

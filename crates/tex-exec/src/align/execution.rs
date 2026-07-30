@@ -62,11 +62,11 @@ pub(crate) fn execute_alignment(
             mutate_align_state(nest, align_level, |state| {
                 state.set_suppress_redundant_cr(suppress_redundant_cr)
             })?;
-            fin_row(align_level, migrations, nest, stores)?;
+            fin_row(align_level, migrations, nest, stores, execution)?;
             replay_everycr(input, stores);
         }
 
-        let finished = finish_alignment_level(nest, stores)?;
+        let finished = finish_alignment_level(nest, stores, execution)?;
         append_finished_alignment(nest, stores, finished);
         build_page_if_outer_vertical(nest, stores)?;
         Ok(())
@@ -137,19 +137,21 @@ pub(super) fn execute_alignment_to_nodes(
             mutate_align_state(nest, align_level, |state| {
                 state.set_suppress_redundant_cr(suppress_redundant_cr)
             })?;
-            fin_row(align_level, migrations, nest, stores)?;
+            fin_row(align_level, migrations, nest, stores, execution)?;
             replay_everycr(input, stores);
         }
 
-        finish_alignment_level(nest, stores)
+        finish_alignment_level(nest, stores, execution)
     }
 }
 
 fn finish_alignment_level(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<FinishedAlignment, ExecError> {
-    let mut level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let aux_prev_depth = level.list().prev_depth();
     let state = level
         .list_mutation()
@@ -292,10 +294,12 @@ fn fin_row(
     migrations: Vec<Node>,
     nest: &mut ModeNest,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let kind = align_kind(nest, align_level)?;
 
-    let mut row_level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut row_level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let nodes = row_level.list_mutation().take_nodes();
     let children = stores.freeze_node_list(&nodes);
     let row = super::packaging::make_unset_node(
@@ -420,7 +424,7 @@ fn execute_cell(
         };
         match terminator {
             CellTerminator::Span => {
-                flush_pending_hchars(nest, stores)?;
+                flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 let next_column = column.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
                 if align_state(nest, align_level)?
                     .column_for(next_column)
@@ -431,13 +435,13 @@ fn execute_cell(
                         "\n! Extra alignment tab has been changed to \\cr.\n",
                     );
                     package_cell(
-                        align_level,
-                        kind,
+                        (align_level, kind),
                         span_count,
                         next_column,
                         migrations,
                         nest,
                         stores,
+                        execution.command_fuel(),
                     )?;
                     leave_group(input, stores, tex_state::GroupKind::Align)?;
                     stores.enter_group_with_kind(tex_state::GroupKind::Align);
@@ -470,13 +474,13 @@ fn execute_cell(
                     );
                 }
                 package_cell(
-                    align_level,
-                    kind,
+                    (align_level, kind),
                     span_count,
                     next_column,
                     migrations,
                     nest,
                     stores,
+                    execution.command_fuel(),
                 )?;
                 leave_group(input, stores, tex_state::GroupKind::Align)?;
                 // WEB fin_col immediately installs the next entry align_group,
@@ -518,19 +522,20 @@ fn next_non_space_protected(
 }
 
 fn package_cell(
-    align_level: usize,
-    kind: AlignmentKind,
+    alignment: (usize, AlignmentKind),
     span_count: u16,
     next_boundary: usize,
     migrations: &mut Vec<Node>,
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
+    let (align_level, kind) = alignment;
     if kind == AlignmentKind::VAlign && nest.current_mode() == Mode::Horizontal {
-        crate::assignments::end_paragraph(nest, stores)?;
+        crate::assignments::end_paragraph_with_fuel(nest, stores, fuel)?;
     }
 
-    let mut cell_level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut cell_level = crate::assignments::commit_current_list(nest, stores, fuel)?;
     let nodes = cell_level.list_mutation().take_nodes();
     let nodes = if kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,

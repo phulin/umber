@@ -440,6 +440,7 @@ impl Cancellation {
 
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
+    command_fuel: tex_command::CommandFuel,
     macro_scan_error_count: u8,
     emit_dvi: bool,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -470,6 +471,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
+            command_fuel: tex_command::CommandFuel::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: None,
@@ -498,6 +500,7 @@ impl<'a> ExecutionContext<'a> {
                 recorder,
             )
             .with_undefined_control_recovery(),
+            command_fuel: tex_command::CommandFuel::default(),
             macro_scan_error_count: state.macro_scan_error_count,
             emit_dvi: true,
             font_resolver,
@@ -513,6 +516,10 @@ impl<'a> ExecutionContext<'a> {
     #[must_use]
     pub(crate) const fn emits_dvi(&self) -> bool {
         self.emit_dvi
+    }
+
+    pub(crate) fn command_fuel(&mut self) -> &mut tex_command::CommandFuel {
+        &mut self.command_fuel
     }
 
     pub(crate) fn record_macro_scan_error(
@@ -555,6 +562,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            command_fuel: tex_command::CommandFuel::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
@@ -583,6 +591,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            command_fuel: tex_command::CommandFuel::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
@@ -1922,13 +1931,23 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
-                if assignments::try_append_tfm_character_span(nest, &macro_text, stores)? {
+                if assignments::try_append_tfm_character_span(
+                    nest,
+                    &macro_text,
+                    stores,
+                    execution.command_fuel(),
+                )? {
                     execution.count_paragraph_tokens(macro_text.len());
                     continue;
                 }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
-                    let appended = assignments::try_append_character(nest, token, stores)?;
+                    let appended = assignments::try_append_character(
+                        nest,
+                        token,
+                        stores,
+                        execution.command_fuel(),
+                    )?;
                     debug_assert!(appended);
                 }
                 if observe(nest, input, stores, BoundaryEvent::default()) {
@@ -1944,13 +1963,23 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
-                if assignments::try_append_tfm_character_span(nest, &macro_text, stores)? {
+                if assignments::try_append_tfm_character_span(
+                    nest,
+                    &macro_text,
+                    stores,
+                    execution.command_fuel(),
+                )? {
                     execution.count_paragraph_tokens(macro_text.len());
                     continue;
                 }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
-                    let appended = assignments::try_append_character(nest, token, stores)?;
+                    let appended = assignments::try_append_character(
+                        nest,
+                        token,
+                        stores,
+                        execution.command_fuel(),
+                    )?;
                     debug_assert!(appended);
                 }
                 if observe(nest, input, stores, BoundaryEvent::default()) {
@@ -2088,7 +2117,7 @@ where
         };
         let Some(token) = token else {
             abandon_stale_vertical_paragraph_probe(nest, stores, execution);
-            assignments::flush_pending_hchars(nest, stores)?;
+            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             return Ok(MainControlExit::EndOfInput);
         };
         if stores.world().execution_tracing_enabled() {
@@ -2184,7 +2213,7 @@ where
                     ),
                     _ => false,
                 };
-                assignments::flush_pending_hchars(nest, stores)?;
+                assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 abandon_stale_vertical_paragraph_probe(nest, stores, execution);
                 return Ok(MainControlExit::End { token });
             }

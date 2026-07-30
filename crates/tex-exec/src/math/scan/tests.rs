@@ -426,7 +426,14 @@ fn canonical_fraction_and_left_right_nesting_recovery_matrix() {
     let mut missing = math_nest();
     let mut left = InputStack::new(MemoryInput::new("."));
     start_left_group(&mut missing, &mut left, &mut stores, &mut execution).expect("left starts");
-    assert!(close_missing_left_group(&mut missing, &mut stores).expect("missing right recovers"));
+    assert!(
+        close_missing_left_group(
+            &mut missing,
+            &mut stores,
+            &mut tex_command::CommandFuel::default(),
+        )
+        .expect("missing right recovers")
+    );
     assert!(pending_terminal_text(&stores).contains("Missing \\right. inserted"));
 
     let mut extra = math_nest();

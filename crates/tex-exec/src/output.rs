@@ -521,7 +521,8 @@ fn run_output_routine_inner(
         }
     }
 
-    let output_level = crate::assignments::commit_current_list(nest, stores)?;
+    let output_level =
+        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     leave_group(input, stores, GroupKind::Output)?;
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);

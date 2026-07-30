@@ -101,7 +101,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
     ) {
         crate::math::insert_dollar_sign(traced, input, stores);
         if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-            assignments::ensure_horizontal_for_character(nest, input, stores)?;
+            assignments::ensure_horizontal_for_character(
+                nest,
+                input,
+                stores,
+                execution.command_fuel(),
+            )?;
         }
         return Ok(DispatchAction::Continue);
     }
@@ -117,7 +122,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
             // \everypar must run before main control retries the `$` and
             // performs the doubled-shift lookahead in horizontal mode.
             push_traced_tokens(input, stores, [traced]);
-            assignments::ensure_horizontal_for_character(nest, input, stores)?;
+            assignments::ensure_horizontal_for_character(
+                nest,
+                input,
+                stores,
+                execution.command_fuel(),
+            )?;
             return Ok(DispatchAction::Continue);
         }
         return crate::math::enter_math(nest, input, stores, execution);
@@ -152,7 +162,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
     );
     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) && !continues_character_run {
-        assignments::flush_pending_hchars(nest, stores)?;
+        assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
         sync_engine_state(execution, nest, stores);
     }
 
@@ -166,7 +176,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
                 }
         )
     {
-        start_paragraph_before_replaying_character(nest, traced, input, stores)?;
+        start_paragraph_before_replaying_character(nest, traced, input, stores, execution)?;
         return Ok(DispatchAction::Continue);
     }
 
@@ -184,7 +194,14 @@ pub(crate) fn dispatch_delivered_token_with_context(
             Ok(DispatchAction::Continue)
         }
         Meaning::CharGiven(ch) => {
-            assignments::append_given_char(nest, input, stores, ch, origin)?;
+            assignments::append_given_char(
+                nest,
+                input,
+                stores,
+                ch,
+                origin,
+                execution.command_fuel(),
+            )?;
             Ok(DispatchAction::Continue)
         }
         Meaning::CharToken { ch, cat } => dispatch_character_token(
@@ -245,7 +262,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
         Meaning::MathCharGiven(_) => {
             crate::math::insert_dollar_sign(traced, input, stores);
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                assignments::ensure_horizontal_for_character(nest, input, stores)?;
+                assignments::ensure_horizontal_for_character(
+                    nest,
+                    input,
+                    stores,
+                    execution.command_fuel(),
+                )?;
             }
             Ok(DispatchAction::Continue)
         }
@@ -271,7 +293,7 @@ fn dispatch_character_token(
             cat: Catcode::BeginGroup,
             ..
         } => {
-            assignments::flush_pending_hchars(nest, stores)?;
+            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             stores.enter_group_with_kind(GroupKind::Simple);
             Ok(DispatchAction::Continue)
         }
@@ -279,7 +301,7 @@ fn dispatch_character_token(
             cat: Catcode::EndGroup,
             ..
         } => {
-            assignments::flush_pending_hchars(nest, stores)?;
+            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             if let Err(error) = leave_group_with_origin(input, stores, GroupKind::Simple, origin) {
                 match error {
                     ExecError::TooManyRightBraces { .. } => stores.world_mut().write_text(
@@ -305,7 +327,12 @@ fn dispatch_character_token(
         } => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 push_traced_tokens(input, stores, [traced]);
-                assignments::ensure_horizontal_for_character(nest, input, stores)?;
+                assignments::ensure_horizontal_for_character(
+                    nest,
+                    input,
+                    stores,
+                    execution.command_fuel(),
+                )?;
                 Ok(DispatchAction::Continue)
             } else {
                 crate::math::enter_math(nest, input, stores, execution)
@@ -315,7 +342,8 @@ fn dispatch_character_token(
             cat: Catcode::Space,
             ..
         } => {
-            let _ = assignments::try_append_character(nest, traced, stores)?;
+            let _ =
+                assignments::try_append_character(nest, traced, stores, execution.command_fuel())?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -331,13 +359,20 @@ fn dispatch_character_token(
         }
         Token::Char { ch, .. } => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                start_paragraph_before_replaying_character(nest, traced, input, stores)?;
+                start_paragraph_before_replaying_character(nest, traced, input, stores, execution)?;
                 return Ok(DispatchAction::Continue);
             }
-            if assignments::try_append_character(nest, traced, stores)? {
+            if assignments::try_append_character(nest, traced, stores, execution.command_fuel())? {
                 return Ok(DispatchAction::Continue);
             }
-            assignments::append_given_char(nest, input, stores, ch, origin)?;
+            assignments::append_given_char(
+                nest,
+                input,
+                stores,
+                ch,
+                origin,
+                execution.command_fuel(),
+            )?;
             Ok(DispatchAction::Continue)
         }
         Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
@@ -351,11 +386,12 @@ fn start_paragraph_before_replaying_character(
     traced: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     // TeX82 backs up the triggering token before `new_graf`, whose `every_par`
     // replay must therefore run before that first character is reconsidered.
     push_traced_tokens(input, stores, [traced]);
-    assignments::ensure_horizontal_for_character(nest, input, stores)
+    assignments::ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())
 }
 
 fn dispatch_delivered_expandable(

@@ -11,7 +11,9 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, PrintSink, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
-use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
+use super::paragraph::{
+    end_paragraph_with_fuel, ensure_horizontal_for_character, normal_paragraph,
+};
 use super::*;
 use crate::dispatch::dispatch_delivered_token_with_context;
 use crate::mode::{PendingHRun, PendingHRunChar};
@@ -23,14 +25,15 @@ pub(crate) fn try_append_character(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<bool, ExecError> {
     let token = tex_expand::semantic_token(traced);
     match (nest.current_mode(), token) {
         (Mode::RestrictedHorizontal | Mode::Horizontal, Token::Char { ch, cat }) => {
             if cat == Catcode::Space {
-                append_space(nest, stores)?;
+                append_space(nest, stores, fuel)?;
             } else {
-                append_hchar(nest, stores, ch, traced.origin())?;
+                append_hchar_with_fuel(nest, stores, ch, traced.origin(), fuel)?;
             }
             Ok(true)
         }
@@ -45,6 +48,7 @@ pub(crate) fn try_append_tfm_character_span(
     nest: &mut ModeNest,
     traced: &[TracedTokenWord],
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<bool, ExecError> {
     let mode = nest.current_mode();
     if !matches!(mode, Mode::RestrictedHorizontal | Mode::Horizontal) {
@@ -61,11 +65,11 @@ pub(crate) fn try_append_tfm_character_span(
             unreachable!("preclassified horizontal text spans contain only character tokens")
         };
         if cat == Catcode::Space {
-            append_space(nest, stores)?;
+            append_space(nest, stores, fuel)?;
             offset += 1;
             continue;
         }
-        fix_hyphen_language(nest, stores, mode)?;
+        fix_hyphen_language_with_fuel(nest, stores, mode, fuel)?;
 
         // A TFM run cannot continue an OpenType pending run. This is normally
         // a font-command boundary, but keeping the guard here makes this
@@ -73,7 +77,7 @@ pub(crate) fn try_append_tfm_character_span(
         if nest.current_list().pending_hchars().is_some_and(|pending| {
             pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)
         }) {
-            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal, false)?;
+            flush_pending_hchar_run_with_fuel(nest, stores, mode == Mode::Horizontal, false, fuel)?;
         }
 
         let mut list = nest.current_list_mutation();
@@ -112,12 +116,15 @@ pub(crate) fn append_given_char(
     stores: &mut Universe,
     ch: char,
     origin: OriginId,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
-        Mode::RestrictedHorizontal | Mode::Horizontal => append_hchar(nest, stores, ch, origin),
+        Mode::RestrictedHorizontal | Mode::Horizontal => {
+            append_hchar_with_fuel(nest, stores, ch, origin, fuel)
+        }
         Mode::Vertical | Mode::InternalVertical => {
-            ensure_horizontal_for_character(nest, input, stores)?;
-            append_hchar(nest, stores, ch, origin)
+            ensure_horizontal_for_character(nest, input, stores, fuel)?;
+            append_hchar_with_fuel(nest, stores, ch, origin, fuel)
         }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
@@ -178,9 +185,10 @@ pub(crate) fn append_canonical_space_with_fuel(
 pub(crate) fn flush_pending_hchars(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    flush_pending_hchars_with_fuel(nest, stores, &mut fuel)
+    let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)
 }
 
 pub(crate) fn flush_pending_hchars_with_fuel(
@@ -188,8 +196,7 @@ pub(crate) fn flush_pending_hchars_with_fuel(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)
+    flush_pending_hchars(nest, stores, fuel)
 }
 
 /// Flushes the active TeX82 §1038 character run after its lookahead consumed
@@ -214,25 +221,10 @@ pub(crate) fn flush_pending_hchars_without_right_boundary(
 pub(crate) fn commit_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<crate::mode::ModeLevelSummary, ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     nest.pop()
-}
-
-fn flush_pending_hchar_run(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    insert_hyphen_discs: bool,
-    suppress_right_boundary: bool,
-) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    flush_pending_hchar_run_with_fuel(
-        nest,
-        stores,
-        insert_hyphen_discs,
-        suppress_right_boundary,
-        &mut fuel,
-    )
 }
 
 fn flush_pending_hchar_run_with_fuel(
@@ -300,13 +292,20 @@ pub(super) fn execute_hmode_material(
                 context: "\\char",
                 value,
             })?;
-            append_given_char(nest, input, stores, ch, context.origin())?;
+            append_given_char(
+                nest,
+                input,
+                stores,
+                ch,
+                context.origin(),
+                execution.command_fuel(),
+            )?;
         }
         UnexpandablePrimitive::HFil
         | UnexpandablePrimitive::HFill
         | UnexpandablePrimitive::HSs
         | UnexpandablePrimitive::HFilNeg => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let spec = match primitive {
                 UnexpandablePrimitive::HFil => infinite_glue(Order::Fil, false, false),
                 UnexpandablePrimitive::HFill => infinite_glue(Order::Fill, false, false),
@@ -322,26 +321,30 @@ pub(super) fn execute_hmode_material(
             });
         }
         UnexpandablePrimitive::Penalty => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let penalty = scan_i32(input, stores, execution, context)?;
             append_vertical_contribution(nest, stores, Node::Penalty(penalty));
             build_page_if_outer_vertical(nest, stores)?;
         }
         UnexpandablePrimitive::VRule => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                ensure_horizontal_for_character(nest, input, stores)?;
+                ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
             }
             nest.current_list_mutation().push(scan_rule_node(
                 input, stores, execution, primitive, context,
             )?);
             nest.current_list_mutation().set_space_factor(1000);
         }
-        UnexpandablePrimitive::ControlSpace => append_control_space(nest, input, stores)?,
-        UnexpandablePrimitive::ItalicCorrection => append_italic_correction(nest, stores)?,
+        UnexpandablePrimitive::ControlSpace => {
+            append_control_space(nest, input, stores, execution.command_fuel())?
+        }
+        UnexpandablePrimitive::ItalicCorrection => {
+            append_italic_correction_with_fuel(nest, stores, execution.command_fuel())?
+        }
         UnexpandablePrimitive::Discretionary => {
             let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let pre = scan_hlist_group(input, stores, execution, "\\discretionary pre")?;
             let post = scan_hlist_group(input, stores, execution, "\\discretionary post")?;
             let mut replace =
@@ -361,7 +364,7 @@ pub(super) fn execute_hmode_material(
             });
         }
         UnexpandablePrimitive::DiscretionaryHyphen => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let font = stores.current_font();
             let hyphen = u8::try_from(stores.font_hyphen_char(font))
                 .ok()
@@ -399,7 +402,7 @@ pub(super) fn execute_hmode_material(
             execute_accent(nest, input, stores, execution, context)?;
         }
         UnexpandablePrimitive::Mark | UnexpandablePrimitive::Marks => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let class = if primitive == UnexpandablePrimitive::Marks {
                 let value = scan_i32(input, stores, execution, context)?;
                 if (0..=32_767).contains(&value) {
@@ -437,7 +440,7 @@ fn execute_insert(
     // reswitches to `ital_corr`. Preserve that ordering: boundary processing
     // may leave a kern at the tail, and §1113 deliberately does nothing
     // unless the post-flush tail itself is a character or ligature.
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, execution.command_fuel())?;
     let mut value = scan_i32(input, stores, execution, context)?;
     if !(0..=255).contains(&value) {
         return Err(ExecError::InvalidCode {
@@ -473,9 +476,10 @@ fn execute_insert(
     normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
-        end_paragraph(&mut inner, stores)?;
+        end_paragraph_with_fuel(&mut inner, stores, execution.command_fuel())?;
     }
-    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
+    let level =
+        crate::assignments::commit_current_list(&mut inner, stores, execution.command_fuel())?;
     let content = stores.freeze_node_list(level.list().nodes());
     let packed = vpack(
         stores,
@@ -536,7 +540,7 @@ fn execute_vadjust(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
-        flush_pending_hchars(nest, stores)?;
+        flush_pending_hchars(nest, stores, execution.command_fuel())?;
     }
     let opener = next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
         context: "\\vadjust group",
@@ -553,9 +557,10 @@ fn execute_vadjust(
     normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
-        end_paragraph(&mut inner, stores)?;
+        end_paragraph_with_fuel(&mut inner, stores, execution.command_fuel())?;
     }
-    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
+    let level =
+        crate::assignments::commit_current_list(&mut inner, stores, execution.command_fuel())?;
     let content = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::AdjustedHBox)?;
     execution.paragraph_group_exited(stores);
@@ -563,8 +568,12 @@ fn execute_vadjust(
     Ok(())
 }
 
-fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores)?;
+fn append_space(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    flush_pending_hchars(nest, stores, fuel)?;
     append_space_after_flush(nest, stores)
 }
 
@@ -596,11 +605,12 @@ fn append_control_space(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        ensure_horizontal_for_character(nest, input, stores)?;
+        ensure_horizontal_for_character(nest, input, stores, fuel)?;
     }
-    append_control_space_glue(nest, stores)
+    append_control_space_glue(nest, stores, fuel)
 }
 
 /// Appends the explicit `\ ` control-space glue after horizontal mode has
@@ -610,8 +620,12 @@ fn append_control_space(
 /// `space_factor=1000` and otherwise scales the glue through `app_space`
 /// (§1042). This is shared by the legacy `InputStack`-driven dispatch above
 /// and canonical main control's mode-switch-then-append split below.
-fn append_control_space_glue(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores)?;
+fn append_control_space_glue(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    flush_pending_hchars(nest, stores, fuel)?;
     append_control_space_glue_after_flush(nest, stores)
 }
 
@@ -655,16 +669,6 @@ pub(crate) fn append_canonical_control_space_with_fuel(
 /// directly onto the current (math) list.
 pub(crate) fn control_space_glue_spec(stores: &Universe) -> GlueSpec {
     nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000)
-}
-
-fn append_hchar(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    ch: char,
-    origin: OriginId,
-) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    append_hchar_with_fuel(nest, stores, ch, origin, &mut fuel)
 }
 
 fn append_hchar_with_fuel(
@@ -717,6 +721,22 @@ fn append_hchar_with_fuel(
 }
 
 #[cfg(test)]
+fn append_hchar(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    ch: char,
+    origin: OriginId,
+) -> Result<(), ExecError> {
+    append_hchar_with_fuel(
+        nest,
+        stores,
+        ch,
+        origin,
+        &mut tex_command::CommandFuel::default(),
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     fix_hyphen_language(nest, stores, mode).expect("test ligature run is fueled");
 }
@@ -739,6 +759,7 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
     }
 }
 
+#[cfg(test)]
 fn fix_hyphen_language(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -1626,7 +1647,7 @@ fn execute_accent(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, execution.command_fuel())?;
     let accent_value = scan_i32(input, stores, execution, context)?;
     let accent = u8::try_from(accent_value).map_err(|_| ExecError::InvalidCode {
         context: "\\accent",
@@ -1852,7 +1873,8 @@ fn scan_hlist_group(
     inner.push(Mode::RestrictedHorizontal)?;
     let box_group_depth = stores.execution_group_depth();
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
-    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
+    let level =
+        crate::assignments::commit_current_list(&mut inner, stores, execution.command_fuel())?;
     let nodes = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::Disc)?;
     execution.paragraph_group_exited(stores);
@@ -1869,11 +1891,13 @@ fn scan_hlist_group(
 /// runs with no guard on the resulting width). Only an empty list, or a tail
 /// that is neither a character nor a ligature, leaves the list untouched
 /// (`return` with no append).
+#[cfg(test)]
 pub(crate) fn append_italic_correction(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
         return Ok(());
     };

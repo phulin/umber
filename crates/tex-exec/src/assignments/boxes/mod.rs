@@ -47,7 +47,7 @@ pub(super) fn execute_make_box(
         )?)
     };
     if let Some(node) = node {
-        append_box_node_to_current_list(nest, stores, node)?;
+        append_box_node_to_current_list(nest, stores, node, execution.command_fuel())?;
     }
     build_page_if_outer_vertical(nest, stores)?;
     Ok(())
@@ -219,7 +219,7 @@ pub(super) fn execute_box_list_command(
                 };
                 Some(UnboxSource::Shared(children))
             };
-            append_unboxed(nest, stores, source)?;
+            append_unboxed(nest, stores, source, execution.command_fuel())?;
         }
         UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards => {
             let nodes = if primitive == UnexpandablePrimitive::PageDiscards {
@@ -227,7 +227,7 @@ pub(super) fn execute_box_list_command(
             } else {
                 stores.take_split_discards()
             };
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, execution.command_fuel())?;
             for node in nodes {
                 if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                     append_vertical_contribution(nest, stores, node);
@@ -237,8 +237,8 @@ pub(super) fn execute_box_list_command(
             }
         }
         UnexpandablePrimitive::LastBox => {
-            if let Some(node) = take_last_box(nest, stores)? {
-                append_box_node_to_current_list(nest, stores, node)?;
+            if let Some(node) = take_last_box(nest, stores, execution.command_fuel())? {
+                append_box_node_to_current_list(nest, stores, node, execution.command_fuel())?;
             }
         }
         UnexpandablePrimitive::Raise
@@ -248,7 +248,7 @@ pub(super) fn execute_box_list_command(
             let amount = scan_scaled(input, stores, execution, context)?;
             if let Some(mut node) = scan_box_value_node(input, stores, execution, context)? {
                 apply_shift(&mut node, primitive, amount)?;
-                append_box_node_to_current_list(nest, stores, node)?;
+                append_box_node_to_current_list(nest, stores, node, execution.command_fuel())?;
             }
         }
         _ => unreachable!("caller restricts box list commands"),
@@ -293,7 +293,7 @@ pub(crate) fn execute_box_register_read(
     {
         stores.pin_survivor(id);
     }
-    append_box_register(nest, stores, id)
+    append_box_register(nest, stores, id, execution.command_fuel())
 }
 
 /// Replays a command-scanned unboxing register operation without reopening
@@ -304,6 +304,7 @@ pub(crate) fn execute_scanned_unbox(
     index: u16,
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let destructive = matches!(
         primitive,
@@ -340,7 +341,7 @@ pub(crate) fn execute_scanned_unbox(
         };
         Some(UnboxSource::Shared(children))
     };
-    append_unboxed(nest, stores, source)
+    append_unboxed(nest, stores, source, fuel)
 }
 
 /// Splices one of e-TeX 2.6 `etex.ch` [45.999]'s saved vertical-discard
@@ -353,13 +354,14 @@ pub(crate) fn execute_scanned_saved_vertical_discards(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let nodes = match primitive {
         UnexpandablePrimitive::PageDiscards => stores.take_page_discards(),
         UnexpandablePrimitive::SplitDiscards => stores.take_split_discards(),
         _ => unreachable!("caller restricts saved vertical-discard primitives"),
     };
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     for node in nodes {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);
@@ -405,11 +407,12 @@ pub(super) fn execute_kern_or_skip(
                     amount,
                     kind: KernKind::Explicit,
                 },
+                execution.command_fuel(),
             )?;
         }
         UnexpandablePrimitive::HSkip => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                ensure_horizontal_for_character(nest, input, stores)?;
+                ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
             }
             let spec = scan_glue_id(input, stores, execution, false, context)?;
             append_node_to_current_list(
@@ -420,6 +423,7 @@ pub(super) fn execute_kern_or_skip(
                     kind: GlueKind::Normal,
                     leader: None,
                 },
+                execution.command_fuel(),
             )?;
         }
         UnexpandablePrimitive::VSkip
@@ -464,6 +468,7 @@ pub(super) fn execute_leaders(
             kind: leader_glue_kind(primitive),
             leader: Some(leader),
         },
+        execution.command_fuel(),
     )?;
     build_page_if_outer_vertical(nest, stores)?;
     Ok(())
@@ -478,7 +483,7 @@ pub(super) fn execute_hrule(
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {}
-        Mode::Horizontal => end_paragraph(nest, stores)?,
+        Mode::Horizontal => end_paragraph_with_fuel(nest, stores, execution.command_fuel())?,
         Mode::RestrictedHorizontal => {
             stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
@@ -516,8 +521,9 @@ pub(crate) fn execute_delete_last(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     if is_outer_vertical(nest) {
         execute_delete_last_outer_vertical(primitive, stores);
         return Ok(());
@@ -601,7 +607,7 @@ fn execute_vertical_skip(
     context: TracedTokenWord,
 ) -> Result<(), ExecError> {
     if nest.current_mode() == Mode::Horizontal {
-        end_paragraph(nest, stores)?;
+        end_paragraph_with_fuel(nest, stores, execution.command_fuel())?;
     }
     if !matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         return Err(ExecError::UnimplementedTypesetting {
@@ -639,9 +645,10 @@ fn append_box_register(
     nest: &mut ModeNest,
     stores: &mut Universe,
     id: Option<tex_state::ids::NodeListId>,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if let Some(node) = first_box_node(stores, id) {
-        append_box_node_to_current_list(nest, stores, node)?;
+        append_box_node_to_current_list(nest, stores, node, fuel)?;
     }
     Ok(())
 }
@@ -676,6 +683,7 @@ pub(crate) fn append_box_node_to_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
     mut node: Node,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let migrated = if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         extract_box_migrations(stores, &mut node)
@@ -691,7 +699,7 @@ pub(crate) fn append_box_node_to_current_list(
     } else {
         node
     };
-    append_node_to_current_list(nest, stores, node)?;
+    append_node_to_current_list(nest, stores, node, fuel)?;
     for node in migrated {
         append_vertical_contribution(nest, stores, node);
     }
@@ -756,6 +764,7 @@ fn append_unboxed(
     nest: &mut ModeNest,
     stores: &mut Universe,
     source: Option<UnboxSource>,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(source) = source else {
         return Ok(());
@@ -767,7 +776,7 @@ fn append_unboxed(
             children
         }
     };
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     for node in stores.nodes(children).to_vec() {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);

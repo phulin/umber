@@ -165,7 +165,12 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
     let mut nest = ModeNest::new();
 
     append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN).expect("character appends");
-    flush_pending_hchars(&mut nest, &mut stores).expect("OpenType character flushes");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("OpenType character flushes");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -188,7 +193,12 @@ fn list_commit_flushes_pending_characters_and_raw_pop_rejects_them() {
         nest.pop(),
         Err(ExecError::UncommittedPendingHchars)
     ));
-    let level = commit_current_list(&mut nest, &mut stores).expect("commit flushes before pop");
+    let level = commit_current_list(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("commit flushes before pop");
     assert!(matches!(
         level.list().nodes(),
         [Node::Char { ch: 'A', .. }, ..]
@@ -254,7 +264,12 @@ fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
     for ch in "ffi".chars() {
         append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN).expect("character appends");
     }
-    flush_pending_hchars(&mut nest, &mut stores).expect("run flushes");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("run flushes");
 
     let nodes = nest.current_list().nodes();
     assert_eq!(
@@ -310,7 +325,12 @@ fn long_opentype_run_preserves_every_source_character() {
     for _ in 0..4096 {
         append_hchar(&mut nest, &mut stores, 'a', OriginId::UNKNOWN).expect("character appends");
     }
-    flush_pending_hchars(&mut nest, &mut stores).expect("long run flushes");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("long run flushes");
 
     assert_eq!(
         nest.current_list()
@@ -429,7 +449,12 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     nest.current_list_mutation()
         .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
 
-    flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("character run flushes");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -516,7 +541,12 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
         second_origin,
     );
 
-    append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");
+    append_italic_correction(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("italic correction appends");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -583,7 +613,12 @@ fn right_boundary_kern_prevents_a_following_italic_correction() {
     nest.current_list_mutation()
         .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
 
-    append_italic_correction(&mut nest, &mut stores).expect("italic correction appends");
+    append_italic_correction(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("italic correction appends");
 
     assert!(
         matches!(
@@ -900,7 +935,12 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
         append_canonical_character(&mut nest, &mut stores, 'A', origin)
             .expect("public pending-character append");
     }
-    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("public pending-character flush");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -1115,7 +1155,7 @@ fn false_boundary_test_font() -> (Universe, FontId) {
         vec![LigKernInstruction {
             skip_byte: 128,
             next_char: b'B',
-            command: Some(LigKernCommand::Ligature(ligature_command(0, b'C'))),
+            command: Some(LigKernCommand::Kern(Scaled::from_raw(123))),
         }],
         Some(b'B'),
         None,
@@ -1160,6 +1200,35 @@ fn public_flush_suppresses_false_boundary_pair_without_consuming_lookahead() {
         nest.current_list().nodes(),
         [Node::Char { ch: 'A', origin, .. }] if *origin == left
     ));
+}
+
+#[test]
+fn false_bchar_terminates_before_its_right_boundary_kern() {
+    let (mut stores, _) = false_boundary_test_font();
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+        .expect("real character");
+    append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
+        .expect("false bchar lookahead");
+    let mut fuel = tex_command::CommandFuel::new(16).expect("finite test fuel");
+
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel).expect("false bchar flush");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::Char { ch: 'A', .. }]
+    ));
+    assert!(
+        !nest.current_list().nodes().iter().any(|node| matches!(
+            node,
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            }
+        )),
+        "the nonexistent false_bchar must terminate before right-boundary kern lookup"
+    );
 }
 
 #[test]
@@ -1284,7 +1353,12 @@ fn public_flush_places_pdf_auto_kern_before_explicit_hyphen_disc() {
     let origin = stores.synthetic_origin(SyntheticOriginKind::Test);
     append_canonical_character(&mut nest, &mut stores, '-', origin).expect("hyphen append");
 
-    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("public pending-character flush");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -1328,7 +1402,12 @@ fn complete_ligature_machine_covers_retain_delete_and_pass_over_operations() {
             append_canonical_character(&mut nest, &mut stores, ch, OriginId::UNKNOWN)
                 .expect("public pending-character append");
         }
-        flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+        flush_pending_hchars(
+            &mut nest,
+            &mut stores,
+            &mut tex_command::CommandFuel::default(),
+        )
+        .expect("public pending-character flush");
         let nodes = nest.current_list().nodes();
         assert_eq!(
             node_characters(nodes).iter().collect::<String>(),
@@ -1355,7 +1434,12 @@ fn generated_ligature_pair_reenters_the_program() {
         append_canonical_character(&mut nest, &mut stores, ch, OriginId::UNKNOWN)
             .expect("public pending-character append");
     }
-    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        &mut tex_command::CommandFuel::default(),
+    )
+    .expect("public pending-character flush");
     let nodes = nest.current_list().nodes();
 
     assert_eq!(node_characters(nodes), ['E']);
@@ -1374,7 +1458,12 @@ fn complete_ligature_machine_processes_both_boundaries() {
         nest.push(Mode::RestrictedHorizontal).expect("test hmode");
         append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
             .expect("public pending-character append");
-        flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+        flush_pending_hchars(
+            &mut nest,
+            &mut stores,
+            &mut tex_command::CommandFuel::default(),
+        )
+        .expect("public pending-character flush");
         let nodes = nest.current_list().nodes();
         assert_eq!(
             node_characters(nodes),

@@ -4,6 +4,63 @@ use std::path::Path;
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side source architecture test
+fn command_fuel_defaults_are_confined_to_session_boundaries_and_test_adapters() {
+    fn rust_sources(directory: &Path, sources: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(directory).expect("read tex-exec source directory") {
+            let path = entry.expect("read tex-exec source entry").path();
+            if path.is_dir() {
+                rust_sources(&path, sources);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let expected = [
+        ("src/executor.rs", 4),
+        ("src/canonical_main_control.rs", 1),
+        ("src/assignments/hmode.rs", 4),
+        ("src/assignments/hyphenation.rs", 2),
+        ("src/assignments/paragraph.rs", 1),
+    ];
+    let mut observed = Vec::new();
+    for (relative, count) in expected {
+        let source = fs::read_to_string(manifest_dir.join(relative))
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        assert_eq!(
+            source.matches("CommandFuel::default()").count(),
+            count,
+            "{relative} changed its audited fuel-ledger construction count"
+        );
+        observed.push(relative);
+    }
+    let mut sources = Vec::new();
+    rust_sources(&manifest_dir.join("src"), &mut sources);
+    for path in sources {
+        if path.file_name().is_some_and(|name| name == "tests.rs")
+            || path
+                .components()
+                .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+        if !observed
+            .iter()
+            .any(|relative| path == manifest_dir.join(relative))
+        {
+            let source = fs::read_to_string(&path).expect("read tex-exec root source");
+            assert!(
+                !source.contains("CommandFuel::default()"),
+                "{} constructs an unaudited command-fuel ledger",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn engine_checkpoint_cannot_be_forged_by_callers() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let tex_lex_dir = manifest_dir.join("../tex-lex");

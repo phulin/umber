@@ -250,7 +250,12 @@ pub(crate) fn try_reuse_aligned_paragraph(
     let nest_before_start = nest.clone();
     let effect_start = stores.world().effect_records().len();
     let mut start_probe = stores.begin_replay_probe();
-    let start_result = crate::assignments::start_reused_paragraph(nest, input, &mut start_probe);
+    let start_result = crate::assignments::start_reused_paragraph(
+        nest,
+        input,
+        &mut start_probe,
+        execution.command_fuel(),
+    );
     let start_failure = if start_result.is_ok() {
         start_probe
             .page_fire_up()

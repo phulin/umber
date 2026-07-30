@@ -183,7 +183,8 @@ fn scan_math_group_after_open_inner(
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
             execution.paragraph_group_exited(stores);
             let list = finish_current_math_list(nest, stores);
-            let _ = crate::assignments::commit_current_list(nest, stores)?;
+            let _ =
+                crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
             return Ok(list);
         }
         match dispatch_math_token_with_context(nest, token, input, stores, execution)? {
@@ -282,7 +283,7 @@ pub(super) fn finish_left_group(
         report_math_error(stores, "Extra \\right");
         return Ok(());
     }
-    close_left_group(nest, stores, delimiter)?;
+    close_left_group(nest, stores, delimiter, execution.command_fuel())?;
     sync_engine_state(execution, nest, stores);
     Ok(())
 }
@@ -309,12 +310,13 @@ pub(super) fn append_middle_delimiter(
 pub(super) fn close_missing_left_group(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<bool, ExecError> {
     if !current_list_is_left_group(nest, stores) {
         return Ok(false);
     }
     report_math_error(stores, "Missing \\right. inserted");
-    close_left_group(nest, stores, 0)?;
+    close_left_group(nest, stores, 0, fuel)?;
     Ok(true)
 }
 
@@ -346,6 +348,7 @@ fn close_left_group(
     nest: &mut ModeNest,
     stores: &mut Universe,
     right_delimiter: u32,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     // TeX completes an outstanding generalized fraction before appending the
     // matching \right noad. Otherwise the right delimiter incorrectly becomes
@@ -363,7 +366,7 @@ fn close_left_group(
         MathField::Empty,
     )));
     let content = stores.freeze_node_list(&nodes);
-    let _ = crate::assignments::commit_current_list(nest, stores)?;
+    let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
     append_noad(
         nest,
         NoadKind::Normal(NoadClass::Inner),
@@ -560,7 +563,7 @@ pub(super) fn scan_vcenter_field(
         input.push_token_list(everyvbox, TokenListReplayKind::EveryVBox);
     }
     assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
-    let level = crate::assignments::commit_current_list(inner, stores)?;
+    let level = crate::assignments::commit_current_list(inner, stores, execution.command_fuel())?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(
         vpack(

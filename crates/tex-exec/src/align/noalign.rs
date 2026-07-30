@@ -35,7 +35,7 @@ pub(super) fn execute_noalign(
         // `end_graf; unsave; align_peek`: a paragraph the body started is
         // line-broken onto the alignment's own vertical list before the
         // group closes (`umber2-usol`).
-        crate::assignments::end_paragraph(nest, stores)?;
+        crate::assignments::end_paragraph_with_fuel(nest, stores, execution.command_fuel())?;
         leave_group(input, stores, tex_state::GroupKind::NoAlign)?;
         execution.paragraph_group_exited(stores);
         Ok(())
@@ -66,7 +66,7 @@ fn scan_noalign_group(
         if super::support::is_end_group(stores, semantic) {
             brace_depth -= 1;
             if brace_depth == 0 {
-                flush_pending_hchars(nest, stores)?;
+                flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 return Ok(());
             }
         }

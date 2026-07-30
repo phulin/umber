@@ -12,8 +12,9 @@ pub(crate) fn append_node_to_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
     node: Node,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    assignments::flush_pending_hchars(nest, stores)?;
+    assignments::flush_pending_hchars(nest, stores, fuel)?;
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         append_node_to_vertical_list(nest, stores, node)
     } else {

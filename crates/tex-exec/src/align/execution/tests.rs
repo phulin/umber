@@ -225,7 +225,14 @@ fn execute_test_row(
     )
     .expect("row executes");
     if finish {
-        fin_row(align_level, migrations, &mut nest, &mut stores).expect("row packages");
+        fin_row(
+            align_level,
+            migrations,
+            &mut nest,
+            &mut stores,
+            &mut execution,
+        )
+        .expect("row packages");
     }
     (stores, nest, align_level, extra)
 }

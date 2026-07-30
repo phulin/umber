@@ -55,6 +55,7 @@ pub(in crate::assignments) fn execute_stream_command(
                 nest,
                 stores,
                 Node::Whatsit(Whatsit::OpenOut { slot, path: name }),
+                execution.command_fuel(),
             )?;
         }
         UnexpandablePrimitive::CloseOut => {
@@ -62,6 +63,7 @@ pub(in crate::assignments) fn execute_stream_command(
                 nest,
                 stores,
                 Node::Whatsit(Whatsit::CloseOut { slot: Some(slot) }),
+                execution.command_fuel(),
             )?;
         }
         _ => unreachable!("caller restricts stream primitive"),
@@ -152,6 +154,7 @@ pub(in crate::assignments) fn execute_write(
             sink,
             tokens: scanned.meaning().replacement_text(),
         }),
+        execution.command_fuel(),
     )
 }
 
@@ -191,6 +194,7 @@ pub(in crate::assignments) fn execute_special(
             class: "dvi".to_owned(),
             payload,
         }),
+        execution.command_fuel(),
     )
 }
 
@@ -300,7 +304,7 @@ pub(in crate::assignments) fn execute_pdf_graphics(
         }
         _ => unreachable!("caller restricts PDF graphics primitive"),
     };
-    append_node_to_current_list(nest, stores, node)
+    append_node_to_current_list(nest, stores, node, execution.command_fuel())
 }
 
 fn tex_byte_text(text: &str) -> Vec<u8> {

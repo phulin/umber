@@ -15,6 +15,7 @@ use tex_typeset::linebreak::{
 use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
 use crate::mode::ParagraphParams;
+use crate::paragraph_memo::ParagraphMemoConsumer;
 use crate::vertical::{
     append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
     build_page_if_outer_vertical,
@@ -44,11 +45,15 @@ pub(super) fn execute_paragraph_command(
                 end_paragraph_with_memo(nest, input, stores, execution)
             }
         }
-        UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true, true),
-        UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false, true),
+        UnexpandablePrimitive::Indent => {
+            start_paragraph(nest, input, stores, true, true, execution.command_fuel())
+        }
+        UnexpandablePrimitive::NoIndent => {
+            start_paragraph(nest, input, stores, false, true, execution.command_fuel())
+        }
         UnexpandablePrimitive::QuitVMode => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                start_paragraph(nest, input, stores, true, true)
+                start_paragraph(nest, input, stores, true, true, execution.command_fuel())
             } else {
                 Ok(())
             }
@@ -74,9 +79,10 @@ pub(crate) fn ensure_horizontal_for_character(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        start_paragraph(nest, input, stores, true, true)?;
+        start_paragraph(nest, input, stores, true, true, fuel)?;
     }
     Ok(())
 }
@@ -138,6 +144,7 @@ pub(crate) fn indent_in_hmode(
     nest: &mut ModeNest,
     stores: &mut Universe,
     indent: bool,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !indent {
         return Ok(());
@@ -154,7 +161,7 @@ pub(crate) fn indent_in_hmode(
             Ok(())
         }
         _ => {
-            flush_pending_hchars(nest, stores)?;
+            flush_pending_hchars(nest, stores, fuel)?;
             nest.current_list_mutation().set_space_factor(1000);
             append_indent_box(nest, stores)
         }
@@ -167,6 +174,7 @@ fn start_paragraph(
     stores: &mut Universe,
     indent: bool,
     replay_everypar: bool,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {
@@ -200,7 +208,9 @@ fn start_paragraph(
             Ok(())
         }
         // §1092 `hmode+start_par`: `indent_in_hmode`, not `new_graf`.
-        Mode::Horizontal | Mode::RestrictedHorizontal => indent_in_hmode(nest, stores, indent),
+        Mode::Horizontal | Mode::RestrictedHorizontal => {
+            indent_in_hmode(nest, stores, indent, fuel)
+        }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
             token: tex_state::token::Token::Cs(stores.intern("par").symbol()),
@@ -224,11 +234,6 @@ pub(crate) fn make_indent_box(stores: &mut Universe) -> Node {
     Node::HList(node)
 }
 
-pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    end_paragraph_with_fuel(nest, stores, &mut fuel)
-}
-
 pub(crate) fn end_paragraph_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -239,7 +244,7 @@ pub(crate) fn end_paragraph_with_fuel(
     }
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     if nest.current_list().is_empty() {
-        let _ = crate::assignments::commit_current_list(nest, stores)?;
+        let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
         normal_paragraph(nest, stores);
         build_page_if_outer_vertical(nest, stores)?;
         return Ok(());
@@ -264,24 +269,48 @@ fn end_paragraph_with_memo(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
-        input,
-        execution,
-        crate::executor::ParagraphContinuation::End,
+    flush_pending_hchars_with_fuel(nest, stores, execution.command_fuel())?;
+    if nest.current_mode() != Mode::Horizontal || nest.current_list().is_empty() {
+        {
+            let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
+                input,
+                execution,
+                crate::executor::ParagraphContinuation::End,
+            );
+            memo.abandon();
+        }
+        return end_paragraph_with_fuel(nest, stores, execution.command_fuel());
+    }
+    {
+        let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
+            input,
+            execution,
+            crate::executor::ParagraphContinuation::End,
+        );
+        memo.prepare_hlist(
+            stores,
+            nest.current_list().nodes(),
+            nest.enclosing_vertical_prev_graf(),
+            crate::executor::ParagraphContinuation::End,
+        );
+    }
+    let result = break_current_paragraph(
+        nest,
+        stores,
+        stores.int_param(IntParam::WIDOW_PENALTY),
+        stores.penalty_array(PenaltyArrayKind::Widow),
+        true,
+        None,
+        execution.command_fuel(),
+    )?;
+    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+    memo.publish_finished_lines(
+        stores,
+        &result.finished_nodes,
+        result.line_count,
+        &result.active_directions,
     );
-    end_paragraph_with_consumer(nest, stores, &mut memo)
-}
-
-/// Ends an outer paragraph while publishing only typed completion values to
-/// an optional optimization consumer.  This is the canonical main-control
-/// seam: it has no raw input or legacy dispatcher dependency.
-pub(crate) fn end_paragraph_with_consumer(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    memo: &mut dyn crate::paragraph_memo::ParagraphMemoConsumer,
-) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    end_paragraph_with_consumer_and_fuel(nest, stores, memo, &mut fuel)
+    Ok(())
 }
 
 pub(crate) fn end_paragraph_with_consumer_and_fuel(
@@ -325,12 +354,13 @@ pub(crate) fn start_reused_paragraph(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     // The retained hlist already includes the recorded `everypar` execution;
     // scheduling it again would leave its tokens after the consumed paragraph.
     // Finished retained lines already contain the recorded indent box and
     // `\everypar` material, so reproduce only the vertical-side transition.
-    start_paragraph(nest, input, stores, false, false)
+    start_paragraph(nest, input, stores, false, false, fuel)
 }
 
 pub(crate) fn install_reused_paragraph_hlist_after_start(
@@ -347,24 +377,29 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
     let Some((finished, line_count, last_badness)) = finished else {
         let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
         let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
-        let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
-        let mut fuel = tex_command::CommandFuel::default();
-        let _ = break_current_paragraph(
+        let result = break_current_paragraph(
             nest,
             stores,
             final_widow_penalty,
             final_widow_penalties,
             true,
-            Some(&mut memo),
-            &mut fuel,
+            None,
+            execution.command_fuel(),
         )?;
+        let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+        memo.publish_finished_lines(
+            stores,
+            &result.finished_nodes,
+            result.line_count,
+            &result.active_directions,
+        );
         return Ok(None);
     };
     let last_line = finished.iter().rev().find_map(|node| match node {
         Node::HList(line) => Some(*line),
         _ => None,
     });
-    let _ = crate::assignments::commit_current_list(nest, stores)?;
+    let _ = crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     for node in finished {
         match node {
             Node::Adjust(list) => {
@@ -376,7 +411,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
             node @ (Node::Mark { .. } | Node::Ins { .. }) => {
                 append_migrated_contribution(nest, stores, node);
             }
-            node => append_node_to_current_list(nest, stores, node)?,
+            node => append_node_to_current_list(nest, stores, node, execution.command_fuel())?,
         }
     }
     let prev_graf = nest.enclosing_vertical_prev_graf();
@@ -393,6 +428,8 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
 pub(crate) struct ParagraphBreakResult {
     pub(crate) last_line: Option<BoxNode>,
     pub(crate) active_directions: Vec<Direction>,
+    pub(crate) finished_nodes: Vec<Node>,
+    pub(crate) line_count: i32,
 }
 
 pub(crate) fn interrupt_paragraph_for_display(
@@ -400,27 +437,35 @@ pub(crate) fn interrupt_paragraph_for_display(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, execution.command_fuel())?;
     if nest.current_list().is_empty() {
-        let _ = crate::assignments::commit_current_list(nest, stores)?;
+        let _ = crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
         return Ok(ParagraphBreakResult {
             last_line: None,
             active_directions: Vec::new(),
+            finished_nodes: Vec::new(),
+            line_count: 0,
         });
     }
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
     let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
-    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
-    let mut fuel = tex_command::CommandFuel::default();
-    break_current_paragraph(
+    let result = break_current_paragraph(
         nest,
         stores,
         final_widow_penalty,
         final_widow_penalties,
         false,
-        Some(&mut memo),
-        &mut fuel,
-    )
+        None,
+        execution.command_fuel(),
+    )?;
+    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+    memo.publish_finished_lines(
+        stores,
+        &result.finished_nodes,
+        result.line_count,
+        &result.active_directions,
+    );
+    Ok(result)
 }
 
 /// Canonical main control has no legacy execution context, but display entry
@@ -433,10 +478,12 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     if nest.current_list().is_empty() {
-        let _ = crate::assignments::commit_current_list(nest, stores)?;
+        let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
         return Ok(ParagraphBreakResult {
             last_line: None,
             active_directions: Vec::new(),
+            finished_nodes: Vec::new(),
+            line_count: 0,
         });
     }
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
@@ -510,7 +557,7 @@ fn break_current_paragraph(
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
-    let mut level = crate::assignments::commit_current_list(nest, stores)?;
+    let mut level = crate::assignments::commit_current_list(nest, stores, fuel)?;
     let hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
     let mut line_params = line_break_params(stores, &params);
@@ -581,7 +628,7 @@ fn break_current_paragraph(
         last_line = Some(line);
         let line_node = Node::HList(line);
         finished_nodes.push(line_node.clone());
-        append_node_to_current_list(nest, stores, line_node)?;
+        append_node_to_current_list(nest, stores, line_node, fuel)?;
         for node in migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
@@ -609,6 +656,8 @@ fn break_current_paragraph(
     Ok(ParagraphBreakResult {
         last_line,
         active_directions,
+        finished_nodes,
+        line_count,
     })
 }
 

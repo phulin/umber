@@ -130,7 +130,8 @@ pub(super) fn scan_box_value(
                 tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
             );
             let nest = nest.ok_or(ExecError::MissingToken { context: "box" })?;
-            take_last_box(nest, stores).map(|value| value.map(ScannedBoxValue::Shared))
+            take_last_box(nest, stores, execution.command_fuel())
+                .map(|value| value.map(ScannedBoxValue::Shared))
         }
         _ => recover_missing_box(input, stores, traced),
     }
@@ -155,8 +156,9 @@ fn recover_missing_box(
 pub(crate) fn take_last_box(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<Option<Node>, ExecError> {
-    flush_pending_hchars(nest, stores)?;
+    flush_pending_hchars(nest, stores, fuel)?;
     match nest.current_mode() {
         Mode::Math | Mode::DisplayMath => {
             stores.world_mut().write_text(
@@ -249,9 +251,10 @@ pub(super) fn scan_box_node(
         // paragraph immediately before the box's closing brace: packaging the
         // horizontal level would otherwise discard the completed vertical
         // list beneath it.
-        crate::assignments::end_paragraph(&mut inner, stores)?;
+        crate::assignments::end_paragraph_with_fuel(&mut inner, stores, execution.command_fuel())?;
     }
-    let level = crate::assignments::commit_current_list(&mut inner, stores)?;
+    let level =
+        crate::assignments::commit_current_list(&mut inner, stores, execution.command_fuel())?;
     let nodes = if kind == BoxKind::HBox {
         crate::math::finish_math_lists(stores, level.list().nodes(), false)
     } else {
@@ -376,7 +379,7 @@ pub(crate) fn scan_box_group(
             if stores.execution_group_depth() == box_group_depth
                 && has_catcode_meaning(stores, semantic, Catcode::EndGroup)
             {
-                flush_pending_hchars(nest, stores)?;
+                flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 return Ok(());
             }
             let action =

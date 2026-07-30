@@ -110,8 +110,8 @@ pub use paragraph::cached_pretolerance_plan;
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    ParagraphBreakResult, display_line_dimensions, end_paragraph,
-    end_paragraph_with_consumer_and_fuel, ensure_horizontal_for_character, indent_in_hmode,
+    ParagraphBreakResult, display_line_dimensions, end_paragraph_with_consumer_and_fuel,
+    end_paragraph_with_fuel, ensure_horizontal_for_character, indent_in_hmode,
     interrupt_canonical_paragraph_for_display, interrupt_paragraph_for_display, make_indent_box,
     normal_paragraph, start_canonical_paragraph,
 };
@@ -439,6 +439,7 @@ fn execute_pdf_form(
                 height: form.height(),
                 depth: form.depth(),
             }),
+            execution.command_fuel(),
         )?;
         return Ok(());
     }
@@ -894,6 +895,7 @@ fn execute_pdf_annotation(
         Node::Whatsit(tex_state::node::Whatsit::PdfAnnotation {
             object: record.object(),
         }),
+        execution.command_fuel(),
     )
 }
 
@@ -1007,6 +1009,7 @@ fn execute_pdf_destination(
                 kind,
             },
         ))),
+        execution.command_fuel(),
     )
 }
 
@@ -1110,10 +1113,15 @@ fn execute_pdf_thread(
                 running,
             },
         ))),
+        execution.command_fuel(),
     )
 }
 
-fn execute_pdf_end_thread(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+fn execute_pdf_end_thread(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
     }
@@ -1121,6 +1129,7 @@ fn execute_pdf_end_thread(nest: &mut ModeNest, stores: &mut Universe) -> Result<
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfEndThread),
+        fuel,
     )
 }
 
@@ -1201,6 +1210,7 @@ fn execute_pdf_start_link(
         Node::Whatsit(tex_state::node::Whatsit::PdfLinkStart {
             object: record.object(),
         }),
+        execution.command_fuel(),
     )
 }
 
@@ -1277,7 +1287,11 @@ fn pdf_destination_identity(
     }
 }
 
-fn execute_pdf_end_link(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+fn execute_pdf_end_link(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         return Err(ExecError::PdfLinkInVerticalMode("pdfendlink"));
     }
@@ -1299,6 +1313,7 @@ fn execute_pdf_end_link(nest: &mut ModeNest, stores: &mut Universe) -> Result<()
         Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd {
             object: open.record.object(),
         }),
+        fuel,
     )
 }
 
@@ -1306,6 +1321,7 @@ fn execute_pdf_running_link(
     nest: &mut ModeNest,
     stores: &mut Universe,
     enabled: bool,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         return Err(ExecError::PdfExtensionInDviMode(if enabled {
@@ -1318,6 +1334,7 @@ fn execute_pdf_running_link(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfRunningLink(enabled)),
+        fuel,
     )
 }
 
@@ -1353,6 +1370,7 @@ fn execute_pdf_accessibility_control(
             nest,
             stores,
             Node::Whatsit(tex_state::node::Whatsit::PdfAccessibility(control)),
+            execution.command_fuel(),
         )?;
         return Ok(());
     }
@@ -1989,7 +2007,7 @@ fn execute_prefixed_command(
                     // entry path: in vertical mode it starts an indented
                     // paragraph and retries the alignment there.
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 crate::align::execute_alignment(
@@ -2066,7 +2084,7 @@ fn execute_prefixed_command(
                     // Plain's `\leavevmode` relies on the indent box to keep
                     // the otherwise-empty paragraph alive through `end_graf`.
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 if matches!(
@@ -2154,7 +2172,7 @@ fn execute_prefixed_command(
                     // triggering command before `new_graf`. In particular,
                     // `every_par` must run before an `\hskip` scans its glue.
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 execute_kern_or_skip(primitive, command.traced, nest, input, stores, execution)?;
@@ -2184,7 +2202,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::UnKern
             | UnexpandablePrimitive::UnSkip => {
                 reject_all_prefixes(prefixes)?;
-                execute_delete_last(primitive, nest, stores)?;
+                execute_delete_last(primitive, nest, stores, execution.command_fuel())?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::LastPenalty
@@ -2222,7 +2240,7 @@ fn execute_prefixed_command(
                     // so `every_par` runs before the accent scans its number
                     // and base character in horizontal mode.
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 if matches!(
@@ -2243,7 +2261,7 @@ fn execute_prefixed_command(
                     // finish before any operands are scanned into the
                     // paragraph list.
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 if matches!(
@@ -2255,7 +2273,7 @@ fn execute_prefixed_command(
                     crate::Mode::Vertical | crate::Mode::InternalVertical
                 ) {
                     push_traced_tokens(input, stores, [command.traced]);
-                    ensure_horizontal_for_character(nest, input, stores)?;
+                    ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 execute_hmode_material(command.traced, primitive, nest, input, stores, execution)?;
@@ -2317,7 +2335,7 @@ fn execute_prefixed_command(
                 }
                 let language = scan_i32(input, stores, execution, command.traced)?;
                 let language = u8::try_from(language).unwrap_or(0);
-                hmode::flush_pending_hchars(nest, stores)?;
+                hmode::flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
                 let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
                 crate::vertical::append_node_to_current_list(
@@ -2328,6 +2346,7 @@ fn execute_prefixed_command(
                         left_hyphen_min,
                         right_hyphen_min,
                     }),
+                    execution.command_fuel(),
                 )?;
                 nest.current_list_mutation().set_hyphen_language(language);
                 Ok(CommandOutcome::continue_only())
@@ -2454,7 +2473,7 @@ fn execute_prefixed_command(
                     );
                     return Ok(CommandOutcome::continue_only());
                 }
-                flush_pending_hchars(nest, stores)?;
+                flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 let direction = match primitive {
                     UnexpandablePrimitive::BeginL => tex_state::node::Direction::BeginL,
                     UnexpandablePrimitive::EndL => tex_state::node::Direction::EndL,
@@ -2622,6 +2641,7 @@ fn execute_prefixed_command(
                     tex_state::node::Node::Whatsit(tex_state::node::Whatsit::PdfReferenceObject {
                         object,
                     }),
+                    execution.command_fuel(),
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
@@ -2683,7 +2703,7 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::PdfEndThread => {
                 reject_all_prefixes(prefixes)?;
-                execute_pdf_end_thread(nest, stores)?;
+                execute_pdf_end_thread(nest, stores, execution.command_fuel())?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::PdfStartLink => {
@@ -2693,7 +2713,7 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::PdfEndLink => {
                 reject_all_prefixes(prefixes)?;
-                execute_pdf_end_link(nest, stores)?;
+                execute_pdf_end_link(nest, stores, execution.command_fuel())?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::PdfRunningLinkOn | UnexpandablePrimitive::PdfRunningLinkOff => {
@@ -2702,6 +2722,7 @@ fn execute_prefixed_command(
                     nest,
                     stores,
                     primitive == UnexpandablePrimitive::PdfRunningLinkOn,
+                    execution.command_fuel(),
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
@@ -2733,6 +2754,7 @@ fn execute_prefixed_command(
                         height: dimensions.height,
                         depth: dimensions.depth,
                     }),
+                    execution.command_fuel(),
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
