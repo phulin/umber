@@ -3165,13 +3165,11 @@ fn tex82_macro_noalign_retains_expanded_delivery_before_its_opening_group() {
     assert!(expanded < opening && opening < brace);
 }
 
-/// TeX82 §§785/789 pass `align_peek`'s final command straight to `init_col`.
-/// Its ordinary branch runs `back_input` before the u-template starts, so a
-/// command produced by macro expansion has a raw delivery followed by the
-/// backup; its expanded delivery belongs to the later replay above the
-/// u-template.
+/// TeX82 §§380/785/789 complete `align_peek`'s `get_x_token` before passing
+/// its final command to `init_col`. The ordinary branch then backs it up
+/// before the u-template, whose replay is a second raw/expanded delivery.
 #[test]
-fn align_peek_backs_a_macro_produced_relax_before_expanded_redelivery() {
+fn align_peek_commits_macro_produced_relax_before_one_backup_and_replay() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\def\next{\relax}\halign{#\cr\next\cr}\end");
@@ -3202,9 +3200,6 @@ fn align_peek_backs_a_macro_produced_relax_before_expanded_redelivery() {
             {
                 Some("expanded relax")
             }
-            CommandObservation::Input(record) if record.transition == InputTransition::Backup => {
-                Some("push backup")
-            }
             CommandObservation::Input(record)
                 if record.transition == InputTransition::Push
                     && record.reason == InputReason::AlignmentUTemplate =>
@@ -3216,17 +3211,22 @@ fn align_peek_backs_a_macro_produced_relax_before_expanded_redelivery() {
         .collect();
 
     assert!(
-        script.windows(5).any(|window| {
-            window
-                == [
-                    "raw relax",
-                    "push backup",
-                    "push u_template",
-                    "raw relax",
-                    "expanded relax",
-                ]
-        }),
-        "§789 must back up before the u-template and expanded replay: {script:?}"
+        script.ends_with(&[
+            "raw relax",
+            "expanded relax",
+            "push u_template",
+            "raw relax",
+            "expanded relax",
+        ]),
+        "§380 completion must precede the u-template and its distinct replay: {script:?}"
+    );
+    assert_eq!(
+        script
+            .iter()
+            .filter(|event| **event == "expanded relax")
+            .count(),
+        2,
+        "lookahead and replay each have exactly one expanded delivery"
     );
 }
 

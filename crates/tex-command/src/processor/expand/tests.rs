@@ -50,19 +50,46 @@ fn install_macro(
     name: &str,
     replacement: Token,
 ) -> tex_state::interner::Symbol {
+    install_macro_with_flags(universe, name, replacement, MeaningFlags::EMPTY)
+}
+
+fn install_macro_with_flags(
+    universe: &mut Universe,
+    name: &str,
+    replacement: Token,
+    flags: MeaningFlags,
+) -> tex_state::interner::Symbol {
     let name = universe.intern(name).symbol();
     let empty = universe.intern_token_list(&[]);
     let replacement = universe.intern_token_list(&[replacement]);
-    let definition =
-        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
-    universe.set_meaning(
-        name,
-        Meaning::Macro {
-            flags: MeaningFlags::EMPTY,
-            definition,
-        },
-    );
+    let definition = universe.intern_macro(MacroMeaning::new(flags, empty, replacement));
+    universe.set_meaning(name, Meaning::Macro { flags, definition });
     name
+}
+
+fn delivery_and_backup_script(recorder: &Recorder, command_name: &str) -> Vec<&'static str> {
+    recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record)
+                if record.command == command_name
+                    && record.boundary == CommandDeliveryBoundary::Raw =>
+            {
+                Some("raw")
+            }
+            CommandObservation::Command(record)
+                if record.command == command_name
+                    && record.boundary == CommandDeliveryBoundary::Expanded =>
+            {
+                Some("expanded")
+            }
+            CommandObservation::Input(record) if record.transition == InputTransition::Backup => {
+                Some("backup")
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -103,31 +130,148 @@ fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
     processor
         .back_alignment_lookahead(lookahead, pending)
         .expect("ordinary init_col backup succeeds");
+    processor
+        .get_x_token()
+        .expect("backed command redelivers")
+        .expect("backed command exists");
 
-    let expanded = recorder
-        .0
-        .iter()
-        .position(|observation| {
-            matches!(
-                observation,
+    assert_eq!(
+        delivery_and_backup_script(&recorder, "assign_int"),
+        ["raw", "expanded", "backup", "raw", "expanded",],
+        "§380's completed expansion precedes §789's one backup and one replay"
+    );
+}
+
+#[test]
+fn direct_alignment_lookahead_keeps_raw_expanded_backup_replay_order() {
+    // TeX82 §§341, 380, 785, 789: a directly fetched unexpandable command
+    // completes raw and expanded delivery before init_col backs it up.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let fam = universe.intern("fam").symbol();
+    universe.set_meaning(
+        fam,
+        Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw()),
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(fam))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    let (lookahead, pending) = processor
+        .next_alignment_lookahead()
+        .expect("direct alignment lookahead succeeds")
+        .expect("direct command exists");
+    assert!(!pending, "direct get_x_token delivery is already committed");
+    processor
+        .back_alignment_lookahead(lookahead, pending)
+        .expect("direct command backup succeeds");
+    processor
+        .get_x_token()
+        .expect("backed direct command redelivers")
+        .expect("backed direct command exists");
+
+    assert_eq!(
+        delivery_and_backup_script(&recorder, "assign_int"),
+        ["raw", "expanded", "backup", "raw", "expanded",]
+    );
+}
+
+#[test]
+fn consumed_macro_alignment_lookahead_commits_once_without_backup() {
+    // TeX82 §§380/785 consume no_align/crcr/closing-brace/omit lookahead in
+    // place. Model that branch directly: its pending expansion commits once
+    // and creates no backup replay.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let omit = universe.intern("omit").symbol();
+    universe.set_meaning(
+        omit,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Omit),
+    );
+    let macro_name = install_macro(&mut universe, "next", Token::Cs(omit));
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(macro_name))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    let (lookahead, pending) = processor
+        .next_alignment_lookahead()
+        .expect("consumed lookahead expands")
+        .expect("macro replacement produces a command");
+    assert!(pending);
+    assert_eq!(
+        lookahead.meaning(),
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Omit)
+    );
+    processor.commit_alignment_lookahead_delivery(&lookahead);
+
+    assert_eq!(
+        delivery_and_backup_script(&recorder, "omit"),
+        ["raw", "expanded"],
+        "consumed lookahead has one completed expanded delivery and no backup"
+    );
+}
+
+#[test]
+fn etex_protected_alignment_lookahead_is_raw_and_nonpending() {
+    // e-TeX 2.6 [37.785] get_x_or_protected returns a protected macro from
+    // get_token, without an expanded delivery pending in observer transport.
+    let mut command = CommandState::new(CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let protected = install_macro_with_flags(
+        &mut universe,
+        "protected",
+        Token::Cs(relax),
+        MeaningFlags::PROTECTED,
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(protected))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    let (lookahead, pending) = processor
+        .next_alignment_lookahead()
+        .expect("protected lookahead succeeds")
+        .expect("protected command exists");
+    assert!(matches!(lookahead.meaning(), Meaning::Macro { .. }));
+    assert!(!pending, "get_x_or_protected is a raw terminal path");
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|event| matches!(
+                event,
                 CommandObservation::Command(record)
                     if record.boundary == CommandDeliveryBoundary::Expanded
-                        && record.command == "assign_int"
-            )
-        })
-        .expect("terminal expanded delivery is observed");
-    let backup = recorder
-        .0
-        .iter()
-        .position(|observation| {
-            matches!(
-                observation,
-                CommandObservation::Input(record)
-                    if record.transition == InputTransition::Backup
-            )
-        })
-        .expect("ordinary command is backed up");
-    assert!(expanded < backup, "get_x_token commits before back_input");
+            ))
+            .count(),
+        0,
+        "protected lookahead never fabricates an expanded delivery"
+    );
 }
 
 #[test]
