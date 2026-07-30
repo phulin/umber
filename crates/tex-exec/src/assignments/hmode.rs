@@ -239,6 +239,18 @@ fn flush_pending_hchar_run(
         return;
     }
     let no_boundary = nest.current_list().no_boundary();
+    if requires_full_ligature_machine(stores, &pending.source, no_boundary) {
+        let nodes = reconstitute_full_ligature_machine(
+            stores,
+            &pending.source,
+            no_boundary,
+            suppress_right_boundary,
+        );
+        let mut list = nest.current_list_mutation();
+        list.set_no_boundary(false);
+        list.replace_pending_suffix(pending.insertion_index, nodes);
+        return;
+    }
     let boundary = (!no_boundary)
         .then(|| boundary_command_node(stores, pending.first, true))
         .flatten()
@@ -717,7 +729,7 @@ fn append_pending_hchar(
         if let Some(kern) = auto_kern(stores, &PendingHRunChar::new(font, ch, origin), Some(true)) {
             list.push(kern);
         }
-        list.begin_pending_hchars(font, ch, origin, font_is_ltr_shaping);
+        list.begin_pending_hchars(font, ch, origin, true);
         return;
     };
     if font_is_ltr_shaping
@@ -736,6 +748,9 @@ fn append_pending_hchar(
         return;
     }
     let next = PendingHRunChar::new(font, ch, origin);
+    pending
+        .source
+        .push(crate::mode::PendingHChar { font, ch, origin });
     let emitted = match reconstitution_step(stores, pending.current, next) {
         ReconstitutionStep::Merge(merged) => {
             pending.current = merged;
@@ -800,10 +815,15 @@ fn append_tfm_hchar(
             ch,
             origin,
             emitted.len(),
-            false,
+            true,
         ));
         return true;
     };
+    current_run.source.push(crate::mode::PendingHChar {
+        font: context.font,
+        ch,
+        origin,
+    });
     match reconstitution_step(stores, current_run.current, next) {
         ReconstitutionStep::Merge(merged) => current_run.current = merged,
         ReconstitutionStep::Emit {
@@ -1066,6 +1086,204 @@ pub(crate) fn reconstitute(
         out.push(kern);
     }
     out
+}
+
+fn requires_full_ligature_machine(
+    stores: &Universe,
+    source: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+) -> bool {
+    let Some(first) = source.first() else {
+        return false;
+    };
+    let nonstandard = |command| {
+        matches!(
+            command,
+            LigKernCommand::Ligature(lig)
+                if !lig.delete_current || !lig.delete_next || lig.pass_over != 0
+        )
+    };
+    if !no_left_boundary
+        && let Ok(code) = font_code(first.ch)
+        && stores
+            .tfm_lig_kern_command(first.font, LigKernChar::Boundary, LigKernChar::Char(code))
+            .is_some_and(nonstandard)
+    {
+        return true;
+    }
+    source.windows(2).any(|pair| {
+        if pair[0].font != pair[1].font {
+            return false;
+        }
+        let (Ok(left), Ok(right)) = (font_code(pair[0].ch), font_code(pair[1].ch)) else {
+            return false;
+        };
+        stores
+            .tfm_lig_kern_command(
+                pair[0].font,
+                LigKernChar::Char(left),
+                LigKernChar::Char(right),
+            )
+            .is_some_and(nonstandard)
+    })
+}
+
+#[derive(Clone)]
+enum LigatureWorkItem {
+    Glyph(PendingHRunChar),
+    Kern(Scaled),
+}
+
+fn replacement_glyph(
+    font: FontId,
+    replacement: u8,
+    consumed: impl IntoIterator<Item = PendingHRunChar>,
+) -> PendingHRunChar {
+    let mut orig = smallvec::SmallVec::new();
+    let mut origins = smallvec::SmallVec::new();
+    for glyph in consumed {
+        orig.extend(glyph.orig);
+        origins.extend(glyph.origins);
+    }
+    PendingHRunChar {
+        font,
+        ch: char::from(replacement),
+        orig,
+        origins,
+        ligature_present: true,
+    }
+}
+
+/// TeX82 §§1034-1036's retained-character ligature machine.
+///
+/// The ordinary two-character fold is sufficient for `=:`, but the other
+/// seven ligature operations retain one or both operands and may pass over
+/// generated pseudo-ligatures. Model those operations as an explicit work
+/// list so the replacement is reconsidered at the same cursor exactly as in
+/// TeX's `lig_stack`.
+fn reconstitute_full_ligature_machine(
+    stores: &Universe,
+    source: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+    suppress_right_boundary: bool,
+) -> Vec<Node> {
+    let Some(first) = source.first() else {
+        return Vec::new();
+    };
+    let font = first.font;
+    let mut work = source
+        .iter()
+        .map(|entry| {
+            LigatureWorkItem::Glyph(PendingHRunChar::new(entry.font, entry.ch, entry.origin))
+        })
+        .collect::<Vec<_>>();
+
+    if !no_left_boundary
+        && let Ok(right) = font_code(first.ch)
+        && let Some(command) =
+            stores.tfm_lig_kern_command(font, LigKernChar::Boundary, LigKernChar::Char(right))
+    {
+        match command {
+            LigKernCommand::Kern(amount) => work.insert(0, LigatureWorkItem::Kern(amount)),
+            LigKernCommand::Ligature(lig) => {
+                let LigatureWorkItem::Glyph(next) = work[0].clone() else {
+                    unreachable!()
+                };
+                let replacement = replacement_glyph(font, lig.replacement, Some(next.clone()));
+                if lig.delete_next {
+                    work[0] = LigatureWorkItem::Glyph(replacement);
+                } else {
+                    work.insert(0, LigatureWorkItem::Glyph(replacement));
+                }
+            }
+        }
+    }
+
+    let mut cursor = 0;
+    let mut transitions = 0_u64;
+    while cursor + 1 < work.len() {
+        transitions += 1;
+        assert!(
+            transitions <= 1_000_000,
+            "TeX ligature work list did not converge"
+        );
+        let (LigatureWorkItem::Glyph(left), LigatureWorkItem::Glyph(right)) =
+            (work[cursor].clone(), work[cursor + 1].clone())
+        else {
+            cursor += 1;
+            continue;
+        };
+        if left.font != right.font {
+            cursor += 1;
+            continue;
+        }
+        let (Ok(left_code), Ok(right_code)) = (font_code(left.ch), font_code(right.ch)) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(command) = stores.tfm_lig_kern_command(
+            left.font,
+            LigKernChar::Char(left_code),
+            LigKernChar::Char(right_code),
+        ) else {
+            cursor += 1;
+            continue;
+        };
+        match command {
+            LigKernCommand::Kern(amount) => {
+                work.insert(cursor + 1, LigatureWorkItem::Kern(amount));
+                cursor += 2;
+            }
+            LigKernCommand::Ligature(lig) => {
+                let consumed = [
+                    lig.delete_current.then_some(left.clone()),
+                    lig.delete_next.then_some(right.clone()),
+                ]
+                .into_iter()
+                .flatten()
+                .chain((!lig.delete_current && !lig.delete_next).then_some(left.clone()));
+                let replacement = LigatureWorkItem::Glyph(replacement_glyph(
+                    left.font,
+                    lig.replacement,
+                    consumed,
+                ));
+                match (lig.delete_current, lig.delete_next) {
+                    (true, true) => {
+                        work[cursor] = replacement;
+                        work.remove(cursor + 1);
+                    }
+                    (true, false) => work[cursor] = replacement,
+                    (false, true) => work[cursor + 1] = replacement,
+                    (false, false) => work.insert(cursor + 1, replacement),
+                }
+                cursor = cursor
+                    .saturating_add(usize::from(lig.pass_over))
+                    .min(work.len());
+            }
+        }
+    }
+
+    if !suppress_right_boundary
+        && let Some(last_index) = work
+            .iter()
+            .rposition(|item| matches!(item, LigatureWorkItem::Glyph(_)))
+        && let LigatureWorkItem::Glyph(last) = &work[last_index]
+        && let Ok(left) = font_code(last.ch)
+        && let Some(LigKernCommand::Kern(amount)) =
+            stores.tfm_lig_kern_command(last.font, LigKernChar::Char(left), LigKernChar::Boundary)
+    {
+        work.insert(last_index + 1, LigatureWorkItem::Kern(amount));
+    }
+
+    work.into_iter()
+        .map(|item| match item {
+            LigatureWorkItem::Glyph(glyph) => rechar_node(glyph),
+            LigatureWorkItem::Kern(amount) => Node::Kern {
+                amount,
+                kind: KernKind::Font,
+            },
+        })
+        .collect()
 }
 
 fn auto_kern_between(

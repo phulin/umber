@@ -920,6 +920,93 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
 }
 
 #[test]
+fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{
+        CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LigatureCommand, LoadedFont,
+    };
+
+    let mut characters = vec![None; 256];
+    for (code, tag) in [
+        (b'1', CharTag::None),
+        (
+            b'5',
+            CharTag::LigKern {
+                program_index: 1,
+                start_index: 1,
+            },
+        ),
+    ] {
+        characters[usize::from(code)] = Some(CharMetrics {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            italic_correction: Scaled::from_raw(0),
+            tag,
+        });
+    }
+    let boundary_kern = Scaled::from_raw(-131_073);
+    let metrics = FontMetrics::new(
+        characters,
+        vec![
+            LigKernInstruction {
+                skip_byte: 128,
+                next_char: b'1',
+                command: Some(LigKernCommand::Ligature(LigatureCommand {
+                    replacement: b'5',
+                    delete_current: false,
+                    delete_next: true,
+                    pass_over: 0,
+                })),
+            },
+            LigKernInstruction {
+                skip_byte: 128,
+                next_char: b'1',
+                command: Some(LigKernCommand::Kern(boundary_kern)),
+            },
+        ],
+        None,
+        Some(0),
+        Vec::new(),
+    );
+    metrics.validate().expect("synthetic retained-ligature TFM");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "retained-boundary",
+        "retained-boundary.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    let source = [
+        PendingHChar {
+            font,
+            ch: '1',
+            origin: OriginId::UNKNOWN,
+        },
+        PendingHChar {
+            font,
+            ch: '1',
+            origin: OriginId::UNKNOWN,
+        },
+    ];
+
+    let nodes = reconstitute_full_ligature_machine(&stores, &source, false, true);
+
+    assert!(matches!(
+        nodes.as_slice(),
+        [
+            Node::Lig { ch: '5', orig, .. },
+            Node::Kern { amount, kind: KernKind::Font },
+            Node::Char { ch: '1', .. },
+        ] if orig == &['1'] && *amount == boundary_kern
+    ));
+}
+
+#[test]
 fn char_primitive_continues_the_pending_ligature_run() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();

@@ -191,6 +191,12 @@ impl ModeList {
         }
     }
 
+    pub(crate) fn replace_pending_suffix(&mut self, start: usize, nodes: Vec<Node>) {
+        let target = Arc::make_mut(&mut self.nodes);
+        target.truncate(start);
+        target.extend(nodes);
+    }
+
     pub(crate) fn begin_pending_hchars(
         &mut self,
         font: FontId,
@@ -470,6 +476,11 @@ impl ModeListMutation<'_> {
         }
         self.list
             .push_reconstituted(insertion, first, second, third);
+    }
+
+    pub(crate) fn replace_pending_suffix(&mut self, start: usize, nodes: Vec<Node>) {
+        self.record_nodes();
+        self.list.replace_pending_suffix(start, nodes);
     }
 
     pub(crate) fn begin_pending_hchars(
