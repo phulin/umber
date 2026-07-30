@@ -221,6 +221,20 @@ run_command() {
   "$@"
 }
 
+# Leaves this run's own output in the shape `scripts/check.sh` demands.
+#
+# The generators write JSON manifests as compact single-line objects, and
+# dprint's JSON plugin expands them, so every regeneration used to leave the
+# gate red until somebody formatted by hand. Formatting the whole repository
+# is the right scope here rather than a per-area path list: the gate holds
+# every other file at a dprint fixed point already, so the only files this
+# can rewrite are the ones this run just wrote.
+format_regenerated_output() {
+  command -v dprint >/dev/null 2>&1 || die \
+    'dprint is not installed; install it with: npm install --global dprint@0.55.2'
+  run_command 'Formatting regenerated fixtures' dprint fmt
+}
+
 build_refexec_once() {
   if [[ "$refexec_built" -eq 0 ]]; then
     run_command 'Building refexec' cargo build -p refexec
@@ -1666,3 +1680,9 @@ case "$mode" in
     exit 2
     ;;
 esac
+
+# `--validate-only` promises to leave the working tree alone, so it is the one
+# mode that must not format; every other mode has just written fixtures.
+if [[ "$mode" != oracle || "$oracle_validate_only" -eq 0 ]]; then
+  format_regenerated_output
+fi
