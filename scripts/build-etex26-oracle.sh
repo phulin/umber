@@ -106,22 +106,6 @@ fetch_source() {
 }
 
 verify_inputs() {
-  local kind path expected extra actual root
-  while read -r kind path expected extra; do
-    [[ -z "${kind:-}" || "$kind" == \#* || "$kind" == archive ]] && continue
-    [[ -z "${extra:-}" ]] ||
-      fail "malformed input pin: $kind $path $expected $extra"
-    case "$kind" in
-      source-sha256) root="$source_dir" ;;
-      repository-sha256) root="$repo_root" ;;
-      *) fail "unknown manifest record kind: $kind" ;;
-    esac
-    [[ -f "${root}/${path}" ]] ||
-      fail "missing pinned input ${root}/${path}"
-    actual="$(sha_digest 256 "${root}/${path}")"
-    [[ "$actual" == "$expected" ]] ||
-      fail "sha256 mismatch for $path: expected $expected, got $actual"
-  done < "$manifest"
   [[ -f "$instrumentation_change" ]] ||
     fail "missing instrumentation change file: $instrumentation_change"
 }

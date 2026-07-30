@@ -6,10 +6,10 @@ Status: pinned build boundary for command-core conformance.
 
 The canonical e-TeX oracle is built from Knuth's `tex.web` and the NTS
 project's e-TeX 2.6 `etexdir/etex.ch` as distributed in the immutable TeX Live
-2025 source archive. The archive is pinned by SHA-512. The two ordered WEB
-sources, Web2C change stack, translator inputs, and repository-owned inputs
-are pinned individually by SHA-256 in
-`tests/etex26-oracle-manifest.txt`.
+2025 source archive. The archive is pinned by SHA-512 in
+`tests/etex26-oracle-manifest.txt`, which is the one identity the workflow
+verifies; the two ordered WEB sources, the Web2C change stack, and the
+translator inputs all come out of that archive.
 
 e-TeX has one executable program and two canonical INITEX profiles.
 Compatibility mode starts from the ordinary input name and does not install

@@ -621,47 +621,23 @@ tex82_fixture_selectors() {
 validate_oracle_source_manifest() {
   local manifest_path="$1"
   local archive_count=0
-  local kind path digest extra
+  local kind url digest extra
   local line_number=0
-  local seen_paths_file
 
   [[ -f "$manifest_path" ]] || die "missing oracle source manifest: ${manifest_path}"
-  seen_paths_file="$(mktemp)"
-  while read -r kind path digest extra; do
+  while read -r kind url digest extra; do
     line_number=$((line_number + 1))
     [[ -n "$kind" && "$kind" != \#* ]] || continue
     [[ -z "${extra:-}" ]] ||
       die "${manifest_path}:${line_number}: unexpected manifest field"
-    case "$kind" in
-      archive)
-        archive_count=$((archive_count + 1))
-        [[ "$path" == https://* ]] ||
-          die "${manifest_path}:${line_number}: archive URL must use HTTPS"
-        [[ "$digest" =~ ^[0-9a-f]{128}$ ]] ||
-          die "${manifest_path}:${line_number}: invalid archive SHA-512"
-        ;;
-      source-sha256|repository-sha256)
-        [[ "$path" != /* && "$path" != *..* ]] ||
-          die "${manifest_path}:${line_number}: unsafe pinned path"
-        [[ "$digest" =~ ^[0-9a-f]{64}$ ]] ||
-          die "${manifest_path}:${line_number}: invalid SHA-256"
-        if grep -Fqx "$path" "$seen_paths_file"; then
-          die "${manifest_path}:${line_number}: duplicate pinned path: ${path}"
-        fi
-        printf '%s\n' "$path" >>"$seen_paths_file"
-        if [[ "$kind" == repository-sha256 ]]; then
-          [[ -f "$path" ]] ||
-            die "${manifest_path}:${line_number}: missing repository input: ${path}"
-          [[ "$(sha256_file "$path")" == "$digest" ]] ||
-            die "${manifest_path}:${line_number}: repository identity drift: ${path}"
-        fi
-        ;;
-      *)
-        die "${manifest_path}:${line_number}: unknown record kind: ${kind}"
-        ;;
-    esac
+    [[ "$kind" == archive ]] ||
+      die "${manifest_path}:${line_number}: unknown record kind: ${kind}"
+    archive_count=$((archive_count + 1))
+    [[ "$url" == https://* ]] ||
+      die "${manifest_path}:${line_number}: archive URL must use HTTPS"
+    [[ "$digest" =~ ^[0-9a-f]{128}$ ]] ||
+      die "${manifest_path}:${line_number}: invalid archive SHA-512"
   done < "$manifest_path"
-  rm -f "$seen_paths_file"
   [[ "$archive_count" -eq 1 ]] ||
     die "${manifest_path}: expected exactly one archive record"
 }

@@ -45,10 +45,10 @@ native-test registry.
 ## Authority and identity
 
 The canonical TeX82 oracle is built from Knuth's `tex.web` as distributed in
-the immutable TeX Live 2025 source archive. The archive is pinned by SHA-512,
-and the selected WEB, ordered Web2C change files, translator inputs, and
-repository-owned inputs are pinned individually by SHA-256 in
-`tests/tex82-oracle-manifest.txt`. The Web2C changes are portability changes;
+the immutable TeX Live 2025 source archive. The archive is pinned by SHA-512 in
+`tests/tex82-oracle-manifest.txt`, which is the one identity the workflow
+verifies; the selected WEB, the ordered Web2C change files, and the translator
+inputs all come out of that archive. The Web2C changes are portability changes;
 they do not make Umber part of the reference engine.
 
 `scripts/build-tex82-oracle.sh` writes two explicitly named executables:

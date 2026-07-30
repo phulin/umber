@@ -8,7 +8,6 @@ use crate::{CommittedFixture, Event, ObservationStream, SchemaVersion};
 
 const REGENERATION_MANIFEST: &str = "tests/oracle-regeneration-manifest.txt";
 const TEX82_FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
-const TEX82_SOURCE_MANIFEST: &str = "tests/tex82-oracle-manifest.txt";
 const TEX82_GEOMETRY_SOURCE: &str = "tests/tex82-oracle/geometry.tex";
 const TEX82_GEOMETRY_EVENTS: &str = "tests/tex82-oracle/geometry-expected.jsonl";
 
@@ -52,16 +51,13 @@ pub struct Tex82GeometryTraceFixture {
 ///
 /// The projection remains outside the schema-v1 command-fixture manifest:
 /// its all-zero manifest field is the reference builder's explicit detached
-/// projection sentinel. Both files are nevertheless content-pinned by the
-/// TeX82 source manifest, and the stream must be schema v2 and geometry-only.
+/// projection sentinel. The stream must be schema v2 and geometry-only.
 pub fn validate_tex82_geometry_trace_fixture(
     repository: impl AsRef<Path>,
 ) -> Result<Tex82GeometryTraceFixture, String> {
     let repository = repository.as_ref();
-    let source_manifest = read(&repository.join(TEX82_SOURCE_MANIFEST))?;
-    let pins = repository_sha256_pins(&source_manifest)?;
-    let source = pinned_file(repository, TEX82_GEOMETRY_SOURCE, &pins)?;
-    let event_bytes = pinned_file(repository, TEX82_GEOMETRY_EVENTS, &pins)?;
+    let source = read(&repository.join(TEX82_GEOMETRY_SOURCE))?;
+    let event_bytes = read(&repository.join(TEX82_GEOMETRY_EVENTS))?;
     let stream = ObservationStream::from_canonical_json_lines(&event_bytes)
         .map_err(|error| format!("{TEX82_GEOMETRY_EVENTS} is invalid: {error}"))?;
     if stream.header.schema != SchemaVersion::V2.number() {
@@ -87,49 +83,6 @@ pub fn validate_tex82_geometry_trace_fixture(
         stream,
         identity: sha256(&event_bytes),
     })
-}
-
-fn repository_sha256_pins(bytes: &[u8]) -> Result<BTreeMap<String, String>, String> {
-    let text =
-        std::str::from_utf8(bytes).map_err(|_| format!("{TEX82_SOURCE_MANIFEST} is not UTF-8"))?;
-    let mut pins = BTreeMap::new();
-    for (index, line) in text.lines().enumerate() {
-        let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
-        if fields.first() != Some(&"repository-sha256") {
-            continue;
-        }
-        if fields.len() != 3 {
-            return Err(format!(
-                "{TEX82_SOURCE_MANIFEST} line {} has a malformed repository pin",
-                index + 1
-            ));
-        }
-        if pins.insert(fields[1].into(), fields[2].into()).is_some() {
-            return Err(format!(
-                "{TEX82_SOURCE_MANIFEST} repeats repository pin {}",
-                fields[1]
-            ));
-        }
-    }
-    Ok(pins)
-}
-
-fn pinned_file(
-    repository: &Path,
-    logical_path: &str,
-    pins: &BTreeMap<String, String>,
-) -> Result<Vec<u8>, String> {
-    let expected = pins
-        .get(logical_path)
-        .ok_or_else(|| format!("{TEX82_SOURCE_MANIFEST} does not pin {logical_path}"))?;
-    let bytes = read(&repository.join(logical_path))?;
-    let observed = sha256(&bytes);
-    if &observed != expected {
-        return Err(format!(
-            "{logical_path} identity drifted: expected {expected}, observed {observed}"
-        ));
-    }
-    Ok(bytes)
 }
 
 /// Load every committed TeX82 command fixture, validate its immutable

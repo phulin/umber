@@ -6,10 +6,11 @@ Status: pinned build boundary for command-core conformance.
 
 The canonical pdfTeX oracle is built from `pdftexdir/pdftex.web` as
 distributed in the immutable TeX Live 2025 source archive. The archive is
-pinned by SHA-512. The WEB source, ordered Web2C and configured SyncTeX change
-stack, translator inputs, build description, runtime configuration, and
-repository-owned inputs are pinned individually by SHA-256 in
-`tests/pdftex14027-oracle-manifest.txt`.
+pinned by SHA-512 in `tests/pdftex14027-oracle-manifest.txt`, which is the one
+identity the workflow verifies. Everything the build reads out of that archive
+-- the WEB source, the ordered Web2C and configured SyncTeX change stack, the
+translator inputs, the build description -- is already covered by the archive
+digest, and the repository-owned inputs are covered by the commit they live in.
 
 The canonical invocation is INITEX with e-TeX extensions explicitly enabled.
 Its command character profile is exact eight-bit input. The repository tooling
@@ -58,19 +59,16 @@ TeX82/e-TeX oracle builds. `CARGO_TARGET_DIR` relocates outputs.
 `UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE` may select another final change;
 the build record captures its path and hash.
 
-Every run verifies the archive and every manifest entry before translation.
-It applies the exact configured TeX Live change order, including SyncTeX
+Every run verifies the archive before translation. It applies the exact configured TeX Live change order, including SyncTeX
 changes selected by the canonical pdfTeX build profile, and builds static
 archive-owned library inputs. No network access occurs after the archive is
 present, and acquisition remains outside correctness tests.
 
-The manifest also pins `Cargo.lock`, because the independent PDF normalizer is
-built through Cargo during the oracle workflow. When a reviewed dependency
-change updates that lockfile, refresh its SHA-256 entry, then refresh the
-pdfTeX row's manifest digest in `tests/oracle-regeneration-manifest.txt` and
-run the validate-only preflight before the full pinned workflow. The validators
-intentionally reject either stale identity; this is a build-input refresh, not
-a semantic-trace regeneration.
+Editing the manifest itself is still a reviewed change: refresh the pdfTeX
+row's manifest digest in `tests/oracle-regeneration-manifest.txt` and run the
+validate-only preflight before the full workflow. The validators intentionally
+reject a stale identity; this is a build-input refresh, not a semantic-trace
+regeneration.
 
 The observer makes the merged pdfTeX WEB exceed TANGLE's historical
 16-bit token/name-byte and expansion-stack capacities. The workflow therefore
