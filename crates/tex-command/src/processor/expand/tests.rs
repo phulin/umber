@@ -311,6 +311,15 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
             .count(),
         1
     );
+    assert!(recorder.0.iter().any(|event| matches!(
+        event,
+        CommandObservation::Input(crate::InputRecord {
+            transition: crate::InputTransition::Push,
+            reason: crate::InputReason::Source,
+            source_name: Some(crate::SourceNameClass::Terminal),
+            ..
+        })
+    )));
 }
 
 #[test]

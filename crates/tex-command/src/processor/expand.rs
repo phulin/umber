@@ -675,7 +675,14 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Push,
             reason: InputReason::Source,
-            source_name: Some(SourceNameClass::File),
+            // e-TeX 2.6 etex.ch §53a `pseudo_start` first calls
+            // `begin_file_reading`, which establishes and observes the new
+            // level while its §328 default is still `name=0`. Only after
+            // that transition does e-TeX assign the pseudo-file name used
+            // during tokenization and retirement. The level remains
+            // file-like in command state, but its push is the transient
+            // terminal-class transition the reference engine performs.
+            source_name: Some(SourceNameClass::Terminal),
             level: level.0,
             position: 0,
         }));
