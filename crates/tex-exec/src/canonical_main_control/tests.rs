@@ -717,6 +717,32 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
+fn pending_sink_text(stores: &Universe, terminal: bool) -> String {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { sink, text }
+                if if terminal {
+                    matches!(
+                        sink,
+                        tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog
+                    )
+                } else {
+                    matches!(
+                        sink,
+                        tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
+                    )
+                } =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn macro_character_text(stores: &Universe, name: &str) -> String {
     let symbol = stores.symbol(name).expect("macro control sequence");
     let meaning = stores.macro_meaning(symbol).expect("macro meaning");
@@ -4004,12 +4030,36 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
         register_source(&mut control, br"\show\errorstopmode\end");
         run_to_end(&mut control, &mut stores);
 
-        let output = terminal_text(&stores);
+        let terminal = pending_sink_text(&stores, true);
+        let log = pending_sink_text(&stores, false);
+        let expected = "\\show\\errorstopmode\n> \\errorstopmode=\\errorstopmode.";
+        if mode == tex_state::InteractionMode::Batch {
+            assert_eq!(terminal, "", "batch mode wrote terminal records");
+        } else {
+            assert!(
+                terminal.starts_with(expected),
+                "{mode:?} terminal inserted output before the show line: {terminal:?}"
+            );
+        }
         assert!(
-            output.starts_with("\\show\\errorstopmode\n> \\errorstopmode=\\errorstopmode."),
-            "{mode:?} inserted output before the show line: {output:?}"
+            log.starts_with(expected),
+            "{mode:?} log inserted output before the show line: {log:?}"
         );
     }
+}
+
+#[test]
+fn display_content_preserves_future_multiple_leading_newlines() {
+    // The structured scanner never produces this malformed/future content.
+    // If that contract expands, replay must still pass the content verbatim
+    // to §62 rather than broadly deleting payload newlines.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.printer().print("closed").print_ln();
+
+    print_display_content(&mut stores, "\n\nfuture");
+
+    assert_eq!(pending_sink_text(&stores, true), "closed\n\n\nfuture");
+    assert_eq!(pending_sink_text(&stores, false), "closed\n\n\nfuture");
 }
 
 #[test]

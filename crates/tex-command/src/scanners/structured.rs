@@ -458,11 +458,14 @@ pub struct ScannedVSplit {
     pub missing_to: bool,
 }
 
-/// A completed display diagnostic. Its text and source origin are frozen while
-/// command input is borrowed, leaving replay no operand-reading work.
+/// A completed display diagnostic. Its display-line content and source origin
+/// are frozen while command input is borrowed, leaving replay no
+/// operand-reading or envelope-decoding work.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedDisplayDiagnostic {
-    pub text: String,
+    /// The content passed to TeX82 §62's `print_nl`, excluding §1293's
+    /// terminating period and error completion.
+    pub content: String,
     pub provenance: StructuredProvenance,
 }
 
@@ -2394,22 +2397,22 @@ impl CommandProcessor<'_> {
     pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
         let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let token = command.spelling().semantic_token();
-        let text = match token {
+        let content = match token {
             Token::Cs(_)
             | Token::Char {
                 cat: Catcode::Active,
                 ..
             } => format!(
-                "\n> {}={}.\n",
+                "> {}={}",
                 string_text(&self.state, token),
                 meaning_text(&self.state, &command)
             ),
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
-                format!("\n> {}.\n", meaning_text(&self.state, &command))
+                format!("> {}", meaning_text(&self.state, &command))
             }
         };
         Ok(ScannedDisplayDiagnostic {
-            text,
+            content,
             provenance: StructuredProvenance {
                 primary: command.origin(),
             },
@@ -2436,7 +2439,7 @@ impl CommandProcessor<'_> {
                 .collect(),
         };
         Ok(ScannedDisplayDiagnostic {
-            text: format!("\n> {text}.\n"),
+            content: format!("> {text}"),
             provenance: StructuredProvenance {
                 primary: value.provenance.primary,
             },
