@@ -32,6 +32,58 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline() {
+    // TeX82 §§262 and 1370: `token_show` prints character tokens through
+    // `print`, whose stream selector recognizes `newlinechar` before the
+    // non-printable-character `^^` rendering used for diagnostic strings.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param(IntParam::NEWLINE_CHAR, 10);
+    let tokens = [
+        Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: '\n',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: 'B',
+            cat: Catcode::Letter,
+        },
+    ];
+
+    assert_eq!(canonical_write_text(&tokens, &stores), "A\nB\n");
+}
+
+#[test]
+fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
+    // TeX82 §§262 and 1297: direct `token_show` output recognizes the live
+    // newline character, while another non-printable byte keeps its `^^`
+    // spelling. The control-sequence separator is part of `print_cs`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param(IntParam::NEWLINE_CHAR, 10);
+    let word = stores.intern("word");
+    let tokens = stores.intern_token_list(&[
+        Token::Char {
+            ch: '\u{1}',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '\n',
+            cat: Catcode::Other,
+        },
+        Token::Cs(word.symbol()),
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        },
+    ]);
+
+    assert_eq!(show_tokens_text(&stores, tokens), "^^A\n\\word X");
+}
+
+#[test]
 fn meaning_mutation_value_projects_protected_macro_storage_marker() {
     let mut stores = Universe::new_with_plain_catcodes();
     let empty = stores.intern_token_list(&[]);

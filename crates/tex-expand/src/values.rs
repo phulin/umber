@@ -1373,6 +1373,29 @@ pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text
     }
 }
 
+/// Appends one token as TeX82's `show_token_list` prints it through an active
+/// output selector.
+///
+/// Section 262 sends every character through `print`. Section 59's `print`
+/// recognizes the live new-line character before expanding any other
+/// non-printable byte to its canonical `^^` spelling.
+pub fn append_token_selector_text(
+    stores: &impl ExpansionState,
+    token: Token,
+    newlinechar: Option<char>,
+    text: &mut String,
+) {
+    let mut raw = String::new();
+    append_token_string_text(stores, token, &mut raw);
+    for ch in raw.chars() {
+        if Some(ch) == newlinechar {
+            text.push('\n');
+        } else {
+            append_tex_print_char(ch, text);
+        }
+    }
+}
+
 /// Appends TeX82's printable string for a character code.
 ///
 /// `show_token_list` calls `print(c)`, not `print_char(c)`. The first 256

@@ -83,8 +83,8 @@ mod values;
 pub use dispatch::{dispatch, dispatch_expandable_opcode, dispatch_with_context};
 pub use scan_helpers::scan_optional_keyword_with_context;
 pub use values::{
-    append_token_show_text, append_token_string_text, meaning_text, scan_the_text_with_context,
-    token_text,
+    append_token_selector_text, append_token_show_text, append_token_string_text, meaning_text,
+    scan_the_text_with_context, token_text,
 };
 
 /// Installs the expandable TeX82 primitives currently implemented by this

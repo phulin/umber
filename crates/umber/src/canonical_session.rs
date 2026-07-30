@@ -1246,6 +1246,47 @@ mod tests {
     }
 
     #[test]
+    fn same_run_write_reopens_newlinechar_as_exact_physical_lines() {
+        // TeX82 §§262 and 1370: expanded write tokens are first captured as
+        // an internal string, then printed through the stream selector. A
+        // character equal to `newlinechar` is therefore a physical line end.
+        let (mut stores, root) = prepared_session(
+            br"\newlinechar=1
+\immediate\openout1=same.out
+\immediate\write1{\noexpand\global\noexpand\count0=123^^A\noexpand\global\noexpand\count1=456}
+\immediate\closeout1
+\shipout\hbox{}
+\input same.out
+\end",
+        );
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_authored_root("job.tex", root)
+            .expect("root registers");
+        let mut host = OneInputHost { calls: 0 };
+
+        session
+            .run(&mut host, &mut Vec::new())
+            .expect("same-run output is written and reopened");
+
+        assert_eq!(
+            session.stores().world().memory_output("same.out"),
+            Some(&b"\\global \\count 0=123\n\\global \\count 1=456\n"[..])
+        );
+        assert!(
+            session
+                .stores()
+                .world()
+                .input_records()
+                .iter()
+                .any(|record| record.path() == Path::new("same.out")
+                    && record.origin() == tex_state::InputOrigin::SameRunGenerated)
+        );
+        assert_eq!(session.stores().count(0), 123);
+        assert_eq!(session.stores().count(1), 456);
+    }
+
+    #[test]
     fn world_host_records_selected_input_once_and_preserves_retry_effects() {
         let (mut stores, root) = prepared_session(b"\\message{once}\\input child\\end");
         stores

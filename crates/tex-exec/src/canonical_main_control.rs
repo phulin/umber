@@ -7527,7 +7527,7 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
 fn canonical_write_text(tokens: &[Token], stores: &Universe) -> String {
     let mut text = String::new();
     for &token in tokens {
-        crate::diagnostics::append_token_show_text(stores, token, &mut text);
+        tex_expand::append_token_string_text(stores, token, &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
@@ -8888,7 +8888,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         }),
         ScannedStep::ShowTokens { tokens } => Some(EffectRecord {
             kind: "showtokens",
-            detail: message_text(stores, tokens.token_list()),
+            detail: show_tokens_text(stores, tokens.token_list()),
             source: None,
             tokens: Some(
                 stores
@@ -9007,7 +9007,7 @@ fn shipout_replay_box(
             }
             let mut text = String::new();
             for &token in stores.tokens(expanded.tokens.token_list()) {
-                crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                tex_expand::append_token_string_text(stores, token, &mut text);
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
             text.push('\n');
@@ -11134,7 +11134,7 @@ fn apply_scanned_step(
             // e-TeX's odd xray modifier reaches `the_toks`, then TeX82
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
-            let text = message_text(stores, tokens.token_list());
+            let text = show_tokens_text(stores, tokens.token_list());
             stores.printer().print(&format!("\n> {text}"));
             crate::diagnostics::complete_show(stores, false);
             Ok(ReplayStep::Continue)
@@ -13437,9 +13437,22 @@ fn report_font_size_recovery(stores: &mut Universe, recovery: tex_command::FontS
 fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
     let mut text = String::new();
     for &token in stores.tokens(tokens) {
-        crate::diagnostics::append_token_show_text(stores, token, &mut text);
+        tex_expand::append_token_string_text(stores, token, &mut text);
     }
     crate::diagnostics::print_text_with_newlinechar(stores, &text)
+}
+
+/// TeX82 §1297's `token_show(temp_head)` through the active selector.
+fn show_tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
+    let newlinechar = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
+        .ok()
+        .filter(|&code| code <= u8::MAX.into())
+        .and_then(char::from_u32);
+    let mut text = String::new();
+    for &token in stores.tokens(tokens) {
+        tex_expand::append_token_selector_text(stores, token, newlinechar, &mut text);
+    }
+    text
 }
 
 /// e-TeX 2.6 `etex.ch` [17.3715--3732]'s exact `show_ifs` traversal.

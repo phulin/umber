@@ -835,7 +835,7 @@ fn expand_write_tokens(
         )?
         .map(tex_expand::semantic_token)
         {
-            diagnostics::append_token_show_text(stores, token, &mut text);
+            tex_expand::append_token_string_text(stores, token, &mut text);
         }
         Ok(())
     })?;

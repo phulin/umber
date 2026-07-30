@@ -326,7 +326,7 @@ fn expand_write_tokens(
     let mut text = String::new();
     expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
         while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {
-            crate::diagnostics::append_token_show_text(stores, token, &mut text);
+            tex_expand::append_token_string_text(stores, token, &mut text);
         }
         Ok(())
     })?;
