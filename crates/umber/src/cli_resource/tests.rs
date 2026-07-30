@@ -190,7 +190,7 @@ fn local_resolver_handles_each_classic_bibliography_kind() {
 #[test]
 fn explicit_local_distribution_preserves_typed_pk_key_path_and_digest() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let bytes = include_bytes!("../../../../tests/corpus/pdf/cmr10.600pk");
+    let bytes = include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk");
     std::fs::write(directory.path().join("cmr10.600pk"), bytes).expect("PK fixture");
     let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 600, b"ljfour".to_vec());
     let mut resolver = DistributionResolver::new(
