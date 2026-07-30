@@ -96,10 +96,9 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
-    let repository = test_support::repository_root_at(
-        &std::env::current_dir().expect("current directory"),
-    )
-    .expect("runtime repository");
+    let repository =
+        test_support::repository_root_at(&std::env::current_dir().expect("current directory"))
+            .expect("runtime repository");
     let area_relative = PathBuf::from("tests/corpus/bib/invocation");
     let area = repository.join(&area_relative);
     let mut names = fs::read_dir(&area)
@@ -117,11 +116,7 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
     names.sort();
     assert_eq!(
         names,
-        [
-            "bcf-success",
-            "invalid-output-format",
-            "tool-mode",
-        ]
+        ["bcf-success", "invalid-output-format", "tool-mode",]
     );
 
     for name in names {
@@ -138,7 +133,11 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
         command.arg("bib");
         for argument in &invocation.argv {
             if argument == "{output}" {
-                command.arg(actual_artifact.as_ref().expect("output placeholder artifact"));
+                command.arg(
+                    actual_artifact
+                        .as_ref()
+                        .expect("output placeholder artifact"),
+                );
             } else if invocation.inputs.contains(argument) {
                 command.arg(repository.join(&case_relative).join(argument));
             } else {
@@ -199,8 +198,9 @@ impl BibInvocationCase {
                 "stderr" => stderr = Some(value.to_owned()),
                 "artifact" if value == "none" => artifact = Some(None),
                 "artifact" => {
-                    let (actual, expected) =
-                        value.split_once(':').expect("artifact actual:expected roles");
+                    let (actual, expected) = value
+                        .split_once(':')
+                        .expect("artifact actual:expected roles");
                     artifact = Some(Some((actual.to_owned(), expected.to_owned())));
                 }
                 _ => panic!("unknown invocation metadata field: {line}"),
