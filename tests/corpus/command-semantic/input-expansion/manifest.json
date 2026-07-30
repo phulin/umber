@@ -554,6 +554,50 @@
       ]
     },
     {
+      "id": "etex-readline-terminal",
+      "property_id": "tex82.input.read-token-list",
+      "profile": "etex-initex",
+      "source": "etex-readline-terminal.tex",
+      "provenance": {
+        "authority": "tex.web + etex.ch",
+        "manifest": "tests/etex26-oracle-manifest.txt",
+        "sections": [
+          328,
+          482,
+          483
+        ]
+      },
+      "projection": {
+        "kind": "observations",
+        "kinds": [
+          "scanner-status",
+          "input",
+          "macro",
+          "token-list"
+        ]
+      },
+      "expected": [
+        "scanner-status:normal>defining",
+        "input:push:terminal",
+        "input:retire:terminal",
+        "scanner-status:defining>normal",
+        "token-list:complete:read:char:other_char:82",
+        "input:push:macro",
+        "macro:activate:readvalue:0:",
+        "input:retire:macro",
+        "input:backup:backup",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
+      ],
+      "expectation": {
+        "kind": "pass"
+      },
+      "terminal_lines": [
+        "R"
+      ]
+    },
+    {
       "id": "input-start-file",
       "property_id": "tex82.input.start-input-and-first-line",
       "source": "input-start-file.tex",

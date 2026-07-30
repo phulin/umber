@@ -1268,8 +1268,10 @@ impl CommandObserver for Recorder {
         if let CommandObservation::Input(InputRecord {
             transition: InputTransition::Retire,
             reason: CommandInputReason::Source,
+            source_name,
             ..
         }) = observation
+            && matches!(source_name, None | Some(tex_command::SourceNameClass::File))
         {
             self.retire_current_source();
         }
@@ -1602,13 +1604,30 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
         | CommandInputReason::Write
         | CommandInputReason::UmberReplay(_) => InputReason::TokenList,
     };
-    let name = if record.transition == InputTransition::Push
-        && record.reason == CommandInputReason::Source
+    let name = if record.reason == CommandInputReason::Source
+        && record.transition == InputTransition::Stop
     {
         record
             .source_name
             .map(canonical_names::source_name_class_name)
-            .map_or_else(|| active_source.into(), Into::into)
+            .unwrap_or("terminal")
+            .into()
+    } else if record.reason == CommandInputReason::Source {
+        match record.source_name {
+            // TeX82 §§328 and 483 give terminal and \read pseudo-files their
+            // own exact `name` identity, but neither opens a registered
+            // source in the translator's parallel source stack. Their
+            // matching retirement must therefore name that level itself,
+            // rather than name and pop the surrounding text file.
+            Some(
+                class @ (tex_command::SourceNameClass::Terminal
+                | tex_command::SourceNameClass::ReadStream(_)),
+            ) => canonical_names::source_name_class_name(class).into(),
+            // A real or generated text file is activated by its detached
+            // source record. Preserve that full source name instead of the
+            // coarse §303 `name>17` class.
+            Some(tex_command::SourceNameClass::File) | None => active_source.into(),
+        }
     } else {
         canonical_names::input_level_name(record.reason)
             .map_or_else(|| active_source.into(), Into::into)
@@ -2012,7 +2031,8 @@ fn hidden_difference_excerpt(expected: &dyn fmt::Debug, actual: &dyn fmt::Debug)
 mod tests {
     use super::*;
     use tex_command::{
-        CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+        CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime,
+        CommandState, ScannerRecord,
     };
     use tex_oracle::{Event, NormalizedEvent, ScannerEvent};
     use tex_state::{
@@ -2056,6 +2076,51 @@ mod tests {
                 name: "terminal".into(),
             })
         );
+    }
+
+    #[test]
+    fn readline_retirement_keeps_the_surrounding_file_active() {
+        let root = LiveSource {
+            name: "root.tex".into(),
+            source: SourceId::new(7),
+            bytes: Arc::from(&b"x"[..]),
+        };
+        let mut translator = LiveSessionTranslator::for_root(SchemaVersion::V1, "terminal", root);
+        translator.translate_captured([
+            CommandObservation::Input(InputRecord {
+                transition: InputTransition::Push,
+                reason: CommandInputReason::Source,
+                source_name: Some(tex_command::SourceNameClass::Terminal),
+                level: 9,
+                position: 0,
+            }),
+            CommandObservation::Input(InputRecord {
+                transition: InputTransition::Retire,
+                reason: CommandInputReason::Source,
+                source_name: Some(tex_command::SourceNameClass::Terminal),
+                level: 9,
+                position: 0,
+            }),
+            CommandObservation::Scanner(ScannerRecord {
+                kind: "integer",
+                value: "1".into(),
+                tokens: None,
+            }),
+        ]);
+
+        assert_eq!(
+            translator.events[1].event,
+            Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Retire,
+                reason: InputReason::Source,
+                name: "terminal".into(),
+            })
+        );
+        assert!(
+            translator.events[2].context.starts_with("source=root.tex"),
+            "retiring the nested readline level must not pop its outer file"
+        );
+        assert_eq!(translator.sources.len(), 2);
     }
 
     #[test]
