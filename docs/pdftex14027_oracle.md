@@ -180,11 +180,11 @@ with its `source`, any `inputs` files (written as the manifest's exact
 string, byte for byte), and any `font_inputs` TFM (copied from the
 repository path the manifest names).
 
-**Interaction mode.** The script always passes
-`-interaction=scrollmode`, not the `batchmode` the rest of this oracle's own
-smoke/extension/state fixtures use. Two constraints select it:
-`\read`-from-terminal and `\pausing` (used by the 8 cases with a
-`terminal_lines` manifest field) are hard errors, respectively no-ops, under
+**Interaction mode.** The script passes the interaction mode declared by each
+case, defaulting to `-interaction=scrollmode`, rather than the `batchmode` the
+rest of this oracle's own smoke/extension/state fixtures use. Two constraints
+select that default: `\read`-from-terminal and `\pausing` (used by the 11 cases
+with a `terminal_lines` manifest field) are hard errors, respectively no-ops, under
 `batchmode`/`nonstopmode` (tex.web requires `interaction>nonstop_mode`), so
 those modes would misrun exactly the cases meant to exercise terminal
 interaction. The tex82 default, `errorstopmode`, satisfies that but also
@@ -194,11 +194,12 @@ stops and prompts at _every_ error, not only the ones a case's
 no further terminal input queued, halts at "! Emergency stop." before
 reaching the rest of the source. `scrollmode` is `>nonstop_mode` (so
 `\read`/`\pausing` work) and still "omits error stops" like batch/nonstopmode
-do, so an undeclared error just prints and the run completes. Known gap:
-`main-control/show-completion` specifically exercises the
-`errorstopmode`-only `?␣` prompt after `\showthe`; under `scrollmode` that
-prompt never appears, so that one case's terminal channel cannot be
-reproduced faithfully by this runner.
+do, so an undeclared error just prints and the run completes.
+`main-control/show-completion` declares `errorstopmode` plus a justification
+in its manifest because it specifically exercises the `errorstopmode`-only
+`?␣` prompt after `\showthe`; its terminal answer switches the engine to
+scrollmode from that prompt. The runner reads this per-case declaration, so
+the case is reproduced under the interaction mode its channels require.
 
 **Profile fidelity.** The manifest `profile` field maps to an invocation as:
 
