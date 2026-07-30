@@ -430,7 +430,7 @@ fn canonical_fraction_and_left_right_nesting_recovery_matrix() {
         close_missing_left_group(
             &mut missing,
             &mut stores,
-            &mut tex_command::CommandFuel::default(),
+            tex_command::CommandFuelLedger::default().fuel_mut(),
         )
         .expect("missing right recovers")
     );

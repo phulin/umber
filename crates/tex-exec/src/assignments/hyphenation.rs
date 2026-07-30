@@ -163,8 +163,8 @@ pub(crate) fn hyphenated_hlist_with_fuel(
 
 #[cfg(test)]
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
-    let mut fuel = tex_command::CommandFuel::default();
-    hyphenated_hlist_with_fuel(stores, nodes, &mut fuel).expect("test hyphenation fuel")
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    hyphenated_hlist_with_fuel(stores, nodes, fuel.fuel_mut()).expect("test hyphenation fuel")
 }
 
 /// Returns legal character boundaries for pass-1 OpenType shaping.
@@ -242,9 +242,9 @@ pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec
     paragraph.push(boundary.clone());
     paragraph.extend_from_slice(nodes);
     paragraph.push(boundary);
-    let mut fuel = tex_command::CommandFuel::default();
-    let mut hyphenated =
-        hyphenated_hlist_with_fuel(stores, paragraph, &mut fuel).expect("test hyphenation fuel");
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    let mut hyphenated = hyphenated_hlist_with_fuel(stores, paragraph, fuel.fuel_mut())
+        .expect("test hyphenation fuel");
     hyphenated.remove(0);
     hyphenated.pop();
     hyphenated

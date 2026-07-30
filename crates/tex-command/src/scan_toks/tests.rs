@@ -1920,11 +1920,11 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
     let mut capabilities = CommandHostCapabilities::default();
 
     for _attempt in 0..2 {
-        let mut fuel = crate::CommandFuel::new(16).expect("finite test fuel");
+        let mut fuel = crate::CommandFuelLedger::new(16).expect("finite test fuel");
         let collected = {
             let mut processor =
                 processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_fuel(&mut fuel);
+                    .with_fuel(fuel.fuel_mut());
             let line = processor
                 .command
                 .open_read_line(

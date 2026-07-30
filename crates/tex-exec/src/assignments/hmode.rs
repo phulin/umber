@@ -163,8 +163,8 @@ pub(crate) fn append_canonical_character(
     ch: char,
     origin: OriginId,
 ) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    append_canonical_character_with_fuel(nest, stores, ch, origin, &mut fuel)
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    append_canonical_character_with_fuel(nest, stores, ch, origin, fuel.fuel_mut())
 }
 
 /// Appends an ordinary space from canonical main control after horizontal
@@ -732,7 +732,7 @@ fn append_hchar(
         stores,
         ch,
         origin,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
 }
 
@@ -765,8 +765,8 @@ fn fix_hyphen_language(
     stores: &mut Universe,
     mode: Mode,
 ) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
-    fix_hyphen_language_with_fuel(nest, stores, mode, &mut fuel)
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    fix_hyphen_language_with_fuel(nest, stores, mode, fuel.fuel_mut())
 }
 
 fn fix_hyphen_language_with_fuel(
@@ -1043,13 +1043,13 @@ pub(crate) fn reconstitute(
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
 ) -> Vec<Node> {
-    let mut fuel = tex_command::CommandFuel::default();
+    let mut fuel = tex_command::CommandFuelLedger::default();
     reconstitute_with_fuel(
         stores,
         pending,
         no_left_boundary,
         insert_hyphen_discs,
-        &mut fuel,
+        fuel.fuel_mut(),
     )
     .expect("test reconstruction fuel")
 }

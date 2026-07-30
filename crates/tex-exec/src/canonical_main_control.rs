@@ -70,7 +70,7 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 pub struct CanonicalMainControl {
     command: CommandState,
     runtime: CommandRuntime,
-    fuel: tex_command::CommandFuel,
+    fuel: tex_command::CommandFuelLedger,
     capabilities: CommandHostCapabilities,
     modes: ModeNest,
     next_alignment_identity: u64,
@@ -535,7 +535,7 @@ impl CanonicalMainControl {
     /// Installing a new limit intentionally starts a new accounting episode;
     /// ordinary rollback and runtime reset never call this.
     pub fn set_fuel_limit(&mut self, limit: u64) -> Result<(), tex_command::CommandFuelLimitError> {
-        self.fuel = tex_command::CommandFuel::new(limit)?;
+        self.fuel = tex_command::CommandFuelLedger::new(limit)?;
         Ok(())
     }
 
@@ -825,7 +825,7 @@ impl CanonicalMainControl {
         CommandMachine {
             state: &mut self.command,
             runtime: &mut self.runtime,
-            fuel: &mut self.fuel,
+            fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
             initex: self.initex,
@@ -1038,7 +1038,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1087,7 +1087,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
-                fuel: &mut self.fuel,
+                fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -1101,7 +1101,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1250,7 +1250,7 @@ impl CanonicalMainControl {
         crate::assignments::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
         )?;
         self.open_discretionary_part(stores)?;
         self.active_discretionaries
@@ -1280,7 +1280,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         let level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let nodes = stores.freeze_node_list(level.list().nodes());
         let aftergroup =
             stores
@@ -1306,7 +1306,7 @@ impl CanonicalMainControl {
                 let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
-                    &mut self.fuel,
+                    self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     stores,
@@ -1357,7 +1357,7 @@ impl CanonicalMainControl {
         crate::assignments::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
         )?;
         let font = stores.current_font();
         let hyphen = u8::try_from(stores.font_hyphen_char(font))
@@ -1457,7 +1457,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1530,7 +1530,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
-                fuel: &mut self.fuel,
+                fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -1544,7 +1544,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -1613,7 +1613,7 @@ impl CanonicalMainControl {
         crate::assignments::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
         )?;
         let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
             context: "\\accent",
@@ -1660,7 +1660,7 @@ impl CanonicalMainControl {
                 let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
-                    &mut self.fuel,
+                    self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     stores,
@@ -1707,7 +1707,7 @@ impl CanonicalMainControl {
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         runtime: &mut self.runtime,
-                        fuel: &mut self.fuel,
+                        fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
                         initex: self.initex,
@@ -1729,7 +1729,7 @@ impl CanonicalMainControl {
                     let opened = command_processor(
                         &mut self.command,
                         &mut self.runtime,
-                        &mut self.fuel,
+                        self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
                         stores,
@@ -1822,7 +1822,7 @@ impl CanonicalMainControl {
             )?;
         }
         let level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         finish_canonical_math_list(
             level.list().nodes(),
             level.list().incomplete_fraction(),
@@ -2075,7 +2075,7 @@ impl CanonicalMainControl {
                 crate::assignments::flush_pending_hchars_with_fuel(
                     &mut self.modes,
                     stores,
-                    &mut self.fuel,
+                    self.fuel.fuel_mut(),
                 )?;
                 // §1138 already applied its own `mode>0` test while probing:
                 // in restricted horizontal mode the second `$` was backed up
@@ -2139,7 +2139,7 @@ impl CanonicalMainControl {
         let paragraph = crate::assignments::interrupt_canonical_paragraph_for_display(
             &mut self.modes,
             stores,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
         )?;
         let dimensions = crate::assignments::display_line_dimensions(&self.modes, stores);
         let pre_display_size = paragraph
@@ -2173,7 +2173,8 @@ impl CanonicalMainControl {
         if crate::math::reject_invalid_math_fonts(stores) {
             content = stores.freeze_node_list(&[]);
         }
-        let _ = crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+        let _ =
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             stores,
@@ -2197,7 +2198,7 @@ impl CanonicalMainControl {
     fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
         let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let mut eq = level
             .list_mutation()
             .take_display_eq_no()
@@ -2250,7 +2251,7 @@ impl CanonicalMainControl {
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
         let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let interrupt =
             level
                 .list_mutation()
@@ -2280,7 +2281,7 @@ impl CanonicalMainControl {
             content = stores.freeze_node_list(&[]);
         }
         let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, &mut self.fuel)?;
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let interrupt =
             level
                 .list_mutation()
@@ -2399,7 +2400,7 @@ impl CanonicalMainControl {
                 let _ = crate::assignments::commit_current_list(
                     &mut self.modes,
                     stores,
-                    &mut self.fuel,
+                    self.fuel.fuel_mut(),
                 )?;
                 let aftergroup =
                     stores
@@ -2438,7 +2439,7 @@ impl CanonicalMainControl {
         command_processor(
             &mut self.command,
             &mut self.runtime,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -2454,7 +2455,7 @@ impl CanonicalMainControl {
         command_processor(
             &mut self.command,
             &mut self.runtime,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -2646,7 +2647,7 @@ impl CanonicalMainControl {
             let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -2770,7 +2771,7 @@ impl CanonicalMainControl {
             &mut CommandMachine {
                 state: &mut self.command,
                 runtime: &mut self.runtime,
-                fuel: &mut self.fuel,
+                fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 initex: self.initex,
@@ -2895,7 +2896,7 @@ impl CanonicalMainControl {
             schedule_afterassignment(
                 &mut self.command,
                 &mut self.runtime,
-                &mut self.fuel,
+                self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
                 stores,
@@ -2927,7 +2928,7 @@ impl CanonicalMainControl {
                 let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
-                    &mut self.fuel,
+                    self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
                     stores,
@@ -2970,7 +2971,7 @@ impl CanonicalMainControl {
         let exhausted = command_processor(
             &mut self.command,
             &mut self.runtime,
-            &mut self.fuel,
+            self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
             stores,
@@ -8980,7 +8981,7 @@ fn shipout_replay_box(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
-    let mut execution = crate::ExecutionContext::new("texput");
+    let mut expansion = tex_expand::ExpansionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
     let effect_start = stores.world().effect_records().len();
@@ -9046,7 +9047,8 @@ fn shipout_replay_box(
         input_summary,
         Some(output_open_context),
         stores,
-        &mut execution,
+        &mut expansion,
+        true,
         &mut expand_write,
     )?;
     if let Some(receipt) = receipt.as_mut() {
@@ -9066,11 +9068,11 @@ pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
-    let mut fuel = tex_command::CommandFuel::default();
+    let mut fuel = tex_command::CommandFuelLedger::default();
     let mut command = CommandMachine {
         state: &mut CommandState::default(),
         runtime: &mut CommandRuntime::default(),
-        fuel: &mut fuel,
+        fuel: fuel.fuel_mut(),
         capabilities: &mut CommandHostCapabilities::default(),
         observations: &mut None,
         initex: true,

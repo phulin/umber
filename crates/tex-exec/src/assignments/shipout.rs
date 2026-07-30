@@ -81,6 +81,7 @@ pub(crate) fn shipout_node(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     let input_summary = input.publication_summary(stores);
+    let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
     shipout_node_with_input_summary(
@@ -89,6 +90,7 @@ pub(crate) fn shipout_node(
         None,
         stores,
         execution,
+        emit_dvi,
         &mut legacy_write_expander,
     )
 }
@@ -104,7 +106,8 @@ pub(crate) fn shipout_node_with_input_summary(
     input_summary: tex_state::InputSummary,
     output_open_context: Option<String>,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     prepare_pdf_output_policy(stores)?;
@@ -189,7 +192,8 @@ pub(crate) fn shipout_node_with_input_summary(
         input_summary,
         output_open_context,
         &mut transaction,
-        execution,
+        expansion,
+        emit_dvi,
         write_expander,
     )?;
     let committed_effects = transaction.world().effect_records()[effect_start..]
@@ -255,6 +259,7 @@ pub(crate) fn test_stage_shipout_artifact(
     stores: &mut Universe,
 ) -> Result<tex_out::PageArtifact, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
+    let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
     let staged = direct::stage_shipout(
@@ -263,6 +268,7 @@ pub(crate) fn test_stage_shipout_artifact(
         None,
         stores,
         &mut execution,
+        emit_dvi,
         &mut legacy_write_expander,
     )?;
     tex_out::PageArtifact::from_bytes(staged.artifact.bytes())

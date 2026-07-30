@@ -147,7 +147,8 @@ pub(super) fn stage_shipout(
     input_summary: tex_state::InputSummary,
     output_open_context: Option<String>,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    emit_dvi: bool,
     write_expander: &mut WriteExpander<'_>,
 ) -> Result<StagedShipout, ExecError> {
     let pending_effects = pending_page_effects(stores.world());
@@ -198,7 +199,7 @@ pub(super) fn stage_shipout(
     // math substitutions, and records the rare direction permutations.
     let output_open_context = output_open_context
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
-    let overlay = execution.with_nested(|expansion| {
+    let overlay = expansion.with_nested(|expansion| {
         normalize_page(
             children,
             vertical,
@@ -213,8 +214,7 @@ pub(super) fn stage_shipout(
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.
     let mut encoder = V10ArtifactBuilder::new(job.clone(), counts, &root, vertical);
-    let mut dvi = execution
-        .emits_dvi()
+    let mut dvi = emit_dvi
         .then(|| DviPagePlanBuilder::new(job, counts, &root, vertical))
         .transpose()
         .map_err(invalid_artifact)?;
@@ -267,7 +267,7 @@ pub(super) fn stage_shipout(
                     | PageEffect::PdfSnapYComp { .. }
             )
         });
-        let dvi_plan = if snapping && execution.emits_dvi() {
+        let dvi_plan = if snapping && emit_dvi {
             Some(DviPagePlan::compile(&artifact).map_err(invalid_artifact)?)
         } else {
             streamed_dvi_plan

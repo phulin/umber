@@ -36,15 +36,14 @@ impl std::error::Error for CommandFuelLimitError {}
 /// This is deliberately separate from semantic [`crate::CommandState`] and
 /// discardable [`crate::CommandRuntime`]. Snapshots and runtime resets cannot
 /// therefore refund work or make resource policy part of format identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct CommandFuel {
     limit: u64,
     burned: u64,
 }
 
 impl CommandFuel {
-    /// Creates a finite, positive ledger.
-    pub const fn new(limit: u64) -> Result<Self, CommandFuelLimitError> {
+    const fn new(limit: u64) -> Result<Self, CommandFuelLimitError> {
         if limit == 0 || limit > MAX_COMMAND_FUEL_LIMIT {
             return Err(CommandFuelLimitError { requested: limit });
         }
@@ -52,12 +51,12 @@ impl CommandFuel {
     }
 
     #[must_use]
-    pub const fn limit(self) -> u64 {
+    pub const fn limit(&self) -> u64 {
         self.limit
     }
 
     #[must_use]
-    pub const fn burned(self) -> u64 {
+    pub const fn burned(&self) -> u64 {
         self.burned
     }
 
@@ -84,11 +83,49 @@ impl CommandFuel {
     }
 }
 
-impl Default for CommandFuel {
+/// Top-level owner of one canonical command session's monotonic work ledger.
+///
+/// Command-processing leaf APIs deliberately receive only `&mut
+/// CommandFuel`. They cannot construct, replace, or reset a ledger because
+/// [`CommandFuel`] has no public constructors and does not implement
+/// [`Default`].
+#[derive(Debug, Eq, PartialEq)]
+pub struct CommandFuelLedger {
+    fuel: CommandFuel,
+}
+
+impl CommandFuelLedger {
+    /// Creates a session ledger with a checked finite limit.
+    pub const fn new(limit: u64) -> Result<Self, CommandFuelLimitError> {
+        match CommandFuel::new(limit) {
+            Ok(fuel) => Ok(Self { fuel }),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Lends the authoritative ledger to a command-processing operation.
+    pub const fn fuel_mut(&mut self) -> &mut CommandFuel {
+        &mut self.fuel
+    }
+
+    #[must_use]
+    pub const fn limit(&self) -> u64 {
+        self.fuel.limit()
+    }
+
+    #[must_use]
+    pub const fn burned(&self) -> u64 {
+        self.fuel.burned()
+    }
+}
+
+impl Default for CommandFuelLedger {
     fn default() -> Self {
         Self {
-            limit: DEFAULT_COMMAND_FUEL_LIMIT,
-            burned: 0,
+            fuel: CommandFuel {
+                limit: DEFAULT_COMMAND_FUEL_LIMIT,
+                burned: 0,
+            },
         }
     }
 }
@@ -132,7 +169,7 @@ mod tests {
 
     #[test]
     fn default_is_positive_finite_and_within_the_hard_maximum() {
-        let fuel = CommandFuel::default();
+        let fuel = CommandFuelLedger::default();
         assert_eq!(fuel.limit(), DEFAULT_COMMAND_FUEL_LIMIT);
         assert!(fuel.limit() > 0);
         assert!(fuel.limit() <= MAX_COMMAND_FUEL_LIMIT);

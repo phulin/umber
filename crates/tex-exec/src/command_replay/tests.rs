@@ -7324,7 +7324,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut CommandMachine {
             state: &mut control.command,
             runtime: &mut control.runtime,
-            fuel: &mut control.fuel,
+            fuel: control.fuel.fuel_mut(),
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
             initex: control.initex,
@@ -7356,7 +7356,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut CommandMachine {
             state: &mut control.command,
             runtime: &mut control.runtime,
-            fuel: &mut control.fuel,
+            fuel: control.fuel.fuel_mut(),
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
             initex: control.initex,
@@ -7384,7 +7384,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
             &mut CommandMachine {
                 state: &mut control.command,
                 runtime: &mut control.runtime,
-                fuel: &mut control.fuel,
+                fuel: control.fuel.fuel_mut(),
                 capabilities: &mut control.capabilities,
                 observations: &mut control.operation_observations,
                 initex: control.initex,
@@ -7409,7 +7409,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
             &mut CommandMachine {
                 state: &mut control.command,
                 runtime: &mut control.runtime,
-                fuel: &mut control.fuel,
+                fuel: control.fuel.fuel_mut(),
                 capabilities: &mut control.capabilities,
                 observations: &mut control.operation_observations,
                 initex: control.initex,

@@ -440,7 +440,7 @@ impl Cancellation {
 
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
-    command_fuel: tex_command::CommandFuel,
+    command_fuel: tex_command::CommandFuelLedger,
     macro_scan_error_count: u8,
     emit_dvi: bool,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -471,7 +471,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
-            command_fuel: tex_command::CommandFuel::default(),
+            command_fuel: tex_command::CommandFuelLedger::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: None,
@@ -500,7 +500,7 @@ impl<'a> ExecutionContext<'a> {
                 recorder,
             )
             .with_undefined_control_recovery(),
-            command_fuel: tex_command::CommandFuel::default(),
+            command_fuel: tex_command::CommandFuelLedger::default(),
             macro_scan_error_count: state.macro_scan_error_count,
             emit_dvi: true,
             font_resolver,
@@ -519,7 +519,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     pub(crate) fn command_fuel(&mut self) -> &mut tex_command::CommandFuel {
-        &mut self.command_fuel
+        self.command_fuel.fuel_mut()
     }
 
     pub(crate) fn record_macro_scan_error(
@@ -562,7 +562,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
-            command_fuel: tex_command::CommandFuel::default(),
+            command_fuel: tex_command::CommandFuelLedger::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
@@ -591,7 +591,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
-            command_fuel: tex_command::CommandFuel::default(),
+            command_fuel: tex_command::CommandFuelLedger::default(),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),

@@ -89,14 +89,14 @@ fn cyclic_macro_exhausts_shared_command_fuel() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut fuel = crate::CommandFuel::new(7).expect("valid test limit");
+    let mut fuel = crate::CommandFuelLedger::new(7).expect("valid test limit");
     let error = CommandProcessor::new(
         &mut command,
         &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
-    .with_fuel(&mut fuel)
+    .with_fuel(fuel.fuel_mut())
     .get_x_token()
     .expect_err("cyclic expansion must terminate inside tex-command");
     assert_eq!(
@@ -193,9 +193,9 @@ fn etex_unexpanded_reenters_the_current_expansion_loop() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut fuel = crate::CommandFuel::new(32).expect("finite test fuel");
+    let mut fuel = crate::CommandFuelLedger::new(32).expect("finite test fuel");
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_fuel(&mut fuel);
+        .with_fuel(fuel.fuel_mut());
 
     let expanded = processor
         .get_x_token()
@@ -258,9 +258,9 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut fuel = crate::CommandFuel::new(64).expect("finite test fuel");
+    let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_fuel(&mut fuel);
+        .with_fuel(fuel.fuel_mut());
     let mut output = Vec::new();
     while let Some(delivery) = processor.get_x_token().expect("scantokens expands") {
         output.push(delivery.spelling().semantic_token());
@@ -339,9 +339,9 @@ fn etex_detokenize_projects_token_show_text_without_expansion() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut fuel = crate::CommandFuel::new(32).expect("finite test fuel");
+    let mut fuel = crate::CommandFuelLedger::new(32).expect("finite test fuel");
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_fuel(&mut fuel);
+        .with_fuel(fuel.fuel_mut());
     let mut output = Vec::new();
     while let Some(delivery) = processor.get_x_token().expect("detokenize expands") {
         output.push(delivery.spelling().semantic_token());

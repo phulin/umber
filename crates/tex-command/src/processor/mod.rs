@@ -9,8 +9,8 @@ pub(crate) mod status;
 use tex_state::CommandContext;
 
 use crate::{
-    CommandFuel, CommandHostContext, CommandReplayEpisode, CommandRuntime, CommandState,
-    DeliveryStamp,
+    CommandFuel, CommandFuelLedger, CommandHostContext, CommandReplayEpisode, CommandRuntime,
+    CommandState, DeliveryStamp,
 };
 
 use crate::input::InputLevelId;
@@ -106,14 +106,14 @@ impl CommandProcessor<'_> {
 }
 
 enum ProcessorFuel<'a> {
-    Owned(CommandFuel),
+    Owned(CommandFuelLedger),
     Shared(&'a mut CommandFuel),
 }
 
 impl ProcessorFuel<'_> {
     fn charge(&mut self) -> Result<(), crate::CommandError> {
         match self {
-            Self::Owned(fuel) => fuel.charge(),
+            Self::Owned(fuel) => fuel.fuel_mut().charge(),
             Self::Shared(fuel) => fuel.charge(),
         }
     }
@@ -134,7 +134,7 @@ impl<'a> CommandProcessor<'a> {
             state,
             host,
             observer: None,
-            fuel: ProcessorFuel::Owned(CommandFuel::default()),
+            fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
             immediate_write_retirement: None,
             last_delivery: None,
             replay_completion: None,

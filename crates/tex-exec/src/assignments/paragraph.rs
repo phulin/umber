@@ -796,8 +796,8 @@ pub(crate) fn break_hlist(
     hlist: Vec<Node>,
     line_params: LineBreakParams,
 ) -> LineBreakResult {
-    let mut fuel = tex_command::CommandFuel::default();
-    break_hlist_with_fuel(stores, hlist, line_params, &mut fuel)
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    break_hlist_with_fuel(stores, hlist, line_params, fuel.fuel_mut())
         .expect("default paragraph reconstruction fuel")
 }
 

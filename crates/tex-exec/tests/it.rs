@@ -4,60 +4,38 @@ use std::path::Path;
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side source architecture test
-fn command_fuel_defaults_are_confined_to_session_boundaries_and_test_adapters() {
-    fn rust_sources(directory: &Path, sources: &mut Vec<std::path::PathBuf>) {
-        for entry in fs::read_dir(directory).expect("read tex-exec source directory") {
-            let path = entry.expect("read tex-exec source entry").path();
-            if path.is_dir() {
-                rust_sources(&path, sources);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                sources.push(path);
-            }
-        }
+fn command_fuel_can_only_be_owned_by_a_session_ledger() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let tex_command_dir = manifest_dir.join("../tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &tex_command_dir)];
+    assert_compile_fail(
+        "command-fuel-construction-forbidden",
+        &manifest_dir.join("tests/ui/command_fuel_construction_forbidden.rs"),
+        &dependencies,
+        &[
+            "associated function `new` is private",
+            "the trait bound `CommandFuel: Default` is not satisfied",
+        ],
+    );
+    assert_compile_fail(
+        "command-fuel-fields-forbidden",
+        &manifest_dir.join("tests/ui/command_fuel_fields_forbidden.rs"),
+        &dependencies,
+        &["fields `limit` and `burned` of struct `CommandFuel` are private"],
+    );
+}
+
+#[test]
+fn session_ledger_lends_typed_fuel_without_transferring_ownership() {
+    fn leaf_operation(fuel: &mut tex_command::CommandFuel) {
+        fuel.charge().expect("session funds leaf operation");
     }
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let expected = [
-        ("src/executor.rs", 4),
-        ("src/canonical_main_control.rs", 1),
-        ("src/assignments/hmode.rs", 4),
-        ("src/assignments/hyphenation.rs", 2),
-        ("src/assignments/paragraph.rs", 1),
-    ];
-    let mut observed = Vec::new();
-    for (relative, count) in expected {
-        let source = fs::read_to_string(manifest_dir.join(relative))
-            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
-        assert_eq!(
-            source.matches("CommandFuel::default()").count(),
-            count,
-            "{relative} changed its audited fuel-ledger construction count"
-        );
-        observed.push(relative);
-    }
-    let mut sources = Vec::new();
-    rust_sources(&manifest_dir.join("src"), &mut sources);
-    for path in sources {
-        if path.file_name().is_some_and(|name| name == "tests.rs")
-            || path
-                .components()
-                .any(|component| component.as_os_str() == "tests")
-        {
-            continue;
-        }
-        if !observed
-            .iter()
-            .any(|relative| path == manifest_dir.join(relative))
-        {
-            let source = fs::read_to_string(&path).expect("read tex-exec root source");
-            assert!(
-                !source.contains("CommandFuel::default()"),
-                "{} constructs an unaudited command-fuel ledger",
-                path.display()
-            );
-        }
-    }
+    let mut session =
+        tex_command::CommandFuelLedger::new(2).expect("valid top-level session limit");
+    leaf_operation(session.fuel_mut());
+    leaf_operation(session.fuel_mut());
+    assert_eq!(session.burned(), 2);
 }
 
 #[test]

@@ -168,7 +168,7 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("OpenType character flushes");
 
@@ -196,7 +196,7 @@ fn list_commit_flushes_pending_characters_and_raw_pop_rejects_them() {
     let level = commit_current_list(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("commit flushes before pop");
     assert!(matches!(
@@ -267,7 +267,7 @@ fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("run flushes");
 
@@ -328,7 +328,7 @@ fn long_opentype_run_preserves_every_source_character() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("long run flushes");
 
@@ -452,7 +452,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("character run flushes");
 
@@ -544,7 +544,7 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
     append_italic_correction(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("italic correction appends");
 
@@ -616,7 +616,7 @@ fn right_boundary_kern_prevents_a_following_italic_correction() {
     append_italic_correction(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("italic correction appends");
 
@@ -938,7 +938,7 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("public pending-character flush");
 
@@ -1022,8 +1022,8 @@ fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
         .expect("public pending-character append");
     append_canonical_character(&mut nest, &mut stores, '1', OriginId::UNKNOWN)
         .expect("public pending-character append");
-    let mut fuel = tex_command::CommandFuel::default();
-    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, &mut fuel)
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, fuel.fuel_mut())
         .expect("public flush completes");
     let nodes = nest.current_list().nodes();
 
@@ -1190,9 +1190,9 @@ fn public_flush_suppresses_false_boundary_pair_without_consuming_lookahead() {
     let right = stores.synthetic_origin(SyntheticOriginKind::Test);
     append_canonical_character(&mut nest, &mut stores, 'A', left).expect("left character");
     append_canonical_character(&mut nest, &mut stores, 'B', right).expect("lookahead character");
-    let mut fuel = tex_command::CommandFuel::new(16).expect("finite test fuel");
+    let mut fuel = tex_command::CommandFuelLedger::new(16).expect("finite test fuel");
 
-    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel)
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, fuel.fuel_mut())
         .expect("public flush is fueled");
 
     assert_eq!(stores.current_font(), font);
@@ -1211,9 +1211,10 @@ fn false_bchar_terminates_before_its_right_boundary_kern() {
         .expect("real character");
     append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
         .expect("false bchar lookahead");
-    let mut fuel = tex_command::CommandFuel::new(16).expect("finite test fuel");
+    let mut fuel = tex_command::CommandFuelLedger::new(16).expect("finite test fuel");
 
-    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel).expect("false bchar flush");
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, fuel.fuel_mut())
+        .expect("false bchar flush");
 
     assert!(matches!(
         nest.current_list().nodes(),
@@ -1243,10 +1244,10 @@ fn public_flush_fuel_exhaustion_rolls_back_pending_run() {
     append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
         .expect("right character");
     let before = nest.current_list().pending_hchars().cloned();
-    let mut exhausted = tex_command::CommandFuel::new(1).expect("one transition");
+    let mut exhausted = tex_command::CommandFuelLedger::new(1).expect("one transition");
 
     assert!(matches!(
-        flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut exhausted),
+        flush_pending_hchars_with_fuel(&mut nest, &mut stores, exhausted.fuel_mut()),
         Err(ExecError::Command(
             tex_command::CommandError::FuelExhausted {
                 limit: 1,
@@ -1257,8 +1258,9 @@ fn public_flush_fuel_exhaustion_rolls_back_pending_run() {
     assert_eq!(nest.current_list().nodes(), &[]);
     assert_eq!(nest.current_list().pending_hchars(), before.as_ref());
 
-    let mut retry = tex_command::CommandFuel::new(16).expect("retry fuel");
-    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut retry).expect("retry commits");
+    let mut retry = tex_command::CommandFuelLedger::new(16).expect("retry fuel");
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, retry.fuel_mut())
+        .expect("retry commits");
     assert_eq!(node_characters(nest.current_list().nodes()), ['C']);
 }
 
@@ -1274,10 +1276,10 @@ fn no_right_boundary_flush_shares_fuel_and_rolls_back_on_exhaustion() {
     append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
         .expect("right character");
     let before = nest.current_list().pending_hchars().cloned();
-    let mut fuel = tex_command::CommandFuel::new(1).expect("one transition");
+    let mut fuel = tex_command::CommandFuelLedger::new(1).expect("one transition");
 
     assert!(matches!(
-        flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, &mut fuel),
+        flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, fuel.fuel_mut()),
         Err(ExecError::Command(
             tex_command::CommandError::FuelExhausted { .. }
         ))
@@ -1303,12 +1305,12 @@ fn reconstruction_uses_one_monotonic_caller_ledger() {
             origin: OriginId::UNKNOWN,
         },
     ];
-    let mut fuel = tex_command::CommandFuel::new(16).expect("finite ledger");
+    let mut fuel = tex_command::CommandFuelLedger::new(16).expect("finite ledger");
 
-    let first = reconstitute_with_fuel(&mut stores, &pending, false, false, &mut fuel)
+    let first = reconstitute_with_fuel(&mut stores, &pending, false, false, fuel.fuel_mut())
         .expect("first reconstruction");
     let after_first = fuel.burned();
-    let second = reconstitute_with_fuel(&mut stores, &pending, false, false, &mut fuel)
+    let second = reconstitute_with_fuel(&mut stores, &pending, false, false, fuel.fuel_mut())
         .expect("second reconstruction");
 
     assert_eq!(node_characters(&first), ['C']);
@@ -1322,9 +1324,10 @@ fn public_empty_flush_preserves_list_and_fuel_cardinality() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal).expect("test hmode");
-    let mut fuel = tex_command::CommandFuel::new(1).expect("finite test fuel");
+    let mut fuel = tex_command::CommandFuelLedger::new(1).expect("finite test fuel");
 
-    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel).expect("empty public flush");
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, fuel.fuel_mut())
+        .expect("empty public flush");
 
     assert_eq!(fuel.burned(), 0);
     assert!(nest.current_list().nodes().is_empty());
@@ -1356,7 +1359,7 @@ fn public_flush_places_pdf_auto_kern_before_explicit_hyphen_disc() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("public pending-character flush");
 
@@ -1405,7 +1408,7 @@ fn complete_ligature_machine_covers_retain_delete_and_pass_over_operations() {
         flush_pending_hchars(
             &mut nest,
             &mut stores,
-            &mut tex_command::CommandFuel::default(),
+            tex_command::CommandFuelLedger::default().fuel_mut(),
         )
         .expect("public pending-character flush");
         let nodes = nest.current_list().nodes();
@@ -1437,7 +1440,7 @@ fn generated_ligature_pair_reenters_the_program() {
     flush_pending_hchars(
         &mut nest,
         &mut stores,
-        &mut tex_command::CommandFuel::default(),
+        tex_command::CommandFuelLedger::default().fuel_mut(),
     )
     .expect("public pending-character flush");
     let nodes = nest.current_list().nodes();
@@ -1461,7 +1464,7 @@ fn complete_ligature_machine_processes_both_boundaries() {
         flush_pending_hchars(
             &mut nest,
             &mut stores,
-            &mut tex_command::CommandFuel::default(),
+            tex_command::CommandFuelLedger::default().fuel_mut(),
         )
         .expect("public pending-character flush");
         let nodes = nest.current_list().nodes();
