@@ -100,6 +100,13 @@ pub struct CommandProcessor<'a> {
 }
 
 impl CommandProcessor<'_> {
+    /// Captures TeX82 §82's `show_context` while this processor still owns
+    /// the live command input cursor.
+    #[must_use]
+    pub fn error_context(&self) -> String {
+        self.command.output_open_context(&self.state)
+    }
+
     /// Returns the immutable command dialect and character mode for this job.
     #[must_use]
     pub const fn profile(&self) -> crate::CommandProfile {

@@ -492,6 +492,99 @@ fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mod
 }
 
 #[test]
+fn standalone_internal_integer_shows_live_context_before_scrolled_help() {
+    // TeX82 §§82, 90, 1048, and 1111: a standalone `last_item` reaches
+    // `report_illegal_case`; `error` shows the live line before routing help
+    // off the terminal in nonstop mode.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(1_000)
+        .expect("bounded canonical fuel");
+    register_source(
+        &mut control,
+        b"\\nonstopmode\n\\hyphenpenalty 89 \\badness\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    assert!(
+        terminal.contains(
+            "! You can't use `\\badness' in vertical mode.\n\
+             l.2 \\hyphenpenalty 89 \\badness"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("Sorry, but I'm not programmed"),
+        "{terminal}"
+    );
+    let log = pending_sink_text(&stores, false);
+    assert!(
+        log.contains("Sorry, but I'm not programmed to handle this case;"),
+        "{log}"
+    );
+}
+
+#[test]
+fn hundredth_standalone_internal_integer_error_terminates_before_later_command() {
+    // TeX82 §82: the hundredth scrolled error calls `succumb`, so §1048's
+    // illegal `last_item` command cannot return to main control.
+    let mut source = "\\nonstopmode\n".to_owned();
+    for _ in 0..100 {
+        source.push_str("\\badness ");
+    }
+    source.push_str("\\count0=23\\end");
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(10_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, source.as_bytes());
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(control.fatal_error(), Some(FatalError::TooManyErrors));
+    assert_eq!(stores.world().error_channel().error_count(), 100);
+    assert_eq!(
+        stores.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+    assert_eq!(stores.count(0), 0, "fatal exit skips the later assignment");
+    assert!(
+        pending_sink_text(&stores, true).contains("(That makes 100 errors; please try again.)")
+    );
+}
+
+#[test]
+fn errorstop_standalone_internal_integer_prompts_after_live_context_and_resumes() {
+    // TeX82 §§82, 90, 1048, and 1111: `report_illegal_case` reaches the
+    // interactive advice path after showing context, then resumes on `s`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts the error response");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .set_fuel_limit(1_000)
+        .expect("bounded canonical fuel");
+    register_source(&mut control, b"\\badness \\count0=23\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    let context = terminal.find("l.1 \\badness").expect("live context");
+    let prompt = terminal.find("? ").expect("interactive prompt");
+    assert!(context < prompt, "{terminal:?}");
+    assert_eq!(stores.count(0), 23, "interactive recovery resumes input");
+    assert_eq!(stores.world().error_channel().error_count(), 0);
+    assert_eq!(control.fatal_error(), None);
+}
+
+#[test]
 fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
     // The `last_item` command identity is serialized in an e-TeX format.
     // Restoring a quiescent checkpoint must restore both the diagnostic

@@ -26,20 +26,49 @@ pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
 }
 pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
     let command = tex_command::command_token_text(&mut stores.command_context(), token);
-    let mode = match mode {
-        Mode::Vertical => "vertical mode",
-        Mode::InternalVertical => "internal vertical mode",
-        Mode::Horizontal => "horizontal mode",
-        Mode::RestrictedHorizontal => "restricted horizontal mode",
-        Mode::Math => "math mode",
-        Mode::DisplayMath => "display math mode",
-    };
+    let mode = mode_name(mode);
     stores.world_mut().write_text(
         tex_state::PrintSink::TerminalAndLog,
         &format!(
             "\n! You can't use `{command}' in {mode}.\nSorry, but I'm not programmed to handle this case;\nI'll just pretend that you didn't ask for it.\nIf you're in the wrong mode, you might be able to\nreturn to the right one by typing `I}}' or `I$' or `I\\par'.\n"
         ),
     );
+}
+
+pub(crate) fn report_illegal_case_with_context(
+    stores: &mut Universe,
+    token: Token,
+    mode: Mode,
+    context: Option<String>,
+) -> tex_state::print::ErrorOutcome {
+    let command = tex_command::command_token_text(&mut stores.command_context(), token);
+    let mode = mode_name(mode);
+    // TeX82 §§82 and 1111: `report_illegal_case` installs help and then
+    // calls the ordinary error routine. The context therefore precedes help
+    // in every interaction mode, and §90 routes scrolled help to the log
+    // instead of leaving it on the terminal.
+    let mut report = stores.print_err(&format!("You can't use `{command}' in {mode}"));
+    report.help(&[
+        "Sorry, but I'm not programmed to handle this case;",
+        "I'll just pretend that you didn't ask for it.",
+        "If you're in the wrong mode, you might be able to",
+        "return to the right one by typing `I}' or `I$' or `I\\par'.",
+    ]);
+    if let Some(context) = context {
+        report.context(context);
+    }
+    report.error()
+}
+
+const fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Vertical => "vertical mode",
+        Mode::InternalVertical => "internal vertical mode",
+        Mode::Horizontal => "horizontal mode",
+        Mode::RestrictedHorizontal => "restricted horizontal mode",
+        Mode::Math => "math mode",
+        Mode::DisplayMath => "display math mode",
+    }
 }
 use crate::{ExecError, push_tokens, push_traced_tokens};
 use crate::{Mode, ModeNest};

@@ -4160,6 +4160,7 @@ enum ScannedStep {
     /// same-shaped recovery.
     IllegalLastItem {
         token: Token,
+        context: String,
     },
     BoxEndGroup {
         ships_out: bool,
@@ -7245,6 +7246,7 @@ fn scan_unclassified_primitive(
         | P::GlueToMu
         | P::MuToGlue => Ok(ScannedStep::IllegalLastItem {
             token: command.spelling().semantic_token(),
+            context: processor.error_context(),
         }),
         // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
         // `\cr` and `\crcr` carry the `car_ret` command code (chr `cr_code`
@@ -7378,6 +7380,7 @@ fn scan_unclassified_meaning(
         // inside a scan, never as a delivered main-control command.
         Meaning::InternalInteger(_) => Ok(ScannedStep::IllegalLastItem {
             token: command.spelling().semantic_token(),
+            context: processor.error_context(),
         }),
         Meaning::CharToken { ch, cat } => {
             scan_unclassified_char_token(processor, command, ch, cat, mode)
@@ -11754,9 +11757,19 @@ fn apply_scanned_step(
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::IllegalLastItem { token } => {
-            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
-            Ok(ReplayStep::Continue)
+        ScannedStep::IllegalLastItem { token, context } => {
+            let outcome = crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            );
+            match outcome {
+                tex_state::print::ErrorOutcome::Continue => Ok(ReplayStep::Continue),
+                tex_state::print::ErrorOutcome::FatalErrorLimit => {
+                    Err(ExecError::Fatal(FatalError::TooManyErrors))
+                }
+            }
         }
         ScannedStep::UndefinedControlSequence => {
             crate::diagnostics::report_undefined_control_sequence(stores);
