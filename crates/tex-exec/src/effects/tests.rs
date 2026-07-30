@@ -2,7 +2,10 @@ use super::*;
 
 use std::sync::Arc;
 
-use tex_command::{CommandObservation, CommandObserver, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandObservation, CommandObserver, EffectRecord as ObservedEffect, InputReason,
+    InputTransition, ObservedToken, RegisteredSourceKind, SourceRegistration,
+};
 use tex_out::{EffectSink, PageArtifact, PageEffect, PageNode};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, LeaderPayload, Node, Sign, Whatsit};
 use tex_state::scaled::{GlueSetRatio, Scaled};
@@ -63,7 +66,7 @@ impl CommandObserver for ObservationRecorder {
     }
 }
 
-fn observed_effects(source: &[u8]) -> Vec<(String, String)> {
+fn observed(source: &[u8]) -> (Universe, CommandReplayControl, Vec<CommandObservation>) {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
     let mut observer = ObservationRecorder::default();
@@ -77,18 +80,174 @@ fn observed_effects(source: &[u8]) -> Vec<(String, String)> {
             MainControlStep::Continue => {}
         }
     }
-    observer
-        .0
+    (stores, control, observer.0)
+}
+
+fn observed_effect_records(source: &[u8]) -> Vec<ObservedEffect> {
+    observed(source)
+        .2
         .into_iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Effect(effect)
-                if matches!(effect.kind, "open" | "close" | "shipout") =>
-            {
-                Some((effect.kind.into(), effect.detail))
-            }
+            CommandObservation::Effect(effect) => Some(effect),
             _ => None,
         })
         .collect()
+}
+
+fn observed_effects(source: &[u8]) -> Vec<(String, String)> {
+    observed_effect_records(source)
+        .into_iter()
+        .filter(|effect| matches!(effect.kind, "open" | "close" | "shipout"))
+        .map(|effect| (effect.kind.into(), effect.detail))
+        .collect()
+}
+
+fn observed_text_tokens(text: &str) -> Vec<ObservedToken> {
+    text.chars()
+        .map(|character| ObservedToken::Character {
+            character,
+            catcode: if character.is_ascii_alphabetic() {
+                tex_state::token::Catcode::Letter
+            } else {
+                tex_state::token::Catcode::Other
+            },
+        })
+        .collect()
+}
+
+#[test]
+fn deferred_stream_effect_cursor_preserves_exact_records_and_write_order() {
+    // TeX82 §§1374--1375 run each `out_what` synchronously: opening the
+    // stream precedes each following write expansion, and closing it follows.
+    for (source, expected_timeline) in [
+        (
+            br"\shipout\hbox{\openout1=trace.out\closeout1}".as_slice(),
+            vec!["open", "close", "shipout"],
+        ),
+        (
+            br"\shipout\hbox{\openout1=trace.out\write1{one}\write1{two}\closeout1}".as_slice(),
+            vec!["open", "write", "write", "close", "shipout"],
+        ),
+    ] {
+        let (_, _, observations) = observed(source);
+        let timeline = observations
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Effect(effect)
+                    if matches!(effect.kind, "open" | "close" | "shipout") =>
+                {
+                    Some(effect.kind)
+                }
+                CommandObservation::Input(input)
+                    if input.transition == InputTransition::Push
+                        && input.reason == InputReason::Write =>
+                {
+                    Some("write")
+                }
+                _ => None,
+            });
+        assert_eq!(timeline.collect::<Vec<_>>(), expected_timeline);
+        assert_eq!(
+            observations
+                .into_iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::Effect(effect)
+                        if matches!(effect.kind, "open" | "close" | "shipout") =>
+                    {
+                        Some(effect)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [
+                ObservedEffect {
+                    kind: "open",
+                    detail: "stream:1\0trace.out".into(),
+                    tokens: None,
+                },
+                ObservedEffect {
+                    kind: "close",
+                    detail: "stream:1\0".into(),
+                    tokens: None,
+                },
+                ObservedEffect {
+                    kind: "shipout",
+                    detail: "dvi\0".to_owned() + "1",
+                    tokens: None,
+                },
+            ]
+        );
+    }
+}
+
+#[test]
+fn immediate_stream_effects_keep_exact_write_tokens_without_shipout_receipt() {
+    assert_eq!(
+        observed_effect_records(
+            br"\immediate\openout1=trace.out\immediate\write1{Ready!}\immediate\closeout1"
+        ),
+        [
+            ObservedEffect {
+                kind: "open",
+                detail: "stream:1\0trace.out".into(),
+                tokens: None,
+            },
+            ObservedEffect {
+                kind: "write",
+                detail: "stream:1\0".into(),
+                tokens: Some(observed_text_tokens("Ready!")),
+            },
+            ObservedEffect {
+                kind: "close",
+                detail: "stream:1\0".into(),
+                tokens: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn prepared_page_receipt_retains_only_the_unobserved_effect_suffix() {
+    let (_, mut control, observations) =
+        observed(br"\shipout\hbox{\openout1=trace.out\write1{one}\closeout1}");
+    let pages = control.take_prepared_dvi_pages();
+    assert_eq!(pages.len(), 1);
+    assert!(matches!(
+        pages[0].committed_effects.as_ref(),
+        [
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Stream(write_slot),
+                text,
+            },
+            EffectRecord::StreamClose { slot },
+        ] if *write_slot == StreamSlot::new(1)
+            && text == "one\n"
+            && *slot == StreamSlot::new(1)
+    ));
+    assert_eq!(
+        pages[0].committed_effects.len(),
+        2,
+        "the pre-write open was consumed by the cursor; finalization retains the write/close suffix"
+    );
+    assert_eq!(
+        observations
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Effect(effect)
+                    if matches!(effect.kind, "open" | "close" | "shipout") =>
+                {
+                    Some((effect.kind, effect.detail.as_str(), effect.tokens.as_ref()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("open", "stream:1\0trace.out", None),
+            ("close", "stream:1\0", None),
+            ("shipout", "dvi\u{0}1", None),
+        ],
+        "open, close, and shipout each publish once"
+    );
 }
 
 fn last_artifact(stores: &Universe) -> PageArtifact {

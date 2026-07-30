@@ -8826,21 +8826,23 @@ fn committed_stream_effect_observations(
                 .flat_map(|page| page.committed_effects.iter()),
         )
     };
-    records
-        .filter_map(|record| match record {
-            tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
-                kind: "open",
-                detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
-                tokens: None,
-            }),
-            tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
-                kind: "close",
-                detail: format!("stream:{}\0", slot.raw()),
-                tokens: None,
-            }),
-            _ => None,
-        })
-        .collect()
+    records.filter_map(stream_effect_observation).collect()
+}
+
+fn stream_effect_observation(record: &tex_state::EffectRecord) -> Option<EffectRecord> {
+    match record {
+        tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
+            kind: "open",
+            detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+            tokens: None,
+        }),
+        tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
+            kind: "close",
+            detail: format!("stream:{}\0", slot.raw()),
+            tokens: None,
+        }),
+        _ => None,
+    }
 }
 
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
@@ -8919,7 +8921,22 @@ fn shipout_replay_box(
     let mut execution = crate::ExecutionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
+    let effect_start = stores.world().effect_records().len();
+    let mut effect_cursor = effect_start;
     let mut expand_write = |stores: &mut Universe, tokens: tex_state::ids::TokenListId| {
+        // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
+        // before moving to the next whatsit. A following write expands only
+        // after those effects have happened, so publish the committed prefix
+        // before its nested command episode contributes observations.
+        if let Some(observations) = command.observations.as_mut() {
+            observations.0.extend(
+                stores.world().effect_records()[effect_cursor..]
+                    .iter()
+                    .filter_map(stream_effect_observation)
+                    .map(CommandObservation::Effect),
+            );
+        }
+        effect_cursor = stores.world().effect_records().len();
         let traced = stores
             .tokens(tokens)
             .iter()
@@ -8944,7 +8961,7 @@ fn shipout_replay_box(
         text.push('\n');
         Ok(Some(text))
     };
-    let receipt = crate::assignments::shipout_node_with_input_summary(
+    let mut receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
         Some(output_open_context),
@@ -8952,6 +8969,11 @@ fn shipout_replay_box(
         &mut execution,
         &mut expand_write,
     )?;
+    if let Some(receipt) = receipt.as_mut() {
+        receipt.committed_effects = receipt.committed_effects[effect_cursor - effect_start..]
+            .to_vec()
+            .into_boxed_slice();
+    }
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
