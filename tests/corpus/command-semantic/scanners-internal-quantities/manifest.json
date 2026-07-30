@@ -135,16 +135,8 @@
       "channels": {
         "events": 252,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 2, "expected": "(./infinite-glue-case.tex", "actual": "(./infinite-glue-case.tex )" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 3, "expected": "(./infinite-glue-case.tex", "actual": "(./infinite-glue-case.tex )" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

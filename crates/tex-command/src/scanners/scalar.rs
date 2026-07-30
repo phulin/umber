@@ -1511,7 +1511,11 @@ impl CommandProcessor<'_> {
         // leading spaces before each candidate (`fill L L L`) and restores
         // the first non-`l` token after the loop.
         while self.scan_keyword("l")?.value {
-            order = raise_infinite_order(order);
+            if order == Order::Filll {
+                self.excess_infinite_order_error();
+            } else {
+                order = raise_infinite_order(order);
+            }
         }
         Ok(DimensionUnit::Infinite(order))
     }
@@ -1629,6 +1633,21 @@ impl CommandProcessor<'_> {
             "delete the erroneous units; e.g., type `2' to delete",
             "two letters. (See Chapter 27 of The TeXbook.)",
         ]);
+        report.error();
+    }
+
+    /// TeX82 §454's recovery for each `l` beyond `filll`.
+    fn excess_infinite_order_error(&mut self) {
+        // §407 has consumed the successful one-letter keyword before §454
+        // calls §82's `error`, so capture the source cursor at that exact
+        // point rather than reusing context from an earlier scanner report.
+        let context = self.command.output_open_context(&self.state);
+        let mut report = self
+            .state
+            .print_err("Illegal unit of measure (replaced by filll)");
+        report
+            .help(&["I dddon't go any higher than filll."])
+            .context(context);
         report.error();
     }
 

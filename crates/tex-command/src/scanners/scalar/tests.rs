@@ -2017,7 +2017,9 @@ fn radix_prefixed_dimension_constants_scan_and_admit_no_fraction() {
 fn excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input() {
     // TeX82 §454's `while scan_keyword("l") do`: `filllll` yields `filll`
     // plus one error per extra `l`, and every `l` is consumed. Stopping the
-    // loop at `filll` would leak the extra letters into later parsing.
+    // loop at `filll` would leak the extra letters into later parsing. §82
+    // displays the command-owned live input after each successful one-letter
+    // keyword has advanced it.
     let mut universe = Universe::new();
 
     let (glue, following) = scan_with(
@@ -2034,6 +2036,22 @@ fn excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input() {
     assert_eq!(glue.stretch.raw(), Scaled::UNITY);
     assert_eq!(glue.stretch_order, Order::Filll);
     assert_eq!(following, 5);
+    let diagnostics = diagnostic_text(&universe);
+    assert_eq!(
+        diagnostics
+            .matches("! Illegal unit of measure (replaced by filll).")
+            .count(),
+        2,
+        "each excess l produces one §454 report: {diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("I dddon't go any higher than filll."),
+        "§454's exact help text is preserved: {diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("filllll"),
+        "§82 displays the live scanner input after consuming the excess l: {diagnostics}"
+    );
 }
 
 #[test]
