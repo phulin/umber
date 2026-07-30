@@ -54,7 +54,7 @@ pub(crate) enum ConditionalKind {
 
 #[allow(dead_code)] // used by pass_text now; evaluation uses the same classifier next
 impl ConditionalKind {
-    const fn canonical_name(self) -> &'static str {
+    pub(crate) const fn canonical_name(self) -> &'static str {
         match self {
             Self::IfTrue => "iftrue",
             Self::IfFalse => "iffalse",
@@ -749,14 +749,14 @@ impl CommandProcessor<'_> {
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
         let left = self.scan_integer()?.value;
-        let relation = self.scan_if_relation()?;
+        let relation = self.scan_if_relation("ifnum")?;
         let right = self.scan_integer()?.value;
         Ok(relation.compare(left, right))
     }
 
     fn evaluate_dimension_comparison(&mut self) -> Result<bool, CommandError> {
         let left = self.scan_dimension()?.value;
-        let relation = self.scan_if_relation()?;
+        let relation = self.scan_if_relation("ifdim")?;
         let right = self.scan_dimension()?.value;
         Ok(relation.compare(left, right))
     }
@@ -767,14 +767,24 @@ impl CommandProcessor<'_> {
     /// "Missing = inserted for \ifnum"/"\ifdim" and calls `back_error` (back
     /// up the offending token, then continue as though `=` had been found),
     /// so the second operand is still scanned and the comparison completes.
-    fn scan_if_relation(&mut self) -> Result<IfRelation, CommandError> {
+    fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let relation = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         match relation.meaning() {
             Meaning::CharToken { ch: '<', .. } => Ok(IfRelation::Less),
             Meaning::CharToken { ch: '=', .. } => Ok(IfRelation::Equal),
             Meaning::CharToken { ch: '>', .. } => Ok(IfRelation::Greater),
             _ => {
-                self.back_error(relation, MISSING_RELATION_DIAGNOSTIC)?;
+                // §503's `print_cmd_chr(if_test,this_if)` names the
+                // conditional whose relation is missing, so the message ends
+                // in the escaped primitive rather than a bare word.
+                let name = crate::processor::expand::print_esc_text(&self.state, conditional);
+                let message = format!("Missing = inserted for {name}");
+                self.back_error_reporting(
+                    relation,
+                    MISSING_RELATION_DIAGNOSTIC,
+                    message,
+                    &["I was expecting to see `<', `=', or `>'. Didn't."],
+                )?;
                 Ok(IfRelation::Equal)
             }
         }
@@ -1020,11 +1030,24 @@ impl CommandProcessor<'_> {
         condition: ConditionId,
         warning: ScannerWarning,
     ) -> Result<PassTextStop, CommandError> {
+        // §494's `skip_line:=line`, taken before any token of the skipped
+        // text is read.
+        let skip_line = self.command.current_file_line_number();
+        // §336's `cur_if` is the live top-of-stack conditional, which §494's
+        // own comment above notes need not be the frame this skip was
+        // started for: §500's `\if\iftrue...` leaves an inner frame on top.
+        let conditional = self
+            .command
+            .conditions
+            .current()
+            .map_or(ConditionalKind::IfTrue, |frame| frame.kind);
         let prior = self
             .command
             .begin_scanner_status(ScannerStatus::Skipping(SkippingContext {
                 condition,
                 warning,
+                skip_line,
+                conditional,
             }));
         self.observe_scanner_status_transition(
             prior.status().clone(),

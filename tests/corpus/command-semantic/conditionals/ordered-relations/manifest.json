@@ -44,16 +44,8 @@
       "channels": {
         "events": 523,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 2, "expected": "(./ordered-relations.tex", "actual": "(./ordered-relations.tex)" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 3, "expected": "(./ordered-relations.tex", "actual": "(./ordered-relations.tex)" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

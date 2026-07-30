@@ -121,8 +121,10 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
         1,
         "outer commands and runaway EOF must share one recovery table"
     );
+    // The boolean argument is §336's `cur_cs<>0` test, which selects the
+    // first help line; both entry points still share the one recovery table.
     assert_eq!(
-        next.matches("self.install_outer_recovery(recovery)?;")
+        next.matches("self.install_outer_recovery(recovery, ")
             .count(),
         2,
         "only outer-command and runaway-EOF entry points may install recovery"

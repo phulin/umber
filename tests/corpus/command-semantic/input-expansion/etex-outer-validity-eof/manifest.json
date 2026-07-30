@@ -42,18 +42,18 @@
           "kind": "xfail",
           "bug": "umber2-alfh.13",
           "mismatch": {
-            "line": 4,
-            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
-            "actual": "*(Please type a command or say `\\end')"
+            "line": 3,
+            "expected": "(./etex-outer-validity-eof.tex)",
+            "actual": "(./etex-outer-validity-eof.tex"
           }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
           "mismatch": {
-            "line": 5,
-            "expected": "! Incomplete \\iffalse; all text was ignored after line 2.",
-            "actual": "*"
+            "line": 4,
+            "expected": "(./etex-outer-validity-eof.tex)",
+            "actual": "(./etex-outer-validity-eof.tex"
           }
         },
         "dvi": { "kind": "empty" },

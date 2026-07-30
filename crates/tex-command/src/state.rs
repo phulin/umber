@@ -107,6 +107,21 @@ pub enum CommandSemanticDiagnostic {
     /// episode. The display therefore crosses the deferred-report boundary
     /// with the diagnostic, exactly as [`Self::MissingNumber`]'s does.
     UndefinedControlSequence { context: String },
+    /// A recoverable command-owned error whose message, help and context the
+    /// command core composed at the point of failure.
+    ///
+    /// `tex-command` never prints (see this crate's `AGENTS.md`), and the
+    /// levels §82 displays are live only inside the borrowed processor
+    /// episode. Composing the whole report here is what lets the executor
+    /// render it faithfully after the borrow ends. `identity` is the same
+    /// `back_error` accounting code recorded in `pending_diagnostics`, kept
+    /// so a report and its recovery remain correlatable.
+    Recoverable {
+        identity: u64,
+        message: String,
+        help: &'static [&'static str],
+        context: String,
+    },
     /// TeX82 §391's compulsory macro-parameter-text mismatch.
     MacroPrefixMismatch(tex_state::interner::Symbol),
     /// TeX82 §415's missing-number recovery, deferred only when an earlier

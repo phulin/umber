@@ -2116,7 +2116,16 @@ impl CanonicalMainControl {
                 fill_canonical_script_target(self.modes.current_list_mutation(), target, field);
             }
             CanonicalMathRequest::Limits(kind) => {
-                apply_canonical_limits(self.modes.current_list_mutation(), stores, kind)
+                if !apply_canonical_limits(self.modes.current_list_mutation(), kind) {
+                    // §1159 falls through to the error only when the tail is
+                    // not an `op_noad`; the switch is dropped and the job
+                    // continues.
+                    let context = self.command.output_open_context(&stores.command_context());
+                    let mut report = stores.print_err("Limit controls must follow a math operator");
+                    report.help(&["I'm ignoring this misplaced \\limits or \\nolimits command."]);
+                    report.context(context);
+                    report.error();
+                }
             }
             CanonicalMathRequest::Fraction(fraction) => {
                 start_canonical_fraction(self.modes.current_list_mutation(), stores, fraction)
@@ -3486,24 +3495,29 @@ pub(crate) fn fill_canonical_script_target(
 
 fn apply_canonical_limits(
     mut list: crate::mode::ModeListMutation<'_>,
-    _stores: &mut Universe,
     kind: MathLimitKind,
-) {
+) -> bool {
+    // TeX82 §1159's `math_limit_switch`: the subtype is set only when
+    // `head<>tail` *and* the tail is an `op_noad`. `with_last_node_mut`
+    // returns `None` for the empty list, which is `head=tail`.
     list.with_last_node_mut(|node| {
         let Node::MathNoad(noad) = node else {
-            return;
+            return false;
         };
-        if matches!(
+        if !matches!(
             noad.kind,
             NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_)
         ) {
-            noad.kind = NoadKind::Operator(match kind {
-                MathLimitKind::Limits => LimitType::Limits,
-                MathLimitKind::NoLimits => LimitType::NoLimits,
-                MathLimitKind::DisplayLimits => LimitType::DisplayLimits,
-            });
+            return false;
         }
-    });
+        noad.kind = NoadKind::Operator(match kind {
+            MathLimitKind::Limits => LimitType::Limits,
+            MathLimitKind::NoLimits => LimitType::NoLimits,
+            MathLimitKind::DisplayLimits => LimitType::DisplayLimits,
+        });
+        true
+    })
+    .unwrap_or(false)
 }
 
 fn start_canonical_fraction(
@@ -14152,6 +14166,16 @@ fn report_pending_diagnostics(
                     "made up of letters only. The macro here has not been",
                     "followed by the required stuff, so I'm ignoring it.",
                 ]);
+                report.error();
+            }
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {
+                message,
+                help,
+                context,
+                ..
+            }) => {
+                let mut report = stores.print_err(&message);
+                report.help(help).context(context);
                 report.error();
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {

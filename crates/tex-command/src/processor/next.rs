@@ -30,6 +30,13 @@ use super::CommandProcessor;
 use super::expand::ExpandedFetch;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
+/// TeX82 §336's `Incomplete \if...; all text was ignored after line N`.
+///
+/// Distinct from `conditionals`'s own incomplete-`\if` recovery identity:
+/// this one is `check_outer_validity` finding a live skipping episode, not
+/// §500 inserting frozen `\relax` in the middle of a condition.
+const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
+
 use super::alignment::AlignmentDeliveryState;
 use super::alignment::CELL_ALIGN_STATE;
 
@@ -1016,6 +1023,32 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// [`Self::back_error`] that also composes the report §82 will render.
+    ///
+    /// TeX82's `back_error` is `back_input` *then* `error`, so the context is
+    /// captured with the backed-up level already on the stack -- which is
+    /// exactly what makes the display's `<to be read again>` line name the
+    /// offending token.
+    pub(crate) fn back_error_reporting(
+        &mut self,
+        command: CurrentCommand,
+        diagnostic: u64,
+        message: String,
+        help: &'static [&'static str],
+    ) -> Result<(), CommandError> {
+        self.back_error(command, diagnostic)?;
+        let context = self.command.output_open_context(&self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: diagnostic,
+                message,
+                help,
+                context,
+            });
+        Ok(())
+    }
+
     /// Canonical backing operation used by `\\noexpand` for one replayed
     /// command. The treatment belongs to the backed-up level, not the token
     /// or the returned command.
@@ -1682,7 +1715,7 @@ impl CommandProcessor<'_> {
             self.outer_recovered_while_absorbing = true;
         }
         self.back_input(command.copy_for_backup())?;
-        self.install_outer_recovery(recovery)?;
+        self.install_outer_recovery(recovery, false)?;
         command.recover_as_space();
         Ok(())
     }
@@ -1702,14 +1735,18 @@ impl CommandProcessor<'_> {
             self.eof_recovered_while_matching = true;
         }
         self.observe_outer_validity_diagnostic(&recovery.status, true);
-        self.install_outer_recovery(recovery)?;
+        self.install_outer_recovery(recovery, true)?;
         Ok(true)
     }
 
     /// TeX.web's `check_outer_validity` recovery table. Primitive insertions
     /// are frozen tokens, retaining their original meanings if user code has
     /// reassigned their visible spellings.
-    fn install_outer_recovery(&mut self, recovery: RecoveryContext) -> Result<(), CommandError> {
+    fn install_outer_recovery(
+        &mut self,
+        recovery: RecoveryContext,
+        at_file_end: bool,
+    ) -> Result<(), CommandError> {
         let RecoveryContext { status, warning } = recovery;
         if matches!(status, ScannerStatus::Aligning(_)) {
             // TeX82 §23's `check_outer_validity` reports the aligning
@@ -1783,6 +1820,43 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
+        // §336 ends with `ins_error`, which is `back_input` as an *inserted*
+        // level and only then `error`. The context therefore renders with the
+        // frozen recovery token already on the stack, which is what puts the
+        // `<inserted text>` line above the source line.
+        if let ScannerStatus::Skipping(skipping) = &status {
+            let name =
+                super::expand::print_esc_text(&self.state, skipping.conditional.canonical_name());
+            let message = format!(
+                "Incomplete {name}; all text was ignored after line {}",
+                skipping.skip_line
+            );
+            let help: &'static [&'static str] = if at_file_end {
+                // §336 replaces only the first help line when the failure was
+                // the file running out rather than a forbidden control
+                // sequence appearing in the skipped text.
+                &[
+                    "The file ended while I was skipping conditional text.",
+                    "This kind of error happens when you say `\\if...' and forget",
+                    "the matching `\\fi'. I've inserted a `\\fi'; this might work.",
+                ]
+            } else {
+                &[
+                    "A forbidden control sequence occurred in skipped text.",
+                    "This kind of error happens when you say `\\if...' and forget",
+                    "the matching `\\fi'. I've inserted a `\\fi'; this might work.",
+                ]
+            };
+            let context = self.command.output_open_context(&self.state);
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: INCOMPLETE_CONDITIONAL_DIAGNOSTIC,
+                    message,
+                    help,
+                    context,
+                });
+        }
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -3956,6 +4030,8 @@ mod tests {
                 ScannerStatus::Skipping(SkippingContext {
                     condition: ConditionId(1),
                     warning,
+                    skip_line: 0,
+                    conditional: crate::conditionals::ConditionalKind::IfTrue,
                 }),
                 vec![universe.primitive_token("fi").expect("fi is registered")],
             ),
@@ -4118,6 +4194,8 @@ mod tests {
             ScannerStatus::Skipping(SkippingContext {
                 condition: ConditionId(1),
                 warning: ScannerWarning(17),
+                skip_line: 0,
+                conditional: crate::conditionals::ConditionalKind::IfTrue,
             }),
             |command| {
                 let mut processor =
@@ -4198,6 +4276,8 @@ mod tests {
             ScannerStatus::Skipping(SkippingContext {
                 condition: ConditionId(1),
                 warning: ScannerWarning(17),
+                skip_line: 0,
+                conditional: crate::conditionals::ConditionalKind::IfTrue,
             }),
             |command| {
                 let mut processor =

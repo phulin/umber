@@ -1488,6 +1488,22 @@ pub fn character_command_text(ch: char, cat: Catcode) -> String {
     }
 }
 
+/// TeX82 §63's `print_esc`: the current `\escapechar`, when it names a
+/// character, followed by `name`.
+///
+/// §63 prints no escape at all when `\escapechar` is outside a character's
+/// range, which is why the prefix is conditional rather than a hard-coded
+/// backslash.
+#[must_use]
+pub fn print_esc_text(state: &tex_state::CommandContext<'_>, name: &str) -> String {
+    let mut text = String::with_capacity(name.len() + 1);
+    if let Ok(escape) = u8::try_from(state.int_param(IntParam::ESCAPE_CHAR)) {
+        text.push(char::from(escape));
+    }
+    text.push_str(name);
+    text
+}
+
 /// TeX82 §298's `print_cmd_chr` representation for a delivered token.
 ///
 /// Diagnostics use this same renderer as `\meaning`; consequently Rust enum

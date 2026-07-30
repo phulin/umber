@@ -208,6 +208,8 @@ fn summary_rejects_each_scanner_episode() {
             ScannerStatus::Skipping(SkippingContext {
                 condition: ConditionId(1),
                 warning: ScannerWarning(1),
+                skip_line: 0,
+                conditional: crate::conditionals::ConditionalKind::IfTrue,
             }),
             CommandSummaryError::ConditionalSkip,
         ),

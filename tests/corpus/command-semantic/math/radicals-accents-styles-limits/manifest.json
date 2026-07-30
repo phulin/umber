@@ -41,29 +41,13 @@
         "command:math_style:4",
         "command:math_comp:17",
         "command:limit_switch:1",
-        "artifact:51471218091ee421b1d76f35f63a876ff05d7b0d19a30c5fa43f6b5637549416"
+        "artifact:d2e4d33a9ec52d1b3046b701b84ada3c21c0db44a81ef4058d67ba0779d3852c"
       ],
       "channels": {
         "events": 110,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 16,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 23,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

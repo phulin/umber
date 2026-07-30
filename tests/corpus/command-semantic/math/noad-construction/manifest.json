@@ -52,29 +52,13 @@
         "command:math_comp:17",
         "command:math_comp:17",
         "command:limit_switch:2",
-        "artifact:11c0e4e131e26e912e0a6d77d8a5228ed2cab26cc588e6c1ca34c8f06ceb53d9"
+        "artifact:30205a4ba8003b22bc49d84eef5894a1a2ff3f0302de63c27405a2fe606b6374"
       ],
       "channels": {
         "events": 76,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 14,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 23,
-            "expected": "! Limit controls must follow a math operator.",
-            "actual": "! Missing $ inserted."
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

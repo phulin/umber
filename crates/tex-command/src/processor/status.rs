@@ -187,6 +187,12 @@ pub(crate) struct AlignmentId(pub(crate) u64);
 pub(crate) struct SkippingContext {
     pub(crate) condition: ConditionId,
     pub(crate) warning: ScannerWarning,
+    /// TeX82 §494's `skip_line:=line`, which §336 prints as "all text was
+    /// ignored after line N". It is the line skipping *began* on, not the
+    /// line the `\if` opened on, so it cannot be read back off the frame.
+    pub(crate) skip_line: u32,
+    /// TeX82 §336's `cur_if`: the conditional whose text was being skipped.
+    pub(crate) conditional: crate::conditionals::ConditionalKind,
 }
 
 /// Context for a macro definition's parameter/replacement scan.
@@ -293,6 +299,8 @@ mod tests {
                 ScannerStatus::Skipping(SkippingContext {
                     condition: ConditionId(2),
                     warning,
+                    skip_line: 0,
+                    conditional: crate::conditionals::ConditionalKind::IfTrue,
                 }),
                 RunawayKind::Conditional,
             ),

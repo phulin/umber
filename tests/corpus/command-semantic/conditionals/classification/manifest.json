@@ -47,20 +47,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 3,
-            "expected": "! Incomplete \\iffalse; all text was ignored after line 20.",
-            "actual": "*(Please type a command or say `\\end')"
-          }
+          "mismatch": { "line": 2, "expected": "(./classification.tex)", "actual": "(./classification.tex" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 4,
-            "expected": "! Incomplete \\iffalse; all text was ignored after line 20.",
-            "actual": "*"
-          }
+          "mismatch": { "line": 3, "expected": "(./classification.tex)", "actual": "(./classification.tex" }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
