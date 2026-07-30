@@ -127,10 +127,9 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
     for name in names {
         let case_relative = area_relative.join(&name);
         let case = ClosedCase::discover(&case_relative).expect("closed bibliography case");
-        let invocation = BibInvocationCase::parse(
-            &case.read_to_string("invocation.case").expect("metadata"),
-        )
-        .expect("valid invocation metadata");
+        let invocation =
+            BibInvocationCase::parse(&case.read_to_string("invocation.case").expect("metadata"))
+                .expect("valid invocation metadata");
         let temp = tempfile::tempdir().expect("create isolated bibliography output directory");
         let resolved = invocation
             .resolve(&case, temp.path())
@@ -252,10 +251,7 @@ impl BibInvocationCase {
                 }
                 "output" => {
                     let mut fields = value.split(':');
-                    let role = checked_role(
-                        "output",
-                        fields.next().ok_or("missing output role")?,
-                    )?;
+                    let role = checked_role("output", fields.next().ok_or("missing output role")?)?;
                     let actual = fields.next().ok_or("missing output artifact name")?;
                     let expected = fields.next().ok_or("missing expected output role")?;
                     if fields.next().is_some() {
@@ -299,6 +295,7 @@ impl BibInvocationCase {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // Host-only hermetic fixture staging.
     fn resolve(
         &self,
         case: &ClosedCase,
@@ -332,16 +329,16 @@ impl BibInvocationCase {
                     output.expected
                 )
             })?;
-            if input_bytes.iter().any(|(_, payload, _)| payload == &output.actual) {
+            if input_bytes
+                .iter()
+                .any(|(_, payload, _)| payload == &output.actual)
+            {
                 return Err(format!(
                     "output artifact collides with staged input: {}",
                     output.actual
                 ));
             }
-            output_paths.insert(
-                role.clone(),
-                safe_artifact_path(workspace, &output.actual)?,
-            );
+            output_paths.insert(role.clone(), safe_artifact_path(workspace, &output.actual)?);
         }
         let mut output_uses = BTreeSet::new();
         let argv = self
@@ -371,11 +368,8 @@ impl BibInvocationCase {
             return Err("bibliography invocation supports at most one output role".into());
         }
         for (role, payload, bytes) in input_bytes {
-            fs::write(
-                input_paths.get(&role).expect("validated input path"),
-                bytes,
-            )
-            .map_err(|error| format!("stage isolated input {payload:?}: {error}"))?;
+            fs::write(input_paths.get(&role).expect("validated input path"), bytes)
+                .map_err(|error| format!("stage isolated input {payload:?}: {error}"))?;
         }
         let artifact = self.outputs.iter().next().map(|(role, output)| {
             (
@@ -393,7 +387,9 @@ fn checked_role(kind: &str, role: &str) -> Result<String, String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        return Err(format!("{kind} role is not a normalized identifier: {role:?}"));
+        return Err(format!(
+            "{kind} role is not a normalized identifier: {role:?}"
+        ));
     }
     Ok(role.to_owned())
 }
@@ -468,6 +464,7 @@ fn bibliography_typed_arguments_reject_duplicate_and_conflicting_outputs() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Host-only isolated staging assertion.
 fn bibliography_typed_arguments_materialize_literals_and_declared_roles() {
     let case = ClosedCase::discover("tests/corpus/bib/invocation/bcf-success")
         .expect("closed bibliography case");
@@ -490,7 +487,13 @@ fn bibliography_typed_arguments_materialize_literals_and_declared_roles() {
     assert_eq!(resolved.argv[0], "ordinary");
     assert_eq!(
         Path::new(&resolved.argv[1]).parent(),
-        Some(workspace.path().canonicalize().expect("workspace").as_path())
+        Some(
+            workspace
+                .path()
+                .canonicalize()
+                .expect("workspace")
+                .as_path()
+        )
     );
     assert_eq!(
         fs::read(&resolved.argv[1]).expect("staged declared input"),
@@ -498,11 +501,18 @@ fn bibliography_typed_arguments_materialize_literals_and_declared_roles() {
     );
     assert_eq!(
         Path::new(&resolved.argv[2]).parent(),
-        Some(workspace.path().canonicalize().expect("workspace").as_path())
+        Some(
+            workspace
+                .path()
+                .canonicalize()
+                .expect("workspace")
+                .as_path()
+        )
     );
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Host-only adversarial sentinel construction.
 fn failing_path_literal_cannot_touch_an_ambient_sentinel() {
     let ambient = tempfile::tempdir().expect("ambient directory");
     let sentinel = ambient.path().join("ambient.bib");
