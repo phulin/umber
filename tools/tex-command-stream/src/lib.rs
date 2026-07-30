@@ -2162,6 +2162,14 @@ mod tests {
     }
 
     #[test]
+    fn explicit_repository_resolves_without_ambient_checkout_discovery() {
+        let repository = test_support::repository_root();
+        let resolved =
+            resolve_cli_repository(Some(repository.clone())).expect("resolve explicit repository");
+        assert_eq!(resolved, repository);
+    }
+
+    #[test]
     fn automated_selection_rejects_a_full_document_footprint() {
         let error = validate_automated_footprint(
             "tex82/accidental-document",
