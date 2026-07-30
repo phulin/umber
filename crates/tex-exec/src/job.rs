@@ -370,17 +370,48 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
         .print_nl("(see the transcript file for additional information)");
 }
 
-/// tex.web §311's `<*>` context: `show_context`'s rendering for the
+/// tex.web §313's `<*>` context: `show_context`'s rendering for the
 /// bottom-of-stack terminal source level.
 ///
 /// [`print_terminal_exhausted`] is the only site that has to spell this out.
 /// Everywhere else `tex-command`'s `output_open_context` renders context from
-/// a live input level, but here input has genuinely run out, so the stack it
-/// would walk is empty. §317's two-line form for a level whose label is
-/// `<*>` followed by a space and whose consumed and pending text are both
-/// empty is that label alone, then an indent of the label's own width with
-/// nothing after it.
-const TERMINAL_EXHAUSTED_CONTEXT: &str = "\n<*> \n    ";
+/// a live input level, but here input has genuinely run out and Umber has
+/// already retired the base level, so the stack it would walk is empty.
+///
+/// tex.web keeps the base level open for the whole run, so `buffer` still
+/// holds whatever was last read into it, and §313 pseudoprints *that* with
+/// `loc` past its end: everything before the split, nothing after. Which line
+/// that is depends on the interaction mode, and it is the same test §360
+/// itself makes:
+///
+/// - `interaction>nonstop_mode`: §360 ran `first:=start; prompt_input("*")`,
+///   so the terminal read that precedes the failing one overwrote `buffer`
+///   with an empty line (`limit=start`) and there is nothing left to
+///   pseudoprint. This is the run whose help line is `End of file on the
+///   terminal!`.
+/// - otherwise: §360 went straight to `fatal_error`, `buffer` was never
+///   rewritten, and it still holds §331's `**` line naming the root file.
+///   This is the run whose help line is `*** (job aborted, no legal \end
+///   found)`.
+///
+/// §31 drops the line's trailing space before setting `limit`, so the
+/// terminator the `**` line ends with is not part of `startup_terminal_line`.
+fn terminal_exhausted_context(
+    stores: &mut Universe,
+    startup_terminal_line: &str,
+    interactive: bool,
+) -> String {
+    let line = if interactive {
+        ""
+    } else {
+        startup_terminal_line
+    };
+    tex_state::print::render_error_context(
+        &[tex_state::print::ErrorContextLevel::new("<*> ", line, "")],
+        stores.command_context().error_context_widths(),
+        stores.int_param(tex_state::env::banks::IntParam::new(54)),
+    )
+}
 
 /// tex.web §360/§362's `*` prompt -- printed when the last input file has
 /// closed and the job has not yet seen `\end`/`\dump` -- followed by §71's
@@ -419,7 +450,7 @@ const TERMINAL_EXHAUSTED_CONTEXT: &str = "\n<*> \n    ";
 /// as another fact about the reference engine's terminal handling this layer
 /// does not model (see `tex_state::print`'s module doc) and reproduces it
 /// directly rather than deriving it from one shared smart `print_nl` call.
-pub(crate) fn print_terminal_exhausted(stores: &mut Universe) {
+pub(crate) fn print_terminal_exhausted(stores: &mut Universe, startup_terminal_line: &str) {
     // tex.web §362's `interaction>nonstop_mode`.
     let interactive = !matches!(
         stores.interaction_mode(),
@@ -444,8 +475,9 @@ pub(crate) fn print_terminal_exhausted(stores: &mut Universe) {
             printer.print_char('*');
         }
     }
+    let context = terminal_exhausted_context(stores, startup_terminal_line, interactive);
     let mut report = stores.print_err("Emergency stop");
-    report.context(TERMINAL_EXHAUSTED_CONTEXT.to_owned());
+    report.context(context);
     report.help(&[if interactive {
         "End of file on the terminal!"
     } else {

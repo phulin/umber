@@ -49,16 +49,8 @@
       "channels": {
         "events": 2418,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 22, "expected": "<*> etex-expressions.tex", "actual": "<*> " }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 37, "expected": "<*> etex-expressions.tex", "actual": "<*> " }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

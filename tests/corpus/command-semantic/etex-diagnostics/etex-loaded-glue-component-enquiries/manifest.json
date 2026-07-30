@@ -35,16 +35,8 @@
       "channels": {
         "events": 1161,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 45, "expected": "<*> etex-loaded-glue-component-enquiries.tex", "actual": "<*> " }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 89, "expected": "<*> etex-loaded-glue-component-enquiries.tex", "actual": "<*> " }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

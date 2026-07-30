@@ -113,6 +113,17 @@ pub struct CanonicalMainControl {
     /// This is a committed termination receipt for the host boundary; it is
     /// not format serialization itself.
     dumped_format: Option<crate::job::FormatDumpReceipt>,
+    /// TeX82 §331's `**` line, retained for §313's pseudoprint of it.
+    ///
+    /// §331 opens the base terminal level over the line naming the job's root
+    /// file and never closes it, so the line stays pseudoprintable in
+    /// `buffer` for the whole run -- §360's `*` prompt reads over it, and a
+    /// failed read (§71) leaves it untouched. Umber retires the base level as
+    /// soon as `scan_startup_file_name` has consumed it, so the line has to be
+    /// kept here for [`crate::job::print_terminal_exhausted`] to render.
+    /// Empty when no startup line was scanned, which is §313's own display for
+    /// a base level whose consumed and pending text are both empty.
+    startup_terminal_line: String,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     page_output_observations: Vec<CommandObservation>,
@@ -624,6 +635,10 @@ impl CanonicalMainControl {
     /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
         let etex = self.command_profile() == CommandProfile::ETEX26;
+        // §534's `**` line is exactly what §313 pseudoprints for the base
+        // terminal level; a driver that frames the job here rather than
+        // scanning the line through `scan_startup_file_name` supplies it here.
+        first_line.clone_into(&mut self.startup_terminal_line);
         crate::job::begin_job(
             &mut self.job,
             stores,
@@ -1243,7 +1258,7 @@ impl CanonicalMainControl {
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
-            crate::job::print_terminal_exhausted(stores);
+            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -1717,7 +1732,7 @@ impl CanonicalMainControl {
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
-            crate::job::print_terminal_exhausted(stores);
+            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -3039,7 +3054,7 @@ impl CanonicalMainControl {
         {
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
         } else if matches!(result, Ok(ReplayStep::EndOfInput)) {
-            crate::job::print_terminal_exhausted(stores);
+            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
         }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
@@ -3245,6 +3260,7 @@ impl CanonicalMainControl {
             });
         }
         self.capabilities.set_startup_job_name(&filename);
+        self.startup_terminal_line.clone_from(&filename);
         Ok(filename)
     }
 }
