@@ -22,6 +22,13 @@ fn register_source(control: &mut CommandReplayControl, bytes: &[u8]) {
         .expect("effect source opens");
 }
 
+fn register_input(control: &mut CommandReplayControl, name: &str, bytes: &[u8]) {
+    control.capabilities_mut().register_input(
+        name,
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(bytes)),
+    );
+}
+
 fn run_to_end(control: &mut CommandReplayControl, stores: &mut Universe) {
     loop {
         match control.step(stores).expect("effect command executes") {
@@ -508,7 +515,7 @@ fn out_what_retry_prints_captured_tex_context_before_prompt() {
         .expect("terminal is utf-8");
         assert!(
             terminal.contains(
-                "I can't write on file `blocked.tex'.\n...ox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n                                                  \nPlease type another output file name: "
+                "I can't write on file `blocked.tex'.\n<token list> \n             \\end \n...ox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n                                                  \nPlease type another output file name: "
             ),
             "{terminal:?}"
         );
@@ -548,6 +555,51 @@ fn out_what_retry_show_context_includes_nested_token_level_and_obeys_context_lim
             < terminal
                 .find("Please type another output file name")
                 .expect("replacement prompt"),
+        "{terminal:?}"
+    );
+}
+
+#[test]
+fn out_what_retry_show_context_traverses_nested_sources_with_limit() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+    stores.world_mut().deny_memory_output("blocked.tex");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("recovered")
+        .expect("terminal replacement");
+    let mut control = CommandReplayControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\errorcontextlines=0 \input middle ROOT-CONTEXT\end",
+    );
+    register_input(&mut control, "middle.tex", br"\input leaf MIDDLE-CONTEXT");
+    register_input(
+        &mut control,
+        "leaf.tex",
+        br"\setbox0=\hbox{\openout2=blocked }\shipout\copy0 LEAF-CONTEXT",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = String::from_utf8(
+        stores
+            .world()
+            .memory_terminal_output()
+            .expect("terminal output")
+            .to_vec(),
+    )
+    .expect("terminal output is utf-8");
+    let leaf = terminal
+        .find("LEAF-CONTEXT")
+        .expect("current nested source");
+    let omitted = terminal[leaf..].find("\n...").expect("omission marker") + leaf;
+    let root = terminal.find("ROOT-CONTEXT").expect("bottom root source");
+    assert!(leaf < omitted && omitted < root, "{terminal:?}");
+    assert!(!terminal.contains("MIDDLE-CONTEXT"), "{terminal:?}");
+    assert!(
+        root < terminal
+            .find("Please type another output file name")
+            .expect("replacement prompt"),
         "{terminal:?}"
     );
 }

@@ -89,11 +89,10 @@ impl InputState {
                 .collect()
         }
 
-        let max_token_levels = stores
+        let max_intermediate_levels = stores
             .int_param(tex_state::env::banks::IntParam::new(54))
             .max(0) as usize;
-        let mut shown = 0usize;
-        let mut output = String::new();
+        let mut contexts = Vec::new();
         for level in self.levels.iter().rev() {
             match level {
                 InputLevel::Source(source) => {
@@ -111,14 +110,13 @@ impl InputState {
                     ) else {
                         continue;
                     };
-                    output.push_str(&clipped(
+                    contexts.push(clipped(
                         &format!("l.{} ", line.physical.number()),
                         &String::from_utf8_lossy(&bytes[start..cursor]),
                         &String::from_utf8_lossy(&bytes[cursor..end]),
                     ));
-                    break;
                 }
-                InputLevel::Tokens(tokens) if shown < max_token_levels => {
+                InputLevel::Tokens(tokens) => {
                     let label = match tokens.trace {
                         ReplayTrace::MacroParameter { .. } => "<argument> ",
                         ReplayTrace::MacroReplacement => "<macro> ",
@@ -187,13 +185,26 @@ impl InputState {
                             )
                         }
                     };
-                    output.push_str(&clipped(label, &before, &after));
-                    shown += 1;
+                    contexts.push(clipped(label, &before, &after));
                 }
-                InputLevel::Tokens(_) => {}
             }
         }
-        output
+        match contexts.as_slice() {
+            [] => String::new(),
+            [only] => only.clone(),
+            [current, rest @ ..] => {
+                let (bottom, intermediate) = rest.split_last().expect("rest is nonempty");
+                let mut output = current.clone();
+                for context in intermediate.iter().take(max_intermediate_levels) {
+                    output.push_str(context);
+                }
+                if intermediate.len() > max_intermediate_levels {
+                    output.push_str("\n...");
+                }
+                output.push_str(bottom);
+                output
+            }
+        }
     }
 
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.

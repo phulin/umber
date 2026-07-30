@@ -240,6 +240,61 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Exercises authoritative finalization retry context.
+fn finalization_retry_context_traverses_nested_sources_with_limit() {
+    let temp = tempfile::Builder::new()
+        .prefix("openout-context.")
+        .tempdir_in(".")
+        .expect("temporary output root");
+    let failed = Path::new(temp.path().file_name().expect("relative temporary name"));
+    let root = "\\errorcontextlines=0 \\input middle ROOT-CONTEXT\\end";
+    let leaf = format!(
+        "\\setbox0=\\hbox{{\\openout2={} }}\\shipout\\copy0 LEAF-CONTEXT",
+        failed.display()
+    );
+    let mut session = session(root);
+    session
+        .add_user_file("middle.tex", br"\input leaf MIDDLE-CONTEXT".to_vec())
+        .expect("middle input");
+    session
+        .add_user_file("leaf.tex", leaf.into_bytes())
+        .expect("leaf input");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let mut finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    finalization
+        .stores
+        .world_mut()
+        .retarget_output_backend(&World::real_with_artifact_dir(
+            temp.path().join("artifacts"),
+        ))
+        .expect("real finalization backend");
+    let plan =
+        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
+            .expect("empty driver plan")
+            .with_prepared_pages(finalization.prepared_pages);
+    let crate::FinalizationCommit::Retry { error, .. } = plan
+        .commit_effects_retryable(&mut finalization.stores)
+        .expect("retry-safe open failure")
+    else {
+        panic!("directory open must retain finalization");
+    };
+    let context = error
+        .stream_open_unavailable()
+        .expect("typed unavailable open")
+        .context();
+    let leaf = context.find("LEAF-CONTEXT").expect("current nested source");
+    let omitted = context[leaf..].find("\n...").expect("omission marker") + leaf;
+    let root = context.find("ROOT-CONTEXT").expect("bottom root source");
+    assert!(leaf < omitted && omitted < root, "{context:?}");
+    assert!(!context.contains("MIDDLE-CONTEXT"), "{context:?}");
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // Exercises ordered real-backend occurrence identity.
 fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     let temp = tempfile::Builder::new()

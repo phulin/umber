@@ -850,8 +850,7 @@ pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -
     let context_lines = stores
         .int_param(tex_state::env::banks::IntParam::new(54))
         .max(0) as usize;
-    let mut shown_token_levels = 0usize;
-    let mut output = String::new();
+    let mut contexts = Vec::new();
     for frame in input.frames().iter().rev() {
         match frame {
             InputFrameSummary::Condition { .. } => {}
@@ -860,31 +859,29 @@ pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -
                 replay_kind,
                 index,
                 ..
-            } if shown_token_levels < context_lines => {
+            } => {
                 let tokens = stores.tokens(*token_list);
                 let split = (*index).min(tokens.len());
-                output.push_str(&clipped(
+                contexts.push(clipped(
                     label(*replay_kind),
                     &shown_tokens(stores, &tokens[..split]),
                     &shown_tokens(stores, &tokens[split..]),
                 ));
-                shown_token_levels += 1;
             }
             InputFrameSummary::TransientTokenList {
                 tokens,
                 replay_kind,
                 ..
-            } if shown_token_levels < context_lines => {
+            } => {
                 let tokens = tokens
                     .iter()
                     .map(|word| word.semantic_token())
                     .collect::<Vec<_>>();
-                output.push_str(&clipped(
+                contexts.push(clipped(
                     label(*replay_kind),
                     "",
                     &shown_tokens(stores, &tokens),
                 ));
-                shown_token_levels += 1;
             }
             InputFrameSummary::Source { source, .. } => {
                 let line = source.normalized_line().trim_end_matches('\r');
@@ -894,17 +891,30 @@ pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -
                     .find(|offset| line.is_char_boundary(*offset))
                     .unwrap_or(0);
                 let (before, after) = line.split_at(split);
-                output.push_str(&clipped(
+                contexts.push(clipped(
                     &format!("l.{} ", source.line_number()),
                     before,
                     after,
                 ));
-                break;
             }
-            InputFrameSummary::TokenList { .. } | InputFrameSummary::TransientTokenList { .. } => {}
         }
     }
-    output
+    match contexts.as_slice() {
+        [] => String::new(),
+        [only] => only.clone(),
+        [current, rest @ ..] => {
+            let (bottom, intermediate) = rest.split_last().expect("rest is nonempty");
+            let mut output = current.clone();
+            for context in intermediate.iter().take(context_lines) {
+                output.push_str(context);
+            }
+            if intermediate.len() > context_lines {
+                output.push_str("\n...");
+            }
+            output.push_str(bottom);
+            output
+        }
+    }
 }
 
 fn diagnostic_print_column(stores: &Universe) -> usize {
