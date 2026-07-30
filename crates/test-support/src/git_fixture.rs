@@ -124,12 +124,9 @@ impl ClosedCase {
             self.payloads.contains(name),
             "undeclared closed fixture payload: {name}"
         );
-        let current = Self::discover_inner(
-            &self.repository,
-            &self.case_relative,
-            self.has_inventory,
-        )
-        .context("revalidate closed fixture before payload access")?;
+        let current =
+            Self::discover_inner(&self.repository, &self.case_relative, self.has_inventory)
+                .context("revalidate closed fixture before payload access")?;
         ensure!(
             current.root == self.root && current.payloads == self.payloads,
             "closed fixture authority changed after discovery"
