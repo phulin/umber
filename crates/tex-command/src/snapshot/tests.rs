@@ -52,6 +52,7 @@ fn populated_quiescent_state() -> CommandState {
     state.input.next_source_identity = 13;
     state.parameters.activations.push(MacroActivation {
         identity: MacroActivationId(17),
+        name: tex_state::interner::Symbol::testing_new(23),
         definition: tex_state::ids::MacroDefinitionId::testing_new(19),
         arguments: MacroArguments {
             buffer: SharedTokenBuffer::default(),

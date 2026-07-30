@@ -40,6 +40,7 @@ fn push_activation(
     let identity = MacroActivationId(identity);
     state.parameters.activations.push(MacroActivation {
         identity,
+        name: tex_state::interner::Symbol::testing_new(1),
         definition: MacroDefinitionId::testing_new(
             u32::try_from(identity.0 + 100).expect("test definition identity fits"),
         ),

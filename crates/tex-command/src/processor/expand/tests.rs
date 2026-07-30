@@ -2384,6 +2384,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
     let mut universe = Universe::new_with_plain_catcodes();
     let empty = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    let target = universe.intern("nested").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let outer_invocation;
     let inner_invocation;
@@ -2395,6 +2396,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             CommandHostContext::new(&mut capabilities),
         );
         processor.push_macro_activation(
+            target,
             definition,
             OriginId::UNKNOWN,
             MacroArguments::default(),
@@ -2409,6 +2411,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .expect("outer activation")
             .invocation;
         processor.push_macro_activation(
+            target,
             definition,
             OriginId::UNKNOWN,
             MacroArguments::default(),
@@ -2459,6 +2462,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         ReplayTrace::Inserted,
     );
     command.push_macro_activation(
+        target,
         definition,
         MacroArguments::default(),
         OriginId::UNKNOWN,
@@ -2466,6 +2470,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         OriginListId::EMPTY,
     );
     command.push_macro_activation(
+        target,
         definition,
         MacroArguments::default(),
         OriginId::UNKNOWN,

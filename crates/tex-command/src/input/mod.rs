@@ -59,9 +59,13 @@ impl InputState {
     /// [`tex_state::print::render_error_context`]; this is §312--§314's
     /// projection of the command core's levels onto it. Every other input
     /// stack in the engine projects onto the same renderer.
-    pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+    pub(crate) fn output_open_context(
+        &self,
+        stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
+    ) -> String {
         tex_state::print::render_error_context(
-            &self.error_context_levels(stores),
+            &self.error_context_levels(stores, parameters),
             stores.error_context_widths(),
             stores.int_param(tex_state::env::banks::IntParam::new(54)),
         )
@@ -75,6 +79,7 @@ impl InputState {
     fn error_context_levels(
         &self,
         stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
         for (index, level) in self.levels.iter().enumerate().rev() {
@@ -97,7 +102,9 @@ impl InputState {
                     }
                 }
                 InputLevel::Tokens(tokens) => {
-                    if let Some(rendered) = Self::token_context_level(stores, tokens, current) {
+                    if let Some(rendered) =
+                        Self::token_context_level(stores, tokens, current, parameters)
+                    {
                         levels.push(rendered);
                     }
                 }
@@ -148,6 +155,7 @@ impl InputState {
         stores: &tex_state::CommandContext<'_>,
         tokens: &TokenCursor,
         current: bool,
+        parameters: &crate::macro_call::ParameterState,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         fn token_text(
             stores: &tex_state::CommandContext<'_>,
@@ -208,11 +216,45 @@ impl InputState {
                 )
             }
         };
+        // §314's macro arm is `print_ln; print_cs(name)` -- the control
+        // sequence being expanded, not a bracketed type name -- and §319
+        // pseudoprints `link(start)`, the whole macro text, so the parameter
+        // text and the `->` that §294 renders for `end_match` precede the
+        // replacement the cursor is inside.
+        if let ReplayTrace::MacroReplacement = tokens.trace {
+            let TokenBehavior::MacroBody(activation) = tokens.behavior else {
+                return None;
+            };
+            let activation = parameters
+                .activations
+                .iter()
+                .find(|candidate| candidate.identity == activation)?;
+            let label = crate::processor::expand::token_list_token_text(
+                stores,
+                tex_state::token::Token::Cs(activation.name),
+            );
+            let parameter_text = token_text(
+                stores,
+                stores
+                    .tokens(
+                        stores
+                            .macro_definition(activation.definition)
+                            .parameter_text(),
+                    )
+                    .iter()
+                    .copied(),
+            );
+            return Some(tex_state::print::ErrorContextLevel::new(
+                label,
+                format!("{parameter_text}->{before}"),
+                after,
+            ));
+        }
         // §314's `loc=null` test, which only the `backed_up` family consults.
         let exhausted = after.is_empty();
         let label = match tokens.trace {
             ReplayTrace::MacroParameter { .. } => "<argument> ",
-            ReplayTrace::MacroReplacement => "<macro> ",
+            ReplayTrace::MacroReplacement => unreachable!("handled above"),
             ReplayTrace::BackedUp => {
                 // §312 omits a `backed_up` list that has already been read
                 // through, unless it is the level the error happened on.

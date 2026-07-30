@@ -1147,6 +1147,7 @@ impl CommandProcessor<'_> {
     #[allow(dead_code)] // consumed by the ordered scalar macro matcher issue
     pub(crate) fn push_macro_activation(
         &mut self,
+        name: tex_state::interner::Symbol,
         definition: MacroDefinitionId,
         call_site: OriginId,
         arguments: MacroArguments,
@@ -1162,6 +1163,7 @@ impl CommandProcessor<'_> {
             self.state
                 .macro_invocation_origin(definition, call_site, definition_origin, parent);
         self.command.push_macro_activation(
+            name,
             definition,
             arguments,
             invocation,

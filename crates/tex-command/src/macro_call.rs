@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use tex_state::ids::MacroDefinitionId;
+use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -36,6 +37,9 @@ pub(crate) struct MacroActivationId(pub(crate) u64);
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroActivation {
     pub(crate) identity: MacroActivationId,
+    /// TeX82 §389's `warning_index`: the control sequence being expanded.
+    /// §314 prints it as this level's context descriptor.
+    pub(crate) name: Symbol,
     pub(crate) definition: MacroDefinitionId,
     pub(crate) arguments: MacroArguments,
     pub(crate) invocation: OriginId,
@@ -164,6 +168,7 @@ impl ParameterState {
     /// `TokenBehavior::MacroBody`, making retirement an atomic ownership pair.
     pub(crate) fn push_activation(
         &mut self,
+        name: Symbol,
         definition: MacroDefinitionId,
         arguments: MacroArguments,
         invocation: OriginId,
@@ -172,6 +177,7 @@ impl ParameterState {
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
         self.activations.push(MacroActivation {
             identity,
+            name,
             definition,
             arguments,
             invocation,
@@ -266,6 +272,7 @@ impl CommandProcessor<'_> {
         self.conserve_input_stack()?;
         let provenance = self.state.macro_definition_provenance(definition);
         let _level = self.push_macro_activation(
+            macro_name,
             definition,
             call.spelling().origin(),
             arguments.clone(),

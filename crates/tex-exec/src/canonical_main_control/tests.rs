@@ -3930,6 +3930,26 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
     assert!(stores.input_stream_eof(tex_state::StreamSlot::new(3)));
 }
 
+/// TeX82 §314's macro arm is `print_ln; print_cs(name)`, and §319
+/// pseudoprints `link(start)` -- the whole macro text -- so a macro level's
+/// context line is `\\a #1->body`, naming the control sequence being expanded
+/// and showing its parameter text ahead of the `->` §294 renders for
+/// `end_match`.
+#[test]
+fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param(tex_state::env::banks::IntParam::new(54), 5);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\def\a#1{ x #1 \undefinedthing y}\a{Q}\end");
+    run_to_end(&mut control, &mut stores);
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("\\a #1-> x #1 \\undefinedthing \n"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("<macro>"), "{terminal}");
+}
+
 /// TeX82 §1068's `handle_right_brace` sends `semi_simple_group`,
 /// `math_shift_group` and `math_left_group` to §1069's `extra_right_brace`,
 /// which names the opener the brace was standing in for. Only the remaining

@@ -110,6 +110,7 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         .expect("argument completes");
     let mut state = CommandState::default();
     let body = state.push_macro_activation(
+        tex_state::interner::Symbol::testing_new(1),
         MacroDefinitionId::testing_new(4),
         builder.finish(),
         OriginId::UNKNOWN,
@@ -139,12 +140,14 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
 fn activation_parent_tracks_the_live_nested_frame() {
     let mut parameters = ParameterState::default();
     let first = parameters.push_activation(
+        tex_state::interner::Symbol::testing_new(1),
         MacroDefinitionId::testing_new(1),
         MacroArgumentBuilder::default().finish(),
         OriginId::UNKNOWN,
     );
     assert_eq!(first.0, 0);
     parameters.push_activation(
+        tex_state::interner::Symbol::testing_new(2),
         MacroDefinitionId::testing_new(2),
         MacroArgumentBuilder::default().finish(),
         OriginId::UNKNOWN,

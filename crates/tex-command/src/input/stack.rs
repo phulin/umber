@@ -123,6 +123,7 @@ impl CommandState {
     /// owner before this level can become visible to delivery.
     pub(crate) fn push_macro_activation(
         &mut self,
+        name: tex_state::interner::Symbol,
         definition: MacroDefinitionId,
         arguments: MacroArguments,
         invocation: OriginId,
@@ -131,7 +132,7 @@ impl CommandState {
     ) -> InputLevelId {
         let activation = self
             .parameters
-            .push_activation(definition, arguments, invocation);
+            .push_activation(name, definition, arguments, invocation);
         self.push_token_level(
             TokenPayload::Stored {
                 tokens: replacement_tokens,

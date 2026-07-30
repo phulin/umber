@@ -184,7 +184,7 @@ impl CommandState {
     /// releases the command processor borrow.
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
-        self.input.output_open_context(stores)
+        self.input.output_open_context(stores, &self.parameters)
     }
 
     /// Schedules one completed `\\discretionary` part for canonical replay.
