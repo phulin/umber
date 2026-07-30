@@ -66,7 +66,13 @@ fn stage_form_inner(
     let overlay = normalize_page(
         children,
         vertical,
-        (Vec::new(), String::new()),
+        (
+            PendingPageEffects {
+                effects: Vec::new(),
+                open_out_occurrences: Vec::new(),
+            },
+            String::new(),
+        ),
         stores,
         expansion,
         &mut legacy_write_expander,
@@ -144,7 +150,7 @@ pub(super) fn stage_shipout(
     execution: &mut crate::ExecutionContext<'_>,
     write_expander: &mut WriteExpander<'_>,
 ) -> Result<StagedShipout, ExecError> {
-    let pending_effects = pending_page_effects(stores.world().effect_records());
+    let pending_effects = pending_page_effects(stores.world());
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
     if let Some(diagnostic) = diagnostic {

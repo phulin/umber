@@ -473,7 +473,9 @@ impl VerifiedArtifact {
 
 impl PartialEq for VerifiedArtifact {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.bytes == other.bytes
+        self.hash == other.hash
+            && self.bytes == other.bytes
+            && self.open_out_occurrences == other.open_out_occurrences
     }
 }
 
@@ -493,6 +495,40 @@ impl CommittedArtifact {
     #[must_use]
     pub fn open_out_occurrences(&self) -> &[(usize, EffectPos)] {
         &self.open_out_occurrences
+    }
+
+    /// Rebases occurrences owned by an adopted effect suffix.
+    #[doc(hidden)]
+    pub fn rebase_open_out_suffix(
+        &mut self,
+        old_prefix: usize,
+        new_prefix: usize,
+    ) -> Result<(), WorldError> {
+        let old_prefix = u64::try_from(old_prefix).map_err(|_| {
+            WorldError::new(
+                "rebase artifact effects",
+                None,
+                "old effect prefix overflow",
+            )
+        })?;
+        let new_prefix = u64::try_from(new_prefix).map_err(|_| {
+            WorldError::new(
+                "rebase artifact effects",
+                None,
+                "new effect prefix overflow",
+            )
+        })?;
+        for (_, position) in Arc::make_mut(&mut self.open_out_occurrences) {
+            if position.raw() <= old_prefix {
+                continue;
+            }
+            let suffix_offset = position.raw() - old_prefix;
+            *position =
+                EffectPos::from_raw(new_prefix.checked_add(suffix_offset).ok_or_else(|| {
+                    WorldError::new("rebase artifact effects", None, "effect position overflow")
+                })?);
+        }
+        Ok(())
     }
 
     /// Replaces prepared bytes while retaining the diagnostic provenance sidecar.
@@ -684,7 +720,9 @@ fn provenance_recipe_bytes(recipe: &crate::ParagraphProvenanceRecipe) -> usize {
 
 impl PartialEq for CommittedArtifact {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.bytes == other.bytes
+        self.hash == other.hash
+            && self.bytes == other.bytes
+            && self.open_out_occurrences == other.open_out_occurrences
     }
 }
 

@@ -33,13 +33,17 @@ struct NormalizeExpansion<'a, 'b> {
 pub(super) fn normalize_page(
     root: NodeListId,
     root_vertical: bool,
-    effects_and_context: (Vec<PageEffect>, String),
+    effects_and_context: (PendingPageEffects, String),
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     write_expander: &mut super::WriteExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
-    let (effects, output_open_context) = effects_and_context;
+    let (pending, output_open_context) = effects_and_context;
+    let PendingPageEffects {
+        effects,
+        open_out_occurrences,
+    } = pending;
     let mut effects = effects;
     let snap_reference = if color_target == tex_state::PdfColorStackTarget::Page {
         stores.pdf_snap_reference()
@@ -70,22 +74,6 @@ pub(super) fn normalize_page(
         }
     }
     let pending_effect_count = effects.len();
-    let open_out_occurrences = stores
-        .world()
-        .effect_records()
-        .iter()
-        .enumerate()
-        .filter(|(_, effect)| matches!(effect, EffectRecord::StreamOpen { .. }))
-        .map(|(index, _)| {
-            (
-                index,
-                stores
-                    .world()
-                    .effect_position(index)
-                    .expect("enumerated retained effect has a position"),
-            )
-        })
-        .collect();
     let mut overlay = PageOverlay {
         pending_effect_count,
         effects,

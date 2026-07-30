@@ -515,6 +515,99 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Exercises a real finalization failure after reuse.
+fn incremental_effect_prefix_shift_rebases_reused_openout_identity() {
+    let temp = tempfile::Builder::new()
+        .prefix("openout-splice.")
+        .tempdir_in(".")
+        .expect("temporary output root");
+    let target =
+        Path::new(temp.path().file_name().expect("relative temporary name")).join("blocked.out");
+    std::fs::create_dir(&target).expect("unavailable output target");
+    let mut original = "\\message{prefix}".to_owned();
+    for page in 0..20 {
+        original.push_str(&format!("\\shipout\\hbox{{stable-{page}}}"));
+    }
+    original.push_str(&format!(
+        "\\shipout\\hbox{{B\\openout2={0} \\openout2={0}}}\\end",
+        target.display()
+    ));
+    let mut session = session(&original);
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    apply_text_replacement(
+        &mut session,
+        2,
+        &original,
+        "\\message{prefix}",
+        "\\message{prefix}\\message{inserted}",
+    );
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+
+    let mut finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    let hashes_before = finalization
+        .prepared_pages
+        .as_ref()
+        .expect("prepared page suffix")
+        .artifacts()
+        .iter()
+        .map(tex_state::CommittedArtifact::hash)
+        .collect::<Vec<_>>();
+    finalization
+        .stores
+        .world_mut()
+        .retarget_output_backend(&World::real_with_artifact_dir(
+            temp.path().join("artifacts"),
+        ))
+        .expect("real finalization backend");
+    let plan =
+        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
+            .expect("empty driver plan")
+            .with_prepared_pages(finalization.prepared_pages);
+    let crate::FinalizationCommit::Retry { mut plan, error } = plan
+        .commit_effects_retryable(&mut finalization.stores)
+        .expect("unavailable adopted OpenOut suspends")
+    else {
+        panic!("unavailable adopted OpenOut must retry");
+    };
+    let failed = error
+        .stream_open_unavailable()
+        .expect("typed exact failure")
+        .clone();
+    let effects_before = finalization.stores.world().effect_records().to_vec();
+    let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
+        .join("replacement.out");
+    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+        .expect("rebased exact occurrence retargets");
+    assert_eq!(
+        finalization.stores.world().effect_records().len(),
+        effects_before.len(),
+        "retry retarget preserves effect history length"
+    );
+    assert_ne!(
+        plan.prepared_pages
+            .as_ref()
+            .expect("prepared suffix retained")
+            .artifacts()
+            .iter()
+            .map(tex_state::CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        hashes_before,
+        "only successful retarget changes prepared artifact identity"
+    );
+    plan.commit_effects(&mut finalization.stores)
+        .expect("replacement finalization succeeds");
+}
+
+#[test]
 fn finalization_rejects_a_session_without_accepted_output() {
     let error = session("\\end")
         .into_accepted_finalization()

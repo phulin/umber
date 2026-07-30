@@ -1325,6 +1325,12 @@ impl Session {
                 let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
                 joined_artifacts.extend_from_slice(&artifacts[..scratch_artifact_count]);
                 joined_artifacts.extend_from_slice(&setup.old_artifacts[old_prefix..]);
+                rebase_and_validate_adopted_artifacts(
+                    &mut joined_artifacts[anchor.artifact_prefix + scratch_artifact_count..],
+                    old_effect_prefix,
+                    new_effect_prefix,
+                    &joined_effects,
+                )?;
                 let mut joined_pages = pages_through_stop;
                 joined_pages.extend_from_slice(&setup.old_pages[old_prefix..]);
                 let mut history = Vec::with_capacity(
@@ -1954,6 +1960,12 @@ impl Session {
                 let mut artifacts = old_artifacts[..restart_artifact_prefix].to_vec();
                 artifacts.extend_from_slice(&advance.artifacts[..scratch_artifact_count]);
                 artifacts.extend_from_slice(&old_artifacts[old_prefix..]);
+                rebase_and_validate_adopted_artifacts(
+                    &mut artifacts[restart_artifact_prefix + scratch_artifact_count..],
+                    old_effect_prefix,
+                    new_effect_prefix,
+                    &effects,
+                )?;
                 let mut pages = advance.pages_through_stop;
                 pages.extend_from_slice(&old_pages[old_prefix..]);
                 let mut history = Vec::with_capacity(
@@ -3150,8 +3162,50 @@ fn paragraph_replay_delta(
     }
 }
 
+fn rebase_and_validate_adopted_artifacts(
+    artifacts: &mut [CommittedArtifact],
+    old_effect_prefix: usize,
+    new_effect_prefix: usize,
+    effects: &[EffectRecord],
+) -> Result<(), SessionError> {
+    for artifact in artifacts {
+        artifact.rebase_open_out_suffix(old_effect_prefix, new_effect_prefix)?;
+        let page = tex_out::PageArtifact::from_bytes(artifact.bytes())
+            .map_err(|error| SessionError::InvalidArtifactEffectSidecar(error.to_string()))?;
+        for &(page_index, position) in artifact.open_out_occurrences() {
+            let Some(tex_out::PageEffect::OpenOut { stream, path }) = page.effects.get(page_index)
+            else {
+                return Err(SessionError::InvalidArtifactEffectSidecar(
+                    "OpenOut sidecar does not address an OpenOut page effect".to_owned(),
+                ));
+            };
+            let Some(effect_index) = position
+                .raw()
+                .checked_sub(1)
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                return Err(SessionError::InvalidArtifactEffectSidecar(
+                    "OpenOut sidecar has an invalid absolute effect position".to_owned(),
+                ));
+            };
+            if !matches!(
+                effects.get(effect_index),
+                Some(EffectRecord::StreamOpen { slot, target })
+                    if slot.raw() == *stream
+                        && target.path().to_string_lossy().as_ref() == path
+            ) {
+                return Err(SessionError::InvalidArtifactEffectSidecar(
+                    "OpenOut sidecar diverges from the spliced effect history".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum SessionError {
+    InvalidArtifactEffectSidecar(String),
     OutputIdentity(getrandom::Error),
     StaleRevision {
         expected: RevisionId,
@@ -3176,6 +3230,12 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidArtifactEffectSidecar(message) => {
+                write!(
+                    f,
+                    "incremental artifact effect sidecar is invalid: {message}"
+                )
+            }
             Self::OutputIdentity(error) => {
                 write!(f, "could not create rendered-output identity: {error}")
             }

@@ -1,7 +1,32 @@
 use super::*;
 
-pub(super) fn pending_page_effects(records: &[EffectRecord]) -> Vec<PageEffect> {
-    records.iter().filter_map(lower_effect_record).collect()
+pub(super) struct PendingPageEffects {
+    pub(super) effects: Vec<PageEffect>,
+    pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
+}
+
+pub(super) fn pending_page_effects(world: &tex_state::World) -> PendingPageEffects {
+    let mut effects = Vec::new();
+    let mut open_out_occurrences = Vec::new();
+    for (world_index, record) in world.effect_records().iter().enumerate() {
+        let Some(effect) = lower_effect_record(record) else {
+            continue;
+        };
+        let page_index = effects.len();
+        if matches!(effect, PageEffect::OpenOut { .. }) {
+            open_out_occurrences.push((
+                page_index,
+                world
+                    .effect_position(world_index)
+                    .expect("enumerated retained effect has a position"),
+            ));
+        }
+        effects.push(effect);
+    }
+    PendingPageEffects {
+        effects,
+        open_out_occurrences,
+    }
 }
 
 pub(super) fn lower_effect_record(record: &EffectRecord) -> Option<PageEffect> {
