@@ -164,8 +164,7 @@ fn run() -> Result<String, String> {
             .join(domain);
         for (case_id, plan) in cases_by_id {
             let fixture_dir = domain_dir.join(case_id);
-            write_channel_files(&fixture_dir, plan)?;
-            rewrite_manifest(&fixture_dir.join("manifest.json"), cases_by_id)?;
+            rewrite_fixture_atomically(&fixture_dir, plan, cases_by_id)?;
             rewritten += 1;
         }
     }
@@ -437,6 +436,69 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
     Ok(())
 }
 
+/// Prepares the complete regenerated fixture beside the live directory, then
+/// swaps it into place. A failed derivation therefore cannot leave a fixture
+/// with new channel bytes and old metadata (or the reverse).
+fn rewrite_fixture_atomically(
+    fixture_dir: &Path,
+    plan: &CasePlan,
+    cases: &BTreeMap<String, CasePlan>,
+) -> Result<(), String> {
+    let parent = fixture_dir
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", fixture_dir.display()))?;
+    let name = fixture_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("non-UTF-8 fixture directory {}", fixture_dir.display()))?;
+    let staging = parent.join(format!(".{name}.regen-staging"));
+    let backup = parent.join(format!(".{name}.regen-backup"));
+    if staging.exists() || backup.exists() {
+        return Err(format!(
+            "refusing to overwrite interrupted regeneration state {} or {}",
+            staging.display(),
+            backup.display()
+        ));
+    }
+    fs::create_dir(&staging).map_err(|error| format!("{}: {error}", staging.display()))?;
+    let prepared = (|| {
+        for entry in fs::read_dir(fixture_dir)
+            .map_err(|error| format!("{}: {error}", fixture_dir.display()))?
+        {
+            let entry = entry.map_err(|error| format!("{}: {error}", fixture_dir.display()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+            if !file_type.is_file() {
+                return Err(format!(
+                    "fixture entry {} is not a regular file",
+                    entry.path().display()
+                ));
+            }
+            fs::copy(entry.path(), staging.join(entry.file_name()))
+                .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+        }
+        write_channel_files(&staging, plan)?;
+        rewrite_manifest(&staging.join("manifest.json"), cases)
+    })();
+    if let Err(error) = prepared {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+
+    fs::rename(fixture_dir, &backup)
+        .map_err(|error| format!("{} -> {}: {error}", fixture_dir.display(), backup.display()))?;
+    if let Err(error) = fs::rename(&staging, fixture_dir) {
+        let _ = fs::rename(&backup, fixture_dir);
+        return Err(format!(
+            "{} -> {}: {error}",
+            staging.display(),
+            fixture_dir.display()
+        ));
+    }
+    fs::remove_dir_all(&backup).map_err(|error| format!("{}: {error}", backup.display()))
+}
+
 /// Renders a derived `expected` array close to the shape `dprint` produces,
 /// one observation per line, exactly like every hand-authored one already
 /// committed; `dprint fmt` (part of `scripts/regen-fixtures.sh`'s own
@@ -569,11 +631,11 @@ fn rewrite_manifest(path: &Path, cases: &BTreeMap<String, CasePlan>) -> Result<(
         ));
     }
 
-    if applied != cases.len() {
+    if applied != 1 {
         return Err(format!(
-            "{}: rewrote {applied} of {} cases; a case's \"expectation\" anchor is missing",
-            path.display(),
-            cases.len()
+            "{}: rewrote {applied} cases, expected exactly one local fixture case with an \
+             \"expectation\" anchor",
+            path.display()
         ));
     }
     fs::write(path, output).map_err(|error| format!("{}: {error}", path.display()))
@@ -586,6 +648,60 @@ fn json_string(value: &str) -> String {
 /// Net `{`/`}` depth a line contributes, ignoring braces inside JSON strings.
 fn braces(line: &str) -> i32 {
     net_delimiter_depth(line, '{', '}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regeneration_replaces_one_complete_fixture_directory() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let fixture = temporary.path().join("case-a");
+        fs::create_dir(&fixture).expect("fixture directory");
+        fs::write(fixture.join("case-a.tex"), b"\\end\n").expect("source");
+        fs::write(
+            fixture.join("manifest.json"),
+            concat!(
+                "{\n",
+                "  \"cases\": [\n",
+                "    {\n",
+                "      \"id\": \"case-a\",\n",
+                "      \"expected\": [\n",
+                "        \"old\"\n",
+                "      ],\n",
+                "      \"channels\": {\n",
+                "        \"events\": 1\n",
+                "      },\n",
+                "      \"expectation\": { \"kind\": \"pass\" }\n",
+                "    }\n",
+                "  ]\n",
+                "}\n",
+            ),
+        )
+        .expect("manifest");
+        let plan = CasePlan {
+            expected: Some(vec!["new".to_owned()]),
+            channels: ChannelsPlan {
+                events: 2,
+                status: "clean".to_owned(),
+                channels: std::array::from_fn(|_| ChannelPlan::Empty),
+            },
+        };
+        let plans = BTreeMap::from([("case-a".to_owned(), plan)]);
+        rewrite_fixture_atomically(&fixture, plans.get("case-a").expect("plan"), &plans)
+            .expect("atomic rewrite");
+
+        assert_eq!(
+            fs::read(fixture.join("case-a.tex")).expect("preserved source"),
+            b"\\end\n"
+        );
+        let manifest = fs::read_to_string(fixture.join("manifest.json")).expect("manifest");
+        assert!(manifest.contains("\"new\""));
+        assert!(manifest.contains("\"events\": 2"));
+        assert!(!temporary.path().join(".case-a.regen-staging").exists());
+        assert!(!temporary.path().join(".case-a.regen-backup").exists());
+    }
 }
 
 /// Net `[`/`]` depth a line contributes, ignoring brackets inside JSON
