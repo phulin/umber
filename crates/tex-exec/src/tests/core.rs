@@ -3372,6 +3372,30 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 }
 
 #[test]
+fn paragraph_indent_is_a_null_box_without_a_pack_transition() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_dimen_param(
+        tex_state::env::banks::DimenParam::PAR_INDENT,
+        Scaled::from_raw(2 * Scaled::UNITY),
+    );
+    stores.enable_geometry_observation();
+
+    let Node::HList(indent) = crate::assignments::make_indent_box(&mut stores) else {
+        panic!("paragraph indent should be an hlist");
+    };
+
+    assert_eq!(indent.width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(indent.height.raw(), 0);
+    assert_eq!(indent.depth.raw(), 0);
+    assert!(stores.nodes(indent.children).is_empty());
+    assert_eq!(
+        stores.geometry_observation_len(),
+        0,
+        "TeX82 §1090 new_null_box is not §649 hpack"
+    );
+}
+
+#[test]
 fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
     let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);

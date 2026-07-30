@@ -1,9 +1,10 @@
 use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::font::PdfFontCode;
+use tex_state::glue::Order;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
-use tex_state::scaled::Scaled;
+use tex_state::node::{BoxNode, BoxNodeFields, Direction, GlueKind, KernKind, Node, Sign};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{ContentHash, ParagraphShapeLine, PenaltyArrayKind, PureMemoKey, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
@@ -226,12 +227,20 @@ fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), E
 }
 
 pub(crate) fn make_indent_box(stores: &mut Universe) -> Node {
-    let empty = stores.freeze_node_list(&[]);
-    let par_indent = stores.dimen_param(DimenParam::PAR_INDENT);
-    let mut node = hpack_with_overfull_rule(stores, empty, PackSpec::Exactly(par_indent));
-    node.height = Scaled::from_raw(0);
-    node.depth = Scaled::from_raw(0);
-    Node::HList(node)
+    // TeX82 §1090 uses `new_null_box`, then assigns only its width. This is
+    // an ordinary zeroed box constructor, not §649 `hpack`; in particular it
+    // must not publish a packing geometry transition.
+    Node::HList(BoxNode::new(BoxNodeFields {
+        width: stores.dimen_param(DimenParam::PAR_INDENT),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: stores.freeze_node_list(&[]),
+    }))
 }
 
 pub(crate) fn end_paragraph_with_fuel(
