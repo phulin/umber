@@ -105,27 +105,38 @@ impl PageMark {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MarkClassState {
     marks: [TokenListId; 5],
+    present: u8,
 }
 
 impl Default for MarkClassState {
     fn default() -> Self {
         Self {
             marks: [TokenListId::EMPTY; 5],
+            present: 0,
         }
     }
 }
 
 impl MarkClassState {
-    fn get(self, mark: PageMark) -> TokenListId {
-        self.marks[usize::from(mark.index())]
+    fn get(self, mark: PageMark) -> Option<TokenListId> {
+        let index = mark.index();
+        (self.present & (1 << index) != 0).then(|| self.marks[usize::from(index)])
     }
 
     fn set(&mut self, mark: PageMark, value: TokenListId) {
-        self.marks[usize::from(mark.index())] = value;
+        let index = mark.index();
+        self.marks[usize::from(index)] = value;
+        self.present |= 1 << index;
+    }
+
+    fn clear(&mut self, mark: PageMark) {
+        let index = mark.index();
+        self.marks[usize::from(index)] = TokenListId::EMPTY;
+        self.present &= !(1 << index);
     }
 
     fn is_empty(self) -> bool {
-        self.marks.iter().all(|mark| *mark == TokenListId::EMPTY)
+        self.present == 0
     }
 }
 
@@ -640,13 +651,19 @@ impl PageBuilderState {
     }
 
     pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        self.mark_class_value(mark, class)
+            .unwrap_or(TokenListId::EMPTY)
+    }
+
+    pub(crate) fn mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
         if class == 0 {
-            return self.mark(mark);
+            let value = self.mark(mark);
+            return (value != TokenListId::EMPTY).then_some(value);
         }
         self.mark_classes
             .get(&class)
             .copied()
-            .map_or(TokenListId::EMPTY, |marks| marks.get(mark))
+            .and_then(|marks| marks.get(mark))
     }
 
     pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
@@ -657,6 +674,23 @@ impl PageBuilderState {
         let classes = Arc::make_mut(&mut self.mark_classes);
         let mut marks = classes.get(&class).copied().unwrap_or_default();
         marks.set(mark, value);
+        if marks.is_empty() {
+            classes.remove(&class);
+        } else {
+            classes.insert(class, marks);
+        }
+    }
+
+    pub(crate) fn clear_mark_class(&mut self, mark: PageMark, class: u16) {
+        if class == 0 {
+            self.set_mark(mark, TokenListId::EMPTY);
+            return;
+        }
+        let classes = Arc::make_mut(&mut self.mark_classes);
+        let Some(mut marks) = classes.get(&class).copied() else {
+            return;
+        };
+        marks.clear(mark);
         if marks.is_empty() {
             classes.remove(&class);
         } else {

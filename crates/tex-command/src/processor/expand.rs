@@ -952,7 +952,10 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        self.push_mark_text(self.state.page_mark(page_mark(primitive)));
+        let tokens = self.state.page_mark(page_mark(primitive));
+        if tokens != TokenListId::EMPTY {
+            self.push_mark_text(tokens);
+        }
         Ok(())
     }
 
@@ -960,7 +963,12 @@ impl CommandProcessor<'_> {
         // e-TeX 2.6 `etex.ch` [26.1178] uses the same
         // `scan_register_num` as numbered marks and sparse registers.
         let class = self.scan_extended_register_index()?;
-        self.push_mark_text(self.state.page_mark_class(page_mark(primitive), class));
+        let tokens = self
+            .state
+            .page_mark_class_value(page_mark(primitive), class);
+        if let Some(tokens) = tokens {
+            self.push_mark_text(tokens);
+        }
         Ok(())
     }
 
@@ -970,9 +978,6 @@ impl CommandProcessor<'_> {
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
     fn push_mark_text(&mut self, tokens: TokenListId) {
-        if tokens == TokenListId::EMPTY {
-            return;
-        }
         let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens,

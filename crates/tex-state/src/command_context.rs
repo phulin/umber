@@ -496,6 +496,12 @@ impl CommandContext<'_> {
         self.universe.page_mark_class(mark, class)
     }
 
+    /// Distinguishes an absent sparse mark from a present empty token list.
+    #[must_use]
+    pub fn page_mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
+        self.universe.page_mark_class_value(mark, class)
+    }
+
     /// Reads a font's immutable external name for `\\fontname` and meaning.
     #[must_use]
     pub fn font_name(&self, font: FontId) -> String {

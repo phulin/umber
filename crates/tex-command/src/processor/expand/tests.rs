@@ -856,9 +856,11 @@ fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
 #[test]
 fn empty_mark_enquiries_match_fresh_and_loaded_etex_formats() {
     // TeX82 §386 and e-TeX 2.6 etex.ch [25.386] begin a mark-text token list
-    // only when the selected mark pointer is non-null. The class scan still
+    // whenever the selected mark pointer is non-null, including a pointer to
+    // an empty list. The absent class-four control still skips that level and
     // backs up its nonnumeric terminator through the ordinary §325 path.
     let mut fresh = Universe::new_with_plain_catcodes();
+    crate::primitives::install_tex82_expandable_primitives(&mut fresh);
     crate::primitives::install_etex_expandable_primitives(&mut fresh);
     let format = fresh.dump_format().expect("quiescent e-TeX format");
     let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
@@ -878,21 +880,42 @@ fn empty_mark_enquiries_match_fresh_and_loaded_etex_formats() {
         let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
+        // e-TeX's sparse-array pointer is non-null even when the referenced
+        // token list is empty. The class-four enquiry is the absent control.
+        universe.set_page_mark_class(PageMark::SplitFirst, 3, TokenListId::EMPTY);
+        assert_eq!(
+            universe.page_mark_class_value(PageMark::SplitFirst, 3),
+            Some(TokenListId::EMPTY)
+        );
         let output = {
             let mut processor =
                 processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
                     .with_observer(&mut recorder);
+            assert_eq!(
+                processor
+                    .state
+                    .page_mark_class_value(PageMark::SplitFirst, 3),
+                Some(TokenListId::EMPTY)
+            );
             rendered(&mut processor)
         };
 
         assert_eq!(output, "X ");
-        assert!(!recorder.0.iter().any(|event| matches!(
-            event,
-            CommandObservation::Input(crate::InputRecord {
-                reason: crate::InputReason::Mark,
-                ..
-            })
-        )));
+        assert_eq!(
+            recorder
+                .0
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    CommandObservation::Input(crate::InputRecord {
+                        transition: InputTransition::Push | InputTransition::Retire,
+                        reason: crate::InputReason::Mark,
+                        ..
+                    })
+                ))
+                .count(),
+            2
+        );
         assert!(recorder.0.iter().any(|event| matches!(
             event,
             CommandObservation::Input(crate::InputRecord {

@@ -173,16 +173,8 @@ fn clear_split_marks(stores: &mut Universe) {
     stores.set_page_mark(PageMark::SplitBot, tex_state::ids::TokenListId::EMPTY);
     let classes = stores.page_mark_classes().collect::<Vec<_>>();
     for class in classes {
-        stores.set_page_mark_class(
-            PageMark::SplitFirst,
-            class,
-            tex_state::ids::TokenListId::EMPTY,
-        );
-        stores.set_page_mark_class(
-            PageMark::SplitBot,
-            class,
-            tex_state::ids::TokenListId::EMPTY,
-        );
+        stores.clear_page_mark_class(PageMark::SplitFirst, class);
+        stores.clear_page_mark_class(PageMark::SplitBot, class);
     }
 }
 

@@ -5767,9 +5767,23 @@ impl Universe {
         self.page.mark_class(mark, class)
     }
 
+    #[must_use]
+    pub fn page_mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
+        self.page.mark_class_value(mark, class)
+    }
+
     pub fn set_page_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
         let _ = self.stores.tokens(value);
         self.page.set_mark_class(mark, class, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class,
+            });
+    }
+
+    pub fn clear_page_mark_class(&mut self, mark: PageMark, class: u16) {
+        self.page.clear_mark_class(mark, class);
         self.dependencies
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),

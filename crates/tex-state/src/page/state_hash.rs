@@ -281,6 +281,7 @@ impl PageBuilderState {
                 projection.usize(self.mark_classes.len());
                 for (&class, marks) in self.mark_classes.iter() {
                     projection.u16(class);
+                    projection.u8(marks.present);
                     for mark in marks.marks {
                         hash_tokens(mark, projection);
                     }
