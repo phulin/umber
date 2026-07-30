@@ -8,7 +8,7 @@ use tex_state::node::{BoxNodeFields, KernKind, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 /// Builds the `\hbox{\kern1pt}` box register from bd `umber2-alfh.6`'s
-/// reproduction (`tests/corpus/command-semantic/main-control/show-box.tex`):
+/// reproduction (`tests/corpus/command-semantic/main-control/show-box/show-box.tex`):
 /// `\setbox0=\hbox{\kern1pt}`.
 fn hbox_with_one_point_kern(stores: &mut Universe) -> NodeListId {
     let kern = Node::Kern {

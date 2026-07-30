@@ -162,7 +162,7 @@ cross-platform binary digest.
 ## Running a command-semantic minifixture through the oracle
 
 `scripts/run-minifixture-oracle.sh` runs one or more
-`tests/corpus/command-semantic/<domain>/manifest.json` cases through the
+`tests/corpus/command-semantic/<domain>/<fixture>/manifest.json` cases through the
 already-built instrumented executable above and captures every channel a
 case's run can produce: terminal text, the raw and host-clock-normalized log,
 the DVI/PDF page artifact, `status.txt` (exit code), any writer-effect file

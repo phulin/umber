@@ -227,13 +227,14 @@ Run the fast property-scoped semantic tier independently with:
 cargo test -q -p tex-command-stream --test it command_semantic
 ```
 
-The one Cargo integration binary discovers independent domain manifests under
-`tests/corpus/command-semantic/<domain>/`; adding a domain does not edit a shared
-Rust registry or add a top-level integration target. Each versioned manifest
+The one Cargo integration binary discovers independent fixture directories under
+`tests/corpus/command-semantic/<domain>/<fixture>/`; adding a domain or fixture
+does not edit a shared Rust registry or add a top-level integration target. Each versioned local manifest
 binds a tiny source to its catalogue property, exact canonical authority and
 sections, projection kind, short expected observations, and either `pass` or a
 strict `xfail` expectation. Discovery rejects malformed, duplicate, unsafe, or
-unowned cases and sources. A manifest whose short directory name differs from
+unowned cases and sources, nonlocal or untracked files, symlinks, and channel
+files outside their owning fixture directory. A manifest whose short directory name differs from
 its catalogue shard declares `property_domain`; ownership validation remains
 exact.
 
@@ -446,8 +447,9 @@ scripts/regen-fixtures.sh --area command-semantic
 ```
 
 It drives the same `tex_command_stream::semantic` module the gate does, so a
-regenerated contract cannot describe a run the gate would not reproduce, and it
-needs no reference engine. The emitted block matches `dprint`'s own shape and
+regenerated contract cannot describe a run the gate would not reproduce. It
+consumes the separately guarded pinned-oracle capture and writes only the
+owning fixture directory. The emitted block matches `dprint`'s own shape and
 the block replacement counts braces rather than matching a line, so the tool is
 idempotent on its own formatted output.
 
