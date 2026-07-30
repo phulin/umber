@@ -128,12 +128,13 @@ its own `tests/tex82-oracle/<name>-v1-semantic-matrix.txt` and
 `crates/tex-oracle/src/suite.rs`'s `validate_tex82_command_trace_suite`
 discovers the committed selector set from `tests/corpus/command/tex82` itself
 rather than from a hardcoded list, so registering another split fixture needs
-only its own directory and contract rows, not a code change. The legacy
+only its own directory and contract rows, not a code change. The legacy single-file
 `tests/tex82-oracle/semantic-event-matrix.txt` and `fixture-audit-matrix.txt`
-remain committed unchanged and still describe every family correctly, but they
-are no longer wired into the regeneration contract; they stay only because
-`crates/tex-command/tests/it/character_input.rs` reads them directly as a
-pinned external cross-check.
+have been retired now that every family they described has an equivalent
+per-fixture home. `crates/tex-command/tests/it/character_input.rs`'s
+`CANONICAL_MATRIX` concatenates the six per-fixture
+`<name>-v1-semantic-matrix.txt` files in their place, so it still reads every
+family directly as a pinned external cross-check.
 The focused source pins TeX's four job-clock parameters before shipout so the
 ordinary DVI preamble remains exact even though the canonical `onlyTeX`
 program does not consume Web2C's reproducible-clock environment variables.
@@ -214,12 +215,14 @@ file.
 
 ## TeX82 command-event matrix
 
-`tests/tex82-oracle/semantic-event-matrix.txt` is the executable audit
-inventory. Every row names a required schema-v1 boundary, its canonical
-focused input, the stable final-change seam that observes the committed
-transition, and a fixed canonical-JSON fragment. The build fails on a malformed
-row or an absent observation, so adding a schema boundary without mapping it
-cannot silently weaken coverage.
+The six per-fixture
+`tests/tex82-oracle/{command-transitions,case-shift,expansion-macros,alignment-delivery,off-save,scanner-conditionals}-v1-semantic-matrix.txt`
+files are the executable audit inventory, one per split fixture. Every row
+names a required schema-v1 boundary, its canonical focused input, the stable
+final-change seam that observes the committed transition, and a fixed
+canonical-JSON fragment. The build fails on a malformed row or an absent
+observation, so adding a schema boundary without mapping it cannot silently
+weaken coverage.
 
 | Family                      | Focused program                            | Stable canonical seams                                                                                                      |
 | --------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
@@ -237,15 +240,15 @@ cannot silently weaken coverage.
 
 The matrix covers every TeX82-applicable schema-v1 `StateTarget` and every
 non-termination `EffectKind`, in addition to ordered termination.
-`tests/tex82-oracle/fixture-audit-matrix.txt` supplies the other half of the
-audit. It assigns each semantic family to the exact manifest citation and
-useful ordinary-output channels. Hermetic validation proves that every event
-row occurs in the committed stream, every focused source is used, the event
-and audit family sets agree, and every manifest citation, source, and output is
-owned. Both matrix hashes are pinned by
-`tests/oracle-regeneration-manifest.txt`; live builds and Cargo correctness
-tests therefore cannot accept a mutually drifting source/event/manifest
-bundle.
+Each split fixture's matching `<name>-v1-audit-matrix.txt` supplies the other
+half of the audit. It assigns each semantic family to the exact manifest
+citation and useful ordinary-output channels. Hermetic validation proves that
+every event row occurs in the committed stream, every focused source is used,
+the event and audit family sets agree, and every manifest citation, source,
+and output is owned. Every matrix pair's hashes are pinned by the
+`fixture-audit` rows in `tests/oracle-regeneration-manifest.txt`; live builds
+and Cargo correctness tests therefore cannot accept a mutually drifting
+source/event/manifest bundle.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine

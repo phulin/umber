@@ -12,8 +12,16 @@ use tex_state::token::Token;
 const CANONICAL_INPUT: &[u8] = include_bytes!(
     "../../../../tests/corpus/command/tex82/command-transitions-v1/sources/input-recovery.tex"
 );
-const CANONICAL_MATRIX: &str =
-    include_str!("../../../../tests/tex82-oracle/semantic-event-matrix.txt");
+// The tex82 coverage matrix has been per-fixture since the fixture split
+// (`umber2-alfh.2`); this is the union of the six per-fixture matrices.
+const CANONICAL_MATRIX: &str = concat!(
+    include_str!("../../../../tests/tex82-oracle/command-transitions-v1-semantic-matrix.txt"),
+    include_str!("../../../../tests/tex82-oracle/case-shift-v1-semantic-matrix.txt"),
+    include_str!("../../../../tests/tex82-oracle/expansion-macros-v1-semantic-matrix.txt"),
+    include_str!("../../../../tests/tex82-oracle/alignment-delivery-v1-semantic-matrix.txt"),
+    include_str!("../../../../tests/tex82-oracle/off-save-v1-semantic-matrix.txt"),
+    include_str!("../../../../tests/tex82-oracle/scanner-conditionals-v1-semantic-matrix.txt"),
+);
 const ETEX_CANONICAL_MATRIX: &str =
     include_str!("../../../../tests/etex26-oracle/semantic-event-matrix.txt");
 const PDFTEX_CANONICAL_MATRIX: &str =

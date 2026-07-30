@@ -19,12 +19,13 @@ instrumentation change file. Its `deterministic-clock.ch` is the system
 adapter for tex.web §1337: Web2C's `onlyTeX` build ignores
 `SOURCE_DATE_EPOCH`, so it installs the same pinned job clock used by hermetic
 Umber worlds; `clock.tex` is the bounded clean/instrumented/repeat control.
-`semantic-event-matrix.txt` maps every required
-TeX82 command-core observation to its focused input and stable final-change
-seam; the live oracle build consumes it as the coverage gate.
-`fixture-audit-matrix.txt` maps those semantic families to exact manifest
-citations and useful ordinary-output channels; hermetic validation requires
-bidirectional source, citation, output, family, and committed-event coverage.
+Each split fixture's `tests/tex82-oracle/<name>-v1-semantic-matrix.txt` maps
+every required TeX82 command-core observation for that fixture to its focused
+input and stable final-change seam; the live oracle build consumes it as the
+coverage gate. Its matching `<name>-v1-audit-matrix.txt` maps those semantic
+families to exact manifest citations and useful ordinary-output channels;
+hermetic validation requires bidirectional source, citation, output, family,
+and committed-event coverage.
 The `input-recovery.tex` program and `input-eof-*.tex` children isolate
 physical-line/token delivery plus legal and scanner-status-sensitive EOF
 recovery without depending on a format or fonts.

@@ -14,6 +14,13 @@ l.6 {\endgroup
 ! Too many }'s.
 l.6 {\endgroup}
                
+
+! You can't use `macro parameter character #' in vertical mode.
+l.8 #
+     
+! Extra \endcsname.
+l.9 \endcsname
+              
 UMBER-TEX82-OFF-SAVE-PROGRESS )
 (see the transcript file for additional information)
 No pages of output.
