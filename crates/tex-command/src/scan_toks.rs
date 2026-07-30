@@ -899,6 +899,15 @@ impl CommandProcessor<'_> {
             }),
         );
         let (line, file_ended, name_class) = self.acquire_read_line(slot, target, prompted)?;
+        // e-TeX's `\readline` change consumes the acquired bytes verbatim
+        // from §328's freshly opened `name=0` level.  Ordinary `\read`
+        // instead takes §483's `name:=m+1` stream classification before
+        // tokenization.
+        let name_class = if raw_catcodes {
+            crate::input::SourceNameClass::Terminal
+        } else {
+            name_class
+        };
         self.command
             .finish_read_line(level, name_class, line.into_bytes())
             .map_err(|_| CommandError::input_invariant())?;

@@ -2156,6 +2156,60 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
 }
 
 #[test]
+fn readline_retirement_stays_terminal_while_ordinary_read_names_the_stream() {
+    // TeX82 §§328 and 483 plus e-TeX's `\readline` change: ordinary `\read`
+    // assigns `name=m+1`, but verbatim `\readline` consumes bytes directly
+    // from the freshly opened `name=0` level. Both controls read actual data
+    // while stream 1 remains open, so EOF fallback cannot explain the result.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+    let slot = read_stream(&mut universe, b"ordinary\nverbatim\n");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder)
+            .with_fuel(fuel.fuel_mut());
+        let target = processor.state.intern_control_sequence("line");
+        let ordinary = processor
+            .read_toks(1, target, false)
+            .expect("ordinary read collects");
+        assert_eq!(read_text(&processor, &ordinary), "ordinary");
+        let verbatim = processor
+            .read_toks(1, target, true)
+            .expect("verbatim readline collects");
+        assert_eq!(read_text(&processor, &verbatim), "verbatim");
+    }
+
+    let retirements = recorder
+        .0
+        .iter()
+        .filter_map(|event| match event {
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Retire
+                    && record.reason == crate::InputReason::Source =>
+            {
+                record.source_name
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retirements,
+        [
+            crate::SourceNameClass::ReadStream(slot.raw()),
+            crate::SourceNameClass::Terminal,
+        ],
+        "`\\read` and `\\readline` must not share one source-name class"
+    );
+    assert!(fuel.burned() <= 64);
+    assert!(!universe.command_context().read_stream_at_eof(slot));
+}
+
+#[test]
 fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
     // TeX82 §482: `if (n<0)or(n>15) then m:=16 else m:=n`. Stream 16 is never
     // open, so §483's `read_open[m]=closed` selects §484's terminal branch
