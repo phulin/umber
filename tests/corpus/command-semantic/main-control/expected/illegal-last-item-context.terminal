@@ -1,0 +1,9 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./illegal-last-item-context.tex
+! You can't use `\badness' in vertical mode.
+l.2 \hyphenpenalty 89 \badness
+                              
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on illegal-last-item-context.log.
