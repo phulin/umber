@@ -4506,6 +4506,27 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
 }
 
 #[test]
+fn initex_dump_prints_format_file_and_identifier_header() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param(IntParam::YEAR, 2026);
+    stores.set_int_param(IntParam::MONTH, 7);
+    stores.set_int_param(IntParam::DAY, 9);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .capabilities_mut()
+        .set_startup_job_name("bounded-dump.tex");
+    register_source(&mut control, br"\dump");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert!(control.dumped_format());
+    assert_eq!(
+        terminal_text(&stores),
+        "Beginning to dump on file bounded-dump.fmt\n (preloaded format=bounded-dump 2026.7.9)"
+    );
+}
+
+#[test]
 fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

@@ -443,6 +443,32 @@ pub(crate) fn finish_job(stores: &mut Universe, job_name: &str, dvi: Option<DviJ
     stores.printer().print_ln();
 }
 
+/// TeX82 §1328's format-file announcement and newly built `format_ident`.
+///
+/// The serialized format bytes remain a host concern, but these two lines are
+/// engine-visible output produced synchronously by `store_fmt_file`.  Keeping
+/// the print here also gives every canonical INITEX driver the same behavior
+/// without making format publication a prerequisite for observing it.
+pub(crate) fn print_format_dump_header(stores: &mut Universe, job_name: &str) {
+    let year = stores.int_param(IntParam::YEAR);
+    let month = stores.int_param(IntParam::MONTH);
+    let day = stores.int_param(IntParam::DAY);
+    let mut printer = stores.printer();
+    printer
+        .print_nl("Beginning to dump on file ")
+        .print(job_name)
+        .print(".fmt")
+        .print_nl(" (preloaded format=")
+        .print(job_name)
+        .print_char(' ')
+        .print_int(year)
+        .print_char('.')
+        .print_int(month)
+        .print_char('.')
+        .print_int(day)
+        .print_char(')');
+}
+
 /// tex.web §642's `<Finish the DVI file>`.
 ///
 /// The page count is read from the engine's own durable commit log

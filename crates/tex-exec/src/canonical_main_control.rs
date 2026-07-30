@@ -689,13 +689,18 @@ impl CanonicalMainControl {
         crate::job::close_open_parens(&mut self.job, stores);
         report_incomplete_conditions(stores, incomplete_conditions);
         crate::job::print_history_note(stores);
-        // TeX82 §1335: `\dump`'s `store_fmt_file` is `init`-only, and the
-        // production binary keeps only the `print_nl` that says so. `\end`
-        // reaches neither.
-        if dump && !self.initex {
-            stores
-                .printer()
-                .print_nl("(\\dump is performed only by INITEX)");
+        if dump {
+            // TeX82 §§1328/1335: INITEX enters `store_fmt_file`, whose first
+            // observable transition is the format-file announcement and new
+            // `format_ident`. The production binary instead keeps only the
+            // `print_nl` that says dumping is unavailable.
+            if self.initex {
+                crate::job::print_format_dump_header(stores, self.capabilities.job_name());
+            } else {
+                stores
+                    .printer()
+                    .print_nl("(\\dump is performed only by INITEX)");
+            }
         }
     }
 
