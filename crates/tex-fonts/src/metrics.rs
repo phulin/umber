@@ -1588,6 +1588,14 @@ impl FontMetrics {
         self.right_boundary_char
     }
 
+    /// TeX82 §1034's `font_false_bchar`: a nonexistent real character whose
+    /// code aliases the right boundary, or no value when that code exists.
+    #[must_use]
+    pub fn false_boundary_char(&self) -> Option<u8> {
+        self.right_boundary_char
+            .filter(|&code| !self.char_exists(code))
+    }
+
     #[must_use]
     pub const fn left_boundary_program(&self) -> Option<u16> {
         self.left_boundary_program

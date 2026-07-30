@@ -80,6 +80,7 @@ pub(crate) use boxes::{apply_box_shift_delta, first_box_node, take_last_box};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec, split_vbox_register};
 use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
+pub(crate) use hmode::flush_pending_hchars_with_fuel;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{

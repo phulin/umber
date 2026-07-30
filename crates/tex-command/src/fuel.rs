@@ -61,7 +61,11 @@ impl CommandFuel {
         self.burned
     }
 
-    pub(crate) fn charge(&mut self) -> Result<(), crate::CommandError> {
+    /// Charges one bounded command-machine transition.
+    ///
+    /// Execution-layer state machines use the same monotonic ledger as token
+    /// delivery so rollback cannot refund work performed below the scanner.
+    pub fn charge(&mut self) -> Result<(), crate::CommandError> {
         let attempted = self
             .burned
             .checked_add(1)

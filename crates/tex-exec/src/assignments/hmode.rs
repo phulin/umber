@@ -30,7 +30,7 @@ pub(crate) fn try_append_character(
             if cat == Catcode::Space {
                 append_space(nest, stores)?;
             } else {
-                append_hchar(nest, stores, ch, traced.origin());
+                append_hchar(nest, stores, ch, traced.origin())?;
             }
             Ok(true)
         }
@@ -65,7 +65,7 @@ pub(crate) fn try_append_tfm_character_span(
             offset += 1;
             continue;
         }
-        fix_hyphen_language(nest, stores, mode);
+        fix_hyphen_language(nest, stores, mode)?;
 
         // A TFM run cannot continue an OpenType pending run. This is normally
         // a font-command boundary, but keeping the guard here makes this
@@ -73,7 +73,7 @@ pub(crate) fn try_append_tfm_character_span(
         if nest.current_list().pending_hchars().is_some_and(|pending| {
             pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)
         }) {
-            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal, false);
+            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal, false)?;
         }
 
         let mut list = nest.current_list_mutation();
@@ -114,14 +114,10 @@ pub(crate) fn append_given_char(
     origin: OriginId,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
-        Mode::RestrictedHorizontal | Mode::Horizontal => {
-            append_hchar(nest, stores, ch, origin);
-            Ok(())
-        }
+        Mode::RestrictedHorizontal | Mode::Horizontal => append_hchar(nest, stores, ch, origin),
         Mode::Vertical | Mode::InternalVertical => {
             ensure_horizontal_for_character(nest, input, stores)?;
-            append_hchar(nest, stores, ch, origin);
-            Ok(())
+            append_hchar(nest, stores, ch, origin)
         }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
@@ -149,8 +145,7 @@ pub(crate) fn append_canonical_character(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    append_hchar(nest, stores, ch, origin);
-    Ok(())
+    append_hchar(nest, stores, ch, origin)
 }
 
 /// Appends an ordinary space from canonical main control after horizontal
@@ -170,9 +165,17 @@ pub(crate) fn flush_pending_hchars(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    flush_pending_hchars_with_fuel(nest, stores, &mut fuel)
+}
+
+pub(crate) fn flush_pending_hchars_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false);
-    Ok(())
+    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)
 }
 
 /// Flushes the active TeX82 §1038 character run after its lookahead consumed
@@ -183,8 +186,8 @@ pub(crate) fn flush_pending_hchars_without_right_boundary(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run(nest, stores, insert_hyphen_discs, true);
-    Ok(())
+    let mut fuel = tex_command::CommandFuel::default();
+    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, true, &mut fuel)
 }
 
 /// Closes the current list's mutable construction phase.
@@ -207,9 +210,26 @@ fn flush_pending_hchar_run(
     stores: &mut Universe,
     insert_hyphen_discs: bool,
     suppress_right_boundary: bool,
-) {
+) -> Result<(), ExecError> {
+    let mut fuel = tex_command::CommandFuel::default();
+    flush_pending_hchar_run_with_fuel(
+        nest,
+        stores,
+        insert_hyphen_discs,
+        suppress_right_boundary,
+        &mut fuel,
+    )
+}
+
+fn flush_pending_hchar_run_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    insert_hyphen_discs: bool,
+    suppress_right_boundary: bool,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
     let Some(pending) = nest.current_list_mutation().take_pending_hchars() else {
-        return;
+        return Ok(());
     };
     if is_ltr_shaping_font(stores, pending.first.font) && is_supported_script(pending.script) {
         let language = nest.current_list().hyphen_language();
@@ -228,19 +248,27 @@ fn flush_pending_hchar_run(
         let mut list = nest.current_list_mutation();
         list.set_no_boundary(false);
         list.append(shaped);
-        return;
+        return Ok(());
     }
     let no_boundary = nest.current_list().no_boundary();
-    let nodes = run_tfm_ligature_machine(
+    let nodes = match run_tfm_ligature_machine(
         stores,
         &pending.source,
         no_boundary,
         suppress_right_boundary,
         insert_hyphen_discs,
-    );
+        fuel,
+    ) {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            nest.current_list_mutation().set_pending_hchars(pending);
+            return Err(ExecError::Command(error));
+        }
+    };
     let mut list = nest.current_list_mutation();
     list.set_no_boundary(false);
     list.append(nodes);
+    Ok(())
 }
 
 pub(super) fn execute_hmode_material(
@@ -602,9 +630,14 @@ pub(crate) fn control_space_glue_spec(stores: &Universe) -> GlueSpec {
     nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000)
 }
 
-fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: OriginId) {
+fn append_hchar(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    ch: char,
+    origin: OriginId,
+) -> Result<(), ExecError> {
     let mode = nest.current_mode();
-    fix_hyphen_language(nest, stores, mode);
+    fix_hyphen_language(nest, stores, mode)?;
     let font = stores.current_font();
     let (character_exists, font_is_ltr_shaping) = {
         let loaded = stores.font(font);
@@ -614,7 +647,10 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
                 && loaded.shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight),
         )
     };
-    if character_exists {
+    let false_boundary_character = font_code(ch)
+        .ok()
+        .is_some_and(|code| stores.font_false_boundary_char(font) == Some(code));
+    if character_exists || false_boundary_character {
         let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
             (font_is_ltr_shaping
                 || (pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)))
@@ -623,7 +659,7 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
-            flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false);
+            flush_pending_hchar_run(nest, stores, insert_hyphen_discs, false)?;
         }
         let mut list = nest.current_list_mutation();
         append_pending_hchar(
@@ -636,14 +672,15 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
             origin,
         );
         update_space_factor(&mut list, stores, ch);
-        return;
+        return Ok(());
     }
     report_missing_character(stores, font, ch);
+    Ok(())
 }
 
 #[cfg(test)]
 pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
-    fix_hyphen_language(nest, stores, mode);
+    fix_hyphen_language(nest, stores, mode).expect("test ligature run is fueled");
 }
 
 /// TeX82 §1091's `norm_min`, verbatim: `if h<=0 then norm_min:=1 else if
@@ -664,17 +701,21 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
     }
 }
 
-fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
+fn fix_hyphen_language(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    mode: Mode,
+) -> Result<(), ExecError> {
     if mode != Mode::Horizontal {
-        return;
+        return Ok(());
     }
     let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
     if language == nest.current_list().hyphen_language() {
-        return;
+        return Ok(());
     }
     // tex.web's fix_language flushes the current ligature word before
     // recording the new language and its current hyphen minima.
-    flush_pending_hchar_run(nest, stores, true, false);
+    flush_pending_hchar_run(nest, stores, true, false)?;
     let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
     let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
     nest.current_list_mutation()
@@ -684,6 +725,7 @@ fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
             right_hyphen_min,
         }));
     nest.current_list_mutation().set_hyphen_language(language);
+    Ok(())
 }
 
 fn append_pending_hchar(
@@ -729,7 +771,11 @@ fn append_tfm_hchar(
     origin: OriginId,
     insertion_index: usize,
 ) -> bool {
-    if !stores.font(font).character_exists(ch) {
+    if !stores.font(font).character_exists(ch)
+        && font_code(ch)
+            .ok()
+            .is_none_or(|code| stores.font_false_boundary_char(font) != Some(code))
+    {
         report_missing_character(stores, font, ch);
         return false;
     }
@@ -927,13 +973,16 @@ pub(crate) fn reconstitute(
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
 ) -> Vec<Node> {
+    let mut fuel = tex_command::CommandFuel::default();
     run_tfm_ligature_machine(
         stores,
         pending,
         no_left_boundary,
         false,
         insert_hyphen_discs,
+        &mut fuel,
     )
+    .unwrap_or_default()
 }
 
 #[derive(Clone)]
@@ -941,6 +990,82 @@ enum LigatureWorkItem {
     Boundary,
     Glyph(PendingHRunChar),
     Kern { amount: Scaled, kind: KernKind },
+}
+
+#[derive(Clone)]
+struct LigatureWorkNode {
+    item: LigatureWorkItem,
+    previous: Option<usize>,
+    next: Option<usize>,
+    discard_if_missing: bool,
+}
+
+struct LigatureWorkList {
+    nodes: Vec<LigatureWorkNode>,
+    head: Option<usize>,
+    tail: Option<usize>,
+}
+
+impl LigatureWorkList {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            nodes: Vec::with_capacity(capacity),
+            head: None,
+            tail: None,
+        }
+    }
+
+    fn push_back(&mut self, item: LigatureWorkItem) -> usize {
+        let index = self.nodes.len();
+        self.nodes.push(LigatureWorkNode {
+            item,
+            previous: self.tail,
+            next: None,
+            discard_if_missing: false,
+        });
+        if let Some(tail) = self.tail {
+            self.nodes[tail].next = Some(index);
+        } else {
+            self.head = Some(index);
+        }
+        self.tail = Some(index);
+        index
+    }
+
+    fn insert_after(&mut self, index: usize, item: LigatureWorkItem) -> usize {
+        let next = self.nodes[index].next;
+        let inserted = self.nodes.len();
+        self.nodes.push(LigatureWorkNode {
+            item,
+            previous: Some(index),
+            next,
+            discard_if_missing: false,
+        });
+        self.nodes[index].next = Some(inserted);
+        if let Some(next) = next {
+            self.nodes[next].previous = Some(inserted);
+        } else {
+            self.tail = Some(inserted);
+        }
+        inserted
+    }
+
+    fn remove(&mut self, index: usize) {
+        let previous = self.nodes[index].previous;
+        let next = self.nodes[index].next;
+        if let Some(previous) = previous {
+            self.nodes[previous].next = next;
+        } else {
+            self.head = next;
+        }
+        if let Some(next) = next {
+            self.nodes[next].previous = previous;
+        } else {
+            self.tail = previous;
+        }
+        self.nodes[index].previous = None;
+        self.nodes[index].next = None;
+    }
 }
 
 fn replacement_glyph(
@@ -974,36 +1099,40 @@ fn run_tfm_ligature_machine(
     no_left_boundary: bool,
     suppress_right_boundary: bool,
     insert_hyphen_discs: bool,
-) -> Vec<Node> {
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, tex_command::CommandError> {
     let Some(first) = source.first() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let font = first.font;
-    let mut work = Vec::with_capacity(source.len() + 4);
+    let false_bchar = stores.font_false_boundary_char(font);
+    let mut work = LigatureWorkList::with_capacity(source.len() + 4);
     if !no_left_boundary {
-        work.push(LigatureWorkItem::Boundary);
+        work.push_back(LigatureWorkItem::Boundary);
     }
-    work.extend(source.iter().map(|entry| {
-        LigatureWorkItem::Glyph(PendingHRunChar::new(entry.font, entry.ch, entry.origin))
-    }));
+    for entry in source {
+        work.push_back(LigatureWorkItem::Glyph(PendingHRunChar::new(
+            entry.font,
+            entry.ch,
+            entry.origin,
+        )));
+    }
     if !suppress_right_boundary {
-        work.push(LigatureWorkItem::Boundary);
+        work.push_back(LigatureWorkItem::Boundary);
     }
 
-    let mut cursor = 0;
-    let mut transitions = 0_u64;
-    while cursor + 1 < work.len() {
-        transitions += 1;
-        assert!(
-            transitions <= 1_000_000,
-            "TeX ligature work list did not converge"
-        );
-        let left_item = work[cursor].clone();
-        let right_item = work[cursor + 1].clone();
+    let mut cursor = work.head;
+    while let Some(left_index) = cursor {
+        let Some(right_index) = work.nodes[left_index].next else {
+            break;
+        };
+        fuel.charge()?;
+        let left_item = work.nodes[left_index].item.clone();
+        let right_item = work.nodes[right_index].item.clone();
         if matches!(left_item, LigatureWorkItem::Kern { .. })
             || matches!(right_item, LigatureWorkItem::Kern { .. })
         {
-            cursor += 1;
+            cursor = Some(right_index);
             continue;
         }
         let pair: Option<(LigKernChar, LigKernChar)> = match (&left_item, &right_item) {
@@ -1023,8 +1152,17 @@ fn run_tfm_ligature_machine(
             }
             _ => None,
         };
+        let false_boundary_match = matches!(
+            &right_item,
+            LigatureWorkItem::Glyph(right)
+                if right.font == font
+                    && font_code(right.ch).ok().is_some_and(|code| Some(code) == false_bchar)
+        );
+        if false_boundary_match {
+            work.nodes[right_index].discard_if_missing = true;
+        }
         let Some((left_code, right_code)) = pair else {
-            cursor += 1;
+            cursor = Some(right_index);
             continue;
         };
 
@@ -1041,25 +1179,29 @@ fn run_tfm_ligature_machine(
             _ => None,
         };
         if let Some(Node::Kern { amount, kind }) = auto {
-            work.insert(cursor + 1, LigatureWorkItem::Kern { amount, kind });
-            cursor += 2;
+            let inserted = work.insert_after(left_index, LigatureWorkItem::Kern { amount, kind });
+            cursor = work.nodes[inserted].next;
             continue;
         }
 
+        if false_boundary_match {
+            cursor = Some(right_index);
+            continue;
+        }
         let Some(command) = stores.tfm_lig_kern_command(font, left_code, right_code) else {
-            cursor += 1;
+            cursor = Some(right_index);
             continue;
         };
         match command {
             LigKernCommand::Kern(amount) => {
-                work.insert(
-                    cursor + 1,
+                let inserted = work.insert_after(
+                    left_index,
                     LigatureWorkItem::Kern {
                         amount,
                         kind: KernKind::Font,
                     },
                 );
-                cursor += 2;
+                cursor = work.nodes[inserted].next;
             }
             LigKernCommand::Ligature(lig) => {
                 let consumed = [
@@ -1072,38 +1214,63 @@ fn run_tfm_ligature_machine(
                     LigatureWorkItem::Glyph(replacement_glyph(font, lig.replacement, consumed));
                 match (lig.delete_current, lig.delete_next) {
                     (true, true) => {
-                        work[cursor] = replacement;
-                        work.remove(cursor + 1);
+                        work.nodes[left_index].item = replacement;
+                        work.remove(right_index);
                     }
-                    (true, false) => work[cursor] = replacement,
-                    (false, true) => work[cursor + 1] = replacement,
-                    (false, false) => work.insert(cursor + 1, replacement),
+                    (true, false) => work.nodes[left_index].item = replacement,
+                    (false, true) => work.nodes[right_index].item = replacement,
+                    (false, false) => {
+                        work.insert_after(left_index, replacement);
+                    }
                 }
                 let op_byte = lig.pass_over * 4
                     + u8::from(!lig.delete_current) * 2
                     + u8::from(!lig.delete_next);
-                cursor += match op_byte {
+                cursor = Some(left_index);
+                for _ in 0..match op_byte {
                     5..=7 => 1,
                     11 => 2,
                     _ => 0,
-                };
+                } {
+                    cursor = cursor.and_then(|index| work.nodes[index].next);
+                }
             }
         }
     }
 
-    let mut out = Vec::with_capacity(work.len() * 2);
-    for item in work {
+    let mut out = Vec::with_capacity(work.nodes.len() * 2);
+    let mut pending_disc = None;
+    let mut index = work.head;
+    while let Some(current) = index {
+        let item = work.nodes[current].item.clone();
+        index = work.nodes[current].next;
+        if !matches!(
+            item,
+            LigatureWorkItem::Kern {
+                kind: KernKind::Auto,
+                ..
+            }
+        ) {
+            out.extend(pending_disc.take());
+        }
         match item {
             LigatureWorkItem::Boundary => {}
             LigatureWorkItem::Glyph(glyph) => {
+                if work.nodes[current].discard_if_missing
+                    && !stores.font(glyph.font).character_exists(glyph.ch)
+                {
+                    report_missing_character(stores, glyph.font, glyph.ch);
+                    continue;
+                }
                 let disc = literal_hyphen_disc(stores, &glyph, insert_hyphen_discs);
                 out.push(rechar_node(glyph));
-                out.extend(disc);
+                pending_disc = disc;
             }
             LigatureWorkItem::Kern { amount, kind } => out.push(Node::Kern { amount, kind }),
         }
     }
-    out
+    out.extend(pending_disc);
+    Ok(out)
 }
 
 fn work_glyph(item: &LigatureWorkItem) -> Option<PendingHRunChar> {

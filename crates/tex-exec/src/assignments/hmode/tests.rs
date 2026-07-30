@@ -164,7 +164,7 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
     stores.set_current_font(font);
     let mut nest = ModeNest::new();
 
-    append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN);
+    append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN).expect("character appends");
     flush_pending_hchars(&mut nest, &mut stores).expect("OpenType character flushes");
 
     assert!(matches!(
@@ -182,7 +182,7 @@ fn list_commit_flushes_pending_characters_and_raw_pop_rejects_them() {
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal)
         .expect("test mode push");
-    append_hchar(&mut nest, &mut stores, 'A', OriginId::UNKNOWN);
+    append_hchar(&mut nest, &mut stores, 'A', OriginId::UNKNOWN).expect("character appends");
 
     assert!(matches!(
         nest.pop(),
@@ -252,7 +252,7 @@ fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
     let mut nest = ModeNest::new();
 
     for ch in "ffi".chars() {
-        append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN);
+        append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN).expect("character appends");
     }
     flush_pending_hchars(&mut nest, &mut stores).expect("run flushes");
 
@@ -308,7 +308,7 @@ fn long_opentype_run_preserves_every_source_character() {
     let mut nest = ModeNest::new();
 
     for _ in 0..4096 {
-        append_hchar(&mut nest, &mut stores, 'a', OriginId::UNKNOWN);
+        append_hchar(&mut nest, &mut stores, 'a', OriginId::UNKNOWN).expect("character appends");
     }
     flush_pending_hchars(&mut nest, &mut stores).expect("long run flushes");
 
@@ -888,31 +888,28 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
         vec![Scaled::from_raw(0); 7],
         metrics,
     ));
-    let pending = [
-        PendingHChar {
-            font,
-            ch: 'A',
-            origin: tex_state::token::OriginId::UNKNOWN,
-        },
-        PendingHChar {
-            font,
-            ch: 'A',
-            origin: tex_state::token::OriginId::UNKNOWN,
-        },
-        PendingHChar {
-            font,
-            ch: 'A',
-            origin: tex_state::token::OriginId::UNKNOWN,
-        },
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    let origins = [
+        stores.synthetic_origin(SyntheticOriginKind::Test),
+        stores.synthetic_origin(SyntheticOriginKind::Test),
+        stores.synthetic_origin(SyntheticOriginKind::Test),
     ];
+    for origin in origins {
+        append_canonical_character(&mut nest, &mut stores, 'A', origin)
+            .expect("public pending-character append");
+    }
+    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
 
     assert!(matches!(
-        reconstitute(&mut stores, &pending, true, false).as_slice(),
+        nest.current_list().nodes(),
         [Node::Lig {
             ch: 'A',
             orig,
+            origins: actual_origins,
             ..
-        }] if orig == &['A', 'A', 'A']
+        }] if orig == &['A', 'A', 'A'] && actual_origins == &origins
     ));
 }
 
@@ -978,25 +975,13 @@ fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
         vec![Scaled::from_raw(0); 7],
         metrics,
     ));
+    stores.set_current_font(font);
     let mut nest = ModeNest::new();
-    append_pending_hchar(
-        &mut nest.current_list_mutation(),
-        &mut stores,
-        Mode::Horizontal,
-        font,
-        false,
-        '1',
-        OriginId::UNKNOWN,
-    );
-    append_pending_hchar(
-        &mut nest.current_list_mutation(),
-        &mut stores,
-        Mode::Horizontal,
-        font,
-        false,
-        '1',
-        OriginId::UNKNOWN,
-    );
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    append_canonical_character(&mut nest, &mut stores, '1', OriginId::UNKNOWN)
+        .expect("public pending-character append");
+    append_canonical_character(&mut nest, &mut stores, '1', OriginId::UNKNOWN)
+        .expect("public pending-character append");
     flush_pending_hchars_without_right_boundary(&mut nest, &mut stores)
         .expect("public flush completes");
     let nodes = nest.current_list().nodes();
@@ -1101,6 +1086,156 @@ fn ligature_command(op_byte: u8, replacement: u8) -> tex_fonts::LigatureCommand 
     }
 }
 
+fn false_boundary_test_font() -> (Universe, FontId) {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
+
+    let zero = Scaled::from_raw(0);
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: zero,
+        height: zero,
+        depth: zero,
+        italic_correction: zero,
+        tag: CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        },
+    });
+    characters[usize::from(b'C')] = Some(CharMetrics {
+        width: zero,
+        height: zero,
+        depth: zero,
+        italic_correction: zero,
+        tag: CharTag::None,
+    });
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'B',
+            command: Some(LigKernCommand::Ligature(ligature_command(0, b'C'))),
+        }],
+        Some(b'B'),
+        None,
+        Vec::new(),
+    );
+    metrics.validate().expect("false-boundary metric program");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "false-boundary",
+        "false-boundary.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    stores.set_current_font(font);
+    (stores, font)
+}
+
+#[test]
+fn public_flush_suppresses_false_boundary_pair_without_consuming_lookahead() {
+    let (mut stores, font) = false_boundary_test_font();
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    let left = stores.synthetic_origin(SyntheticOriginKind::Test);
+    let right = stores.synthetic_origin(SyntheticOriginKind::Test);
+    append_canonical_character(&mut nest, &mut stores, 'A', left).expect("left character");
+    append_canonical_character(&mut nest, &mut stores, 'B', right).expect("lookahead character");
+    let mut fuel = tex_command::CommandFuel::new(16).expect("finite test fuel");
+
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel)
+        .expect("public flush is fueled");
+
+    assert_eq!(stores.current_font(), font);
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::Char { ch: 'A', origin, .. }] if *origin == left
+    ));
+}
+
+#[test]
+fn public_flush_fuel_exhaustion_rolls_back_pending_run() {
+    let (mut stores, font) =
+        ligature_test_font(&[(b'A', b'B', ligature_command(0, b'C'))], None, None);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+        .expect("left character");
+    append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
+        .expect("right character");
+    let before = nest.current_list().pending_hchars().cloned();
+    let mut exhausted = tex_command::CommandFuel::new(1).expect("one transition");
+
+    assert!(matches!(
+        flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut exhausted),
+        Err(ExecError::Command(
+            tex_command::CommandError::FuelExhausted {
+                limit: 1,
+                burned: 1
+            }
+        ))
+    ));
+    assert_eq!(nest.current_list().nodes(), &[]);
+    assert_eq!(nest.current_list().pending_hchars(), before.as_ref());
+
+    let mut retry = tex_command::CommandFuel::new(16).expect("retry fuel");
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut retry).expect("retry commits");
+    assert_eq!(node_characters(nest.current_list().nodes()), ['C']);
+}
+
+#[test]
+fn public_empty_flush_preserves_list_and_fuel_cardinality() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    let mut fuel = tex_command::CommandFuel::new(1).expect("finite test fuel");
+
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, &mut fuel).expect("empty public flush");
+
+    assert_eq!(fuel.burned(), 0);
+    assert!(nest.current_list().nodes().is_empty());
+    assert!(nest.current_list().pending_hchars().is_none());
+}
+
+#[test]
+fn public_flush_places_pdf_auto_kern_before_explicit_hyphen_disc() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    stores.set_int_param(IntParam::PDF_APPEND_KERN, 1);
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Knac, font, b'-', 100);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("test hmode");
+    let origin = stores.synthetic_origin(SyntheticOriginKind::Test);
+    append_canonical_character(&mut nest, &mut stores, '-', origin).expect("hyphen append");
+
+    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [
+            Node::Char { ch: '-', origin: actual, .. },
+            Node::Kern { kind: KernKind::Auto, .. },
+            Node::Disc { kind: DiscKind::ExplicitHyphen, .. },
+        ] if *actual == origin
+    ));
+}
+
 fn node_characters(nodes: &[Node]) -> Vec<char> {
     nodes
         .iter()
@@ -1126,14 +1261,17 @@ fn complete_ligature_machine_covers_retain_delete_and_pass_over_operations() {
     ] {
         let (mut stores, font) =
             ligature_test_font(&[(b'A', b'B', ligature_command(op_byte, b'C'))], None, None);
-        let source = ['A', 'B'].map(|ch| PendingHChar {
-            font,
-            ch,
-            origin: OriginId::UNKNOWN,
-        });
-        let nodes = run_tfm_ligature_machine(&mut stores, &source, true, true, false);
+        stores.set_current_font(font);
+        let mut nest = ModeNest::new();
+        nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+        for ch in ['A', 'B'] {
+            append_canonical_character(&mut nest, &mut stores, ch, OriginId::UNKNOWN)
+                .expect("public pending-character append");
+        }
+        flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+        let nodes = nest.current_list().nodes();
         assert_eq!(
-            node_characters(&nodes).iter().collect::<String>(),
+            node_characters(nodes).iter().collect::<String>(),
             expected,
             "op byte {op_byte}"
         );
@@ -1150,15 +1288,17 @@ fn generated_ligature_pair_reenters_the_program() {
         None,
         None,
     );
-    let source = ['A', 'B', 'D'].map(|ch| PendingHChar {
-        font,
-        ch,
-        origin: OriginId::UNKNOWN,
-    });
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    for ch in ['A', 'B', 'D'] {
+        append_canonical_character(&mut nest, &mut stores, ch, OriginId::UNKNOWN)
+            .expect("public pending-character append");
+    }
+    flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+    let nodes = nest.current_list().nodes();
 
-    let nodes = run_tfm_ligature_machine(&mut stores, &source, true, true, false);
-
-    assert_eq!(node_characters(&nodes), ['E']);
+    assert_eq!(node_characters(nodes), ['E']);
     assert!(matches!(&nodes[0], Node::Lig { orig, .. } if orig == &['A', 'B', 'D']));
 }
 
@@ -1169,14 +1309,15 @@ fn complete_ligature_machine_processes_both_boundaries() {
         (None, Some((b'A', ligature_command(0, b'R')))),
     ] {
         let (mut stores, font) = ligature_test_font(&[], left_boundary, right_boundary);
-        let source = [PendingHChar {
-            font,
-            ch: 'A',
-            origin: OriginId::UNKNOWN,
-        }];
-        let nodes = run_tfm_ligature_machine(&mut stores, &source, false, false, false);
+        stores.set_current_font(font);
+        let mut nest = ModeNest::new();
+        nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+        append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+            .expect("public pending-character append");
+        flush_pending_hchars(&mut nest, &mut stores).expect("public pending-character flush");
+        let nodes = nest.current_list().nodes();
         assert_eq!(
-            node_characters(&nodes),
+            node_characters(nodes),
             [if left_boundary.is_some() { 'L' } else { 'R' }]
         );
     }

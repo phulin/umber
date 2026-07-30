@@ -1247,7 +1247,11 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        crate::assignments::flush_pending_hchars_with_fuel(
+            &mut self.modes,
+            stores,
+            &mut self.fuel,
+        )?;
         self.open_discretionary_part(stores)?;
         self.active_discretionaries
             .push(ActiveDiscretionary { parts: Vec::new() });
@@ -1349,7 +1353,11 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        crate::assignments::flush_pending_hchars_with_fuel(
+            &mut self.modes,
+            stores,
+            &mut self.fuel,
+        )?;
         let font = stores.current_font();
         let hyphen = u8::try_from(stores.font_hyphen_char(font))
             .ok()
@@ -1601,7 +1609,11 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        crate::assignments::flush_pending_hchars_with_fuel(
+            &mut self.modes,
+            stores,
+            &mut self.fuel,
+        )?;
         let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
             context: "\\accent",
             value: scanned.accent,
@@ -2058,7 +2070,11 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
-                crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+                crate::assignments::flush_pending_hchars_with_fuel(
+                    &mut self.modes,
+                    stores,
+                    &mut self.fuel,
+                )?;
                 // §1138 already applied its own `mode>0` test while probing:
                 // in restricted horizontal mode the second `$` was backed up
                 // rather than consumed, so `paired` is false there and this
@@ -9817,12 +9833,12 @@ fn apply_scanned_step(
             // the ligature loop. The command itself has no list effect, but
             // it is still a word boundary: `?\\relax\\char96` must not form
             // the `?`` ligature across the relax.
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TextDirection { direction, enabled } => {
             if enabled {
-                crate::assignments::flush_pending_hchars(modes, stores)?;
+                crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
                 modes
                     .current_list_mutation()
                     .push(Node::Direction(direction));
@@ -9990,7 +10006,7 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(value),
                 kind: GlueKind::Normal,
@@ -10008,7 +10024,7 @@ fn apply_scanned_step(
             // vertical list is represented by the page contribution queue,
             // so it still uses the shared contribution splice (contrast
             // `\penalty`, §1103, which also calls `build_page` there).
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -10026,7 +10042,7 @@ fn apply_scanned_step(
             // vertical mode, matching `append_vertical_contribution`'s own
             // `is_outer_vertical` gate and (unlike `\vskip`'s `append_glue`,
             // §1057) always followed by a page-builder call in that case.
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
@@ -10263,7 +10279,7 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive)),
                 kind: GlueKind::Normal,
@@ -10736,7 +10752,7 @@ fn apply_scanned_step(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfAccessibility(control)));
@@ -10750,7 +10766,7 @@ fn apply_scanned_step(
                     "pdfrunninglinkoff"
                 }));
             }
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::PdfRunningLink(enabled)));
@@ -10892,7 +10908,7 @@ fn apply_scanned_step(
             // first, before `clang` moves, so it hyphenates under the
             // language that was current while it was being built.
             let clang = u8::try_from(language).unwrap_or(0);
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes
                 .current_list_mutation()
                 .push(Node::Whatsit(Whatsit::Language {
@@ -11438,7 +11454,7 @@ fn apply_scanned_step(
             // No `build_page` call afterward (unlike `\penalty`/`\insert`):
             // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
             // node in every mode and leave page building to a later trigger.
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -11548,17 +11564,17 @@ fn apply_scanned_step(
             // run when the next expanded command is not a character. A brace
             // is therefore a real text boundary on both entry and exit:
             // `{f}i` must not form `fi` across the closing brace.
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             enter_canonical_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             enter_canonical_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndSemiSimpleGroup => {
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::SemiSimple)
                 .map_err(|_| ExecError::MissingToken {
@@ -11603,7 +11619,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
-            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
                 .map_err(|_| ExecError::MissingToken {

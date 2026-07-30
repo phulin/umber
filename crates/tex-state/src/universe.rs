@@ -4894,6 +4894,11 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn font_false_boundary_char(&self, font: FontId) -> Option<u8> {
+        self.stores.font_false_boundary_char(font)
+    }
+
+    #[must_use]
     pub fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
         self.stores.pdf_font_code(table, font, code)
     }

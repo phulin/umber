@@ -1626,6 +1626,11 @@ impl Stores {
         self.lig_kern_command_with_loaded(font, loaded, left, right)
     }
 
+    #[must_use]
+    pub fn font_false_boundary_char(&self, font: FontId) -> Option<u8> {
+        self.font(font).metrics().false_boundary_char()
+    }
+
     fn lig_kern_command_with_loaded(
         &self,
         font: FontId,
