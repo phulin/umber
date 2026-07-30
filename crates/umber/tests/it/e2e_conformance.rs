@@ -790,7 +790,11 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
         panic
             .downcast_ref::<String>()
             .cloned()
-            .or_else(|| panic.downcast_ref::<&str>().map(|message| (*message).to_owned()))
+            .or_else(|| {
+                panic
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+            })
             .expect("panic carries a string")
     }
 
@@ -838,7 +842,10 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
         ),
     ] {
         let message = mismatch_panics(temp.path(), expected, actual);
-        assert!(message.contains("TRIP compared-channel mismatch"), "{message}");
+        assert!(
+            message.contains("TRIP compared-channel mismatch"),
+            "{message}"
+        );
         assert!(message.contains("report:"), "{message}");
         assert!(
             message.contains(&format!("earliest.channel: {channel}")),

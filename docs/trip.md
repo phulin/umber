@@ -48,9 +48,13 @@ fallback. The shared conformance library compares the pinned semantic,
 geometry, transcript, and log channels and requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
-comment. The two-phase format-image path also retains its contract that
-provenance caches and host state are not serialized. DVItype is diagnostic for
-Umber. Fixture regeneration independently executes both TRIP phases with
+comment. The two-phase format-image path also asserts through the format schema
+APIs that diagnostic and macro-invocation provenance, host effects and
+capabilities, checkpoints, state-hash caches, and job journals are not durable
+format state. It separately proves that loading reconstructs the selected
+engine's primitive registry and frozen primitive meanings without overwriting
+the format's live control-sequence meanings. DVItype is diagnostic for Umber.
+Fixture regeneration independently executes both TRIP phases with
 pdfTeX and installs that locally generated DVI through
 `scripts/regen-fixtures.sh`; it never copies the official third-party DVI.
 The official `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain
