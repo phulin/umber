@@ -358,4 +358,15 @@ fn conformance_gate_assets_are_provisionable() {
             );
         }
     }
+    for phase in ["initex", "format-loaded"] {
+        for channel in ["command.jsonl", "geometry.jsonl", "terminal.txt", "log"] {
+            let oracle = format!("target/trip-oracles/etrip/{phase}-{channel}");
+            let oracle = oracle.replace("-log", ".log");
+            assert!(
+                provisioned.contains(oracle.as_str()),
+                "e-TRIP semantic oracle `{oracle}` is absent from \
+                 tests/native-test-assets.lock"
+            );
+        }
+    }
 }
