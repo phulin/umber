@@ -40,7 +40,7 @@
         "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"
       ],
       "channels": {
-        "events": 1086,
+        "events": 1084,
         "status": "clean",
         "terminal": {
           "kind": "file"
