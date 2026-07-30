@@ -43,12 +43,19 @@ source, every exact local support input, and each applicable
 `expected.<channel>` output. `tools/fixturegen --migrate-layout --plan` is the
 read-only deterministic migration inventory. `--apply` stages and byte-checks
 the whole requested plan before mutation, then commits through recoverable
-authority backups and case-directory swaps. Any commit failure reverses all
-completed swaps, including failure to clean the transaction after its swaps.
-Transaction roots are uniquely allocated beside the corpus, so a retained
-restored root is reported but cannot collide with a retry. Incomplete
-restoration retains named backups and reports the original and restoration
-failures together. The declarative mapping schema
+authority backups and case-directory swaps. The pre-commit phase includes
+every authority move, case install, and final installed-layout byte
+revalidation; any failure there reverses all completed swaps and reports every
+restoration failure. Only then is the new layout committed as the sole complete
+authority. Backup/root removal is post-commit garbage collection, so even a
+partial recursive-deletion failure never rolls back from damaged backups: it
+keeps the complete installed layout and reports committed status plus the exact
+owned retained root. Transaction roots are uniquely allocated beside the
+corpus and carry a strict schema/version/plan-digest ownership marker. A
+matching committed retry safely finishes garbage collection; unknown or
+mismatched roots are refused and preserved. Incomplete pre-commit restoration
+retains named backups and reports the original and restoration failures
+together. The declarative mapping schema
 does not assume TeX extensions or conventional output names. Repeating either
 mode after success or successful rollback returns the same case/byte/SHA-256
 report. The routine `test-support` gate uses the shared `ClosedCase` validator

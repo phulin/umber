@@ -73,6 +73,10 @@ const EXECUTION_CASE_FILES: &[CaseFile] = &[
 ];
 const NO_OWNED: &[CaseOwnedFile] = &[];
 const NO_SHARED: &[SharedFile] = &[];
+const TRANSACTION_PREFIX: &str = ".fixture-layout-transaction-";
+const OWNER_MARKER: &str = "owner";
+const COMMITTED_MARKER: &str = "committed";
+const TRANSACTION_SCHEMA: &str = "umber-fixture-layout-transaction-v1";
 
 pub const EXECUTION_FAMILIES: &[FamilySpec] = &[
     execution_family("align", NO_OWNED, NO_SHARED),
@@ -143,13 +147,32 @@ fn run_with_fs(
 ) -> Result<String> {
     let plan = MigrationPlan::build(corpus, specs)?;
     let report = plan.report();
-    if mode == Mode::Apply
-        && !plan
+    if mode == Mode::Apply {
+        let digest = plan.transaction_digest();
+        let retained = retained_transactions(corpus, &digest)?;
+        let complete = plan
             .cases
             .iter()
-            .all(|case| case.layout == Layout::Directory)
-    {
-        Transaction::new(corpus, plan, io)?.apply()?;
+            .all(|case| case.layout == Layout::Directory);
+        if complete {
+            for root in retained.committed {
+                garbage_collect(io, &root).with_context(|| {
+                    format!(
+                        "committed fixture layout is complete; garbage collection failed; \
+                         committed=true; retained owned transaction={}",
+                        root.display()
+                    )
+                })?;
+            }
+        } else {
+            if !retained.committed.is_empty() {
+                bail!(
+                    "owned committed transaction exists but installed fixture layout is incomplete: {}",
+                    retained.committed[0].display()
+                );
+            }
+            Transaction::new(corpus, plan, digest, io)?.apply()?;
+        }
     }
     Ok(report)
 }
@@ -231,6 +254,19 @@ impl MigrationPlan {
         }
         report
     }
+
+    fn transaction_digest(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(TRANSACTION_SCHEMA.as_bytes());
+        for case in &self.cases {
+            digest.update((case.display_area.len() as u64).to_be_bytes());
+            digest.update(case.display_area.as_bytes());
+            digest.update((case.case.len() as u64).to_be_bytes());
+            digest.update(case.case.as_bytes());
+            digest.update(inventory_digest(&case.inventory).as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
 }
 
 fn discover_cases(area: &Path, discovery_suffix: &str) -> Result<BTreeMap<String, Layout>> {
@@ -243,7 +279,7 @@ fn discover_cases(area: &Path, discovery_suffix: &str) -> Result<BTreeMap<String
             bail!("symlink is forbidden: {}", path.display());
         }
         let name = file_name(&path)?;
-        if name.starts_with(".fixture-layout-transaction-") {
+        if name.starts_with(TRANSACTION_PREFIX) {
             continue;
         }
         let discovered = if kind.is_dir() {
@@ -400,17 +436,23 @@ struct Transaction<'a> {
     corpus: &'a Path,
     plan: MigrationPlan,
     root: PathBuf,
+    digest: String,
     io: &'a dyn MigrationFs,
 }
 
 impl<'a> Transaction<'a> {
-    fn new(corpus: &'a Path, plan: MigrationPlan, io: &'a dyn MigrationFs) -> Result<Self> {
+    fn new(
+        corpus: &'a Path,
+        plan: MigrationPlan,
+        digest: String,
+        io: &'a dyn MigrationFs,
+    ) -> Result<Self> {
         static NEXT_TRANSACTION: AtomicU64 = AtomicU64::new(0);
         let sequence = NEXT_TRANSACTION.fetch_add(1, Ordering::Relaxed);
         let mut root = None;
         for attempt in 0..1_000_u64 {
             let candidate = corpus.join(format!(
-                ".fixture-layout-transaction-{}-{sequence}-{attempt}",
+                "{TRANSACTION_PREFIX}{}-{sequence}-{attempt}",
                 std::process::id()
             ));
             match io.create_dir(&candidate) {
@@ -428,10 +470,15 @@ impl<'a> Transaction<'a> {
                 corpus.display()
             )
         })?;
+        if let Err(error) = io.write(&root.join(OWNER_MARKER), owner_marker(&digest).as_bytes()) {
+            let _ = io.remove_dir_all(&root);
+            return Err(error);
+        }
         Ok(Self {
             corpus,
             plan,
             root,
+            digest,
             io,
         })
     }
@@ -459,6 +506,11 @@ impl<'a> Transaction<'a> {
                 self.io.rename(&staged, &target)?;
                 installed.push((target, staged));
             }
+            self.validate_installed(&installed)?;
+            self.io.write(
+                &self.root.join(COMMITTED_MARKER),
+                committed_marker(&self.digest).as_bytes(),
+            )?;
             Ok(())
         })();
         if let Err(original) = commit {
@@ -469,13 +521,33 @@ impl<'a> Transaction<'a> {
                 &backed_up,
             ));
         }
-        if let Err(cleanup) = self.io.remove_dir_all(&self.root) {
-            return Err(self.rollback_error(
-                "migration cleanup failed after swaps committed",
-                cleanup,
-                &installed,
-                &backed_up,
-            ));
+        if let Err(cleanup) = garbage_collect(self.io, &self.root) {
+            bail!(
+                "fixture layout committed and revalidated; garbage collection failed: \
+                 {cleanup:#}; committed=true; retained owned transaction={}",
+                self.root.display()
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_installed(&self, installed: &[(PathBuf, PathBuf)]) -> Result<()> {
+        for (target, _) in installed {
+            let case = self
+                .plan
+                .cases
+                .iter()
+                .find(|case| case.area.join(&case.case) == *target)
+                .ok_or_else(|| {
+                    anyhow!("installed target is absent from plan: {}", target.display())
+                })?;
+            if read_regular_inventory_recursive(target)? != case.inventory {
+                bail!(
+                    "installed byte inventory changed for {}/{}",
+                    case.display_area,
+                    case.case
+                );
+            }
         }
         Ok(())
     }
@@ -600,12 +672,80 @@ impl<'a> Transaction<'a> {
     }
 }
 
+fn garbage_collect(io: &dyn MigrationFs, root: &Path) -> Result<()> {
+    // Keep the ownership and commit markers until all recursively removed
+    // subtrees are gone. A partial recursive failure therefore remains
+    // authenticated and resumable.
+    io.remove_dir_all(&root.join("backup"))?;
+    io.remove_dir_all(&root.join("staged"))?;
+    io.remove_file(&root.join(COMMITTED_MARKER))?;
+    io.remove_file(&root.join(OWNER_MARKER))?;
+    io.remove_dir(root)
+}
+
+struct RetainedTransactions {
+    committed: Vec<PathBuf>,
+}
+
+fn retained_transactions(corpus: &Path, digest: &str) -> Result<RetainedTransactions> {
+    let expected_owner = owner_marker(digest);
+    let expected_committed = committed_marker(digest);
+    let mut committed = Vec::new();
+    for entry in fs::read_dir(corpus).with_context(|| format!("read {}", corpus.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = file_name(&path)?;
+        if !name.starts_with(TRANSACTION_PREFIX) {
+            continue;
+        }
+        if !entry.file_type()?.is_dir() {
+            bail!("refusing non-directory transaction path {}", path.display());
+        }
+        let owner = fs::read_to_string(path.join(OWNER_MARKER)).with_context(|| {
+            format!(
+                "refusing unknown transaction root {}; ownership marker is absent or unreadable",
+                path.display()
+            )
+        })?;
+        if owner != expected_owner {
+            bail!(
+                "refusing mismatched transaction root {}; ownership marker does not match this plan",
+                path.display()
+            );
+        }
+        let committed_path = path.join(COMMITTED_MARKER);
+        if committed_path.exists() {
+            let marker = fs::read_to_string(&committed_path)
+                .with_context(|| format!("read committed marker {}", committed_path.display()))?;
+            if marker != expected_committed {
+                bail!(
+                    "refusing mismatched committed transaction root {}",
+                    path.display()
+                );
+            }
+            committed.push(path);
+        }
+    }
+    committed.sort();
+    Ok(RetainedTransactions { committed })
+}
+
+fn owner_marker(digest: &str) -> String {
+    format!("{TRANSACTION_SCHEMA}\nplan-sha256={digest}\n")
+}
+
+fn committed_marker(digest: &str) -> String {
+    format!("{TRANSACTION_SCHEMA}\nplan-sha256={digest}\nstate=committed\n")
+}
+
 trait MigrationFs {
     fn create_dir(&self, path: &Path) -> Result<()>;
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> Result<()>;
     fn remove_dir_all(&self, path: &Path) -> Result<()>;
+    fn remove_file(&self, path: &Path) -> Result<()>;
+    fn remove_dir(&self, path: &Path) -> Result<()>;
 }
 
 struct RealFs;
@@ -627,6 +767,20 @@ impl MigrationFs for RealFs {
     fn remove_dir_all(&self, path: &Path) -> Result<()> {
         if path.exists() {
             fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))
+        } else {
+            Ok(())
+        }
+    }
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+        } else {
+            Ok(())
+        }
+    }
+    fn remove_dir(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            fs::remove_dir(path).with_context(|| format!("remove {}", path.display()))
         } else {
             Ok(())
         }

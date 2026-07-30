@@ -84,7 +84,8 @@ enum Failure {
     Rename(usize),
     RenameFrom(usize),
     Remove(usize),
-    RemoveFrom(usize),
+    PartialRemove,
+    RenameAndRemove(usize),
 }
 
 struct InjectedFs {
@@ -137,6 +138,9 @@ impl MigrationFs for InjectedFs {
             Failure::Rename(at) if current == at => {
                 bail!("injected rename failure at operation {current}")
             }
+            Failure::RenameAndRemove(at) if current == at => {
+                bail!("injected rename failure at operation {current}")
+            }
             Failure::RenameFrom(at) if current >= at => {
                 bail!("injected persistent rename failure at operation {current}")
             }
@@ -151,12 +155,30 @@ impl MigrationFs for InjectedFs {
             Failure::Remove(at) if current == at => {
                 bail!("injected remove failure at operation {current}")
             }
-            Failure::RemoveFrom(at) if current >= at => {
+            Failure::RenameAndRemove(_) => {
                 bail!("injected persistent remove failure at operation {current}")
+            }
+            Failure::PartialRemove if current == 1 => {
+                let removed = path.join("sample/first.src");
+                std::fs::remove_file(&removed).expect("partially remove backed-up authority");
+                std::fs::remove_dir(path.join("sample"))
+                    .expect_err("other backups keep directory nonempty");
+                bail!(
+                    "injected partial remove failure after deleting {}",
+                    removed.display()
+                )
             }
             _ => {}
         }
         RealFs.remove_dir_all(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        RealFs.remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<()> {
+        RealFs.remove_dir(path)
     }
 }
 
@@ -167,7 +189,7 @@ fn staging_failure_precedes_every_authority_mutation_and_retry_succeeds() {
         temp.path(),
         SPEC,
         Mode::Apply,
-        &InjectedFs::new(Failure::Write(2)),
+        &InjectedFs::new(Failure::Write(3)),
     )
     .expect_err("failure");
     assert!(format!("{error:#}").contains("injected failure"));
@@ -239,7 +261,7 @@ fn restoration_failure_reports_both_errors_and_preserves_backups() {
 }
 
 #[test]
-fn post_commit_cleanup_failure_restores_authorities_and_retry_succeeds() {
+fn zero_progress_post_commit_gc_failure_keeps_new_authority_and_retry_succeeds() {
     let temp = fixture();
     let error = run_with_fs(
         temp.path(),
@@ -249,11 +271,14 @@ fn post_commit_cleanup_failure_restores_authorities_and_retry_succeeds() {
     )
     .expect_err("cleanup failure");
     let message = format!("{error:#}");
-    assert!(message.contains("cleanup failed after swaps committed"));
-    assert!(message.contains("every authority was restored"));
-    assert!(temp.path().join("sample/first.src").is_file());
-    assert!(!temp.path().join("sample/first").exists());
+    assert!(message.contains("fixture layout committed and revalidated"));
+    assert!(message.contains("garbage collection failed"));
+    assert!(message.contains("committed=true"));
+    assert!(message.contains("retained owned transaction="));
+    assert!(!temp.path().join("sample/first.src").exists());
+    assert!(temp.path().join("sample/first").is_dir());
     run(temp.path(), SPEC, Mode::Apply).expect("retry");
+    assert!(transaction_roots(temp.path()).is_empty());
 }
 
 #[test]
@@ -263,7 +288,7 @@ fn rollback_cleanup_failure_reports_retained_unique_root_and_retry_succeeds() {
         temp.path(),
         SPEC,
         Mode::Apply,
-        &InjectedFs::new(Failure::RemoveFrom(1)),
+        &InjectedFs::new(Failure::RenameAndRemove(7)),
     )
     .expect_err("cleanup failure");
     let message = format!("{error:#}");
@@ -281,4 +306,74 @@ fn rollback_cleanup_failure_reports_retained_unique_root_and_retry_succeeds() {
         .expect("retained unique root");
     assert!(retained.is_dir());
     run(temp.path(), SPEC, Mode::Apply).expect("retry beside retained root");
+}
+
+#[test]
+fn partial_post_commit_gc_failure_never_rolls_back_and_matching_retry_finishes() {
+    let temp = fixture();
+    let error = run_with_fs(
+        temp.path(),
+        SPEC,
+        Mode::Apply,
+        &InjectedFs::new(Failure::PartialRemove),
+    )
+    .expect_err("partial gc failure");
+    let message = format!("{error:#}");
+    assert!(message.contains("committed=true"));
+    assert!(message.contains("retained owned transaction="));
+    assert!(temp.path().join("sample/first/program.input").is_file());
+    assert!(temp.path().join("sample/second/program.input").is_file());
+    assert!(!temp.path().join("sample/first.src").exists());
+    let retained = transaction_roots(temp.path());
+    assert_eq!(retained.len(), 1);
+    assert!(!retained[0].join("backup/sample/first.src").exists());
+    assert!(retained[0].join("owner").is_file());
+    assert!(retained[0].join("committed").is_file());
+
+    run(temp.path(), SPEC, Mode::Apply).expect("matching committed retry");
+    assert!(transaction_roots(temp.path()).is_empty());
+    assert!(temp.path().join("sample/first/program.input").is_file());
+}
+
+#[test]
+fn unknown_retained_root_is_refused_and_preserved() {
+    let temp = fixture();
+    let root = temp.path().join(".fixture-layout-transaction-user-data");
+    std::fs::create_dir(&root).expect("unknown root");
+    std::fs::write(root.join("notes"), b"user").expect("unknown data");
+    let error = run(temp.path(), SPEC, Mode::Apply).expect_err("unknown root");
+    assert!(format!("{error:#}").contains("refusing unknown transaction root"));
+    assert_eq!(
+        std::fs::read(root.join("notes")).expect("preserved"),
+        b"user"
+    );
+    assert!(temp.path().join("sample/first.src").is_file());
+}
+
+#[test]
+fn mismatched_retained_root_is_refused_and_preserved() {
+    let temp = fixture();
+    let root = temp.path().join(".fixture-layout-transaction-other-plan");
+    std::fs::create_dir(&root).expect("mismatched root");
+    std::fs::write(
+        root.join("owner"),
+        b"umber-fixture-layout-transaction-v1\nplan-sha256=wrong\n",
+    )
+    .expect("owner");
+    let error = run(temp.path(), SPEC, Mode::Apply).expect_err("mismatched root");
+    assert!(format!("{error:#}").contains("refusing mismatched transaction root"));
+    assert!(root.join("owner").is_file());
+    assert!(temp.path().join("sample/first.src").is_file());
+}
+
+fn transaction_roots(corpus: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(corpus)
+        .expect("corpus")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".fixture-layout-transaction-"))
+        })
+        .collect()
 }

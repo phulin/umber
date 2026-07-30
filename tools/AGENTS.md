@@ -12,10 +12,13 @@ authority mutation. Its commit renames every old authority into a named
 transaction backup and installs the staged cases; a failure reverses every
 completed rename, reports every restoration failure, and retains recoverable
 backups when restoration is incomplete. Transaction roots are atomically
-allocated unique siblings. Cleanup is part of commit: cleanup failure reverses
-the swaps, and a restored root that cannot be removed is reported precisely
-without blocking a retry. A completed apply and a successfully rolled-back
-apply are both safe to repeat. The reusable specification declares
+allocated unique siblings and carry a strict schema/version/plan-digest
+ownership marker. Commit occurs only after every installed directory is
+byte-revalidated. Transaction removal after that point is garbage collection:
+failure keeps the complete new authority, reports committed status and the
+exact owned retained root, and a matching retry finishes cleanup. Unknown or
+mismatched transaction roots are preserved and refused. A completed apply and
+a successfully rolled-back apply are both safe to repeat. The reusable specification declares
 case discovery, relative sources and destinations, roles, local metadata,
 shared-input copies, and output mappings without assuming `.tex` or
 `expected.<channel>` names.
