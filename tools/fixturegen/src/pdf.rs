@@ -179,7 +179,10 @@ fn stage_case_resources(case_root: &Path, directory: &Path) -> Result<()> {
             continue;
         }
         if !entry.file_type()?.is_file() {
-            bail!("PDF closed case contains non-file resource {}", entry.path().display());
+            bail!(
+                "PDF closed case contains non-file resource {}",
+                entry.path().display()
+            );
         }
         fs::copy(entry.path(), directory.join(name.as_ref()))
             .with_context(|| format!("stage closed-case PDF resource {name}"))?;
@@ -262,7 +265,10 @@ fn pixels_within(left: &[u8], right: &[u8], delta: u8) -> bool {
 }
 
 fn write_fixture(case: &str, kind: &str, bytes: &[u8]) -> Result<()> {
-    let path = corpus_root().join("pdf").join(case).join(format!("expected.{kind}"));
+    let path = corpus_root()
+        .join("pdf")
+        .join(case)
+        .join(format!("expected.{kind}"));
     if fs::read(&path).ok().as_deref() == Some(bytes) {
         eprintln!("fixture unchanged: {}", path.display());
         return Ok(());

@@ -572,14 +572,14 @@ mod tests {
         let font_300 = PdfPkFont::parse(include_bytes!(
             "../../../tests/corpus/pdf/pk_bitmap_300/cmr10.300pk"
         ))
-            .expect("committed 300 DPI PK font parses");
+        .expect("committed 300 DPI PK font parses");
         let glyph = font_300.glyph(65).expect("300 DPI A glyph");
         assert_eq!((glyph.width, glyph.height), (28, 29));
         assert_eq!((glyph.x_offset, glyph.y_offset), (-1, 28));
         let font_600 = PdfPkFont::parse(include_bytes!(
             "../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk"
         ))
-            .expect("committed 600 DPI PK font parses");
+        .expect("committed 600 DPI PK font parses");
         let glyph = font_600.glyph(65).expect("600 DPI A glyph");
         assert_eq!((glyph.width, glyph.height), (55, 60));
         assert_eq!((glyph.x_offset, glyph.y_offset), (-3, 59));

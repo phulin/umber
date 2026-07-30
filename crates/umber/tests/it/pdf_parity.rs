@@ -360,7 +360,10 @@ fn check_embedded_font_case(case: &str) {
     if case.starts_with("pk_bitmap_") {
         let dpi = case.trim_start_matches("pk_bitmap_");
         fs::copy(
-            corpus_root().join("pdf").join(case).join(format!("cmr10.{dpi}pk")),
+            corpus_root()
+                .join("pdf")
+                .join(case)
+                .join(format!("cmr10.{dpi}pk")),
             temp.path().join(format!("cmr10.{dpi}pk")),
         )
         .expect("stage committed PK program");
@@ -379,7 +382,10 @@ fn check_embedded_font_case(case: &str) {
         .expect("stage committed Type1 program");
         if case == "embedded_tagged_spacing" {
             fs::copy(
-                corpus_root().join("pdf").join(case).join("tagged_spacing.enc"),
+                corpus_root()
+                    .join("pdf")
+                    .join(case)
+                    .join("tagged_spacing.enc"),
                 temp.path().join("tagged_spacing.enc"),
             )
             .expect("stage tagged-spacing encoding");

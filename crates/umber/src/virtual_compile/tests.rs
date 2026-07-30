@@ -1607,8 +1607,7 @@ fn pdf_bitmap_fallback_crosses_the_typed_session_boundary() {
         session.output_resource_plan().union[0].reasons[0].purpose,
         ResourcePurpose::PdfBitmapProgram
     );
-    let bytes =
-        include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk").to_vec();
+    let bytes = include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk").to_vec();
     let expected_sha256 = Some(sha2::Sha256::digest(&bytes).into());
     session
         .provide_resources(vec![ResourceResponse::PkFont(ResolvedPkFont {

@@ -33,7 +33,10 @@ fn bounded_pdf_minifixtures_are_exact_closed_tracked_directories() {
             entry.file_name().into_string().expect("UTF-8 case name")
         })
         .collect::<BTreeSet<_>>();
-    assert_eq!(actual, CASES.iter().map(|case| (*case).to_owned()).collect());
+    assert_eq!(
+        actual,
+        CASES.iter().map(|case| (*case).to_owned()).collect()
+    );
     for case in CASES {
         let closed =
             ClosedCase::discover_tracked_at(&repository, format!("tests/corpus/pdf/{case}"))

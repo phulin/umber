@@ -77,7 +77,11 @@ fn inventories(repository: &Path) -> Result<BTreeMap<String, BTreeMap<String, Ve
                 let files = fs::read_dir(&root)?
                     .map(|entry| {
                         let entry = entry?;
-                        ensure!(entry.file_type()?.is_file(), "non-file in {}", root.display());
+                        ensure!(
+                            entry.file_type()?.is_file(),
+                            "non-file in {}",
+                            root.display()
+                        );
                         let name = entry.file_name().to_string_lossy().into_owned();
                         Ok((name, fs::read(entry.path())?))
                     })
@@ -87,7 +91,9 @@ fn inventories(repository: &Path) -> Result<BTreeMap<String, BTreeMap<String, Ve
             .collect();
     }
     ensure!(
-        CASES.iter().all(|case| pdf.join(format!("{case}.tex")).is_file()),
+        CASES
+            .iter()
+            .all(|case| pdf.join(format!("{case}.tex")).is_file()),
         "PDF layout is neither the complete flat cohort nor the complete directory cohort"
     );
     let mut result = BTreeMap::new();
@@ -129,10 +135,16 @@ fn inventories(repository: &Path) -> Result<BTreeMap<String, BTreeMap<String, Ve
             | "embedded_subset_type1"
             | "embedded_subset_omit"
             | "embedded_subset_controls_negative" => {
-                files.insert("cmr10.pfb".to_owned(), fs::read(pdf.join("embedded_type1.pfb"))?);
+                files.insert(
+                    "cmr10.pfb".to_owned(),
+                    fs::read(pdf.join("embedded_type1.pfb"))?,
+                );
             }
             "embedded_tagged_spacing" => {
-                files.insert("cmr10.pfb".to_owned(), fs::read(pdf.join("embedded_type1.pfb"))?);
+                files.insert(
+                    "cmr10.pfb".to_owned(),
+                    fs::read(pdf.join("embedded_type1.pfb"))?,
+                );
                 files.insert(
                     "tagged_spacing.enc".to_owned(),
                     fs::read(pdf.join("tagged_spacing.enc"))?,
@@ -175,7 +187,7 @@ fn authorities(repository: &Path, case: &str) -> Vec<String> {
         if candidate.parent() == Some(Path::new(pdf))
             && candidate
                 .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
         {
             paths.push(path);
         }
