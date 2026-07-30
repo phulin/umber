@@ -974,10 +974,14 @@ impl PlannedFinalization {
             })?;
         let effects = pages.effects().to_vec();
         let mut retargeted = 0usize;
+        // `effect_index` is absolute within the complete prepared suffix.
+        // Keep the projection cursor across artifact boundaries: resetting it
+        // for each page makes an equal effect on a later page alias the first
+        // page's occurrence.
+        let mut world_index = 0usize;
         for artifact in pages.artifacts_mut() {
             let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
                 .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-            let mut world_index = 0usize;
             let mut target_page_index = None;
             for (page_index, page_effect) in page.effects.iter().enumerate() {
                 let Some(relative) = effects[world_index..]

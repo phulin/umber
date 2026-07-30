@@ -502,17 +502,54 @@ fn out_what_retry_prints_captured_tex_context_before_prompt() {
             stores
                 .world()
                 .memory_terminal_output()
-                .expect("terminal output")
+                .unwrap_or_default()
                 .to_vec(),
         )
         .expect("terminal is utf-8");
         assert!(
             terminal.contains(
-                "I can't write on file `blocked.tex'.\nl.1 \\setbox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n    \nPlease type another output file name: "
+                "I can't write on file `blocked.tex'.\n...ox0=\\hbox{\\openout2=blocked }\\shipout\\copy0\\end\n                                                  \nPlease type another output file name: "
             ),
             "{terminal:?}"
         );
     }
+}
+
+#[test]
+fn out_what_retry_show_context_includes_nested_token_level_and_obeys_context_limit() {
+    let padding = "abcdefghijklmnopqrstuvwxyz".repeat(4);
+    let source = format!(
+        "\\errorcontextlines=1 \\def\\outer#1{{\\setbox0=\\hbox{{#1}}\\shipout\\copy0}}\
+         \\outer{{\\openout2=blocked {padding}}}\\end"
+    );
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+    stores.world_mut().deny_memory_output("blocked.tex");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("recovered")
+        .expect("terminal replacement");
+    let mut control = CommandReplayControl::tex82_initex(&mut stores);
+    register_source(&mut control, source.as_bytes());
+    run_to_end(&mut control, &mut stores);
+    let terminal = String::from_utf8(
+        stores
+            .world()
+            .memory_terminal_output()
+            .expect("terminal output")
+            .to_vec(),
+    )
+    .expect("terminal output is utf-8");
+    assert!(terminal.contains("<token list> "), "{terminal:?}");
+    assert!(terminal.contains("mnopqrstuvwxyz}\\end"), "{terminal:?}");
+    assert!(terminal.contains("..."), "{terminal:?}");
+    assert!(
+        terminal.find("<token list> ").expect("token-list context")
+            < terminal
+                .find("Please type another output file name")
+                .expect("replacement prompt"),
+        "{terminal:?}"
+    );
 }
 
 #[test]
@@ -578,6 +615,16 @@ fn out_what_noninteractive_failure_is_fatal_without_reading_terminal() {
                 .as_deref(),
             Some("must-remain")
         );
+        let terminal = String::from_utf8(
+            stores
+                .world()
+                .memory_terminal_output()
+                .unwrap_or_default()
+                .to_vec(),
+        )
+        .expect("terminal output is utf-8");
+        assert!(!terminal.contains("Please type another output file name"));
+        assert!(!terminal.contains(": "));
     }
 }
 
@@ -656,6 +703,16 @@ fn commit_time_open_retry_is_fatal_without_consuming_input_in_nonstop_modes() {
                 .as_deref(),
             Some("must-remain")
         );
+        let terminal = String::from_utf8(
+            stores
+                .world()
+                .memory_terminal_output()
+                .unwrap_or_default()
+                .to_vec(),
+        )
+        .expect("terminal output is utf-8");
+        assert!(!terminal.contains("Please type another output file name"));
+        assert!(!terminal.contains(": "));
     }
 }
 

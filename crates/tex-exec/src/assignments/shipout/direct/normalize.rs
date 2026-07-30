@@ -645,6 +645,18 @@ fn retry_openout_target(
         == tex_state::RetainedOutputOpenOutcome::Unavailable
     {
         let interaction = stores.interaction_mode();
+        if matches!(
+            interaction,
+            tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
+        ) {
+            stores
+                .print_err("I can't write on file `")
+                .print(&path)
+                .print("'.");
+            return Err(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+                "job aborted, file error in nonstop mode",
+            )));
+        }
         let mut report = stores.print_err("I can't write on file `");
         report
             .print(&path)
@@ -652,14 +664,6 @@ fn retry_openout_target(
             .print(context)
             .print("\nPlease type another output file name");
         drop(report);
-        if matches!(
-            interaction,
-            tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
-        ) {
-            return Err(ExecError::Fatal(tex_command::FatalError::emergency_stop(
-                "job aborted, file error in nonstop mode",
-            )));
-        }
         let replacement = stores
             .command_context()
             .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })

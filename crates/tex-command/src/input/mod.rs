@@ -49,38 +49,151 @@ pub(crate) struct InputState {
 }
 
 impl InputState {
-    pub(crate) fn output_open_context(&self) -> String {
-        let Some(source) = self.levels.iter().rev().find_map(|level| {
-            let InputLevel::Source(source) = level else {
-                return None;
+    pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+        const ERROR_LINE: usize = 79;
+        const HALF_ERROR_LINE: usize = 50;
+
+        fn clipped(label: &str, before: &str, after: &str) -> String {
+            let mut left = format!("{label}{before}");
+            let len = left.chars().count();
+            if len > HALF_ERROR_LINE {
+                left = format!(
+                    "...{}",
+                    left.chars()
+                        .skip(len - (HALF_ERROR_LINE - 3))
+                        .collect::<String>()
+                );
+            }
+            let indent = left.chars().count();
+            let available = ERROR_LINE.saturating_sub(indent);
+            let right = if after.chars().count() > available {
+                format!(
+                    "{}...",
+                    after
+                        .chars()
+                        .take(available.saturating_sub(3))
+                        .collect::<String>()
+                )
+            } else {
+                after.to_owned()
             };
-            Some(source)
-        }) else {
-            return String::new();
-        };
-        let Some(line) = source.cursor.line.as_ref() else {
-            return String::new();
-        };
-        let bytes = &source.cursor.current_backing().bytes;
-        let start = line.physical.content_range().start();
-        let end = line.retained_end;
-        let cursor = line.byte_cursor.clamp(start, end);
-        let Ok(start) = usize::try_from(start) else {
-            return String::new();
-        };
-        let Ok(end) = usize::try_from(end) else {
-            return String::new();
-        };
-        let Ok(cursor) = usize::try_from(cursor) else {
-            return String::new();
-        };
-        let read = String::from_utf8_lossy(&bytes[start..cursor]);
-        let remaining = String::from_utf8_lossy(&bytes[cursor..end]);
-        let label = format!("l.{} ", line.physical.number());
-        format!(
-            "\n{label}{read}\n{}{remaining}",
-            " ".repeat(label.chars().count())
-        )
+            format!("\n{left}\n{}{right}", " ".repeat(indent))
+        }
+
+        fn token_text(
+            stores: &tex_state::CommandContext<'_>,
+            tokens: impl Iterator<Item = tex_state::token::Token>,
+        ) -> String {
+            tokens
+                .map(|token| crate::processor::expand::token_list_token_text(stores, token))
+                .collect()
+        }
+
+        let max_token_levels = stores
+            .int_param(tex_state::env::banks::IntParam::new(54))
+            .max(0) as usize;
+        let mut shown = 0usize;
+        let mut output = String::new();
+        for level in self.levels.iter().rev() {
+            match level {
+                InputLevel::Source(source) => {
+                    let Some(line) = source.cursor.line.as_ref() else {
+                        continue;
+                    };
+                    let bytes = &source.cursor.current_backing().bytes;
+                    let start = line.physical.content_range().start();
+                    let end = line.retained_end;
+                    let cursor = line.byte_cursor.clamp(start, end);
+                    let (Ok(start), Ok(end), Ok(cursor)) = (
+                        usize::try_from(start),
+                        usize::try_from(end),
+                        usize::try_from(cursor),
+                    ) else {
+                        continue;
+                    };
+                    output.push_str(&clipped(
+                        &format!("l.{} ", line.physical.number()),
+                        &String::from_utf8_lossy(&bytes[start..cursor]),
+                        &String::from_utf8_lossy(&bytes[cursor..end]),
+                    ));
+                    break;
+                }
+                InputLevel::Tokens(tokens) if shown < max_token_levels => {
+                    let label = match tokens.trace {
+                        ReplayTrace::MacroParameter { .. } => "<argument> ",
+                        ReplayTrace::MacroReplacement => "<macro> ",
+                        ReplayTrace::Inserted => "<inserted text> ",
+                        ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
+                        ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
+                        ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
+                        _ => "<token list> ",
+                    };
+                    let (before, after) = match &tokens.payload {
+                        TokenPayload::Stored { tokens: list, .. } => {
+                            let words = stores.tokens(*list);
+                            let split = tokens.index.min(words.len());
+                            (
+                                token_text(stores, words[..split].iter().copied()),
+                                token_text(stores, words[split..].iter().copied()),
+                            )
+                        }
+                        TokenPayload::Transient(words) => {
+                            let split = tokens.index.min(words.len());
+                            (
+                                token_text(
+                                    stores,
+                                    (0..split).filter_map(|index| {
+                                        words.get(index).map(|w| w.semantic_token())
+                                    }),
+                                ),
+                                token_text(
+                                    stores,
+                                    (split..words.len()).filter_map(|index| {
+                                        words.get(index).map(|w| w.semantic_token())
+                                    }),
+                                ),
+                            )
+                        }
+                        TokenPayload::BackedUp(words) => {
+                            let before = (0..tokens.index)
+                                .filter_map(|index| words.get(index))
+                                .map(|word| word.spelling.semantic_token());
+                            let after = (tokens.index..)
+                                .map_while(|index| words.get(index))
+                                .map(|word| word.spelling.semantic_token());
+                            (token_text(stores, before), token_text(stores, after))
+                        }
+                        TokenPayload::ArgumentRange { buffer, range } => {
+                            let start = range.start();
+                            let end = range.end();
+                            let split = start.saturating_add(tokens.index).min(end);
+                            (
+                                token_text(
+                                    stores,
+                                    (start..split).filter_map(|index| {
+                                        buffer.get(index).map(|w| w.semantic_token())
+                                    }),
+                                ),
+                                token_text(
+                                    stores,
+                                    (split..end).filter_map(|index| {
+                                        buffer.get(index).map(|w| w.semantic_token())
+                                    }),
+                                ),
+                            )
+                        }
+                    };
+                    output.push_str(&clipped(label, &before, &after));
+                    shown += 1;
+                }
+                InputLevel::Tokens(_) => {}
+            }
+        }
+        output
     }
 
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.

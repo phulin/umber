@@ -205,7 +205,17 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
         .stream_open_unavailable()
         .expect("failed target")
         .to_owned();
-    assert_eq!(failed.context(), format!("\nl.1 {source}\n    "));
+    let context_lines = failed.context().lines().collect::<Vec<_>>();
+    assert!(context_lines.len() >= 2);
+    let context_lines = &context_lines[context_lines.len() - 2..];
+    assert!(
+        context_lines[0].starts_with("..."),
+        "{:?}",
+        failed.context()
+    );
+    assert!(context_lines[0].ends_with("\\shipout\\copy0\\end"));
+    assert_eq!(context_lines[0].chars().count(), 50);
+    assert_eq!(context_lines[1].chars().count(), 50);
     plan = retained;
     plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
         .expect("retarget prepared page");
@@ -231,7 +241,7 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Exercises ordered real-backend occurrence identity.
-fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
+fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     let temp = tempfile::Builder::new()
         .prefix("openout-duplicate.")
         .tempdir_in(".")
@@ -241,9 +251,8 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
     let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
         .join("replacement.out");
     let source = format!(
-        "\\immediate\\openout2={0} \
-         \\setbox0=\\hbox{{\\openout1={0} \\openout1={0} \\write1{{second}}}}\
-         \\shipout\\copy0\\end",
+        "\\shipout\\hbox{{A\\openout2={0} }}\
+         \\shipout\\hbox{{B\\openout1={0} \\openout1={0} \\write1{{second}}}}\\end",
         target.display()
     );
     let mut session = session(&source);
@@ -254,6 +263,15 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
     let mut finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
+    assert_eq!(
+        finalization
+            .prepared_pages
+            .as_ref()
+            .expect("cross-page prepared suffix")
+            .artifacts()
+            .len(),
+        2
+    );
     finalization
         .stores
         .world_mut()
@@ -261,22 +279,36 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
             temp.path().join("artifacts"),
         ))
         .expect("real finalization backend");
-    let first_target = match &finalization.stores.world().effect_records()[0] {
-        tex_state::EffectRecord::StreamOpen { target, .. } => target.path().to_owned(),
-        effect => panic!("first occurrence is not open: {effect:?}"),
-    };
+    let records = finalization.stores.world().effect_records();
+    let first_target = records
+        .iter()
+        .find_map(|effect| match effect {
+            tex_state::EffectRecord::StreamOpen { target, .. } => Some(target.path().to_owned()),
+            _ => None,
+        })
+        .expect("first occurrence is open");
     assert_eq!(first_target, target);
-    let remaining = u64::try_from(finalization.stores.world().effect_records().len())
-        .expect("effect count fits");
-    let first_open = finalization
+    let remaining = u64::try_from(records.len()).expect("effect count fits");
+    let effect_base = finalization
         .stores
         .world()
         .effect_pos()
-        .retreated_by(remaining - 1);
+        .retreated_by(remaining);
+    let open_positions = records
+        .iter()
+        .enumerate()
+        .filter(|(_, effect)| matches!(effect, tex_state::EffectRecord::StreamOpen { .. }))
+        .map(|(index, _)| {
+            effect_base.advanced_by(u64::try_from(index + 1).expect("effect index fits"))
+        })
+        .collect::<Vec<_>>();
+    let [_, second_open, third_open, ..] = open_positions.as_slice() else {
+        panic!("cross-page test needs at least three opens");
+    };
     finalization
         .stores
-        .export_retained_effects_through(first_open)
-        .expect("first same-path occurrence commits");
+        .export_retained_effects_through(*second_open)
+        .expect("two same-path occurrences commit");
     std::fs::remove_file(&first_target).expect("replace first output with unavailable directory");
     std::fs::create_dir(&first_target).expect("second occurrence becomes unavailable");
 
@@ -298,7 +330,7 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
         .expect("exact failed occurrence")
         .clone();
     assert_eq!(failed.slot(), tex_state::StreamSlot::new(1));
-    assert_eq!(failed.position(), first_open.advanced_by(1));
+    assert_eq!(failed.position(), *third_open);
     plan = retained;
     plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
         .expect("exact occurrence retargets");
@@ -307,25 +339,38 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
         .prepared_pages
         .as_ref()
         .expect("prepared suffix retained");
-    let page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[0].bytes())
-        .expect("prepared page parses");
-    let opens = page
-        .effects
+    assert_eq!(prepared.artifacts().len(), 2);
+    let opens = prepared
+        .artifacts()
         .iter()
-        .filter_map(|effect| match effect {
-            tex_out::PageEffect::OpenOut { stream, path } => Some((*stream, path.as_str())),
-            _ => None,
+        .map(|artifact| {
+            let page =
+                tex_out::PageArtifact::from_bytes(artifact.bytes()).expect("prepared page parses");
+            page.effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_out::PageEffect::OpenOut { stream, path } => Some((*stream, path.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     assert_eq!(
         opens,
         [
-            (2, target.to_string_lossy().as_ref()),
-            (1, replacement.to_string_lossy().as_ref()),
-            (1, target.to_string_lossy().as_ref()),
+            vec![(2, target.to_string_lossy().into_owned())],
+            vec![
+                (2, target.to_string_lossy().into_owned()),
+                (1, target.to_string_lossy().into_owned()),
+                (1, replacement.to_string_lossy().into_owned()),
+            ],
         ]
     );
-    let retargeted_hash = prepared.artifacts()[0].hash();
+    let retargeted_hashes = prepared
+        .artifacts()
+        .iter()
+        .map(tex_state::CommittedArtifact::hash)
+        .collect::<Vec<_>>();
 
     assert!(
         plan.retarget_stream_open(&mut finalization.stores, &failed, Path::new("stale.out"))
@@ -336,9 +381,11 @@ fn retry_retargets_exact_second_duplicate_open_occurrence_atomically() {
         plan.prepared_pages
             .as_ref()
             .expect("prepared suffix survives")
-            .artifacts()[0]
-            .hash(),
-        retargeted_hash,
+            .artifacts()
+            .iter()
+            .map(tex_state::CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        retargeted_hashes,
         "stale failure is atomic for prepared history"
     );
     assert!(matches!(

@@ -132,8 +132,8 @@ impl CommandState {
     /// Captures TeX82 §530's current input display before deferred shipout
     /// releases the command processor borrow.
     #[must_use]
-    pub fn output_open_context(&self) -> String {
-        self.input.output_open_context()
+    pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+        self.input.output_open_context(stores)
     }
 
     /// Schedules one completed `\\discretionary` part for canonical replay.

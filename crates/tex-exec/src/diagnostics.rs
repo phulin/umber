@@ -784,6 +784,129 @@ pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut
     tex_expand::append_token_show_text(stores, token, text);
 }
 
+/// TeX82 §530's detached `show_context` display.
+///
+/// `error_line` and `half_error_line` are compile-time WEB constants (79 and
+/// 50 in TeX82), while `error_context_lines` is the live integer parameter.
+/// This returns owned text because deferred output can fail after the input
+/// stack itself has retired.
+pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -> String {
+    use tex_state::input::{InputFrameSummary, TokenListReplayKind};
+
+    const ERROR_LINE: usize = 79;
+    const HALF_ERROR_LINE: usize = 50;
+
+    fn label(kind: TokenListReplayKind) -> &'static str {
+        match kind {
+            TokenListReplayKind::MacroBody => "<macro> ",
+            TokenListReplayKind::MacroArgument => "<argument> ",
+            TokenListReplayKind::NoExpand => "<recently read> ",
+            TokenListReplayKind::Unexpanded => "<unexpanded> ",
+            TokenListReplayKind::EveryPar => "<everypar> ",
+            TokenListReplayKind::EveryHBox => "<everyhbox> ",
+            TokenListReplayKind::EveryVBox => "<everyvbox> ",
+            TokenListReplayKind::EveryJob => "<everyjob> ",
+            TokenListReplayKind::EveryCr => "<everycr> ",
+            TokenListReplayKind::Mark => "<mark> ",
+            TokenListReplayKind::OutputRoutine => "<output> ",
+            TokenListReplayKind::Inserted => "<inserted text> ",
+            TokenListReplayKind::ScantokensEveryEof => "<everyeof> ",
+            TokenListReplayKind::AlignmentUTemplate => "<template> ",
+            TokenListReplayKind::AlignmentVTemplate => "<template> ",
+        }
+    }
+
+    fn clipped(label: &str, before: &str, after: &str) -> String {
+        let mut left = format!("{label}{before}");
+        let left_len = left.chars().count();
+        if left_len > HALF_ERROR_LINE {
+            left = format!(
+                "...{}",
+                left.chars()
+                    .skip(left_len - (HALF_ERROR_LINE - 3))
+                    .collect::<String>()
+            );
+        }
+        let indent = left.chars().count();
+        let available = ERROR_LINE.saturating_sub(indent);
+        let after_len = after.chars().count();
+        let right = if after_len > available {
+            let take = available.saturating_sub(3);
+            format!("{}...", after.chars().take(take).collect::<String>())
+        } else {
+            after.to_owned()
+        };
+        format!("\n{left}\n{}{right}", " ".repeat(indent))
+    }
+
+    fn shown_tokens(stores: &Universe, tokens: &[Token]) -> String {
+        let mut text = String::new();
+        for &token in tokens {
+            append_token_show_text(stores, token, &mut text);
+        }
+        text
+    }
+
+    let context_lines = stores
+        .int_param(tex_state::env::banks::IntParam::new(54))
+        .max(0) as usize;
+    let mut shown_token_levels = 0usize;
+    let mut output = String::new();
+    for frame in input.frames().iter().rev() {
+        match frame {
+            InputFrameSummary::Condition { .. } => {}
+            InputFrameSummary::TokenList {
+                token_list,
+                replay_kind,
+                index,
+                ..
+            } if shown_token_levels < context_lines => {
+                let tokens = stores.tokens(*token_list);
+                let split = (*index).min(tokens.len());
+                output.push_str(&clipped(
+                    label(*replay_kind),
+                    &shown_tokens(stores, &tokens[..split]),
+                    &shown_tokens(stores, &tokens[split..]),
+                ));
+                shown_token_levels += 1;
+            }
+            InputFrameSummary::TransientTokenList {
+                tokens,
+                replay_kind,
+                ..
+            } if shown_token_levels < context_lines => {
+                let tokens = tokens
+                    .iter()
+                    .map(|word| word.semantic_token())
+                    .collect::<Vec<_>>();
+                output.push_str(&clipped(
+                    label(*replay_kind),
+                    "",
+                    &shown_tokens(stores, &tokens),
+                ));
+                shown_token_levels += 1;
+            }
+            InputFrameSummary::Source { source, .. } => {
+                let line = source.normalized_line().trim_end_matches('\r');
+                let split = source.line_byte_offset().min(line.len());
+                let split = (0..=split)
+                    .rev()
+                    .find(|offset| line.is_char_boundary(*offset))
+                    .unwrap_or(0);
+                let (before, after) = line.split_at(split);
+                output.push_str(&clipped(
+                    &format!("l.{} ", source.line_number()),
+                    before,
+                    after,
+                ));
+                break;
+            }
+            InputFrameSummary::TokenList { .. } | InputFrameSummary::TransientTokenList { .. } => {}
+        }
+    }
+    output
+}
+
 fn diagnostic_print_column(stores: &Universe) -> usize {
     stores
         .world()

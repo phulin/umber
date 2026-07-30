@@ -190,8 +190,8 @@ pub(super) fn stage_shipout(
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
-    let output_open_context =
-        output_open_context.unwrap_or_else(|| input_summary.output_open_context());
+    let output_open_context = output_open_context
+        .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
     let overlay = execution.with_nested(|expansion| {
         normalize_page(
             children,

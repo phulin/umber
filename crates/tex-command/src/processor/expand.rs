@@ -1485,7 +1485,7 @@ pub(crate) fn token_list_string_text(
 /// TeX82's `show_token_list` representation used by `\\meaning` distinguishes
 /// a printed control word from following letter tokens with one space.  That
 /// delimiter belongs to the rendered definition, not to source input.
-fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
     let Token::Cs(symbol) = token else {
         return string_text(state, token);
     };
