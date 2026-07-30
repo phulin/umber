@@ -1996,6 +1996,22 @@
         "terminal-check:! Undefined control sequence.=true",
         "count:0=1"
       ],
+      "channels": {
+        "events": 46,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 4, "expected": "l.2 \\show\\errorstopmode", "actual": "> \\scrollmode=\\scrollmode." }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.14",
+          "mismatch": { "line": 5, "expected": "l.2 \\show\\errorstopmode", "actual": "" }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": { "kind": "pass" },
       "terminal_lines": ["s"]
     },

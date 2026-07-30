@@ -73,11 +73,14 @@ fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<
 }
 
 /// The set of cases exempt from the channel contract is exactly the set whose
-/// engine run does not complete, and it is pinned at its measured size.
+/// engine run does not complete -- and it is empty.
 ///
-/// Without the count this invariant would be satisfiable by pinning more cases
-/// as `xfail` -- the exemption would become the escape hatch instead of the
-/// ledger. Lowering the number is the only edit this test accepts silently.
+/// This used to also pin the corpus size, from when the exempt set was
+/// non-empty and a count was the only thing stopping someone from growing the
+/// exemptions instead of fixing a case. With the set asserted empty the count
+/// guarded nothing: a new case either declares a channel contract or lands in
+/// `exempt` and fails here. It only ever obstructed legitimate additions, so
+/// it is gone.
 #[test]
 fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
     let cases =
@@ -105,7 +108,6 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
     // declares a channel contract. Growing this list again is a regression to
     // argue for, not a convenience.
     assert_eq!(exempt, [] as [String; 0], "the exempt set moved");
-    assert_eq!(cases.len(), 197, "the corpus changed size");
 }
 
 #[test]

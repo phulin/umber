@@ -1,0 +1,15 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./show-selector-transitions.tex
+> \errorstopmode=\errorstopmode.
+l.2 \show\errorstopmode
+                       
+> \scrollmode=\scrollmode.
+l.3 \show\scrollmode
+                    
+! Undefined control sequence.
+l.4 \undefined
+              
+ )
+(see the transcript file for additional information)
+No pages of output.
+Transcript written on show-selector-transitions.log.

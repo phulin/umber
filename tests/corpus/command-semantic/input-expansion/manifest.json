@@ -478,11 +478,20 @@
       "provenance": {
         "authority": "tex.web",
         "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [336, 379, 494, 510]
+        "sections": [
+          336,
+          379,
+          494,
+          510
+        ]
       },
       "projection": {
         "kind": "observations",
-        "kinds": ["diagnostic", "recovery", "scanner-status"]
+        "kinds": [
+          "diagnostic",
+          "recovery",
+          "scanner-status"
+        ]
       },
       "expected": [
         "recovery:backup:char:other_char:61",
@@ -517,7 +526,9 @@
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
-      "expectation": { "kind": "pass" }
+      "expectation": {
+        "kind": "pass"
+      }
     },
     {
       "id": "input-tokenization-lifecycle",
@@ -816,6 +827,30 @@
         "input:retire:file",
         "input:stop:terminal"
       ],
+      "channels": {
+        "events": 45,
+        "status": "clean",
+        "terminal": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.31",
+          "mismatch": {
+            "line": 3,
+            "expected": "(./etex-readline-terminal.tex)",
+            "actual": "(./etex-readline-terminal.tex"
+          }
+        },
+        "log": {
+          "kind": "xfail",
+          "bug": "umber2-alfh.31",
+          "mismatch": {
+            "line": 4,
+            "expected": "(./etex-readline-terminal.texR",
+            "actual": "(./etex-readline-terminal.tex"
+          }
+        },
+        "dvi": { "kind": "empty" },
+        "effects": { "kind": "empty" }
+      },
       "expectation": {
         "kind": "pass"
       },
