@@ -66,6 +66,71 @@ fn install_macro(
 }
 
 #[test]
+fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
+    // TeX82 §§380, 785, 789: `align_peek` completes `get_x_token` before
+    // `init_col` backs its ordinary command up. This bounded source-free
+    // microfixture models `\def\bf{\fam...}` at the start of an alignment
+    // entry, the first long-document occurrence that exposed the ordering.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let fam = universe.intern("fam").symbol();
+    universe.set_meaning(
+        fam,
+        Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw()),
+    );
+    let bf = install_macro(&mut universe, "bf", Token::Cs(fam));
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(bf))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    let (lookahead, pending) = processor
+        .next_alignment_lookahead()
+        .expect("alignment lookahead expands")
+        .expect("macro replacement produces a command");
+    assert!(pending, "the macro-produced command has a pending delivery");
+    assert_eq!(
+        lookahead.meaning(),
+        Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw())
+    );
+    processor
+        .back_alignment_lookahead(lookahead, pending)
+        .expect("ordinary init_col backup succeeds");
+
+    let expanded = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(record)
+                    if record.boundary == CommandDeliveryBoundary::Expanded
+                        && record.command == "assign_int"
+            )
+        })
+        .expect("terminal expanded delivery is observed");
+    let backup = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Backup
+            )
+        })
+        .expect("ordinary command is backed up");
+    assert!(expanded < backup, "get_x_token commits before back_input");
+}
+
+#[test]
 fn cyclic_macro_exhausts_shared_command_fuel() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

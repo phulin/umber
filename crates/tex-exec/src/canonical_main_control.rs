@@ -4639,7 +4639,9 @@ fn scan_alignment_peek(
             })
         }
         _ => {
-            processor.back_input(command).map_err(command_error)?;
+            processor
+                .back_alignment_lookahead(command, pending_expanded_delivery)
+                .map_err(command_error)?;
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,
                 omit: false,

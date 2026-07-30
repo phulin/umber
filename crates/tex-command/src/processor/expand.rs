@@ -269,9 +269,9 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §§785/791's shared alignment lookahead fetch.
     ///
-    /// TeX82's `init_col` backs an ordinary command up before the
-    /// expanded-delivery boundary is committed: the command is observed as
-    /// expanded only when the backup is read again above its u-template.
+    /// TeX82's `get_x_token` commits the terminal expanded command before
+    /// `init_col` backs an ordinary command up. The backup is later read
+    /// again above its u-template, producing a second raw/expanded delivery.
     /// Spacers skipped by §406 are complete deliveries and are committed here
     /// normally.
     ///
@@ -336,6 +336,23 @@ impl CommandProcessor<'_> {
     /// consumes instead of passing to an ordinary `back_input` branch.
     pub fn commit_alignment_lookahead_delivery(&mut self, command: &CurrentCommand) {
         self.observe_expanded_delivery(command);
+    }
+
+    /// Completes TeX82 §§785/791's ordinary `align_peek`/`init_col` branch.
+    ///
+    /// A command reached through §380's expansion loop is still pending only
+    /// in Umber's observer transport. TeX has already completed
+    /// `get_x_token`, so its expanded delivery precedes §789's `back_input`;
+    /// the later replay above the u-template is a distinct delivery.
+    pub fn back_alignment_lookahead(
+        &mut self,
+        command: CurrentCommand,
+        pending_expanded_delivery: bool,
+    ) -> Result<(), CommandError> {
+        if pending_expanded_delivery {
+            self.commit_alignment_lookahead_delivery(&command);
+        }
+        self.back_input(command)
     }
 
     /// Delivers one expanded command or the completion of an executor-owned

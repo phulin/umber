@@ -2841,7 +2841,7 @@ impl CommandProcessor<'_> {
                 }
                 return Ok(AlignmentCellOpening::Omit);
             }
-            self.back_input(command)?;
+            self.back_alignment_lookahead(command, pending_expanded_delivery)?;
         }
         Ok(AlignmentCellOpening::Template)
     }
