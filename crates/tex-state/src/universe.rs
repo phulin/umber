@@ -4127,6 +4127,16 @@ impl Universe {
         duplicate
     }
 
+    #[must_use]
+    pub fn contains_hyphenation_pattern_for_language(
+        &self,
+        language: u8,
+        letters: &[char],
+    ) -> bool {
+        self.stores
+            .contains_hyphenation_pattern_for_language(language, letters)
+    }
+
     /// Reports TeX82 §960's live `trie_not_ready` state.
     #[must_use]
     pub fn hyphenation_patterns_open(&self) -> bool {

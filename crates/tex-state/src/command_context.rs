@@ -43,6 +43,18 @@ impl CommandContext<'_> {
         self.universe.hyphenation_patterns_open()
     }
 
+    /// Reads TeX82 §963's existing-pattern test without moving insertion
+    /// ownership out of the executor.
+    #[must_use]
+    pub fn contains_hyphenation_pattern_for_language(
+        &self,
+        language: u8,
+        letters: &[char],
+    ) -> bool {
+        self.universe
+            .contains_hyphenation_pattern_for_language(language, letters)
+    }
+
     /// Opens tex.web §73's recoverable-error report through the live command
     /// aggregate borrow.
     ///

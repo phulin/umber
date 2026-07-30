@@ -32,6 +32,7 @@
           "Nonletter",
           "l.5 \\patterns{a\\relax b a!",
           "Duplicate pattern",
+          "l.5 \\patterns{a\\relax b a!b a1b a2b}",
           "(See Appendix H.)"
         ],
         "count_registers": [
@@ -46,6 +47,7 @@
         "terminal-check:Nonletter=true",
         "terminal-check:l.5 \\patterns{a\\relax b a!=true",
         "terminal-check:Duplicate pattern=true",
+        "terminal-check:l.5 \\patterns{a\\relax b a!b a1b a2b}=true",
         "terminal-check:(See Appendix H.)=true",
         "count:0=1"
       ],

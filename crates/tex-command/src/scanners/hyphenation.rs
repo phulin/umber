@@ -14,6 +14,7 @@
 //! gave `\the` the direct-splice treatment §473 reserves for token-list
 //! collection instead of the ordinary expansion `get_x_token` performs.
 
+use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::PatternSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
@@ -80,6 +81,7 @@ impl CommandProcessor<'_> {
         let mut pattern_letters: Vec<char> = Vec::new();
         let mut pattern_values = vec![0];
         let mut pattern_digit_sensed = false;
+        let pattern_language = u8::try_from(self.state.int_param(IntParam::LANGUAGE)).unwrap_or(0);
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             let character = match command.meaning() {
@@ -133,10 +135,16 @@ impl CommandProcessor<'_> {
                     ..
                 } => {
                     if !pattern_letters.is_empty() {
-                        patterns.push(PatternSpec {
+                        let pattern = PatternSpec {
                             letters: std::mem::take(&mut pattern_letters),
                             values: std::mem::replace(&mut pattern_values, vec![0]),
-                        });
+                        };
+                        self.report_duplicate_pattern_if_needed(
+                            pattern_language,
+                            &patterns,
+                            &pattern,
+                        );
+                        patterns.push(pattern);
                     }
                     pattern_digit_sensed = false;
                     None
@@ -149,10 +157,16 @@ impl CommandProcessor<'_> {
                         words.push(current);
                     }
                     if !pattern_letters.is_empty() {
-                        patterns.push(PatternSpec {
+                        let pattern = PatternSpec {
                             letters: pattern_letters,
                             values: pattern_values,
-                        });
+                        };
+                        self.report_duplicate_pattern_if_needed(
+                            pattern_language,
+                            &patterns,
+                            &pattern,
+                        );
+                        patterns.push(pattern);
                     }
                     return Ok(ScannedHyphenationData { words, patterns });
                 }
@@ -181,6 +195,25 @@ impl CommandProcessor<'_> {
         report.help(&["(See Appendix H.)"]);
         report.context(context);
         report.error();
+    }
+
+    fn report_duplicate_pattern_if_needed(
+        &mut self,
+        language: u8,
+        pending: &[PatternSpec],
+        pattern: &PatternSpec,
+    ) {
+        let duplicate = pending.iter().any(|prior| prior.letters == pattern.letters)
+            || self
+                .state
+                .contains_hyphenation_pattern_for_language(language, &pattern.letters);
+        if duplicate {
+            let context = self.command.output_open_context(&self.state);
+            let mut report = self.state.print_err("Duplicate pattern");
+            report.help(&["(See Appendix H.)"]);
+            report.context(context);
+            report.error();
+        }
     }
 
     fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {

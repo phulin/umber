@@ -5147,6 +5147,53 @@ fn pattern_nonletter_prompts_at_the_live_section_962_source_context() {
 }
 
 #[test]
+fn duplicate_pattern_prompts_at_the_live_section_963_separator_context() {
+    // TeX82 §963 tests trie_o[q] and calls §82 before the §961 loop asks for
+    // another token. The separator is therefore still current, and an
+    // interactive response must not be consumed from later source input.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("s")
+        .expect("memory terminal accepts the error response");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\patterns{a1b a2b next}\\count0=1\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1, "interactive recovery resumes input");
+    let output = terminal_text(&stores);
+    let context = output
+        .find("! Duplicate pattern.\nl.1 \\patterns{a1b a2b ")
+        .expect("§963 reports at the live separator");
+    let prompt = output.find("? ").expect("§82 interactive prompt");
+    assert!(context < prompt, "{output}");
+    assert_eq!(
+        output.matches("! Duplicate pattern.").count(),
+        1,
+        "executor must not repeat §963's scan-time report: {output}"
+    );
+}
+
+#[test]
+fn distinct_pattern_paths_do_not_report_section_963_duplicate() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\patterns{a1b a2c}\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 1);
+    assert!(
+        !terminal_text(&stores).contains("! Duplicate pattern."),
+        "different trie paths are the negative control"
+    );
+}
+
+#[test]
 fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
     // TeX82 §962's `digit_sensed=false` branch treats the first ASCII digit
     // as a hyphen level and therefore never consults its zero `\lccode`.

@@ -11369,7 +11369,8 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let diagnostics = if patterns {
-                crate::assignments::apply_patterns(stores, pattern_specs)
+                crate::assignments::apply_scanned_patterns(stores, pattern_specs);
+                Vec::new()
             } else {
                 crate::assignments::apply_hyphenation_exceptions(stores, words)
             };

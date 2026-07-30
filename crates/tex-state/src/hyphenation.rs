@@ -141,6 +141,30 @@ impl HyphenationTable {
         duplicate
     }
 
+    /// Reports whether a language already has values on this pattern path.
+    ///
+    /// TeX82 §963 makes this test while the separator after a pattern is still
+    /// current. Canonical scanning uses the read-only query so it can preserve
+    /// that error timing while the executor retains ownership of insertion.
+    #[must_use]
+    pub(crate) fn contains_pattern_for_language(&self, language: u8, letters: &[char]) -> bool {
+        let Some(table) = self.languages.get(&language) else {
+            return false;
+        };
+        let mut node = 0usize;
+        for &ch in letters {
+            let Some(next) = table.nodes[node]
+                .edges
+                .iter()
+                .find_map(|&(edge, next)| (edge == ch).then_some(next))
+            else {
+                return false;
+            };
+            node = next;
+        }
+        !letters.is_empty() && !table.nodes[node].values.is_empty()
+    }
+
     pub fn add_exception(&mut self, exception: ExceptionSpec) {
         self.add_exception_for_language(0, exception);
     }

@@ -73,10 +73,27 @@ pub(crate) fn apply_patterns(
     stores: &mut Universe,
     patterns: Vec<PatternSpec>,
 ) -> Vec<HyphenationApplyDiagnostic> {
+    install_patterns(stores, patterns, true)
+}
+
+/// Installs patterns whose §963 duplicate diagnostics were already reported
+/// by the canonical live scanner.
+pub(crate) fn apply_scanned_patterns(stores: &mut Universe, patterns: Vec<PatternSpec>) {
+    let diagnostics = install_patterns(stores, patterns, false);
+    debug_assert!(diagnostics.is_empty());
+}
+
+fn install_patterns(
+    stores: &mut Universe,
+    patterns: Vec<PatternSpec>,
+    collect_duplicate_diagnostics: bool,
+) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
     let mut diagnostics = Vec::new();
     for pattern in patterns {
-        if stores.add_hyphenation_pattern_for_language(language, pattern) {
+        if stores.add_hyphenation_pattern_for_language(language, pattern)
+            && collect_duplicate_diagnostics
+        {
             diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
         }
     }

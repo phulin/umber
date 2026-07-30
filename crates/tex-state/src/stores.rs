@@ -481,6 +481,16 @@ impl Stores {
     }
 
     #[must_use]
+    pub(crate) fn contains_hyphenation_pattern_for_language(
+        &self,
+        language: u8,
+        letters: &[char],
+    ) -> bool {
+        self.hyphenation
+            .contains_pattern_for_language(language, letters)
+    }
+
+    #[must_use]
     pub fn hyphenation_patterns_open(&self) -> bool {
         self.hyphenation.patterns_open()
     }
