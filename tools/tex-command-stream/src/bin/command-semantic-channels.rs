@@ -650,6 +650,29 @@ fn braces(line: &str) -> i32 {
     net_delimiter_depth(line, '{', '}')
 }
 
+/// Net `[`/`]` depth a line contributes, ignoring brackets inside JSON
+/// strings.
+fn brackets(line: &str) -> i32 {
+    net_delimiter_depth(line, '[', ']')
+}
+
+fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in line.chars() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            character if !in_string && character == open => depth += 1,
+            character if !in_string && character == close => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,27 +725,4 @@ mod tests {
         assert!(!temporary.path().join(".case-a.regen-staging").exists());
         assert!(!temporary.path().join(".case-a.regen-backup").exists());
     }
-}
-
-/// Net `[`/`]` depth a line contributes, ignoring brackets inside JSON
-/// strings.
-fn brackets(line: &str) -> i32 {
-    net_delimiter_depth(line, '[', ']')
-}
-
-fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
-    let mut depth = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    for character in line.chars() {
-        match character {
-            _ if escaped => escaped = false,
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            character if !in_string && character == open => depth += 1,
-            character if !in_string && character == close => depth -= 1,
-            _ => {}
-        }
-    }
-    depth
 }
