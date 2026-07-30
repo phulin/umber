@@ -27,6 +27,20 @@ shared authority may target either every discovered case or an explicit
 nonempty subset; the latter keeps overlapping scenario groups declarative
 without introducing duplicate flat authorities.
 
+`fixturegen --cohort-transaction --plan PLAN.json` and `--apply PLAN.json`
+reuse that transaction engine for generators that already hold a complete
+multi-case cohort. The versioned JSON plan names the Git checkout, each
+repository-relative staged closed case, its unique repository-relative
+destination, and every tracked authority to consume. Each staged directory
+must carry `closed-case-v1` `case.inventory` metadata, but it need not be
+tracked: staged output is validated as closed local data while old authorities
+are independently required to belong to the selected Git checkout. The command
+prints one `umber-fixture-cohort-result-v1` JSON object on success and exits
+nonzero without a success object on validation, transaction, rollback, or
+garbage-collection failure. This is the Rust transaction interface intended
+for a future `scripts/regen-fixtures.sh` cohort handoff; the script does not yet
+invoke it.
+
 Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
 of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of
 legal `.bst` programs, stages each case without host lookup, and compares

@@ -57,6 +57,10 @@ Fixture areas:
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
 Reference tools:
+  fixturegen also exposes a noninteractive --cohort-transaction JSON
+  plan/apply interface for a future whole-cohort handoff. This script does not
+  invoke that helper yet.
+
   Text and DVI reference regeneration requires pdftex or tex on PATH, or
   UMBER_REF_TEX=/absolute/path/to/pdftex. Text/native regeneration builds and
   runs the workspace fixturegen tool; DVI regeneration builds and runs the
