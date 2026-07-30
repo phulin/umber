@@ -58,7 +58,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   does by latching the session's terminal state instead of returning an
   error. No other handler may recover from it or roll back over it.
 - `src/effects/tests.rs`: canonical-replay tests for stream lifecycle, immediate and deferred effects, and shipout-time special/write/open/close behavior.
-- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
+- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, runtime-only session command-fuel ownership across detached operations, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.

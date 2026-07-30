@@ -1320,6 +1320,84 @@ fn reconstruction_uses_one_monotonic_caller_ledger() {
 }
 
 #[test]
+fn detached_session_operations_share_fuel_without_refund_or_partial_commit() {
+    let (mut stores, font) =
+        ligature_test_font(&[(b'A', b'B', ligature_command(0, b'C'))], None, None);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    let mut execution =
+        crate::ExecutionContext::new("cumulative-command-fuel").with_command_fuel_limit(3);
+
+    append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+        .expect("first left character");
+    append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
+        .expect("first right character");
+    flush_pending_hchars_with_fuel(&mut nest, &mut stores, execution.command_fuel())
+        .expect("one ligature operation fits the session limit");
+    assert_eq!(node_characters(nest.current_list().nodes()), ['C']);
+
+    let (state, input_resolver, font_resolver, image_resolver, recorder) =
+        execution.into_owned_parts();
+    execution = crate::ExecutionContext::from_owned_state(
+        "cumulative-command-fuel",
+        state,
+        input_resolver,
+        font_resolver,
+        image_resolver,
+        recorder,
+    );
+
+    append_canonical_character(&mut nest, &mut stores, 'A', OriginId::UNKNOWN)
+        .expect("second left character");
+    append_canonical_character(&mut nest, &mut stores, 'B', OriginId::UNKNOWN)
+        .expect("second right character");
+    let nodes_before = nest.current_list().nodes().to_vec();
+    let pending_before = nest.current_list().pending_hchars().cloned();
+    let stores_before = stores.snapshot().state_hash();
+    let observation_keys_before = execution
+        .paragraph_dependency_cache
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for operation in ["second", "third"] {
+        assert!(
+            matches!(
+                flush_pending_hchars_with_fuel(&mut nest, &mut stores, execution.command_fuel()),
+                Err(ExecError::Command(
+                    tex_command::CommandError::FuelExhausted {
+                        limit: 3,
+                        burned: 3
+                    }
+                ))
+            ),
+            "{operation} cumulative operation must exhaust the retained ledger"
+        );
+        assert_eq!(nest.current_list().nodes(), nodes_before);
+        assert_eq!(
+            nest.current_list().pending_hchars(),
+            pending_before.as_ref(),
+            "{operation} failure must retain the pending run"
+        );
+        assert_eq!(
+            stores.snapshot().state_hash(),
+            stores_before,
+            "{operation} failure must not mutate engine state"
+        );
+        assert_eq!(
+            execution
+                .paragraph_dependency_cache
+                .keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            observation_keys_before,
+            "{operation} failure must not publish observations"
+        );
+    }
+}
+
+#[test]
 fn public_empty_flush_preserves_list_and_fuel_cardinality() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut nest = ModeNest::new();

@@ -193,6 +193,10 @@ pub(crate) struct CachedParagraphDependency {
 /// Expansion and paragraph state that survives between bounded executor calls.
 pub struct ExecutionState {
     expansion: tex_expand::ExpansionSessionState,
+    /// Runtime-only command budget for this execution session. This is moved
+    /// through detached contexts but deliberately excluded from step
+    /// snapshots: rolling back semantic state must never refund work.
+    command_fuel: tex_command::CommandFuelLedger,
     macro_scan_error_count: u8,
     pending_paragraph_memo: Option<PendingParagraphMemo>,
     paragraph_memo_barrier: bool,
@@ -206,6 +210,7 @@ impl Default for ExecutionState {
     fn default() -> Self {
         Self {
             expansion: tex_expand::ExpansionSessionState::default(),
+            command_fuel: tex_command::CommandFuelLedger::default(),
             macro_scan_error_count: 0,
             pending_paragraph_memo: None,
             paragraph_memo_barrier: false,
@@ -440,7 +445,7 @@ impl Cancellation {
 
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
-    command_fuel: tex_command::CommandFuelLedger,
+    command_fuel: Option<tex_command::CommandFuelLedger>,
     macro_scan_error_count: u8,
     emit_dvi: bool,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -458,7 +463,7 @@ pub struct ExecutionContext<'a> {
         ahash::AHashMap<tex_state::DependencyKey, CachedParagraphDependency>,
 }
 
-type ExecutionContextParts<'a> = (
+pub(crate) type ExecutionContextParts<'a> = (
     ExecutionState,
     Option<&'a mut dyn InputResolver>,
     Option<&'a mut dyn FontResolver>,
@@ -471,7 +476,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
-            command_fuel: tex_command::CommandFuelLedger::default(),
+            command_fuel: Some(tex_command::CommandFuelLedger::default()),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: None,
@@ -484,7 +489,26 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
-    fn from_owned_state(
+    /// Leaves a temporary shell while a legacy session moves its live state
+    /// into [`ExecutionRun`]. The shell cannot execute commands and, crucially,
+    /// does not create a second command-fuel ledger.
+    fn detached_placeholder(job_name: &str) -> Self {
+        Self {
+            expansion: tex_expand::ExpansionContext::new(job_name),
+            command_fuel: None,
+            macro_scan_error_count: 0,
+            emit_dvi: true,
+            font_resolver: None,
+            image_resolver: None,
+            pending_paragraph_memo: None,
+            paragraph_memo_barrier: false,
+            paragraph_memo_disabled_for_run: false,
+            cold_paragraph_recording: None,
+            paragraph_dependency_cache: ahash::AHashMap::new(),
+        }
+    }
+
+    pub(crate) fn from_owned_state(
         job_name: &str,
         state: ExecutionState,
         input_resolver: Option<&'a mut dyn InputResolver>,
@@ -500,7 +524,7 @@ impl<'a> ExecutionContext<'a> {
                 recorder,
             )
             .with_undefined_control_recovery(),
-            command_fuel: tex_command::CommandFuelLedger::default(),
+            command_fuel: Some(state.command_fuel),
             macro_scan_error_count: state.macro_scan_error_count,
             emit_dvi: true,
             font_resolver,
@@ -519,7 +543,10 @@ impl<'a> ExecutionContext<'a> {
     }
 
     pub(crate) fn command_fuel(&mut self) -> &mut tex_command::CommandFuel {
-        self.command_fuel.fuel_mut()
+        self.command_fuel
+            .as_mut()
+            .expect("live execution context retains its command-fuel ledger")
+            .fuel_mut()
     }
 
     pub(crate) fn record_macro_scan_error(
@@ -535,11 +562,14 @@ impl<'a> ExecutionContext<'a> {
         Ok(())
     }
 
-    fn into_owned_parts(self) -> ExecutionContextParts<'a> {
+    pub(crate) fn into_owned_parts(self) -> ExecutionContextParts<'a> {
         let (expansion, input_resolver, recorder) = self.expansion.into_parts();
         (
             ExecutionState {
                 expansion,
+                command_fuel: self
+                    .command_fuel
+                    .expect("live execution context retains its command-fuel ledger"),
                 macro_scan_error_count: self.macro_scan_error_count,
                 pending_paragraph_memo: self.pending_paragraph_memo,
                 paragraph_memo_barrier: self.paragraph_memo_barrier,
@@ -562,7 +592,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
-            command_fuel: tex_command::CommandFuelLedger::default(),
+            command_fuel: Some(tex_command::CommandFuelLedger::default()),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
@@ -582,6 +612,13 @@ impl<'a> ExecutionContext<'a> {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_command_fuel_limit(mut self, limit: u64) -> Self {
+        self.command_fuel =
+            Some(tex_command::CommandFuelLedger::new(limit).expect("valid test fuel limit"));
+        self
+    }
+
     #[must_use]
     pub fn with_resource_resolvers(
         job_name: &str,
@@ -591,7 +628,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
-            command_fuel: tex_command::CommandFuelLedger::default(),
+            command_fuel: Some(tex_command::CommandFuelLedger::default()),
             macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
@@ -1653,7 +1690,8 @@ where {
         C: CheckpointSink,
     {
         let job_name = execution.job_name.clone();
-        let detached = std::mem::replace(execution, ExecutionContext::new(&job_name));
+        let detached =
+            std::mem::replace(execution, ExecutionContext::detached_placeholder(&job_name));
         let (state, input_resolver, font_resolver, image_resolver, recorder) =
             detached.into_owned_parts();
         let nest = std::mem::take(&mut self.nest);
