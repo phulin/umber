@@ -2445,7 +2445,7 @@ impl CanonicalMainControl {
         let mut machine = self.command_machine();
         let mut processor = machine.processor(stores);
         let fetched = processor.get_x_token();
-        let result = match fetched {
+        match fetched {
             Ok(Some(command))
                 if !matches!(
                     command.meaning(),
@@ -2459,8 +2459,7 @@ impl CanonicalMainControl {
             }
             Ok(_) => Ok(()),
             Err(err) => Err(command_error(err)),
-        };
-        result
+        }
     }
 
     fn apply_canonical_math_delimiter(
@@ -3069,7 +3068,7 @@ impl CanonicalMainControl {
                 )?;
                 processor.back_input(first).map_err(command_error)?;
                 let mut filename = String::new();
-                let filename = loop {
+                loop {
                     let command = processor.get_x_token().map_err(command_error)?.ok_or(
                         ExecError::MissingToken {
                             context: "terminal filename",
@@ -3087,8 +3086,7 @@ impl CanonicalMainControl {
                             });
                         }
                     }
-                };
-                filename
+                }
             };
         // The terminal line supplies only the startup filename.  It is not a
         // normal file-input level beneath the selected root, so retire its

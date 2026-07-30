@@ -272,8 +272,8 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
         return;
     }
     let interaction = stores.interaction_mode();
-    let severity_warrants_note =
-        history == ErrorHistory::WarningIssued || interaction != tex_state::InteractionMode::ErrorStop;
+    let severity_warrants_note = history == ErrorHistory::WarningIssued
+        || interaction != tex_state::InteractionMode::ErrorStop;
     if !severity_warrants_note {
         return;
     }

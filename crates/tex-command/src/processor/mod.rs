@@ -242,5 +242,4 @@ impl<'a> CommandProcessor<'a> {
             false
         }
     }
-
 }
