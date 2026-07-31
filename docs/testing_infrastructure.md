@@ -1095,12 +1095,12 @@ rewriting either fixture.
 parity: the canonical `tex-command`/
 `CanonicalEngineSession` architecture's assembled DVI for `story.tex` and
 `gentle.tex` must remain byte-identical to real pdfTeX's output, normalized
-only the same way the legacy conformance tests already are. They are kept
-alongside, not instead of, their legacy `EngineSession` gates while the
-migration is in progress. Each shares its exact staged fixture directory
-(`parity_harness::run_named_fixture_document`, the same
-`plain.tex`/document/`hyphen.tex`/TFM staging the legacy in-process runner
-consumes) and its registered gate, so both reach their assets through
+only the same way the separately named conformance tests already are. All four
+now execute through the same persistent loaded-Plain provider path. Each shares
+its exact staged fixture directory
+(`parity_harness::run_named_fixture_document`, with the same
+`plain.tex`/document/`hyphen.tex`/TFM staging consumed by the shared provider
+runner) and its registered gate, so both reach their assets through
 `assets::with_gate` and neither can skip silently. See the
 [End-to-End Conformance Gate Contract](#end-to-end-conformance-gate-contract)
 above for what an absent oracle does.
@@ -1118,20 +1118,17 @@ not an automated differential-tracer fixture: the tracer's structural tests
 admit only committed microfixtures and synthetic fixtures, and do not load
 Gentle or another full document.
 
-Unlike the legacy runner (`EngineSession` over `ExecutionContext`/
-`InputResolver`/`FontResolver`), this test drives
-`umber::CanonicalEngineSession` directly: it seeds the staged directory into a
-memory `World` (via the shared `staged_world` helper both runners now use),
-installs the canonical primitive tables with
-`CanonicalEngineSession::tex82_initex`, whose command core owns the expandable
-table and composes it with `tex_exec::install_unexpandable_primitives` (matching
-`examples/first_failure_locator.rs`'s proven-working setup rather than the
-CLI's `prepare_run_stores`), registers the staged job wrapper as an authored
-root, and answers `\input`/font resource suspensions from a `StagedDirResourceHost`
-that reads the same staged files the legacy resolvers do. It does not perform
-the legacy test's macro-invocation-provenance budget check: that budget is a
-legacy `EngineSession`/`ExecutionContext` observation that does not yet have a
-canonical-session equivalent (see `umber2-johp.75`).
+The shared runner builds the complete pinned Plain recipe, prepares it through
+`PreparedFormatProvider`, and supplies each document as a fresh explicit
+`PreparedFormatJob`. Construction owns `plain.tex`, `hyphen.tex`, and the
+preloaded Plain TFMs; the staged document and its remaining input/font files
+become typed job resources. The provider owns format caching, authenticated
+worker construction, image loading, and the fresh memory `World`; no family
+helper owns an INITEX session, dump/load adapter, staged resource host, or
+mutable loaded universe. The separately named Story and Gentle gates differ
+only in their retained acceptance observations: the noncanonical-named route
+also checks the macro-invocation-provenance budget, while both DVI routes use
+the same loaded-format execution substrate.
 
 Under the `cargo test --tests`/`profile.test` (`opt-level = 1`) build this test
 uses, Story's canonical run is fast (a few seconds), not the roughly 50-second
