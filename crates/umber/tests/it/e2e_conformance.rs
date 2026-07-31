@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,9 +11,8 @@ use parity_harness::{
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_command::{CommandObserver, FontResource, RegisteredSourceKind};
+use tex_command::{CommandObserver, RegisteredSourceKind};
 use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
-use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineCheckpoint};
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
@@ -22,10 +20,8 @@ use tex_state::{EffectRecord, PrintSink};
 use tex_state::{JobClock, Universe, World};
 
 use umber::{
-    CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode,
-    FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource, OutputCapability,
-    PreparedFormatJob, PreparedFormatProvider, dvi_from_page_plans,
+    EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource,
+    OutputCapability, PreparedFormatJob, PreparedFormatProvider, dvi_from_page_plans,
 };
 use umber_fetch::FormatCacheStore;
 
@@ -185,56 +181,6 @@ fn trip_observer_profile_selection_includes_fixture_and_phase_identity() {
         assert_eq!(stream.header.schema, SchemaVersion::V1.number());
         assert_eq!(stream.header.manifest, expected_manifest);
     }
-}
-
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-struct NoCheckpoints;
-
-impl CheckpointSink for NoCheckpoints {
-    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
-        false
-    }
-
-    fn checkpoint(&mut self, _checkpoint: EngineCheckpoint) {}
-}
-
-/// Canonicalizes a staged fixture directory's job path and loads every file
-/// it contains into a memory `World`, keyed by absolute path so both the
-/// legacy and canonical in-process runners can address the same staged
-/// inputs (source document, format source, hyphenation data, TFMs) the same
-/// way `parity_harness::staged_source_dir` assembled them.
-#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-fn staged_world(path: &Path) -> Result<(World, PathBuf), String> {
-    let path = path
-        .canonicalize()
-        .map_err(|error| format!("resolve {}: {error}", path.display()))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("input has no parent: {}", path.display()))?;
-    let mut world = World::memory_with_clock(JobClock {
-        time: 13 * 60 + 36,
-        second: 0,
-        day: 9,
-        month: 7,
-        year: 2026,
-    });
-    for entry in fs::read_dir(parent)
-        .map_err(|error| format!("read staged directory {}: {error}", parent.display()))?
-    {
-        let entry = entry.map_err(|error| format!("read staged directory entry: {error}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("inspect {}: {error}", entry.path().display()))?;
-        if file_type.is_file() {
-            let bytes = fs::read(entry.path())
-                .map_err(|error| format!("read {}: {error}", entry.path().display()))?;
-            world
-                .set_memory_file(entry.path(), bytes)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok((world, path))
 }
 
 fn startup_input_name(canonical_source_name: &str) -> String {
@@ -418,14 +364,18 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
         .expect("two-phase helper has a bounded source region")
         .0;
     for forbidden in [
-        "run_file_in_process_captured",
-        "tempfile::tempdir",
-        "FormatCacheStore::new",
-        "ensure_format(",
+        concat!("run_file_in_process_", "captured"),
+        concat!("tempfile::", "tempdir"),
+        concat!("FormatCacheStore::", "new"),
+        concat!("ensure_", "format("),
         ".load(",
-        "Universe::from_format",
-        ".dump_format(",
-        "construct_format_in_worker",
+        concat!("Universe::from_", "format"),
+        concat!(".dump_", "format("),
+        concat!("construct_format_", "in_worker"),
+        concat!("run_format_", "worker"),
+        concat!("CanonicalEngineSession::", "tex82_initex"),
+        concat!("Once", "Lock"),
+        concat!("Temp", "Dir"),
     ] {
         assert!(
             !helper.contains(forbidden),
@@ -445,6 +395,20 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
             helper.contains(required),
             "two-phase helper must retain public boundary step {required}"
         );
+    }
+    for (caller, profile) in [
+        ("e2e_conformance_trip_canonical", "TripEngineProfile::Tex82"),
+        ("e2e_conformance_etrip", "TripEngineProfile::ETex"),
+    ] {
+        let body = source
+            .split_once(&format!("\nfn {caller}()"))
+            .unwrap_or_else(|| panic!("full-pipeline caller exists: {caller}"))
+            .1
+            .split_once("\n}")
+            .unwrap_or_else(|| panic!("bounded full-pipeline caller: {caller}"))
+            .0;
+        assert_eq!(body.matches("run_two_phase_fixture").count(), 1);
+        assert!(body.contains(profile), "{caller} selects {profile}");
     }
 }
 
@@ -537,136 +501,6 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
         2,
         "one authenticated entry must be published for each profile identity"
     );
-}
-
-#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-fn run_file_in_process_captured(
-    path: &Path,
-    canonical_source_name: &str,
-    format: Option<&[u8]>,
-    engine: EngineMode,
-    failure: &mut Option<LiveCapture>,
-) -> Result<InProcessRun, String> {
-    let (world, path) = staged_world(path)?;
-
-    let mut stores = if let Some(format) = format {
-        let mut stores = Universe::from_format(world, format).map_err(|error| error.to_string())?;
-        engine.install_after_format(&mut stores);
-        stores
-    } else {
-        let mut stores = Universe::with_world(world);
-        engine.prepare_initex(&mut stores);
-        stores
-    };
-    // Every live reference invocation used to build the four DVI and command
-    // oracles passes `-interaction=nonstopmode`. Match that process option
-    // before execution; it is initial session state, not TeX input and not a
-    // value owned by the dumped format.
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    // The canonical TRIP environment's texmf.cnf selects 64/32 for TeX82
-    // §79's process-level pseudoprint widths. This is driver configuration,
-    // not fixture syntax or dumped-format state.
-    stores.set_error_context_widths(
-        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths"),
-    );
-    let content = stores
-        .world_mut()
-        .read_file(&path)
-        .map_err(|error| error.to_string())?;
-    let root_bytes = content.shared_bytes();
-    let base_dir = path
-        .parent()
-        .ok_or_else(|| format!("input has no parent: {}", path.display()))?
-        .to_owned();
-    // TeX82 §§529, 537 derive the job name and print the file-opening frame
-    // from the driver-selected startup name. The staged path may deliberately
-    // differ (e-TRIP is locally renamed), so it is not an observable name.
-    let startup_input_name = startup_input_name(canonical_source_name);
-    let mut session = if format.is_some() {
-        CanonicalEngineSession::new(&mut stores, engine.command_profile())
-    } else {
-        CanonicalEngineSession::prepared_initex(&mut stores, engine.command_profile())
-    };
-    assert_eq!(
-        session.fuel_limit(),
-        tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
-        "canonical e2e sessions must use the finite command-fuel default"
-    );
-    assert_ne!(
-        session.fuel_limit(),
-        u64::MAX,
-        "canonical e2e sessions must never run with unbounded command fuel"
-    );
-    let root_source = session
-        .register_world_root(&startup_input_name, content)
-        .map_err(|error| error.to_string())?;
-    let mut host = StagedDirResourceHost { base_dir };
-    let mut observers = TripObservers::default();
-    let run = match session.run_with_observer(&mut host, &mut NoCheckpoints, &mut observers) {
-        Ok(run) => run,
-        Err(error) => {
-            let message = canonical_error_message(&session, &error);
-            *failure = Some(LiveCapture {
-                root: LiveSource {
-                    name: canonical_source_name.to_owned(),
-                    source: root_source,
-                    bytes: root_bytes,
-                },
-                observations: mem::take(&mut observers).into_captured(),
-                outcome: LiveSessionOutcome::Failed {
-                    diagnostic: "canonical_session_error".into(),
-                    detail: message.clone(),
-                },
-            });
-            return Err(message);
-        }
-    };
-    drop(session);
-    for (index, committed) in run.committed_artifacts.iter().enumerate() {
-        let page = tex_out::PageArtifact::from_bytes(committed.bytes())
-            .map_err(|error| format!("decode page {} for HTML: {error}", index + 1))?;
-        let positioned = tex_out::positioned::lower_page(&page, (index + 1) as u32)
-            .map_err(|error| format!("lower page {} for HTML: {error}", index + 1))?;
-        tex_out::dvi::coordinates::compare_page(&page, &positioned)
-            .map_err(|error| format!("validate page {} HTML coordinates: {error}", index + 1))?;
-    }
-    let dvi = if run.artifacts.is_empty() {
-        None
-    } else {
-        Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
-    };
-    let _format = if run.dumped_format {
-        let bytes = stores.dump_format().map_err(|error| error.to_string())?;
-        let mut receipt = run
-            .format_dump_receipt
-            .clone()
-            .ok_or_else(|| "dumped format is missing its engine receipt".to_owned())?;
-        let displayed = format!("{}.fmt", receipt.format_ident.name);
-        tex_exec::confirm_format_dump_publication(&mut stores, &mut receipt, &displayed);
-        Some(bytes)
-    } else {
-        None
-    };
-    let provenance = stores.provenance_stats();
-    let macro_provenance = stores.macro_invocation_provenance_stats();
-    let (terminal, log) = transcript_channels(stores.world().effect_records());
-    Ok(InProcessRun {
-        dvi,
-        provenance,
-        macro_provenance,
-        terminal: terminal.clone(),
-        log: log.clone(),
-        capture: PhaseCapture::Live(LiveCapture {
-            root: LiveSource {
-                name: canonical_source_name.to_owned(),
-                source: root_source,
-                bytes: root_bytes,
-            },
-            observations: observers.into_captured(),
-            outcome: LiveSessionOutcome::Completed,
-        }),
-    })
 }
 
 const PLAIN_CLOCK: JobClock = JobClock {
@@ -1066,6 +900,17 @@ fn plain_job_split_types_non_preload_resources() {
 #[test]
 fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
     let source = include_str!("e2e_conformance.rs");
+    for removed_definition in [
+        concat!("fn staged_", "world("),
+        concat!("fn run_file_in_process_", "captured("),
+        concat!("struct StagedDir", "ResourceHost"),
+        concat!("fn canonical_error_", "message("),
+    ] {
+        assert!(
+            !source.contains(removed_definition),
+            "dead full-pipeline bootstrap definition remains: {removed_definition}"
+        );
+    }
     let repo_root = test_support::repository_root();
     test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
     for route in [
@@ -1158,13 +1003,17 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
         );
     }
     for forbidden in [
-        "staged_world(",
-        "StagedDirResourceHost",
-        "tex82_initex",
-        "run_file_in_process_captured",
-        "Universe::from_format",
-        "dump_format",
-        "FormatCacheStore::new",
+        concat!("staged_", "world("),
+        concat!("StagedDir", "ResourceHost"),
+        concat!("tex82_", "initex"),
+        concat!("run_file_in_process_", "captured"),
+        concat!("Universe::from_", "format"),
+        concat!("dump_", "format"),
+        concat!("FormatCacheStore::", "new"),
+        concat!("run_format_", "worker"),
+        concat!("CanonicalEngineSession::", "tex82_initex"),
+        concat!("Once", "Lock"),
+        concat!("Temp", "Dir"),
     ] {
         assert!(
             !shared.contains(forbidden),
@@ -1348,86 +1197,6 @@ fn e2e_conformance_story() {
 #[test]
 fn e2e_conformance_gentle() {
     assets::with_gate("gentle", |gate| run_plain_fixture_case("gentle.tex", gate));
-}
-
-/// Adds an extension inferred from the resource kind (`.tex` for input
-/// requests, `.tfm` for font requests) when a canonical resource need names a
-/// file without one, mirroring the legacy `InProcessInputResolver`/
-/// `InProcessFontResolver`'s own default-extension behavior above.
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-fn with_default_extension(name: &str, extension: &str) -> PathBuf {
-    let mut path = PathBuf::from(name);
-    if path.extension().is_none() {
-        path.set_extension(extension);
-    }
-    path
-}
-
-/// Resolves canonical resource suspensions (`\input`, font loads) directly
-/// against the same staged fixture directory the legacy runner reads,
-/// keeping the two engines' host-side fixture wiring identical so a DVI
-/// difference between them reflects only engine behavior.
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-struct StagedDirResourceHost {
-    base_dir: PathBuf,
-}
-
-impl CanonicalResourceHost for StagedDirResourceHost {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
-        match need {
-            CanonicalResourceNeed::Input { name } => {
-                let path = with_default_extension(name, "tex");
-                world.read_file(self.base_dir.join(path)).ok().map_or(
-                    CanonicalResourceOutcome::Unavailable,
-                    |content| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::world_input(name, content),
-                        )
-                    },
-                )
-            }
-            CanonicalResourceNeed::Font { request } => {
-                let path = with_default_extension(&request.name, "tfm");
-                CanonicalResourceOutcome::Fulfilled(
-                    world.read_file(self.base_dir.join(path)).map_or_else(
-                        |_| CanonicalResourceFulfillment::Font {
-                            request: request.clone(),
-                            resource: Box::new(FontResource::Unavailable),
-                        },
-                        |metrics| CanonicalResourceFulfillment::Font {
-                            request: request.clone(),
-                            resource: Box::new(FontResource::Tfm {
-                                metrics,
-                                opentype: None,
-                            }),
-                        },
-                    ),
-                )
-            }
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
-        }
-    }
-}
-
-/// Renders a canonical session failure the same way `first_failure_locator.rs`
-/// does: an execution error gets its provenance-resolved TeX source context,
-/// while every other `CanonicalSessionError` variant already carries enough
-/// context through its own `Display` impl.
-#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
-fn canonical_error_message(
-    session: &CanonicalEngineSession<'_>,
-    error: &CanonicalSessionError,
-) -> String {
-    match error {
-        CanonicalSessionError::Execution(exec_error) => {
-            exec_error.format_with_provenance(session.stores())
-        }
-        other => other.to_string(),
-    }
 }
 
 /// Runs one self-contained staged fixture as a fresh job loaded from the

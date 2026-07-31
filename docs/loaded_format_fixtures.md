@@ -1,6 +1,6 @@
 # Loaded Format Fixture Substrate
 
-Status: substrate and universal persistent provider implemented; command and TRIP families migrated
+Status: universal persistent provider migration complete
 
 ## Scope
 
@@ -125,7 +125,7 @@ existing acceptance contract.
 | TRIP                   | `crates/umber/tests/it/e2e_conformance.rs`: ignored `e2e_conformance_trip_canonical` -> `run_two_phase_fixture` via `trip_format_recipe`                                                                                                                                                              | migrated: the complete TeX82 recipe prepares through the persistent provider, which owns each fresh loaded job                                                            | complete: construction evidence and advisory geometry remain separate from loaded command/output channels and normalized-DVI acceptance; hermetic controls prove authenticated warm reuse and fresh mutable state                                                                    |
 | e-TRIP                 | same file: ignored `e2e_conformance_etrip` -> `run_two_phase_fixture` via `trip_format_recipe`                                                                                                                                                                                                        | migrated through the same provider helper with a distinct complete e-TeX recipe identity                                                                                  | complete: the typed profile, construction closure, loaded resources, runtime controls, observation channels, and acceptance policy remain explicit                                                                                                                                   |
 | legacy Story/Gentle    | same file: `e2e_conformance_story` and `e2e_conformance_gentle` -> `run_plain_fixture_case` -> `run_file_with_plain_format`                                                                                                                                                                           | migrated: the shared complete Plain recipe prepares through `PreparedFormatProvider`; each document executes as a fresh loaded job                                        | complete: the staged wrapper's `plain.tex` prefix is construction-only; document and non-preload resources are typed job inputs, and provenance plus the existing normalized-DVI policy remain preserved                                                                             |
-| canonical Story/Gentle | same file: `e2e_conformance_story_canonical` and `e2e_conformance_gentle_canonical` -> `run_plain_fixture_case_canonical`; seven self-contained committed canonical DVI regressions use `run_file_in_process_canonical`                                                                               | migrated: Story/Gentle use the persistent Plain recipe, while self-contained INITEX fixtures use the existing persistent raw-TeX82 recipe through the same provider       | complete: each route supplies an explicit clock, profile/backend, Nonstop interaction, error widths, finite guards, terminal input, observer, authored root, and typed resources; recipe identity preserves the source INITEX allocation namespace without an output remapping layer |
+| canonical Story/Gentle | same file: `e2e_conformance_story_canonical` and `e2e_conformance_gentle_canonical` -> `run_plain_fixture_case_canonical`; `canonical_ligature_group_boundaries_match_reference_dvi`, `canonical_rule_space_factor_reset_matches_reference_dvi`, `canonical_alignment_leading_tabskip_matches_reference_dvi`, `canonical_rule_follows_pending_characters_in_reference_dvi`, `canonical_relax_breaks_ligatures_in_reference_dvi`, `canonical_display_equation_number_preserves_formula_dvi`, and `canonical_math_group_singleton_ord_matches_reference_dvi` -> `run_file_in_process_canonical` | migrated: Story/Gentle use the persistent Plain recipe, while the seven self-contained fixtures use the persistent raw-TeX82 recipe through the same provider | complete: each route supplies an explicit clock, profile/backend, Nonstop interaction, error widths, finite guards, terminal input, observer, authored root, and typed resources; recipe identity preserves the source INITEX allocation namespace without an output remapping layer |
 
 The Gentle profiling binary is a performance/session tool rather than one of
 these parity test families; this migration must not silently broaden into its
@@ -155,10 +155,12 @@ Implementation proceeds linearly so no two changes own the same helper:
    canonical Story/Gentle to it. Keep self-contained committed-DVI callers on
    the generic persistent raw-TeX82 recipe so their standalone INITEX state,
    including font allocation order, is unchanged.
-5. Audit and remove dead bootstrap/adaptor paths, strengthen forbidden-path and
-   complete-call-site controls, then run the guarded routine suite and format/
-   clippy gate. Canonical parity diagnosis begins only after the parent epic
-   closes.
+5. The final audit removed the staged-World resource host, captured direct
+   INITEX/dump/load runner, checkpoint adapter, manual failure adapter, and
+   their imports. Definition-anchored controls enumerate every caller above
+   and reject private cache, worker, decode, and construction ownership in
+   family helpers. Direct construction/security/unit coverage remains at the
+   generic format boundary.
 
 ## Identity
 

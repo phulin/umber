@@ -45,6 +45,68 @@ impl HermeticFormats {
     }
 }
 
+fn rust_function_body<'a>(source: &'a str, name: &str) -> &'a str {
+    let signature = format!("fn {name}(");
+    let start = source
+        .find(&signature)
+        .unwrap_or_else(|| panic!("function definition exists: {name}"));
+    let open = source[start..]
+        .find('{')
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("function body opens: {name}"));
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[open..].iter().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[open + 1..open + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("function body closes: {name}")
+}
+
+#[test]
+fn every_loaded_command_route_has_only_the_generic_provider_owner() {
+    let source = include_str!("../../src/semantic.rs");
+    let dispatch = rust_function_body(source, "execute_with_provider");
+    for owner in [
+        "execute_raw_tex82_loaded",
+        "execute_raw_etex26_loaded",
+        "execute_production_pdftex14027_loaded",
+    ] {
+        assert_eq!(dispatch.matches(owner).count(), 1, "dispatch owns {owner}");
+        let body = rust_function_body(source, owner);
+        assert_eq!(
+            body.matches("execute_loaded_format").count(),
+            1,
+            "{owner} delegates exactly once"
+        );
+    }
+
+    let generic = rust_function_body(source, "execute_loaded_format");
+    for required in ["provider", ".prepare(&recipe)", "PreparedFormatJob {", ".run("] {
+        assert!(generic.contains(required), "generic owner requires {required}");
+    }
+    for forbidden in [
+        concat!("Once", "Lock"),
+        concat!("Temp", "Dir"),
+        concat!("ensure_", "format("),
+        concat!("Universe::from_", "format"),
+        concat!("dump_", "format"),
+        concat!("run_format_", "worker"),
+    ] {
+        assert!(
+            !generic.contains(forbidden),
+            "generic loaded owner forbids {forbidden}"
+        );
+    }
+}
+
 #[test]
 fn declared_command_semantic_cases_match() {
     let root = tempfile::TempDir::new().expect("hermetic persistent format cache");
