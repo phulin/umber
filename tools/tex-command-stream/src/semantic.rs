@@ -1303,12 +1303,39 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
     let mut recorder = Recorder::default();
+    let mut resources = Vec::with_capacity(case.inputs.len() + case.font_inputs.len());
+    for (name, bytes) in &case.inputs {
+        let resolved_name = if name.contains('/') {
+            name.clone()
+        } else {
+            format!("./{name}")
+        };
+        resources.push(umber::LoadedFormatResource::Input {
+            logical_name: name.clone(),
+            resolved_name,
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: Arc::from(bytes.as_bytes()),
+        });
+    }
+    for (name, fixture_source) in &case.font_inputs {
+        let bytes = fs::read(repository_root().join(fixture_source))
+            .map_err(|error| format!("font fixture read: {error}"))?;
+        resources.push(umber::LoadedFormatResource::Tfm {
+            logical_name: name.clone(),
+            bytes: Arc::from(bytes),
+        });
+    }
     let mut loaded_fixture = fixture
         .load(world)
         .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
     loaded_fixture.set_interaction_mode(case.interaction_mode.engine_mode());
     let loaded = loaded_fixture
-        .run(&case.source, Arc::<[u8]>::from(source), &mut recorder)
+        .run(
+            &case.source,
+            Arc::<[u8]>::from(source),
+            &resources,
+            &mut recorder,
+        )
         .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
     let counts = std::array::from_fn(|slot| {
         loaded

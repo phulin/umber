@@ -13,6 +13,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
 use tex_command::FatalError;
 use tex_state::Universe;
 
@@ -113,6 +114,104 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
             "input:stop:terminal",
         ]
     );
+}
+
+#[test]
+fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
+    let case: Case = serde_json::from_value(serde_json::json!({
+        "id": "raw-loaded-declared-input",
+        "property_id": "tex82.input.loaded-job-resource",
+        "profile": "raw-tex82-loaded",
+        "source": "raw-loaded-declared-input.tex",
+        "provenance": {
+            "authority": "tex.web",
+            "manifest": "tests/tex82-oracle-manifest.txt",
+            "sections": [24, 534, 536, 537]
+        },
+        "projection": {"kind": "observations", "kinds": ["input"]},
+        "expected": [],
+        "expectation": {"kind": "pass"},
+        "inputs": {"child.tex": "\\count0=37 "}
+    }))
+    .expect("bounded loaded-input regression case is valid");
+    let run = execute(br"\input child\end", &case).expect("declared loaded-job input is available");
+    let channels = CapturedChannels::capture(&run);
+
+    assert_eq!(run.counts[0], 37);
+    assert_eq!(channels.events, 48);
+    assert_eq!(channels.status, "clean");
+    assert_eq!(
+        channels.stream(StreamChannel::Terminal),
+        concat!(
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "(preloaded format=production)\n",
+            "(./raw-loaded-declared-input.tex (./child.tex) )\n",
+            "No pages of output.\n",
+            "Transcript written on raw-loaded-declared-input.log.\n"
+        )
+        .as_bytes()
+    );
+    assert_eq!(
+        channels.stream(StreamChannel::Log),
+        concat!(
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "(preloaded format=production 2026.3.1)  1 JAN 1970 00:00\n",
+            "**raw-loaded-declared-input.tex\n",
+            "(./raw-loaded-declared-input.tex (./child.tex) )\n",
+            "No pages of output.\n"
+        )
+        .as_bytes()
+    );
+    assert!(channels.stream(StreamChannel::Dvi).is_empty());
+    assert!(channels.stream(StreamChannel::Effects).is_empty());
+}
+
+#[test]
+fn raw_tex82_loaded_reapplies_declared_job_tfm() {
+    let case: Case = serde_json::from_value(serde_json::json!({
+        "id": "raw-loaded-declared-tfm",
+        "property_id": "tex82.font.loaded-job-resource",
+        "profile": "raw-tex82-loaded",
+        "source": "raw-loaded-declared-tfm.tex",
+        "provenance": {
+            "authority": "tex.web",
+            "manifest": "tests/tex82-oracle-manifest.txt",
+            "sections": [560, 561, 565, 618]
+        },
+        "projection": {
+            "kind": "execution-boundaries",
+            "command_names": ["leader_ship"],
+            "include_artifact_hashes": true
+        },
+        "expected": [],
+        "expectation": {"kind": "pass"},
+        "font_inputs": {
+            "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+        }
+    }))
+    .expect("bounded loaded-font regression case is valid");
+    let run = execute(br"\font\ten=cmr10 \ten\shipout\hbox{A}\end", &case)
+        .expect("declared loaded-job TFM is available");
+    let channels = CapturedChannels::capture(&run);
+
+    assert_eq!(channels.events, 75);
+    assert_eq!(channels.status, "clean");
+    assert_eq!(
+        (
+            format!(
+                "{:x}",
+                Sha256::digest(channels.stream(StreamChannel::Terminal))
+            ),
+            format!("{:x}", Sha256::digest(channels.stream(StreamChannel::Log))),
+            format!("{:x}", Sha256::digest(channels.stream(StreamChannel::Dvi))),
+        ),
+        (
+            "018a58ed865382e7c2cf187b0e91dfad7bf8078f453fe0b81a322165b3cae721".to_owned(),
+            "c522687d11c774bd068e414620a35459eef0528f3679839c681de5bcac52c681".to_owned(),
+            "07c3e696d0a55c9e9beec4c55efb22417ecffa8d3381d696608d87f41b3cf7bc".to_owned(),
+        )
+    );
+    assert!(channels.stream(StreamChannel::Effects).is_empty());
 }
 
 fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<ChannelFailure> {

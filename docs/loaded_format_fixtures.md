@@ -113,6 +113,13 @@ cumulative command fuel, and returns structured semantic output. It has no
 an explicitly named test seam used only for the small fresh-versus-loaded
 matrix; it is not an automatic fallback from a cache or load failure.
 
+The recipe's source and typed resource closure belong to format construction
+and therefore participate in the format-cache identity. Inputs and TFMs
+declared by an individual loaded job cross the separate
+`LoadedFormatResource` boundary after restore. They preserve the host's
+logical lookup key, resolved input name, source kind, and typed font
+fulfillment, but do not alter the shared format-cache identity.
+
 Loaded jobs use TeX82 §§61, 534, 536, 537, 642, and 1333 framing through the
 generic retained session. A named retained root lets the command input stack
 own its balanced file-opening events; an unnamed compatibility root retains
@@ -127,7 +134,8 @@ builds, cache failure atomicity, concurrent publication, corrupt-entry
 recovery, adversarial symlink authority, format schema and exclusion
 properties, live-registry reload, the ordinary
 `main-control/hyphenation-data` corpus case through raw-TeX82 loaded execution,
-and one explicit fresh-versus-loaded semantic-state invariant. TeX82
+declared loaded-job `\input` and TFM replay with exact output-channel
+assertions, and one explicit fresh-versus-loaded semantic-state invariant. TeX82
 §§1250–1252 make that first migrated case a useful loaded-state witness:
 dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.

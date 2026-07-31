@@ -239,6 +239,7 @@ fn representative_command_semantic_case_runs_loaded() {
         .run(
             "loaded-count-arithmetic.tex",
             Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]),
+            &[],
             &mut observations,
         )
         .expect("loaded run");
@@ -262,6 +263,7 @@ fn explicit_fresh_seam_matches_loaded_semantic_state() {
         .run(
             "equivalence.tex",
             Arc::clone(&source),
+            &[],
             &mut loaded_observations,
         )
         .expect("loaded run");
@@ -285,6 +287,7 @@ fn loaded_page_job_reports_exact_serialized_dvi_length() {
         .run(
             "page.tex",
             Arc::from(&br"\catcode`\{=1 \catcode`\}=2 \shipout\hbox{}\end"[..]),
+            &[],
             &mut observations,
         )
         .expect("loaded page run");

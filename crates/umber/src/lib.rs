@@ -59,7 +59,7 @@ pub use fixed_point::FixedPointLimits;
 #[cfg(not(target_arch = "wasm32"))]
 pub use format_fixture::{
     FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,
-    LoadedFormatFixture, LoadedFormatRun, ensure_format,
+    LoadedFormatFixture, LoadedFormatResource, LoadedFormatRun, ensure_format,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use format_worker::run_format_worker;

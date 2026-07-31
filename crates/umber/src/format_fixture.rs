@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
-use tex_command::{CommandObserver, FontResource, RegisteredSourceKind};
+use tex_command::{CommandObserver, FontResource, RegisteredSourceKind, SourceRegistration};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink};
 use tex_state::{JobClock, Universe, World};
 use umber_fetch::{
@@ -46,6 +46,24 @@ impl FormatGenerationGuards {
 pub enum FormatResource {
     Input {
         logical_name: String,
+        source_kind: RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+    },
+    Tfm {
+        logical_name: String,
+        bytes: Arc<[u8]>,
+    },
+}
+
+/// One immutable job-local resource supplied after a format is loaded.
+///
+/// These resources belong to the execution episode, not to the format recipe
+/// or its cache identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LoadedFormatResource {
+    Input {
+        logical_name: String,
+        resolved_name: String,
         source_kind: RegisteredSourceKind,
         bytes: Arc<[u8]>,
     },
@@ -188,6 +206,7 @@ impl LoadedFormatFixture {
         mut self,
         source_name: &str,
         source: Arc<[u8]>,
+        resources: &[LoadedFormatResource],
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let mut session =
@@ -207,7 +226,7 @@ impl LoadedFormatFixture {
         let guards = GuardCheckpoints::new(self.recipe.guards)?;
         let mut checkpoints = &guards;
         let result = session.run_with_observer(
-            &mut RecipeResourceHost::new(&self.recipe.resources),
+            &mut LoadedResourceHost::new(resources),
             &mut checkpoints,
             observer,
         );
@@ -216,6 +235,73 @@ impl LoadedFormatFixture {
             result,
             universe: self.universe,
         })
+    }
+}
+
+struct LoadedResourceHost<'a> {
+    resources: &'a [LoadedFormatResource],
+}
+
+impl<'a> LoadedResourceHost<'a> {
+    fn new(resources: &'a [LoadedFormatResource]) -> Self {
+        Self { resources }
+    }
+}
+
+impl CanonicalResourceHost for LoadedResourceHost<'_> {
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        match need {
+            CanonicalResourceNeed::Input { name } => self
+                .resources
+                .iter()
+                .find_map(|resource| match resource {
+                    LoadedFormatResource::Input {
+                        logical_name,
+                        resolved_name,
+                        source_kind,
+                        bytes,
+                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::Input {
+                            name: logical_name.clone(),
+                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                .with_name(resolved_name.clone()),
+                        },
+                    )),
+                    _ => None,
+                })
+                .unwrap_or(CanonicalResourceOutcome::Unavailable),
+            CanonicalResourceNeed::Font { request } => self
+                .resources
+                .iter()
+                .find_map(|resource| match resource {
+                    LoadedFormatResource::Tfm {
+                        logical_name,
+                        bytes,
+                    } if Path::new(logical_name).file_stem()
+                        == Some(std::ffi::OsStr::new(&request.name)) =>
+                    {
+                        let content = world
+                            .register_selected_file(logical_name, Arc::clone(bytes))
+                            .ok()?;
+                        Some(CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::Font {
+                                request: request.clone(),
+                                resource: Box::new(FontResource::Tfm {
+                                    metrics: content,
+                                    opentype: None,
+                                }),
+                            },
+                        ))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(CanonicalResourceOutcome::Unavailable),
+            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+        }
     }
 }
 
