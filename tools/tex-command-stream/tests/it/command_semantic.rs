@@ -56,6 +56,47 @@ fn declared_command_semantic_cases_match() {
         failures.join("\n")
     );
     assert_eq!(raw_tex82_format_initializations(), 1);
+    assert_eq!(raw_etex26_format_initializations(), 1);
+}
+
+#[test]
+fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() {
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let run = |name: &str| {
+        let declared = cases
+            .iter()
+            .find(|declared| declared.case.id == name)
+            .unwrap_or_else(|| panic!("missing focused case {name}"));
+        let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+            .unwrap_or_else(|error| panic!("{name} source: {error}"));
+        execute(&source, &declared.case).unwrap_or_else(|error| panic!("{name}: {error}"))
+    };
+    let explicit_end = run("etex-loaded-ifcsname");
+    assert_eq!(
+        explicit_end.mode_transitions.last(),
+        Some(&tex_exec::Mode::Vertical)
+    );
+    assert!(explicit_end.observations.iter().any(|observation| {
+        matches!(
+            observation,
+            tex_command::CommandObservation::Effect(effect)
+                if effect.kind == "terminate" && effect.detail == "engine\0"
+        )
+    }));
+
+    let exhausted = run("etex-loaded-glue-component-enquiries");
+    assert_ne!(
+        exhausted.mode_transitions.last(),
+        Some(&tex_exec::Mode::Vertical)
+    );
+    assert!(matches!(
+        exhausted.observations.as_slice(),
+        [.., tex_command::CommandObservation::Input(input), tex_command::CommandObservation::Effect(effect)]
+            if input.transition == tex_command::InputTransition::Stop
+                && input.reason == tex_command::InputReason::Source
+                && effect.kind == "terminate"
+                && effect.detail == "engine\0"
+    ));
 }
 
 #[test]
@@ -97,23 +138,18 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         "scanners-internal-quantities/scaled-division",
         "scanners-internal-quantities/vacuous-dimension-units",
     ];
+    const ETEX_LOADED: &[&str] = &[
+        "conditionals/etex-loaded-ifcsname",
+        "conditionals/etex-loaded-ifdefined",
+        "conditionals/etex-loaded-iffontchar",
+        "conditionals/etex-loaded-unless-frame",
+        "etex-diagnostics/etex-loaded-code-reassignment",
+        "etex-diagnostics/etex-loaded-glue-component-enquiries",
+        "etex-diagnostics/etex-loaded-macro-call",
+        "etex-diagnostics/etex-loaded-meaning-reassignment",
+        "etex-diagnostics/etex-loaded-state-reset",
+    ];
     const EXCLUDED: &[(&str, SessionProfile)] = &[
-        (
-            "conditionals/etex-loaded-ifcsname",
-            SessionProfile::EtexLoaded,
-        ),
-        (
-            "conditionals/etex-loaded-ifdefined",
-            SessionProfile::EtexLoaded,
-        ),
-        (
-            "conditionals/etex-loaded-iffontchar",
-            SessionProfile::EtexLoaded,
-        ),
-        (
-            "conditionals/etex-loaded-unless-frame",
-            SessionProfile::EtexLoaded,
-        ),
         (
             "input-expansion/etex-noexpand-undefined",
             SessionProfile::EtexInitex,
@@ -226,6 +262,36 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         .collect();
     assert_eq!(allowlisted, expected_allowlist);
     assert_eq!(allowlisted.len(), 172);
+    let etex_loaded: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (case.profile.execution_route() == ExecutionRoute::RawEtex26Loaded)
+                .then_some(name.as_str())
+        })
+        .collect();
+    assert_eq!(etex_loaded, ETEX_LOADED.iter().copied().collect());
+    let etex_loaded_cases: Vec<_> = etex_loaded.iter().map(|name| by_name[*name]).collect();
+    assert_eq!(
+        etex_loaded_cases
+            .iter()
+            .map(|case| case.font_inputs.len())
+            .sum::<usize>(),
+        1
+    );
+    assert_eq!(
+        by_name["conditionals/etex-loaded-iffontchar"]
+            .font_inputs
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["cmr10.tfm"]
+    );
+    assert!(etex_loaded_cases.iter().all(|case| {
+        matches!(
+            case.channels.as_ref().expect("validated channels").dvi,
+            StreamDisposition::Empty
+        )
+    }));
     for (name, profile) in EXCLUDED {
         assert_eq!(by_name[*name].profile, *profile, "{name}");
         assert_eq!(

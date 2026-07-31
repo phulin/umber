@@ -26,11 +26,7 @@ use tex_command::{
 };
 use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
 use tex_state::{
-    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe,
-    macro_store::MacroMeaning,
-    meaning::{Meaning, MeaningFlags},
-    node::Node,
-    token::Token,
+    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe, node::Node,
 };
 
 pub mod channels;
@@ -197,6 +193,7 @@ pub enum SessionProfile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionRoute {
     Fresh,
+    RawEtex26Loaded,
     RawTex82Loaded,
 }
 
@@ -204,10 +201,9 @@ impl SessionProfile {
     #[must_use]
     pub const fn execution_route(self) -> ExecutionRoute {
         match self {
+            Self::EtexLoaded => ExecutionRoute::RawEtex26Loaded,
             Self::RawTex82Loaded => ExecutionRoute::RawTex82Loaded,
-            Self::Initex | Self::EtexInitex | Self::EtexLoaded | Self::Production => {
-                ExecutionRoute::Fresh
-            }
+            Self::Initex | Self::EtexInitex | Self::Production => ExecutionRoute::Fresh,
         }
     }
 }
@@ -1094,8 +1090,10 @@ fn terminal_stdin(case: &Case) -> Vec<String> {
 }
 
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    if case.profile.execution_route() == ExecutionRoute::RawTex82Loaded {
-        return execute_raw_tex82_loaded(source, case);
+    match case.profile.execution_route() {
+        ExecutionRoute::RawEtex26Loaded => return execute_raw_etex26_loaded(source, case),
+        ExecutionRoute::RawTex82Loaded => return execute_raw_tex82_loaded(source, case),
+        ExecutionRoute::Fresh => {}
     }
     let mut universe = Universe::new();
     for line in terminal_stdin(case) {
@@ -1112,40 +1110,7 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
             CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
         }
-        SessionProfile::EtexLoaded => {
-            let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
-            tex_command::install_etex_expandable_primitives(&mut universe);
-            tex_exec::install_etex_unexpandable_primitives(&mut universe);
-            // Bounded format-loaded macro identity probe. TeX82 §§341/1221
-            // expose the `def_ref` head after §1309's format memory compaction
-            // removes the unreachable frozen `\endwrite` definition.
-            let empty = universe.intern_token_list(&[]);
-            let relax = universe.intern("relax");
-            let replacement = universe.intern_token_list(&[Token::Cs(relax.symbol())]);
-            let format_macro =
-                universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
-            let format_macro_symbol = universe.intern("formatmacro");
-            universe.set_meaning_global(
-                format_macro_symbol,
-                Meaning::Macro {
-                    flags: MeaningFlags::EMPTY,
-                    definition: format_macro,
-                },
-            );
-            // Exercise e-TeX change [50.1307], which resets optional e-TeX
-            // state cells immediately before tex.web §1307 dumps `eqtb`.
-            universe.set_int_param(tex_state::env::banks::IntParam::TEX_XET_STATE, 1);
-            let format = universe
-                .dump_format()
-                .map_err(|error| format!("e-TeX format creation: {error}"))?;
-            universe = Universe::from_format(tex_state::World::memory(), &format)
-                .map_err(|error| format!("e-TeX format restore: {error}"))?;
-            tex_command::register_tex82_expandable_primitives(&mut universe);
-            tex_command::register_etex_expandable_primitives(&mut universe);
-            let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
-            control.set_preloaded_format(dumped_format_identity("etex-loaded", &universe));
-            control
-        }
+        SessionProfile::EtexLoaded => unreachable!("loaded profile handled above"),
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
             let mut control = CanonicalMainControl::new();
@@ -1313,6 +1278,20 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
 
 static RAW_TEX82_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
 static RAW_TEX82_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+static RAW_ETEX26_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
+static RAW_ETEX26_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn format_worker_launcher() -> umber::FormatWorkerLauncher {
+    if std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_owned()))
+        .is_some_and(|name| name == "command-semantic-channels")
+    {
+        umber::FormatWorkerLauncher::production()
+    } else {
+        umber::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap")
+    }
+}
 
 fn shared_raw_tex82_format() -> Result<umber::FormatFixture, String> {
     RAW_TEX82_FORMAT
@@ -1322,21 +1301,40 @@ fn shared_raw_tex82_format() -> Result<umber::FormatFixture, String> {
                 tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
             let mut recipe = umber::FormatRecipe::raw_tex82();
             recipe.format_name = "production".into();
-            let launcher = if std::env::current_exe()
-                .ok()
-                .and_then(|path| path.file_name().map(|name| name.to_owned()))
-                .is_some_and(|name| name == "command-semantic-channels")
-            {
-                umber::FormatWorkerLauncher::production()
-            } else {
-                umber::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap")
-            };
             umber::ensure_format(
                 &umber_fetch::FormatCacheStore::new(cache.path()),
                 &recipe,
-                &launcher,
+                &format_worker_launcher(),
             )
             .map_err(|error| format!("ensure raw TeX82 format: {error}"))
+        })
+        .clone()
+}
+
+fn shared_raw_etex26_format() -> Result<umber::FormatFixture, String> {
+    RAW_ETEX26_FORMAT
+        .get_or_init(|| {
+            RAW_ETEX26_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
+            let cache =
+                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
+            let mut recipe = umber::FormatRecipe::raw_etex26();
+            recipe.format_name = "etex-loaded".into();
+            // This loaded-profile cohort intentionally observes both a macro
+            // that survives §1309's format-memory compaction and e-TeX
+            // change [50.1307]'s reset of optional state immediately before
+            // the dump. Build those two pieces through the public recipe's
+            // INITEX source rather than mutating a restored Universe.
+            recipe.construction_source_name = "etex-loaded.ini".into();
+            recipe.construction_source = Arc::from(
+                &b"\\catcode`\\{=1 \\catcode`\\}=2 \\def\\formatmacro{\\relax}\
+\\catcode`\\{=12 \\catcode`\\}=12 \\TeXXeTstate=1 \\dump\n"[..],
+            );
+            umber::ensure_format(
+                &umber_fetch::FormatCacheStore::new(cache.path()),
+                &recipe,
+                &format_worker_launcher(),
+            )
+            .map_err(|error| format!("ensure raw e-TeX 2.6 format: {error}"))
         })
         .clone()
 }
@@ -1350,8 +1348,28 @@ pub fn raw_tex82_format_initializations() -> usize {
     RAW_TEX82_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
 }
 
+/// Number of shared raw-e-TeX 2.6 format initialization episodes in this process.
+///
+/// This proves the nine loaded e-TeX jobs share one recipe identity and image.
+#[must_use]
+pub fn raw_etex26_format_initializations() -> usize {
+    RAW_ETEX26_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
+}
+
+fn execute_raw_etex26_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+    execute_loaded_format(shared_raw_etex26_format()?, source, case, "raw e-TeX 2.6")
+}
+
 fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    let fixture = shared_raw_tex82_format()?;
+    execute_loaded_format(shared_raw_tex82_format()?, source, case, "raw TeX82")
+}
+
+fn execute_loaded_format(
+    fixture: umber::FormatFixture,
+    source: &[u8],
+    case: &Case,
+    format_label: &str,
+) -> Result<SemanticRun, String> {
     let mut world = tex_state::World::memory();
     for line in terminal_stdin(case) {
         world
@@ -1383,7 +1401,7 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
     }
     let mut loaded_fixture = fixture
         .load(world)
-        .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
+        .map_err(|error| format!("loaded {format_label} run: {error}"))?;
     loaded_fixture.set_interaction_mode(case.interaction_mode.engine_mode());
     let loaded = loaded_fixture
         .run(
@@ -1392,7 +1410,7 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
             &resources,
             &mut recorder,
         )
-        .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
+        .map_err(|error| format!("loaded {format_label} run: {error}"))?;
     let counts = std::array::from_fn(|slot| {
         loaded
             .universe
