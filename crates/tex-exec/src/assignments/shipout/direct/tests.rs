@@ -43,7 +43,7 @@ fn openout_sidecars_share_the_filtered_page_effect_index_space() {
     world.record_pdf_object_placeholder("between");
     world.open_out(tex_state::StreamSlot::new(2), "same.out");
 
-    let pending = pending_page_effects(&world);
+    let pending = pending_page_effects(&world, world.effect_records().len());
     assert_eq!(pending.effects.len(), 2);
     assert!(pending.effects.iter().all(|effect| matches!(
         effect,

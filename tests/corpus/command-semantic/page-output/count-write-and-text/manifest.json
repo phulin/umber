@@ -32,24 +32,8 @@
       "channels": {
         "events": 257,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.24",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./count-write-and-text.tex [7",
-            "actual": "(./count-write-and-text.texship count 7"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.24",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./count-write-and-text.tex [7",
-            "actual": "(./count-write-and-text.texship count 7"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

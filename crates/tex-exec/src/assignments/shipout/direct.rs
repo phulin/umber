@@ -145,13 +145,17 @@ fn stage_form_inner(
 pub(super) fn stage_shipout(
     node: Node,
     input_summary: tex_state::InputSummary,
-    output_open_context: Option<String>,
+    origin: super::ShipoutOrigin,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     emit_dvi: bool,
     write_expander: &mut WriteExpander<'_>,
 ) -> Result<StagedShipout, ExecError> {
-    let pending_effects = pending_page_effects(stores.world());
+    let super::ShipoutOrigin {
+        output_open_context,
+        pending_end,
+    } = origin;
+    let pending_effects = pending_page_effects(stores.world(), pending_end);
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
     if let Some(diagnostic) = diagnostic {

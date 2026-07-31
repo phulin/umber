@@ -324,6 +324,17 @@ fn append_whatsit_effect(
                 Some(text) => text,
                 None => expand_write_tokens(stores, expansion.expansion, tokens)?,
             };
+            // TeX82 §1370's `write_out` frames the expansion as `print_nl("");
+            // token_show(def_ref); print_ln` when the stream is not an open
+            // file. The trailing `print_ln` is part of the write's own text;
+            // the leading `print_nl` is not -- it is §62's column test against
+            // whatever happens to be on the line, which for a `\write16`
+            // inside a shipped box is §638's `[<counts>` marker printed a
+            // moment earlier. So it is applied to the channel and left off the
+            // page effect, which records what the token list expanded to.
+            if write_line_is_open(stores, sink) {
+                stores.world_mut().write_text(sink, "\n");
+            }
             stores.world_mut().write_text(sink, &text);
             effects.push(PageEffect::Write {
                 sink: lower_sink(sink),
@@ -842,4 +853,21 @@ fn expand_write_tokens(
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
     Ok(text)
+}
+
+/// TeX82 §62's `print_nl` test, applied to a `\write`'s own sink.
+///
+/// §1370 writes an unopened stream through `print_nl("")`, whose guard is
+/// `((term_offset>0)and(odd(selector)))or((file_offset>0)and(selector>=
+/// log_only))`. A `\write` to a real file has no column to break.
+fn write_line_is_open(stores: &Universe, sink: tex_state::PrintSink) -> bool {
+    let bufs = stores.world().stream_bufs();
+    let terminal = !bufs.terminal_partial_line().is_empty();
+    let log = !bufs.log_partial_line().is_empty();
+    match sink {
+        tex_state::PrintSink::Terminal => terminal,
+        tex_state::PrintSink::Log => log,
+        tex_state::PrintSink::TerminalAndLog => terminal || log,
+        tex_state::PrintSink::Stream(_) => false,
+    }
 }

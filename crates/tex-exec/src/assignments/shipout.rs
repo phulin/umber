@@ -84,15 +84,36 @@ pub(crate) fn shipout_node(
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
+    // The legacy path prints no progress marker of its own, so every live
+    // effect is genuine carried-forward whatsit output.
+    let pending_end = stores.world().effect_records().len();
     shipout_node_with_input_summary(
         node,
         input_summary,
-        None,
+        ShipoutOrigin {
+            output_open_context: None,
+            pending_end,
+        },
         stores,
         execution,
         emit_dvi,
         &mut legacy_write_expander,
     )
+}
+
+/// What the surrounding job already was when a `\shipout` began.
+///
+/// Both fields are boundaries between the job and the page: the §82 context
+/// an `\openout` retry reports against, and the point in the live effect log
+/// past which nothing belongs to the page. They travel together because a
+/// caller that knows one always knows the other.
+pub(crate) struct ShipoutOrigin {
+    /// TeX82 §82's input display, captured before the page is staged.
+    pub(crate) output_open_context: Option<String>,
+    /// Index into `World::effect_records`: effects before it are whatsit
+    /// output carried forward from before this page, effects at or after it
+    /// belong to this `\shipout` -- §638's own `[<counts>` marker above all.
+    pub(crate) pending_end: usize,
 }
 
 /// Ships a completed box using an already-owned publication summary.
@@ -104,12 +125,13 @@ pub(crate) fn shipout_node(
 pub(crate) fn shipout_node_with_input_summary(
     node: Node,
     input_summary: tex_state::InputSummary,
-    output_open_context: Option<String>,
+    origin: ShipoutOrigin,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
+    let pending_end = origin.pending_end;
     prepare_pdf_output_policy(stores)?;
     let geometry = shipout_geometry(&node, stores);
     if huge_shipout_box(&node, stores) {
@@ -134,7 +156,7 @@ pub(crate) fn shipout_node_with_input_summary(
     }
     let cacheable = stores.shipout_memo_enabled()
         && effect_free_shipout_graph(stores, &node)
-        && stores.world().effect_records().is_empty()
+        && stores.world().effect_records()[..pending_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = cacheable.then(|| shipout_key(stores, &node));
@@ -196,11 +218,15 @@ pub(crate) fn shipout_node_with_input_summary(
         stores.reject_pure_memo(key);
     }
     let effect_start = stores.world().effect_records().len();
+    // Absolute, unlike the index above: committing the transaction *drains*
+    // the live effect log, so only a position that survives the drain can
+    // answer "did staging this page produce an effect of its own?" below.
+    let effect_pos_start = stores.world().effect_pos();
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(
         node,
         input_summary,
-        output_open_context,
+        origin,
         &mut transaction,
         expansion,
         emit_dvi,
@@ -231,7 +257,7 @@ pub(crate) fn shipout_node_with_input_summary(
     }
     if let (Some(key), Some((artifact_bytes, render_origin_ends, render_origins))) =
         (key, memo_payload)
-        && stores.world().effect_records().len() == effect_start
+        && stores.world().effect_pos() == effect_pos_start
         && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
             artifact_schema: 10,
             payload: artifact_bytes,
@@ -272,10 +298,14 @@ pub(crate) fn test_stage_shipout_artifact(
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
+    let pending_end = stores.world().effect_records().len();
     let staged = direct::stage_shipout(
         node,
         tex_state::InputSummary::default(),
-        None,
+        ShipoutOrigin {
+            output_open_context: None,
+            pending_end,
+        },
         stores,
         &mut execution,
         emit_dvi,

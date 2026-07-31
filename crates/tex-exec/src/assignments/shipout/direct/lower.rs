@@ -5,10 +5,23 @@ pub(super) struct PendingPageEffects {
     pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
 }
 
-pub(super) fn pending_page_effects(world: &tex_state::World) -> PendingPageEffects {
+/// Lowers the effects a page must carry forward: the whatsit output produced
+/// *before* this `\shipout` began.
+///
+/// `pending_end` is that boundary, an index into the live effect suffix. It
+/// is not a refinement of an already-correct sweep: without it the sweep is
+/// unscoped, so anything the shipout itself prints before staging -- §638's
+/// own `[<counts>` progress marker above all -- is embedded in the page's
+/// serialized content as a spurious whatsit (`umber2-v4dx`). Job framing and
+/// page content are distinguished by *when* they happen, which is exactly
+/// what this index records.
+pub(super) fn pending_page_effects(
+    world: &tex_state::World,
+    pending_end: usize,
+) -> PendingPageEffects {
     let mut effects = Vec::new();
     let mut open_out_occurrences = Vec::new();
-    for (world_index, record) in world.effect_records().iter().enumerate() {
+    for (world_index, record) in world.effect_records()[..pending_end].iter().enumerate() {
         let Some(effect) = lower_effect_record(record) else {
             continue;
         };

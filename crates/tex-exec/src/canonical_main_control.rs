@@ -9456,30 +9456,26 @@ fn engine_termination_effect() -> EffectRecord {
 /// published while its command-owned terminator backup is still live.  The
 /// artifact kernel receives only an already-published detached input summary;
 /// it never receives a legacy source stack or scans the command operand.
-/// TeX82 §638's `ship_out` progress marker: a leading separator, `[`, the
-/// nonzero-trimmed `\count0..\count9` values, and -- only under
-/// `\tracingoutput>0` -- an announcement plus a full box dump between `[`
-/// and its matching `]`. `\tracingoutput<=0` (the default) closes with `]`
-/// only after the page is actually written; see [`shipout_replay_box`].
-/// TeX82 §638's `ship_out` progress marker: a leading separator, `[`, the
-/// nonzero-trimmed `\count0..\count9` values, and -- only under
-/// `\tracingoutput>0` -- an announcement plus a full box dump between `[`
-/// and its matching `]`.
 ///
-/// tex.web interleaves this with the page write itself (`[` and the counts
-/// print first, the page is shipped, then `]`), but every one of those
-/// prints, if issued before [`crate::assignments::shipout_node_with_input_summary`]
-/// runs, is swept up by `direct::stage_shipout`'s own unscoped
-/// `pending_page_effects(stores.world().effect_records())` -- meant to carry
-/// forward a `\special`/`\write` whatsit still pending from *before* this
-/// page, not commentary about the page itself -- and gets embedded in the
-/// DVI page as a spurious whatsit effect. [`shipout_replay_box`] therefore
-/// prints this marker whole, immediately after the page has already been
-/// staged, rather than interleaved: nothing else prints between the two
-/// halves in the ordinary (`\tracingoutput<=0`) case, so the emitted bytes
-/// land in the same place either way, and only the traced box dump (needing
-/// the page before it is consumed) has to clone it to preserve the interleave.
-fn print_ship_out_marker(
+/// TeX82 §638's `ship_out` progress marker, opening half: the
+/// `\tracingoutput` announcement, a leading separator, `[`, and the
+/// nonzero-trimmed `\count0..\count9` values. Under `\tracingoutput>0` this
+/// also closes the bracket and dumps the box, because §638 does:
+///
+/// ```text
+/// if tracing_output>0 then
+///   begin print_char("]"); begin_diagnostic; show_box(p); end_diagnostic(true);
+///   end;
+/// <Ship box p out>;
+/// if eqtb[int_base+tracing_output_code].int<=0 then print_char("]");
+/// ```
+///
+/// Everything here therefore precedes the page write, and
+/// [`print_ship_out_marker_close`] follows it. tex.web's interleave is not
+/// cosmetic: a `\write` whatsit inside the box prints *between* the two
+/// halves, so `[7` opens the bracket, the write's text follows, and `]`
+/// closes it.
+fn print_ship_out_marker_open(
     stores: &mut Universe,
     tracing_output: i32,
     counts: &[i32; 10],
@@ -9520,7 +9516,13 @@ fn print_ship_out_marker(
         let mut diagnostic = stores.begin_diagnostic();
         diagnostic.print(&text);
         diagnostic.end(true);
-    } else {
+    }
+}
+
+/// §638's `if eqtb[int_base+tracing_output_code].int<=0 then print_char("]")`,
+/// run after the page has been written.
+fn print_ship_out_marker_close(stores: &mut Universe, tracing_output: i32) {
+    if tracing_output <= 0 {
         stores.printer().print_char(']');
     }
 }
@@ -9544,6 +9546,12 @@ fn shipout_replay_box(
     // enclosing `command` borrow has moved into the closure below, so the
     // context it needs is captured here alongside the shipout's own copy.
     let unbalanced_context = output_open_context.clone();
+    // Effects live at this point are genuine whatsit output carried forward
+    // from before the page; everything after it -- §638's own marker
+    // included -- belongs to this shipout and must not be swept into the
+    // page's serialized content.
+    let pending_end = stores.world().effect_records().len();
+    print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
     let mut expand_write =
@@ -9612,7 +9620,10 @@ fn shipout_replay_box(
     let mut receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
-        Some(output_open_context),
+        crate::assignments::ShipoutOrigin {
+            output_open_context: Some(output_open_context),
+            pending_end,
+        },
         stores,
         &mut expansion,
         true,
@@ -9623,36 +9634,27 @@ fn shipout_replay_box(
             .to_vec()
             .into_boxed_slice();
     }
-    print_ship_out_marker(stores, tracing_output, &counts, traced_node.as_ref());
-    // The marker above prints after `shipout_node_with_input_summary`'s own
-    // transaction has already committed (see `print_ship_out_marker`'s doc),
-    // so without this call it would sit as a live, uncommitted effect
-    // suffix. A later `\shipout` in the same job would then find
-    // `World::effect_records` non-empty at the exact point
-    // `direct::stage_shipout` unconditionally sweeps it into *that* page's
-    // own committed artifact -- not merely a stray terminal-text
-    // discrepancy, but the marker's literal bytes (`[`, a digit, `]`)
-    // embedded in the next shipped page's serialized content, confirmed
-    // against `canonical_effect_free_shipout_memo_republishes_one_aligned_receipt`'s
-    // two identical `\shipout\copy0` calls (`umber2-alfh.10`). Committing
-    // here closes that: a no-op under retained sessions, which consume
-    // their effect suffix on export instead.
+    print_ship_out_marker_close(stores, tracing_output);
+    // The closing bracket prints after `shipout_node_with_input_summary`'s
+    // own transaction has committed, so without this call it would sit as a
+    // live, uncommitted effect suffix that a later `\shipout` would find at
+    // the exact point `direct::stage_shipout` reads its carried-forward
+    // effects. `pending_end` above already excludes this page's own marker
+    // from that read; committing here keeps the *next* page's `pending_end`
+    // from including this one's trailing `]` (`umber2-alfh.10`, confirmed
+    // against
+    // `canonical_effect_free_shipout_memo_republishes_one_aligned_receipt`'s
+    // two identical `\shipout\copy0` calls). It is a no-op under retained
+    // sessions, which consume their effect suffix on export instead.
     //
-    // This is not free: a checkpoint/retry session
-    // (`crates/umber`'s `CanonicalEngineSession`) can still roll this whole
-    // step back if a *later* command turns out to need a resource this
-    // speculative run did not have, and `commit_effects` materializes into
+    // This is not free: a checkpoint/retry session (`crates/umber`'s
+    // `CanonicalEngineSession`) can still roll this whole step back if a
+    // *later* command turns out to need a resource this speculative run did
+    // not have, and `commit_effects` materializes into
     // `World::memory_terminal_output`/`memory_log_output`, which that
     // rollback does not undo -- confirmed to duplicate the marker under
     // `retained_session_retries_input_without_duplicate_effect_or_receipt`.
-    // Between the two known failure modes, silently corrupting a shipped
-    // page's bytes (affecting any ordinary multi-page job) is worse than a
-    // duplicated marker under a narrower retry scenario this crate's own
-    // tests exercise directly, so this call stays; `umber2-v4dx` tracks the
-    // real fix, which needs a way to distinguish incidental job-framing
-    // prints like this one from the genuine pending whatsit content
-    // `pending_page_effects` exists to carry forward, so neither failure
-    // mode has to be chosen between.
+    // `umber2-v4dx` tracks giving rollback that reach.
     stores.commit_effects(stores.world().effect_pos())?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
