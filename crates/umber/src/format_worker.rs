@@ -211,6 +211,22 @@ fn read_bounded(
 }
 
 #[cfg(target_os = "linux")]
+fn drain_available(
+    receiver: &mpsc::Receiver<(bool, Result<Vec<u8>, FormatFixtureError>)>,
+    stdout: &mut Option<Vec<u8>>,
+    stderr: &mut Option<Vec<u8>>,
+) -> Result<(), FormatFixtureError> {
+    while let Ok((is_stdout, result)) = receiver.try_recv() {
+        match result {
+            Ok(bytes) if is_stdout => *stdout = Some(bytes),
+            Ok(bytes) => *stderr = Some(bytes),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 #[allow(
     clippy::disallowed_methods,
     reason = "native format-worker supervisor measures real wall time outside deterministic engine state"
@@ -236,15 +252,9 @@ fn supervise_and_collect(
     let mut stdout = None;
     let mut stderr = None;
     let result = 'supervision: loop {
-        while let Ok((is_stdout, result)) = receiver.try_recv() {
-            match result {
-                Ok(bytes) if is_stdout => stdout = Some(bytes),
-                Ok(bytes) => stderr = Some(bytes),
-                Err(error) => {
-                    terminate(child);
-                    break 'supervision Err(error);
-                }
-            }
+        if let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr) {
+            terminate(child);
+            break 'supervision Err(error);
         }
         if status.is_none() {
             match child.try_wait() {
@@ -255,6 +265,16 @@ fn supervise_and_collect(
                     break Err(FormatFixtureError::Worker(error.to_string()));
                 }
             }
+        }
+        // A reader can enqueue after the first drain but before `try_wait`
+        // observes exit. Reconcile only completions already available now:
+        // genuinely open inherited pipes remain unresolved and retain the
+        // original wall-time bound.
+        if status.is_some()
+            && let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr)
+        {
+            terminate(child);
+            break 'supervision Err(error);
         }
         match decide_supervision_action(
             status,
@@ -505,6 +525,7 @@ fn decode_source_kind(tag: u8) -> Result<RegisteredSourceKind, String> {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+    use std::sync::Barrier;
 
     #[test]
     fn completed_exit_and_drains_resolve_before_expired_wall_time() {
@@ -555,6 +576,44 @@ mod tests {
             decide_supervision_action(None, &mut open_stdout, &mut open_stderr, true),
             SupervisionAction::WallTimeExceeded
         ));
+    }
+
+    #[test]
+    fn exit_observation_redrains_completions_enqueued_after_initial_drain() {
+        let (sender, receiver) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        let enqueued = Arc::new(Barrier::new(2));
+        let sender_release = Arc::clone(&release);
+        let sender_enqueued = Arc::clone(&enqueued);
+        let producer = std::thread::spawn(move || {
+            sender_release.wait();
+            sender
+                .send((true, Ok(b"response".to_vec())))
+                .expect("stdout completion receiver remains live");
+            sender
+                .send((false, Ok(Vec::new())))
+                .expect("stderr completion receiver remains live");
+            sender_enqueued.wait();
+        });
+
+        let mut stdout = None;
+        let mut stderr = None;
+        drain_available(&receiver, &mut stdout, &mut stderr).expect("initial empty drain succeeds");
+        assert!(stdout.is_none() && stderr.is_none());
+
+        release.wait();
+        enqueued.wait();
+        let status = Some(std::process::ExitStatus::from_raw(0));
+        drain_available(&receiver, &mut stdout, &mut stderr)
+            .expect("post-exit reconciliation succeeds");
+        assert!(matches!(
+            decide_supervision_action(status, &mut stdout, &mut stderr, true),
+            SupervisionAction::Complete(Ok(CollectedWorkerOutput {
+                stdout: response,
+                ..
+            })) if response == b"response"
+        ));
+        producer.join().expect("completion producer");
     }
 
     fn helper(script: &str) -> Child {
