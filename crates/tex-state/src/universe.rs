@@ -4931,6 +4931,11 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn dvi_font_number(&self, id: FontId) -> u32 {
+        self.stores.dvi_font_number(id)
+    }
+
+    #[must_use]
     pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
         self.stores.font_identifier_symbol(id)
     }

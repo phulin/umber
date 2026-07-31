@@ -293,6 +293,13 @@ and `Universe`, then reinstalling the selected profile's live primitive
 implementations. The returned `LoadedFormatFixture` owns that fresh universe
 until it constructs one retained `CanonicalEngineSession` for a job.
 
+DVI resource numbers are runtime output identities, not serialized semantic
+font handles. A fresh loaded job retains the format font registry and live
+meanings, while its first explicit font definitions establish output numbers
+in job order. Repeating an equivalent definition in that job reuses the same
+number. The collision-free permutation keeps untouched format fonts available
+without exposing the size or allocation order of the frozen prefix in DVI.
+
 Raw e-TeX reload uses the generic `EngineMode::ETex` registry reconstruction:
 TeX82 and e-TeX expandable and unexpandable meanings are registered as live
 implementations, while pdfTeX-only meanings remain absent. A missing or wrong
