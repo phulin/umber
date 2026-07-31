@@ -6,6 +6,7 @@
     {
       "id": "missing-number-error-context",
       "property_id": "tex82.scanner.integer",
+      "profile": "raw-tex82-loaded",
       "source": "missing-number-error-context.tex",
       "provenance": {
         "authority": "tex.web",

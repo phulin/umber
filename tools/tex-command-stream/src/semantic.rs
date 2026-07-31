@@ -13,7 +13,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use serde::Deserialize;
 use tex_command::{
@@ -189,6 +192,24 @@ pub enum SessionProfile {
     EtexLoaded,
     Production,
     RawTex82Loaded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionRoute {
+    Fresh,
+    RawTex82Loaded,
+}
+
+impl SessionProfile {
+    #[must_use]
+    pub const fn execution_route(self) -> ExecutionRoute {
+        match self {
+            Self::RawTex82Loaded => ExecutionRoute::RawTex82Loaded,
+            Self::Initex | Self::EtexInitex | Self::EtexLoaded | Self::Production => {
+                ExecutionRoute::Fresh
+            }
+        }
+    }
 }
 
 /// tex.web's four `-interaction` modes, spelled exactly as pdfTeX's own flag
@@ -1073,7 +1094,7 @@ fn terminal_stdin(case: &Case) -> Vec<String> {
 }
 
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    if case.profile == SessionProfile::RawTex82Loaded {
+    if case.profile.execution_route() == ExecutionRoute::RawTex82Loaded {
         return execute_raw_tex82_loaded(source, case);
     }
     let mut universe = Universe::new();
@@ -1290,17 +1311,47 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     Err(format!("exceeded {MAX_STEPS} main-control steps"))
 }
 
+static RAW_TEX82_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
+static RAW_TEX82_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn shared_raw_tex82_format() -> Result<umber::FormatFixture, String> {
+    RAW_TEX82_FORMAT
+        .get_or_init(|| {
+            RAW_TEX82_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
+            let cache =
+                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
+            let mut recipe = umber::FormatRecipe::raw_tex82();
+            recipe.format_name = "production".into();
+            let launcher = if std::env::current_exe()
+                .ok()
+                .and_then(|path| path.file_name().map(|name| name.to_owned()))
+                .is_some_and(|name| name == "command-semantic-channels")
+            {
+                umber::FormatWorkerLauncher::production()
+            } else {
+                umber::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap")
+            };
+            umber::ensure_format(
+                &umber_fetch::FormatCacheStore::new(cache.path()),
+                &recipe,
+                &launcher,
+            )
+            .map_err(|error| format!("ensure raw TeX82 format: {error}"))
+        })
+        .clone()
+}
+
+/// Number of shared raw-TeX82 format initialization episodes in this process.
+///
+/// This is exposed for the corpus boundary test that proves all loaded jobs
+/// reuse one recipe identity and image.
+#[must_use]
+pub fn raw_tex82_format_initializations() -> usize {
+    RAW_TEX82_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
+}
+
 fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    let cache = tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
-    let mut recipe = umber::FormatRecipe::raw_tex82();
-    recipe.format_name = "production".into();
-    let launcher = umber::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap");
-    let fixture = umber::ensure_format(
-        &umber_fetch::FormatCacheStore::new(cache.path()),
-        &recipe,
-        &launcher,
-    )
-    .map_err(|error| format!("ensure raw TeX82 format: {error}"))?;
+    let fixture = shared_raw_tex82_format()?;
     let mut world = tex_state::World::memory();
     for line in terminal_stdin(case) {
         world

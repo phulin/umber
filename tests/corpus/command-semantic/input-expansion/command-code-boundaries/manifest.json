@@ -6,6 +6,7 @@
     {
       "id": "command-code-boundaries",
       "property_id": "tex82.input.command-code-boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "command-code-boundaries.tex",
       "provenance": {
         "authority": "tex.web",

@@ -6,6 +6,7 @@
     {
       "id": "coercion-ownership",
       "property_id": "tex82.scanner.internal-coercion-ownership",
+      "profile": "raw-tex82-loaded",
       "source": "coercion-ownership.tex",
       "provenance": {
         "authority": "tex.web",

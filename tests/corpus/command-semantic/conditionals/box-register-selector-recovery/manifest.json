@@ -5,6 +5,7 @@
     {
       "id": "box-register-selector-recovery",
       "property_id": "tex82.conditionals.box-register-kind",
+      "profile": "raw-tex82-loaded",
       "source": "box-register-selector-recovery.tex",
       "provenance": {
         "authority": "tex.web",
@@ -25,7 +26,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 113,
+        "events": 114,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

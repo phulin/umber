@@ -5,6 +5,7 @@
     {
       "id": "stack-lifecycle",
       "property_id": "tex82.conditionals.stack-lifecycle",
+      "profile": "raw-tex82-loaded",
       "source": "stack-lifecycle.tex",
       "provenance": {
         "authority": "tex.web",
@@ -34,7 +35,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 102,
+        "events": 103,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

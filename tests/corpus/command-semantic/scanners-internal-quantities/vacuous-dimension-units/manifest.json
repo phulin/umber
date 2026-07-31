@@ -6,6 +6,7 @@
     {
       "id": "vacuous-dimension-units",
       "property_id": "tex82.scanner.dimension-prefix-fraction",
+      "profile": "raw-tex82-loaded",
       "source": "vacuous-dimension-units.tex",
       "provenance": {
         "authority": "tex.web",

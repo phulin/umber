@@ -6,6 +6,7 @@
     {
       "id": "input-raw-delivery",
       "property_id": "tex82.input.raw-delivery",
+      "profile": "raw-tex82-loaded",
       "source": "input-raw-delivery.tex",
       "provenance": {
         "authority": "tex.web",
@@ -38,7 +39,7 @@
         "command:expanded:char:letter:65:letter:65"
       ],
       "channels": {
-        "events": 13,
+        "events": 14,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

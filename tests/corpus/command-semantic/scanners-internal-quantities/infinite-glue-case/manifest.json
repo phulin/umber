@@ -6,6 +6,7 @@
     {
       "id": "infinite-glue-case",
       "property_id": "tex82.scanner.dimension-internal-relative-infinite-units",
+      "profile": "raw-tex82-loaded",
       "source": "infinite-glue-case.tex",
       "provenance": {
         "authority": "tex.web",

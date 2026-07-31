@@ -6,6 +6,7 @@
     {
       "id": "register-sources",
       "property_id": "tex82.scanner.internal-register-sources",
+      "profile": "raw-tex82-loaded",
       "source": "register-sources.tex",
       "provenance": {
         "authority": "tex.web",

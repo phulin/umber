@@ -6,6 +6,7 @@
     {
       "id": "dimension-fraction",
       "property_id": "tex82.scanner.dimension-prefix-fraction",
+      "profile": "raw-tex82-loaded",
       "source": "dimension-fraction.tex",
       "provenance": {
         "authority": "tex.web",

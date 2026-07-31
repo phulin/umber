@@ -173,6 +173,24 @@ scripts/run-minifixture-oracle.sh --case main-control/eqtb-regions
 scripts/run-minifixture-oracle.sh --all
 ```
 
+The loaded raw-TeX82 batch uses the blessed regeneration entry point with an
+explicit profile and reviewed exact-case allowlist:
+
+```bash
+scripts/regen-fixtures.sh --area command-semantic \
+  --profile raw-tex82-loaded \
+  --allowlist tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases
+```
+
+That route removes any prior cached raw TeX82 image, constructs one
+`production.fmt` with a separate `-ini`/`\dump` priming job, and reuses it for
+every selected `-fmt=production` job. The logical oracle profile remains
+`raw-tex82-loaded`; `production` is the format name shared with Umber's raw
+TeX82 recipe and therefore the banner identity under comparison. A missing
+dump or load is a hard failure; there is no INITEX fallback. The priming
+transcript and log are construction evidence only and are never copied into a
+case channel.
+
 Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
 with its `source`, any `inputs` files (written as the manifest's exact
 string, byte for byte), and any `font_inputs` TFM (copied from the

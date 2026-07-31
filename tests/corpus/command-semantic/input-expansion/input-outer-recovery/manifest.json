@@ -6,6 +6,7 @@
     {
       "id": "input-outer-recovery",
       "property_id": "tex82.input.outer-validity-recovery",
+      "profile": "raw-tex82-loaded",
       "source": "input-outer-recovery.tex",
       "provenance": {
         "authority": "tex.web",
@@ -38,7 +39,7 @@
         "scanner-status:defining>normal"
       ],
       "channels": {
-        "events": 76,
+        "events": 77,
         "status": "clean",
         "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
         "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },

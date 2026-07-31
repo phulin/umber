@@ -8,7 +8,7 @@ corpus_root="tests/corpus/command-semantic"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 oracle_dir="${target_dir}/pdftex14027-oracle"
-executable="${oracle_dir}/bin/umber-pdftex14027-oracle-instrumented"
+executable="${UMBER_MINIFIXTURE_ORACLE_EXECUTABLE:-${oracle_dir}/bin/umber-pdftex14027-oracle-instrumented}"
 out_root="${target_dir}/minifixture-oracle"
 # Dumped formats for the two profiles built past INITEX (see
 # `ensure_format` below). One format per profile, shared by every case that
@@ -34,6 +34,7 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
 usage() {
   cat <<'EOF'
 usage: scripts/run-minifixture-oracle.sh (--case DOMAIN/CASE-ID)... | --all
+       scripts/run-minifixture-oracle.sh --profile PROFILE --allowlist FILE
 
 Run one or more tests/corpus/command-semantic minifixture sources through the
 pinned, already-built INSTRUMENTED pdfTeX 1.40.27 oracle
@@ -53,6 +54,8 @@ Each selected case is staged and run under:
 Options:
   --case DOMAIN/CASE-ID   Run one case. May be repeated.
   --all                   Run all 202 singleton fixture-local manifests.
+  --profile PROFILE       Require every selected case to declare PROFILE.
+  --allowlist FILE        Run exactly the non-comment selectors in FILE.
   --help, -h              Show this message.
 
 Environment:
@@ -80,6 +83,8 @@ warn() {
 
 selected_cases=()
 run_all=0
+required_profile=""
+allowlist=""
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -89,11 +94,41 @@ while [[ "$#" -gt 0 ]]; do
       shift 2
       ;;
     --all) run_all=1; shift ;;
+    --profile)
+      [[ -n "${2:-}" ]] || fail "--profile expects a profile name"
+      required_profile="$2"
+      shift 2
+      ;;
+    --allowlist)
+      [[ -n "${2:-}" ]] || fail "--allowlist expects a file"
+      allowlist="$2"
+      shift 2
+      ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'run-minifixture-oracle: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
+[[ -z "$allowlist" || -f "$allowlist" ]] || fail "allowlist does not exist: $allowlist"
+[[ -z "$allowlist" || -n "$required_profile" ]] ||
+  fail "--allowlist requires --profile"
+[[ -n "$allowlist" || -z "$required_profile" ]] ||
+  fail "--profile requires --allowlist"
+if [[ -n "$allowlist" ]]; then
+  declare -A seen_selectors=()
+  while IFS= read -r selector; do
+    selector="${selector%%#*}"
+    selector="${selector#"${selector%%[![:space:]]*}"}"
+    selector="${selector%"${selector##*[![:space:]]}"}"
+    if [[ -n "$selector" ]]; then
+      [[ -z "${seen_selectors[$selector]:-}" ]] ||
+        fail "allowlist repeats case: $selector"
+      seen_selectors[$selector]=1
+      selected_cases+=("$selector")
+    fi
+  done <"$allowlist"
+  [[ "${#selected_cases[@]}" -gt 0 ]] || fail "allowlist selects no cases: $allowlist"
+fi
 [[ "$run_all" -eq 1 || "${#selected_cases[@]}" -gt 0 ]] ||
   { usage >&2; exit 2; }
 [[ "$run_all" -eq 0 || "${#selected_cases[@]}" -eq 0 ]] ||
@@ -104,6 +139,11 @@ command -v jq >/dev/null || fail "jq is required"
   fail "instrumented oracle not built: $executable (run scripts/build-pdftex14027-oracle.sh)"
 [[ -f "${texmfcnf_dir}/texmf.cnf" ]] ||
   fail "missing kpathsea config at ${texmfcnf_dir}/texmf.cnf; set UMBER_REF_TEXLIVE_SOURCE to a checkout with an extracted texlive-source/src tree"
+if [[ -n "$required_profile" ]]; then
+  format_name="$required_profile"
+  [[ "$required_profile" == raw-tex82-loaded ]] && format_name=production
+  rm -f "${format_source_dir}/${format_name}.fmt"
+fi
 
 # Every profile the corpus declares, and how this runner reproduces it with
 # the executable above:
@@ -153,6 +193,18 @@ engine_args_for_profile() {
       ensure_format production 1>&2 || return 1
       printf -- '-fmt=production'
       ;;
+    raw-tex82-loaded)
+      ensure_format production 1>&2 || return 1
+      printf -- '-fmt=production'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+format_name_for_profile() {
+  case "$1" in
+    raw-tex82-loaded) printf 'production\n' ;;
+    etex-loaded|production) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -377,6 +429,8 @@ run_one_case() {
   local source_name profile interaction_mode
   source_name="$(jq -r '.source' <<<"$case_json")"
   profile="$(jq -r '.profile // "initex"' <<<"$case_json")"
+  [[ -z "$required_profile" || "$profile" == "$required_profile" ]] ||
+    fail "$domain/$case_id declares profile '$profile', required '$required_profile'"
   interaction_mode="$(case_interaction_mode "$case_json")"
 
   local engine_args
@@ -395,8 +449,10 @@ run_one_case() {
   # `engine_args_for_profile`'s `ensure_format` call above; stage it beside
   # the source the same way a declared `font_inputs` TFM is staged, so
   # `TEXMFDOTDIR` (`.`) finds it.
-  if [[ -f "${format_source_dir}/${profile}.fmt" ]]; then
-    cp "${format_source_dir}/${profile}.fmt" "${run_dir}/${profile}.fmt"
+  local format_name
+  format_name="$(format_name_for_profile "$profile" 2>/dev/null || true)"
+  if [[ -n "$format_name" && -f "${format_source_dir}/${format_name}.fmt" ]]; then
+    cp "${format_source_dir}/${format_name}.fmt" "${run_dir}/${format_name}.fmt"
   fi
 
   local -a terminal_lines
@@ -437,7 +493,7 @@ run_one_case() {
   # a name of its own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \
-    status.txt terminal.txt pdftex14027-events.jsonl "${profile}.fmt")
+    status.txt terminal.txt pdftex14027-events.jsonl "${format_name}.fmt")
   local key
   while IFS= read -r key; do staged+=("$key"); done \
     < <(jq -r '(.inputs // {}) | keys[]' <<<"$case_json")
@@ -504,6 +560,9 @@ else
 fi
 
 warn "ran $ran case(s), skipped $skipped case(s)"
+if [[ -n "$allowlist" && "$ran" -ne "${#selected_cases[@]}" ]]; then
+  fail "allowlist selected ${#selected_cases[@]} case(s), but $ran ran"
+fi
 # A skipped case captured nothing, so exiting 0 would report a run that did no
 # work as a clean one -- and it did exactly that once: a priming job that
 # failed to build its format skipped every case of that profile while this

@@ -6,6 +6,7 @@
     {
       "id": "edef-noexpand-the-interaction",
       "property_id": "tex82.expansion.delivery-and-primitives",
+      "profile": "raw-tex82-loaded",
       "source": "edef-noexpand-the-interaction.tex",
       "provenance": {
         "authority": "tex.web",

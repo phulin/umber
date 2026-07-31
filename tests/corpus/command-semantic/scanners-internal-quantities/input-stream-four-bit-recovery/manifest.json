@@ -6,6 +6,7 @@
     {
       "id": "input-stream-four-bit-recovery",
       "property_id": "tex82.scanner.restricted-integers",
+      "profile": "raw-tex82-loaded",
       "source": "input-stream-four-bit-recovery.tex",
       "provenance": {
         "authority": "tex.web",

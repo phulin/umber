@@ -6,6 +6,7 @@
     {
       "id": "integer-radix-forms",
       "property_id": "tex82.scanner.integer",
+      "profile": "raw-tex82-loaded",
       "source": "integer-radix-forms.tex",
       "provenance": {
         "authority": "tex.web",

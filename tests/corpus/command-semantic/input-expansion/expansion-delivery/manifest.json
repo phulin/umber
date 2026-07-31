@@ -6,6 +6,7 @@
     {
       "id": "expansion-delivery",
       "property_id": "tex82.expansion.delivery-and-primitives",
+      "profile": "raw-tex82-loaded",
       "source": "expansion-delivery.tex",
       "provenance": {
         "authority": "tex.web",
@@ -50,7 +51,7 @@
         "command:expanded:char:letter:65:letter:65"
       ],
       "channels": {
-        "events": 13,
+        "events": 14,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

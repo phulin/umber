@@ -65,7 +65,7 @@
     reason = "this host-only regeneration entry point reads its oracle capture and rewrites its committed corpus"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -79,6 +79,15 @@ use tex_command_stream::semantic::{
 };
 
 fn main() -> ExitCode {
+    if let Some(worker) = umber::dispatch_format_worker() {
+        return match worker {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("command-semantic-channels format worker: {error}");
+                ExitCode::from(70)
+            }
+        };
+    }
     let mut arguments = std::env::args().skip(1);
     let outcome = match arguments.next().as_deref() {
         Some("--diff") => {
@@ -89,13 +98,28 @@ fn main() -> ExitCode {
             let selector = arguments.next().unwrap_or_default();
             diff(&selector, StreamChannel::Log)
         }
+        Some("--allowlist") => {
+            let path = arguments.next().unwrap_or_default();
+            if arguments.next().as_deref() != Some("--accept-projection-changes")
+                || arguments.next().is_some()
+            {
+                Err(
+                    "--allowlist requires exactly PATH --accept-projection-changes; the explicit \
+                     loaded-profile regeneration route is the only batch allowed to update \
+                     reviewed projections"
+                        .to_owned(),
+                )
+            } else {
+                run(Some(Path::new(&path)), true)
+            }
+        }
         Some(other) => Err(format!(
             "unknown argument {other:?}; the only options are no arguments (regenerate the \
              corpus), `--diff <substring>` (print the oracle/Umber terminal text of every \
              matching case), and `--diff-log <substring>` (the same for the transcript, which \
              is where §90 puts an error's help lines). Neither `--diff` writes anything."
         )),
-        None => run(),
+        None => run(None, false),
     };
     match outcome {
         Ok(summary) => {
@@ -202,9 +226,45 @@ fn print_side_by_side(oracle: &[u8], umber: &[u8]) {
     }
 }
 
-fn run() -> Result<String, String> {
+fn read_allowlist(path: &Path) -> Result<BTreeSet<String>, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let selected: BTreeSet<_> = text
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if selected.is_empty() {
+        return Err(format!("{} selects no cases", path.display()));
+    }
+    Ok(selected)
+}
+
+fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<String, String> {
     let oracle_root = oracle_root();
-    let cases = load_suite_with(ChannelPolicy::Deriving)?;
+    let all_cases = load_suite_with(ChannelPolicy::Deriving)?;
+    let selected = allowlist.map(read_allowlist).transpose()?;
+    let cases: Vec<_> = all_cases
+        .into_iter()
+        .filter(|declared| {
+            selected.as_ref().is_none_or(|selected| {
+                selected.contains(&format!("{}/{}", declared.domain, declared.case.id))
+            })
+        })
+        .collect();
+    if let Some(selected) = &selected {
+        let found: BTreeSet<_> = cases
+            .iter()
+            .map(|declared| format!("{}/{}", declared.domain, declared.case.id))
+            .collect();
+        if found != *selected {
+            let missing: Vec<_> = selected.difference(&found).cloned().collect();
+            return Err(format!(
+                "allowlist names unknown case(s): {}",
+                missing.join(", ")
+            ));
+        }
+    }
 
     let mut plans: BTreeMap<String, BTreeMap<String, CasePlan>> = BTreeMap::new();
     let mut unrunnable = Vec::new();
@@ -218,7 +278,14 @@ fn run() -> Result<String, String> {
             Ok(completed) => {
                 let captured = CapturedChannels::capture(&completed);
                 let actual_projection = project(&completed, &declared.case.projection);
-                let plan = plan_expected(declared, &actual_projection).and_then(|expected| {
+                let expected = if accept_projection_changes
+                    && matches!(declared.case.expectation, Expectation::Pass)
+                {
+                    Ok(Some(actual_projection.clone()))
+                } else {
+                    plan_expected(declared, &actual_projection)
+                };
+                let plan = expected.and_then(|expected| {
                     plan_case(&oracle_root, declared, &source, &captured)
                         .map(|channels| CasePlan { expected, channels })
                 });
@@ -248,6 +315,13 @@ fn run() -> Result<String, String> {
             "{} case(s) cannot be regenerated against the oracle:\n  {}",
             errors.len(),
             errors.join("\n  ")
+        ));
+    }
+    if selected.is_some() && !unrunnable.is_empty() {
+        return Err(format!(
+            "{} allowlisted case(s) did not run; refusing a partial rewrite:\n  {}",
+            unrunnable.len(),
+            unrunnable.join("\n  ")
         ));
     }
 
@@ -833,6 +907,19 @@ fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn allowlist_is_exact_and_rejects_empty_input() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let allowlist = temporary.path().join("cases");
+        fs::write(&allowlist, "# comment\nb/two\n\na/one # note\nb/two\n").expect("allowlist");
+        assert_eq!(
+            read_allowlist(&allowlist).expect("valid allowlist"),
+            BTreeSet::from(["a/one".to_owned(), "b/two".to_owned()])
+        );
+        fs::write(&allowlist, "# only comments\n").expect("empty allowlist");
+        assert!(read_allowlist(&allowlist).is_err());
+    }
 
     #[test]
     fn regeneration_replaces_one_complete_fixture_directory() {

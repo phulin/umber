@@ -6,6 +6,7 @@
     {
       "id": "internal-unit-probe",
       "property_id": "tex82.scanner.dimension-internal-relative-infinite-units",
+      "profile": "raw-tex82-loaded",
       "source": "internal-unit-probe.tex",
       "provenance": {
         "authority": "tex.web",

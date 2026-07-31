@@ -5,6 +5,7 @@
     {
       "id": "skipped-text",
       "property_id": "tex82.conditionals.skipped-text",
+      "profile": "raw-tex82-loaded",
       "source": "skipped-text.tex",
       "provenance": {
         "authority": "tex.web",
@@ -33,7 +34,7 @@
         "count:0=7"
       ],
       "channels": {
-        "events": 89,
+        "events": 90,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

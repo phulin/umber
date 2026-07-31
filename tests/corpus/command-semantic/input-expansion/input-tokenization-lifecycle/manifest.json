@@ -6,6 +6,7 @@
     {
       "id": "input-tokenization-lifecycle",
       "property_id": "tex82.input.tokenization",
+      "profile": "raw-tex82-loaded",
       "source": "input-tokenization-lifecycle.tex",
       "provenance": {
         "authority": "tex.web",
@@ -52,7 +53,7 @@
         "command:expanded:char:letter:66:letter:66"
       ],
       "channels": {
-        "events": 21,
+        "events": 22,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

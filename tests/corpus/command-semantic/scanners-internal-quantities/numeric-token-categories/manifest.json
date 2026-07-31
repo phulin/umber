@@ -6,6 +6,7 @@
     {
       "id": "numeric-token-categories",
       "property_id": "tex82.scanner.integer",
+      "profile": "raw-tex82-loaded",
       "source": "numeric-token-categories.tex",
       "provenance": {
         "authority": "tex.web",

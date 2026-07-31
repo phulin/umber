@@ -6,6 +6,7 @@
     {
       "id": "stored-token-replay",
       "property_id": "tex82.input.stored-token-representation",
+      "profile": "raw-tex82-loaded",
       "source": "stored-token-replay.tex",
       "provenance": {
         "authority": "tex.web",
@@ -30,7 +31,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 93,
+        "events": 94,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

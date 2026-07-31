@@ -6,6 +6,7 @@
     {
       "id": "mode-activities",
       "property_id": "tex82.modes.activity-diagnostics",
+      "profile": "raw-tex82-loaded",
       "source": "mode-activities.tex",
       "provenance": {
         "authority": "tex.web",
@@ -25,7 +26,7 @@
         "count:0=0"
       ],
       "channels": {
-        "events": 4,
+        "events": 5,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

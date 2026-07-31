@@ -5,6 +5,7 @@
     {
       "id": "ordered-relations",
       "property_id": "tex82.conditionals.ordered-relations",
+      "profile": "raw-tex82-loaded",
       "source": "ordered-relations.tex",
       "provenance": {
         "authority": "tex.web",
@@ -42,7 +43,7 @@
         "count:6=1"
       ],
       "channels": {
-        "events": 523,
+        "events": 524,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

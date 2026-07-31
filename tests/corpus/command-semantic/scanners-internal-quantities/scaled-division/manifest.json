@@ -6,6 +6,7 @@
     {
       "id": "scaled-division",
       "property_id": "tex82.scanner.arithmetic",
+      "profile": "raw-tex82-loaded",
       "source": "scaled-division.tex",
       "provenance": {
         "authority": "tex.web",

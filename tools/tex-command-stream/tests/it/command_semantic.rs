@@ -55,6 +55,157 @@ fn declared_command_semantic_cases_match() {
         cases.len(),
         failures.join("\n")
     );
+    assert_eq!(raw_tex82_format_initializations(), 1);
+}
+
+#[test]
+fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
+    const EXPECTED: &[&str] = &[
+        "conditionals/box-register-selector-recovery",
+        "conditionals/branch-delimiters",
+        "conditionals/classification",
+        "conditionals/odd-integer",
+        "conditionals/ordered-relations",
+        "conditionals/predicate-dispatch",
+        "conditionals/skipped-text",
+        "conditionals/stack-lifecycle",
+        "conditionals/token-predicates",
+        "input-expansion/command-code-boundaries",
+        "input-expansion/edef-noexpand-the-interaction",
+        "input-expansion/expansion-conversions",
+        "input-expansion/expansion-delivery",
+        "input-expansion/input-control-sequences",
+        "input-expansion/input-level-lifecycle",
+        "input-expansion/input-outer-recovery",
+        "input-expansion/input-raw-delivery",
+        "input-expansion/input-read-toks",
+        "input-expansion/input-start-file",
+        "input-expansion/input-tokenization-lifecycle",
+        "input-expansion/mode-activities",
+        "input-expansion/stored-token-replay",
+        "scanners-internal-quantities/coercion-ownership",
+        "scanners-internal-quantities/dimension-fraction",
+        "scanners-internal-quantities/infinite-glue-case",
+        "scanners-internal-quantities/input-stream-four-bit-recovery",
+        "scanners-internal-quantities/integer-radix-forms",
+        "scanners-internal-quantities/integer-sign-chain-and-units",
+        "scanners-internal-quantities/internal-unit-probe",
+        "scanners-internal-quantities/missing-left-brace-recovery",
+        "scanners-internal-quantities/missing-number-error-context",
+        "scanners-internal-quantities/numeric-token-categories",
+        "scanners-internal-quantities/register-sources",
+        "scanners-internal-quantities/scaled-division",
+        "scanners-internal-quantities/vacuous-dimension-units",
+    ];
+    const EXCLUDED: &[(&str, SessionProfile)] = &[
+        (
+            "conditionals/etex-loaded-ifcsname",
+            SessionProfile::EtexLoaded,
+        ),
+        (
+            "conditionals/etex-loaded-ifdefined",
+            SessionProfile::EtexLoaded,
+        ),
+        (
+            "conditionals/etex-loaded-iffontchar",
+            SessionProfile::EtexLoaded,
+        ),
+        (
+            "conditionals/etex-loaded-unless-frame",
+            SessionProfile::EtexLoaded,
+        ),
+        (
+            "input-expansion/etex-noexpand-undefined",
+            SessionProfile::EtexInitex,
+        ),
+        (
+            "input-expansion/etex-outer-validity-eof",
+            SessionProfile::EtexInitex,
+        ),
+        (
+            "input-expansion/etex-readline-terminal",
+            SessionProfile::EtexInitex,
+        ),
+        (
+            "input-expansion/etex-unexpanded-delivery",
+            SessionProfile::EtexInitex,
+        ),
+    ];
+
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let by_name: BTreeMap<_, _> = cases
+        .iter()
+        .map(|declared| {
+            (
+                format!("{}/{}", declared.domain, declared.case.id),
+                &declared.case,
+            )
+        })
+        .collect();
+    let loaded: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
+                .then_some(name.as_str())
+        })
+        .filter(|name| {
+            name.starts_with("conditionals/")
+                || name.starts_with("input-expansion/")
+                || name.starts_with("scanners-internal-quantities/")
+        })
+        .collect();
+    assert_eq!(loaded, EXPECTED.iter().copied().collect());
+    let allowlist = std::fs::read_to_string(
+        repository_root().join("tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases"),
+    )
+    .expect("loaded oracle allowlist");
+    let allowlisted: BTreeSet<_> = allowlist
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(allowlisted, loaded);
+    for (name, profile) in EXCLUDED {
+        assert_eq!(by_name[*name].profile, *profile, "{name}");
+        assert_eq!(
+            by_name[*name].profile.execution_route(),
+            ExecutionRoute::Fresh,
+            "{name}"
+        );
+    }
+
+    let selected: Vec<_> = EXPECTED.iter().map(|name| by_name[*name]).collect();
+    assert_eq!(
+        selected.iter().map(|case| case.inputs.len()).sum::<usize>(),
+        3
+    );
+    assert_eq!(
+        selected
+            .iter()
+            .filter(|case| !case.terminal_lines.is_empty())
+            .count(),
+        3
+    );
+    assert_eq!(
+        selected
+            .iter()
+            .filter(|case| matches!(
+                case.channels.as_ref().expect("validated channels").dvi,
+                StreamDisposition::File
+            ))
+            .count(),
+        5
+    );
+    assert_eq!(
+        selected
+            .iter()
+            .filter(|case| matches!(
+                case.channels.as_ref().expect("validated channels").dvi,
+                StreamDisposition::Empty
+            ))
+            .count(),
+        30
+    );
 }
 
 #[test]

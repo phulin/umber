@@ -25,6 +25,7 @@ refexec_bin="${target_dir}/debug/refexec"
 fixturegen_bin="${target_dir}/debug/fixturegen"
 umber_bin="${target_dir}/debug/umber"
 parity_harness_bin="${target_dir}/debug/parity-harness"
+command_semantic_channels_bin="${target_dir}/debug/command-semantic-channels"
 refexec_built=0
 fixturegen_built=0
 umber_built=0
@@ -38,6 +39,7 @@ usage:
   scripts/regen-fixtures.sh --incremental
   scripts/regen-fixtures.sh --all
   scripts/regen-fixtures.sh --area AREA
+  scripts/regen-fixtures.sh --area command-semantic --profile PROFILE --allowlist FILE
   scripts/regen-fixtures.sh --case AREA/CASE
   scripts/regen-fixtures.sh --case AREA CASE
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--fixture FIXTURE] [--offline]
@@ -50,7 +52,7 @@ Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
-  minifixtures: command-semantic  (per-channel contracts; no reference engine)
+  minifixtures: command-semantic  (explicit profile/allowlist captures and contracts)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
@@ -1399,8 +1401,21 @@ regen_bibtex_area() {
 # every affected case, rather than silently regenerating against a missing or
 # stale capture.
 regen_command_semantic_area() {
+  local profile="${1:-}"
+  local allowlist="${2:-}"
+  [[ -n "$profile" && -n "$allowlist" ]] ||
+    die 'command-semantic regeneration requires --profile PROFILE --allowlist FILE'
+  [[ "$profile" == raw-tex82-loaded ]] ||
+    die "unsupported command-semantic oracle profile: ${profile}"
+  [[ -f "$allowlist" ]] || die "command-semantic allowlist does not exist: ${allowlist}"
+  [[ -x "$command_semantic_channels_bin" ]] ||
+    die "command-semantic regeneration tool is not built: ${command_semantic_channels_bin}; run cargo build -p tex-command-stream first"
+  run_command "Capturing ${profile} command-semantic oracle channels" \
+    "${repo_root}/scripts/run-minifixture-oracle.sh" \
+    --profile "$profile" --allowlist "$allowlist"
   run_command 'Deriving command-semantic channel contracts against the pinned oracle' \
-    cargo run -q -p tex-command-stream --bin command-semantic-channels
+    "$command_semantic_channels_bin" --allowlist "$allowlist" \
+    --accept-projection-changes
 }
 
 regen_area() {
@@ -1419,7 +1434,7 @@ regen_area() {
   elif [[ "$area" == "$bibtex_area" ]]; then
     regen_bibtex_area
   elif [[ "$area" == "$command_semantic_area" ]]; then
-    regen_command_semantic_area
+    regen_command_semantic_area "$command_semantic_profile" "$command_semantic_allowlist"
   elif [[ "$area" == "$tex82_oracle_area" || \
           "$area" == "$etex26_oracle_area" || \
           "$area" == "$pdftex14027_oracle_area" ]]; then
@@ -1569,6 +1584,8 @@ oracle_offline=0
 oracle_validate_only=0
 oracle_fixture=""
 oracle_bootstrap_fixture=0
+command_semantic_profile=""
+command_semantic_allowlist=""
 
 if [[ "$#" -eq 0 ]]; then
   usage
@@ -1621,9 +1638,21 @@ while [[ "$#" -gt 0 ]]; do
       shift 2
       ;;
     --profile)
-      [[ "$mode" == oracle ]] || die "--profile requires --oracle"
       [[ "$#" -ge 2 ]] || die "missing profile after --profile"
-      oracle_profile="$2"
+      if [[ "$mode" == oracle ]]; then
+        oracle_profile="$2"
+      elif [[ "$mode" == area && "$area_arg" == "$command_semantic_area" ]]; then
+        command_semantic_profile="$2"
+      else
+        die "--profile requires --oracle or --area command-semantic"
+      fi
+      shift 2
+      ;;
+    --allowlist)
+      [[ "$mode" == area && "$area_arg" == "$command_semantic_area" ]] ||
+        die "--allowlist requires --area command-semantic"
+      [[ "$#" -ge 2 ]] || die "missing file after --allowlist"
+      command_semantic_allowlist="$2"
       shift 2
       ;;
     --offline)

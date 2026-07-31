@@ -6,6 +6,7 @@
     {
       "id": "integer-sign-chain-and-units",
       "property_id": "tex82.scanner.integer",
+      "profile": "raw-tex82-loaded",
       "source": "integer-sign-chain-and-units.tex",
       "provenance": {
         "authority": "tex.web",

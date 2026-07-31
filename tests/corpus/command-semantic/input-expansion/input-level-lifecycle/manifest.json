@@ -6,6 +6,7 @@
     {
       "id": "input-level-lifecycle",
       "property_id": "tex82.input.level-lifecycle",
+      "profile": "raw-tex82-loaded",
       "source": "input-level-lifecycle.tex",
       "provenance": {
         "authority": "tex.web",
@@ -47,10 +48,11 @@
         "input:retire:backup",
         "input:retire:file",
         "input:retire:file",
-        "input:stop:terminal"
+        "input:stop:terminal",
+        "effect:terminate:engine\u0000"
       ],
       "channels": {
-        "events": 39,
+        "events": 40,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

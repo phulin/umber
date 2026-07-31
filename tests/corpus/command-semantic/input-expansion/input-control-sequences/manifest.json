@@ -6,6 +6,7 @@
     {
       "id": "input-control-sequences",
       "property_id": "tex82.input.control-sequence-lookup",
+      "profile": "raw-tex82-loaded",
       "source": "input-control-sequences.tex",
       "provenance": {
         "authority": "tex.web",
@@ -37,7 +38,7 @@
         "macro:activate:made:0:"
       ],
       "channels": {
-        "events": 75,
+        "events": 76,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -6,6 +6,7 @@
     {
       "id": "input-start-file",
       "property_id": "tex82.input.start-input-and-first-line",
+      "profile": "raw-tex82-loaded",
       "source": "input-start-file.tex",
       "provenance": {
         "authority": "tex.web",
@@ -44,10 +45,11 @@
         "command:raw:char:letter:78:letter:78",
         "command:expanded:char:letter:78:letter:78",
         "command:raw:char:letter:78:letter:78",
-        "command:expanded:char:letter:78:letter:78"
+        "command:expanded:char:letter:78:letter:78",
+        "effect:terminate:engine\u0000"
       ],
       "channels": {
-        "events": 33,
+        "events": 34,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

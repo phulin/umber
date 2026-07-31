@@ -5,6 +5,7 @@
     {
       "id": "classification",
       "property_id": "tex82.conditionals.classification",
+      "profile": "raw-tex82-loaded",
       "source": "classification.tex",
       "provenance": {
         "authority": "tex.web",
@@ -42,7 +43,7 @@
         "recovery:inserted-token:cs:fi"
       ],
       "channels": {
-        "events": 300,
+        "events": 301,
         "status": "clean",
         "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },
         "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },

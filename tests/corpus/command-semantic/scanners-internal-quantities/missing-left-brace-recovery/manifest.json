@@ -6,6 +6,7 @@
     {
       "id": "missing-left-brace-recovery",
       "property_id": "tex82.scanner.syntax",
+      "profile": "raw-tex82-loaded",
       "source": "missing-left-brace-recovery.tex",
       "provenance": {
         "authority": "tex.web",

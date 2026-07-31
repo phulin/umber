@@ -5,6 +5,7 @@
     {
       "id": "token-predicates",
       "property_id": "tex82.conditionals.token-predicates",
+      "profile": "raw-tex82-loaded",
       "source": "token-predicates.tex",
       "provenance": {
         "authority": "tex.web",
@@ -53,7 +54,7 @@
         "count:9=1"
       ],
       "channels": {
-        "events": 476,
+        "events": 477,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

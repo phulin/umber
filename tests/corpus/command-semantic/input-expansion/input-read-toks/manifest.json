@@ -6,6 +6,7 @@
     {
       "id": "input-read-toks",
       "property_id": "tex82.input.read-token-list",
+      "profile": "raw-tex82-loaded",
       "source": "input-read-toks.tex",
       "provenance": {
         "authority": "tex.web",
@@ -43,7 +44,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 45,
+        "events": 46,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },
