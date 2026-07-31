@@ -6,6 +6,7 @@
     {
       "id": "error-and-stop",
       "property_id": "tex82.main-control.error-and-stop",
+      "profile": "raw-tex82-loaded",
       "source": "error-and-stop.tex",
       "provenance": {
         "authority": "tex.web",

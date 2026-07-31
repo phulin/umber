@@ -6,6 +6,7 @@
     {
       "id": "read-missing-to",
       "property_id": "tex82.assignment.read-to-definition",
+      "profile": "raw-tex82-loaded",
       "source": "read-missing-to.tex",
       "provenance": {
         "authority": "tex.web",

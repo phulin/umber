@@ -6,6 +6,7 @@
     {
       "id": "brace-dispatch",
       "property_id": "tex82.group.brace-dispatch",
+      "profile": "raw-tex82-loaded",
       "source": "brace-dispatch.tex",
       "provenance": {
         "authority": "tex.web",

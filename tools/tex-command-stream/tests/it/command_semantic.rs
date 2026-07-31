@@ -60,7 +60,7 @@ fn declared_command_semantic_cases_match() {
 
 #[test]
 fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
-    const EXPECTED: &[&str] = &[
+    const PRIOR_EXPECTED: &[&str] = &[
         "conditionals/box-register-selector-recovery",
         "conditionals/branch-delimiters",
         "conditionals/classification",
@@ -131,6 +131,17 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
             SessionProfile::EtexInitex,
         ),
     ];
+    const MAIN_CONTROL_EXCLUDED: &[(&str, SessionProfile)] = &[
+        (
+            "main-control/final-cleanup-end-or-dump",
+            SessionProfile::Production,
+        ),
+        (
+            "main-control/hyphenation-data",
+            SessionProfile::RawTex82Loaded,
+        ),
+        ("main-control/hyphenation-errors", SessionProfile::Initex),
+    ];
 
     let cases = load_suite().expect("valid command-semantic corpus");
     let by_name: BTreeMap<_, _> = cases
@@ -142,7 +153,7 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
             )
         })
         .collect();
-    let loaded: BTreeSet<_> = by_name
+    let prior_loaded: BTreeSet<_> = by_name
         .iter()
         .filter_map(|(name, case)| {
             (case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
@@ -154,7 +165,21 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
                 || name.starts_with("scanners-internal-quantities/")
         })
         .collect();
-    assert_eq!(loaded, EXPECTED.iter().copied().collect());
+    assert_eq!(prior_loaded, PRIOR_EXPECTED.iter().copied().collect());
+    let main_control_excluded: BTreeSet<_> = MAIN_CONTROL_EXCLUDED
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let main_control: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (name.starts_with("main-control/")
+                && !main_control_excluded.contains(name.as_str())
+                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
+                .then_some(name.as_str())
+        })
+        .collect();
+    assert_eq!(main_control.len(), 55);
     let allowlist = std::fs::read_to_string(
         repository_root().join("tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases"),
     )
@@ -164,7 +189,13 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         .map(|line| line.split('#').next().unwrap_or_default().trim())
         .filter(|line| !line.is_empty())
         .collect();
-    assert_eq!(allowlisted, loaded);
+    let expected_allowlist: BTreeSet<_> = prior_loaded
+        .iter()
+        .copied()
+        .chain(main_control.iter().copied())
+        .collect();
+    assert_eq!(allowlisted, expected_allowlist);
+    assert_eq!(allowlisted.len(), 90);
     for (name, profile) in EXCLUDED {
         assert_eq!(by_name[*name].profile, *profile, "{name}");
         assert_eq!(
@@ -173,8 +204,12 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
             "{name}"
         );
     }
+    for (name, profile) in MAIN_CONTROL_EXCLUDED {
+        assert_eq!(by_name[*name].profile, *profile, "{name}");
+        assert!(!allowlisted.contains(name), "{name}");
+    }
 
-    let selected: Vec<_> = EXPECTED.iter().map(|name| by_name[*name]).collect();
+    let selected: Vec<_> = PRIOR_EXPECTED.iter().map(|name| by_name[*name]).collect();
     assert_eq!(
         selected.iter().map(|case| case.inputs.len()).sum::<usize>(),
         3
@@ -205,6 +240,53 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
             ))
             .count(),
         30
+    );
+
+    let main_control_selected: Vec<_> = main_control.iter().map(|name| by_name[*name]).collect();
+    assert_eq!(
+        main_control_selected
+            .iter()
+            .map(|case| case.inputs.len())
+            .sum::<usize>(),
+        1
+    );
+    assert_eq!(
+        main_control_selected
+            .iter()
+            .map(|case| case.font_inputs.len())
+            .sum::<usize>(),
+        3
+    );
+    assert_eq!(
+        main_control_selected
+            .iter()
+            .filter(|case| !case.terminal_lines.is_empty())
+            .count(),
+        6
+    );
+    assert_eq!(
+        main_control_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::File
+                )
+            })
+            .count(),
+        4
+    );
+    assert_eq!(
+        main_control_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::Empty
+                )
+            })
+            .count(),
+        51
     );
 }
 

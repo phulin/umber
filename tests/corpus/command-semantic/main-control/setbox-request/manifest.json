@@ -6,6 +6,7 @@
     {
       "id": "setbox-request",
       "property_id": "tex82.assignment.setbox-request",
+      "profile": "raw-tex82-loaded",
       "source": "setbox-request.tex",
       "provenance": {
         "authority": "tex.web",

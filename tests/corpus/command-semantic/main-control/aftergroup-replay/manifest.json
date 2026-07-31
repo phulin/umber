@@ -6,6 +6,7 @@
     {
       "id": "aftergroup-replay",
       "property_id": "tex82.group.aftergroup-replay",
+      "profile": "raw-tex82-loaded",
       "source": "aftergroup-replay.tex",
       "provenance": {
         "authority": "tex.web",

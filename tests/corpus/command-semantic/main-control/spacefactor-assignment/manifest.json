@@ -6,6 +6,7 @@
     {
       "id": "spacefactor-assignment",
       "property_id": "tex82.assignment.auxiliary-state",
+      "profile": "raw-tex82-loaded",
       "source": "spacefactor-assignment.tex",
       "provenance": {
         "authority": "tex.web",
@@ -64,7 +65,7 @@
         "count:14=1"
       ],
       "channels": {
-        "events": 1107,
+        "events": 1108,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -6,6 +6,7 @@
     {
       "id": "eqtb-regions",
       "property_id": "tex82.assignment.eqtb-regions",
+      "profile": "raw-tex82-loaded",
       "source": "eqtb-regions.tex",
       "provenance": {
         "authority": "tex.web",

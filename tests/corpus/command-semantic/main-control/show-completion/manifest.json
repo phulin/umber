@@ -6,6 +6,7 @@
     {
       "id": "show-completion",
       "property_id": "tex82.main-control.show-completion",
+      "profile": "raw-tex82-loaded",
       "source": "show-completion.tex",
       "provenance": {
         "authority": "tex.web",

@@ -6,6 +6,7 @@
     {
       "id": "interaction-mode",
       "property_id": "tex82.assignment.interaction-mode",
+      "profile": "raw-tex82-loaded",
       "source": "interaction-mode.tex",
       "provenance": {
         "authority": "tex.web",

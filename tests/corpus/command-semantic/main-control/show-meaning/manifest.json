@@ -6,6 +6,7 @@
     {
       "id": "show-meaning",
       "property_id": "tex82.main-control.show-meaning",
+      "profile": "raw-tex82-loaded",
       "source": "show-meaning.tex",
       "provenance": {
         "authority": "tex.web",

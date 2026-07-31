@@ -6,6 +6,7 @@
     {
       "id": "messages",
       "property_id": "tex82.main-control.messages",
+      "profile": "raw-tex82-loaded",
       "source": "messages.tex",
       "provenance": {
         "authority": "tex.web",

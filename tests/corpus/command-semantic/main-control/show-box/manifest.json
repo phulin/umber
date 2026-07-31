@@ -6,6 +6,7 @@
     {
       "id": "show-box",
       "property_id": "tex82.main-control.show-box",
+      "profile": "raw-tex82-loaded",
       "source": "show-box.tex",
       "provenance": {
         "authority": "tex.web",

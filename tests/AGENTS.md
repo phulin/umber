@@ -129,6 +129,10 @@ revalidates the closed case after execution so no ambient output can appear.
 for loaded minifixture oracle profiles. Regeneration requires both the profile
 and its allowlist, rejects unknown or duplicate selectors, builds one genuine
 format through `-ini`/`\dump`, and captures only the subsequent `-fmt` jobs.
+The `raw-tex82-loaded` allowlist contains exactly 90 jobs: the reviewed
+35-case scanner/input/conditional cohort and 55 ordinary main-control cases.
+The latter excludes `hyphenation-data`, `hyphenation-errors`, and
+`final-cleanup-end-or-dump`.
 
 Each case also declares a `channels` block accounting for every observable its run produces -- `events`, `status`, `terminal`, `log`, `dvi`, and `effects` -- because a projection asserts one observable and is not coverage of the run. A case with no block fails validation; the only exemption is a case whose run does not complete, and it is granted only to a case already pinned as `xfail`. **The authority rule above governs `expected` (the projection), and the same rule now governs the channel bytes too.** Every applicable fixture-local `expected.<channel>` file holds the pinned instrumented pdfTeX 1.40.27 oracle's own bytes, for `file` and `xfail` alike (`umber2-alfh.1`/`umber2-alfh.7`): a channel where Umber does not yet match those bytes is `xfail` with a `mismatch` pinning the first divergence and a `bug` -- or `xfail-diagnostics` with a `bug` alone, when the divergence is confined to §82's error reports and the rest of the channel still matches -- never a self-pin against Umber's own output. `StreamDisposition` carries no `authority` field, because there is now exactly one place a committed channel's bytes can have come from; reading a green `file` channel as canonical evidence needs no further check.
 

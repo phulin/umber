@@ -6,6 +6,7 @@
     {
       "id": "afterassignment-no-token",
       "property_id": "tex82.assignment.afterassignment",
+      "profile": "raw-tex82-loaded",
       "source": "afterassignment-no-token.tex",
       "provenance": {
         "authority": "tex.web",

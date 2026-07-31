@@ -6,6 +6,7 @@
     {
       "id": "read-to-definition",
       "property_id": "tex82.assignment.read-to-definition",
+      "profile": "raw-tex82-loaded",
       "source": "read-to-definition.tex",
       "provenance": {
         "authority": "tex.web",

@@ -6,6 +6,7 @@
     {
       "id": "command-terminator",
       "property_id": "tex82.assignment.command-terminator",
+      "profile": "raw-tex82-loaded",
       "source": "command-terminator.tex",
       "provenance": {
         "authority": "tex.web",
@@ -29,7 +30,7 @@
         "count:2=9"
       ],
       "channels": {
-        "events": 123,
+        "events": 124,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

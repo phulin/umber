@@ -6,6 +6,7 @@
     {
       "id": "prefix-collection",
       "property_id": "tex82.assignment.prefix-collection",
+      "profile": "raw-tex82-loaded",
       "source": "prefix-collection.tex",
       "provenance": {
         "authority": "tex.web",

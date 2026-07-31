@@ -6,6 +6,7 @@
     {
       "id": "shorthand-definitions",
       "property_id": "tex82.assignment.shorthand-definitions",
+      "profile": "raw-tex82-loaded",
       "source": "shorthand-definitions.tex",
       "provenance": {
         "authority": "tex.web",

@@ -6,6 +6,7 @@
     {
       "id": "show-value",
       "property_id": "tex82.main-control.show-value",
+      "profile": "raw-tex82-loaded",
       "source": "show-value.tex",
       "provenance": {
         "authority": "tex.web",

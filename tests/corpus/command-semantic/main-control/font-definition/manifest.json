@@ -6,6 +6,7 @@
     {
       "id": "font-definition",
       "property_id": "tex82.assignment.font-definition",
+      "profile": "raw-tex82-loaded",
       "source": "font-definition.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

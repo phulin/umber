@@ -6,6 +6,7 @@
     {
       "id": "macro-parameter-errors",
       "property_id": "tex82.assignment.macro-definitions",
+      "profile": "raw-tex82-loaded",
       "source": "macro-parameter-errors.tex",
       "provenance": {
         "authority": "tex.web",

@@ -6,6 +6,7 @@
     {
       "id": "redefinable-target",
       "property_id": "tex82.assignment.redefinable-target",
+      "profile": "raw-tex82-loaded",
       "source": "redefinable-target.tex",
       "provenance": {
         "authority": "tex.web",

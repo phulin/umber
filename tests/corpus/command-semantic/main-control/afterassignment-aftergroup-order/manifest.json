@@ -6,6 +6,7 @@
     {
       "id": "afterassignment-aftergroup-order",
       "property_id": "tex82.assignment.afterassignment",
+      "profile": "raw-tex82-loaded",
       "source": "afterassignment-aftergroup-order.tex",
       "provenance": {
         "authority": "tex.web",

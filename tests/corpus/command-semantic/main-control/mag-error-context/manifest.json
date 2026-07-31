@@ -6,6 +6,7 @@
     {
       "id": "mag-error-context",
       "property_id": "tex82.assignment.mag-freeze",
+      "profile": "raw-tex82-loaded",
       "source": "mag-error-context.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

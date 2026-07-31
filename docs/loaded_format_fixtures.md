@@ -174,6 +174,13 @@ dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
+
+The blessed raw-TeX82 loaded oracle profile additionally owns an exact
+90-case allowlist. It preserves the independently reviewed original 35-case
+cohort and adds exactly 55 ordinary main-control jobs, excluding the three
+separately owned hyphenation/error/final-cleanup fixtures. One cached raw
+format identity serves all selected jobs; inputs, TFMs, terminal lines, and
+interaction mode remain job-local after restore.
 Worker-boundary regressions additionally replace stale and wrong sibling
 candidates before selection, replace a pathname after its inode is anchored,
 exercise the current-image worker entry, and submit a decoder-valid image with

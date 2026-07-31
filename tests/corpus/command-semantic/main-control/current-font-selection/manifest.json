@@ -6,6 +6,7 @@
     {
       "id": "current-font-selection",
       "property_id": "tex82.assignment.current-font-selection",
+      "profile": "raw-tex82-loaded",
       "source": "current-font-selection.tex",
       "provenance": {
         "authority": "tex.web",

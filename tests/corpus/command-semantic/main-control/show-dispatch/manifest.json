@@ -6,6 +6,7 @@
     {
       "id": "show-dispatch",
       "property_id": "tex82.main-control.show-dispatch",
+      "profile": "raw-tex82-loaded",
       "source": "show-dispatch.tex",
       "provenance": {
         "authority": "tex.web",

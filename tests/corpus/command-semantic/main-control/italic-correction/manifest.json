@@ -6,6 +6,7 @@
     {
       "id": "italic-correction",
       "property_id": "tex82.main-control.mode-dispatch",
+      "profile": "raw-tex82-loaded",
       "source": "italic-correction.tex",
       "provenance": {
         "authority": "tex.web",
@@ -34,7 +35,7 @@
         "command:expanded:cs:/:ital_corr:0"
       ],
       "channels": {
-        "events": 134,
+        "events": 135,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

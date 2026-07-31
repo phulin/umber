@@ -6,6 +6,7 @@
     {
       "id": "input-stream-open-close",
       "property_id": "tex82.main-control.input-stream-open-close",
+      "profile": "raw-tex82-loaded",
       "source": "input-stream-open-close.tex",
       "provenance": {
         "authority": "tex.web",

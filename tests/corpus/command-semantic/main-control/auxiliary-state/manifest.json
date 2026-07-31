@@ -6,6 +6,7 @@
     {
       "id": "auxiliary-state",
       "property_id": "tex82.assignment.auxiliary-state",
+      "profile": "raw-tex82-loaded",
       "source": "auxiliary-state.tex",
       "provenance": {
         "authority": "tex.web",

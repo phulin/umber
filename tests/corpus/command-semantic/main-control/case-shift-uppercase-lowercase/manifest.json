@@ -6,6 +6,7 @@
     {
       "id": "case-shift-uppercase-lowercase",
       "property_id": "tex82.main-control.case-shift",
+      "profile": "raw-tex82-loaded",
       "source": "case-shift-uppercase-lowercase.tex",
       "provenance": {
         "authority": "tex.web",

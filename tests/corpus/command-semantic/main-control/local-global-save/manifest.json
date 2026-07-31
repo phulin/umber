@@ -6,6 +6,7 @@
     {
       "id": "local-global-save",
       "property_id": "tex82.assignment.local-global-save",
+      "profile": "raw-tex82-loaded",
       "source": "local-global-save.tex",
       "provenance": {
         "authority": "tex.web",

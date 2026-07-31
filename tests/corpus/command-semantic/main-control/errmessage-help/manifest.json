@@ -6,6 +6,7 @@
     {
       "id": "errmessage-help",
       "property_id": "tex82.main-control.errmessage-help",
+      "profile": "raw-tex82-loaded",
       "source": "errmessage-help.tex",
       "provenance": {
         "authority": "tex.web",

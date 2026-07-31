@@ -6,6 +6,7 @@
     {
       "id": "globaldefs-scope-override",
       "property_id": "tex82.assignment.prefix-collection",
+      "profile": "raw-tex82-loaded",
       "source": "globaldefs-scope-override.tex",
       "provenance": {
         "authority": "tex.web",

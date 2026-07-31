@@ -6,6 +6,7 @@
     {
       "id": "show-control-sequence-spacing",
       "property_id": "tex82.main-control.show-value",
+      "profile": "raw-tex82-loaded",
       "source": "show-control-sequence-spacing.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

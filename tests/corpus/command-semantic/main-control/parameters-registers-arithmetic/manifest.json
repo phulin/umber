@@ -6,6 +6,7 @@
     {
       "id": "parameters-registers-arithmetic",
       "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "raw-tex82-loaded",
       "source": "parameters-registers-arithmetic.tex",
       "provenance": {
         "authority": "tex.web",

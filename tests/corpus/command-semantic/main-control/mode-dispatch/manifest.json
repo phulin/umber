@@ -6,6 +6,7 @@
     {
       "id": "mode-dispatch",
       "property_id": "tex82.main-control.mode-dispatch",
+      "profile": "raw-tex82-loaded",
       "source": "mode-dispatch.tex",
       "provenance": {
         "authority": "tex.web",

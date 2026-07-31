@@ -6,6 +6,7 @@
     {
       "id": "unsave-restoration",
       "property_id": "tex82.group.unsave-restoration",
+      "profile": "raw-tex82-loaded",
       "source": "unsave-restoration.tex",
       "provenance": {
         "authority": "tex.web",

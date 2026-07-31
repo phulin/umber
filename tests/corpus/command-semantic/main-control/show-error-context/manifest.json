@@ -6,6 +6,7 @@
     {
       "id": "show-error-context",
       "property_id": "tex82.main-control.show-completion",
+      "profile": "raw-tex82-loaded",
       "source": "show-error-context.tex",
       "provenance": {
         "authority": "tex.web",

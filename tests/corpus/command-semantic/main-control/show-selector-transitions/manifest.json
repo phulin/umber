@@ -6,6 +6,7 @@
     {
       "id": "show-selector-transitions",
       "property_id": "tex82.main-control.show-meaning",
+      "profile": "raw-tex82-loaded",
       "source": "show-selector-transitions.tex",
       "provenance": {
         "authority": "tex.web",

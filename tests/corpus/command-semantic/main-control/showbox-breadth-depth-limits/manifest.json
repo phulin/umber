@@ -6,6 +6,7 @@
     {
       "id": "showbox-breadth-depth-limits",
       "property_id": "tex82.main-control.show-box",
+      "profile": "raw-tex82-loaded",
       "source": "showbox-breadth-depth-limits.tex",
       "provenance": {
         "authority": "tex.web",

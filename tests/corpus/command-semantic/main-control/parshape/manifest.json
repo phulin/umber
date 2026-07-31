@@ -6,6 +6,7 @@
     {
       "id": "parshape",
       "property_id": "tex82.assignment.parshape",
+      "profile": "raw-tex82-loaded",
       "source": "parshape.tex",
       "provenance": {
         "authority": "tex.web",

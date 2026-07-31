@@ -6,6 +6,7 @@
     {
       "id": "empty-token-register",
       "property_id": "tex82.assignment.parameters-registers-arithmetic",
+      "profile": "raw-tex82-loaded",
       "source": "empty-token-register.tex",
       "provenance": {
         "authority": "tex.web",
@@ -26,7 +27,7 @@
         "count:0=0"
       ],
       "channels": {
-        "events": 39,
+        "events": 40,
         "status": "clean",
         "terminal": {
           "kind": "xfail",

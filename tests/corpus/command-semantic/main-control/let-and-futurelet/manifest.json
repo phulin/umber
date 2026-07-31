@@ -6,6 +6,7 @@
     {
       "id": "let-and-futurelet",
       "property_id": "tex82.assignment.let-and-futurelet",
+      "profile": "raw-tex82-loaded",
       "source": "let-and-futurelet.tex",
       "provenance": {
         "authority": "tex.web",

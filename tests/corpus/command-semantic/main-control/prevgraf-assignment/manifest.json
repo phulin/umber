@@ -6,6 +6,7 @@
     {
       "id": "prevgraf-assignment",
       "property_id": "tex82.assignment.auxiliary-state",
+      "profile": "raw-tex82-loaded",
       "source": "prevgraf-assignment.tex",
       "provenance": {
         "authority": "tex.web",
@@ -48,7 +49,7 @@
         "count:8=1"
       ],
       "channels": {
-        "events": 662,
+        "events": 663,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

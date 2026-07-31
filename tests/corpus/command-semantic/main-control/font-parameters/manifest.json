@@ -6,6 +6,7 @@
     {
       "id": "font-parameters",
       "property_id": "tex82.assignment.font-parameters",
+      "profile": "raw-tex82-loaded",
       "source": "font-parameters.tex",
       "provenance": {
         "authority": "tex.web",
