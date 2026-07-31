@@ -1439,14 +1439,24 @@ impl CommandProcessor<'_> {
             ("bp", PhysicalUnit::Bp),
             ("dd", PhysicalUnit::Dd),
             ("cc", PhysicalUnit::Cc),
-            // pdfTeX 1.40.27 inserts `nd`/`nc` here, between `cc` and `sp`.
-            ("nd", PhysicalUnit::Nd),
-            ("nc", PhysicalUnit::Nc),
-            ("sp", PhysicalUnit::Sp),
         ] {
             if self.scan_keyword(keyword)?.value {
                 return Ok((DimensionUnit::Physical(unit), magnification));
             }
+        }
+        // TeX82 §458 proceeds directly from `cc` to `sp`. pdfTeX 1.40.27's
+        // corresponding change inserts `nd` and `nc` between them, so these
+        // probes (including their observable failed-keyword backups) belong
+        // only to the pdfTeX command profile.
+        if self.command.profile().capabilities().supports_pdftex() {
+            for (keyword, unit) in [("nd", PhysicalUnit::Nd), ("nc", PhysicalUnit::Nc)] {
+                if self.scan_keyword(keyword)?.value {
+                    return Ok((DimensionUnit::Physical(unit), magnification));
+                }
+            }
+        }
+        if self.scan_keyword("sp")?.value {
+            return Ok((DimensionUnit::Physical(PhysicalUnit::Sp), magnification));
         }
         // §459's "Complain about unknown unit": TeX assumes `pt` and
         // finishes the job that a hard scanner failure here would abandon.
@@ -1716,17 +1726,22 @@ impl CommandProcessor<'_> {
         report.error();
     }
 
-    /// TeX82 §459's unit recovery for ordinary dimensions, with pdfTeX
-    /// 1.40.27's `nd`/`nc` named in the help line that lists the units.
+    /// TeX82 §459's unit recovery for ordinary dimensions, extended only in
+    /// the pdfTeX profile with pdfTeX 1.40.27's `nd`/`nc` help text.
     fn illegal_unit_pt_error(&mut self) {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (pt inserted)");
+        let unit_help = if self.command.profile().capabilities().supports_pdftex() {
+            "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!"
+        } else {
+            "cm, mm, dd, cc, bp, or sp; but yours is a new one!"
+        };
         report
             .help(&[
                 "Dimensions can be in units of em, ex, in, pt, pc,",
-                "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!",
+                unit_help,
                 "I'll assume that you meant to say pt, for printer's points.",
                 "To recover gracefully from this error, it's best to",
                 "delete the erroneous units; e.g., type `2' to delete",

@@ -5645,6 +5645,50 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
 }
 
 #[test]
+fn pdftex_dimension_units_do_not_enter_tex82_keyword_probes() {
+    fn scan(profile: CommandProfile, source: &str) -> (Scaled, usize) {
+        let mut command = CommandState::new(profile);
+        push(&mut command, scanner_tokens(source));
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let value = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder)
+        .scan_dimension()
+        .expect("dimension scans")
+        .value;
+        let backups = recorder
+            .0
+            .iter()
+            .filter(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Backup
+                )
+            })
+            .count();
+        (value, backups)
+    }
+
+    let tex82 = CommandProfile::exact(CommandDialect::Tex82);
+    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14027);
+    let (tex82_sp, tex82_backups) = scan(tex82, "1sp=");
+    let (pdftex_sp, pdftex_backups) = scan(pdftex, "1sp=");
+    assert_eq!(tex82_sp.raw(), 1);
+    assert_eq!(pdftex_sp.raw(), 1);
+    assert_eq!(pdftex_backups, tex82_backups + 2);
+    assert_eq!(scan(pdftex, "1nd=").0.raw(), 69_925);
+    assert_eq!(scan(pdftex, "1nc=").0.raw(), 839_105);
+}
+
+#[test]
 fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
     use tex_state::glue::Order;
 

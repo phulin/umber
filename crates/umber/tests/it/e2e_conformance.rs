@@ -359,7 +359,7 @@ fn run_file_in_process_captured(
     } else {
         Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
     };
-    let format = if run.dumped_format {
+    let _format = if run.dumped_format {
         let bytes = stores.dump_format().map_err(|error| error.to_string())?;
         let mut receipt = run
             .format_dump_receipt
@@ -1189,8 +1189,6 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
-            terminal,
-            log,
         }),
     };
     let dvi = loaded
