@@ -4119,10 +4119,8 @@ fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
             ReplayStep::Continue
         );
     }
-    let slots: Vec<_> = control
-        .modes
-        .current_list()
-        .nodes()
+    let slots: Vec<_> = universe
+        .page_contributions()
         .iter()
         .map(|node| match node {
             Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot }) => *slot,

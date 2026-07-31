@@ -9622,6 +9622,7 @@ fn shipout_replay_box(
     print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
+    let mut write_diagnostics = Vec::new();
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
@@ -9644,10 +9645,17 @@ fn shipout_replay_box(
                 .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
                 .collect::<Vec<_>>();
             let traced = stores.finish_traced_token_list(&traced);
-            let expanded = command
-                .processor(stores)
-                .expand_write_text(traced)
-                .map_err(command_error)?;
+            let expanded = {
+                let mut processor = command.processor(stores);
+                let expanded = processor.expand_write_text(traced).map_err(command_error)?;
+                write_diagnostics.extend(
+                    processor
+                        .take_semantic_diagnostics()
+                        .into_iter()
+                        .map(PendingDiagnostic::Command),
+                );
+                expanded
+            };
             if let Some(observations) = command.observations.as_mut() {
                 observations
                     .0
@@ -9702,6 +9710,12 @@ fn shipout_replay_box(
             .to_vec()
             .into_boxed_slice();
     }
+    // TeX82 §1370 expands deferred writes during `ship_out`; §§82 and 90
+    // render any recoverable scanner errors before shipout returns. The
+    // expansion itself runs inside Umber's artifact transaction, so render
+    // the command-owned reports only after that transaction has committed:
+    // otherwise its transcript effects are consumed as staging scratch.
+    report_pending_diagnostics(stores, write_diagnostics)?;
     print_ship_out_marker_close(stores, tracing_output);
     // The closing bracket prints after `shipout_node_with_input_summary`'s
     // own transaction has committed, so without this call it would sit as a

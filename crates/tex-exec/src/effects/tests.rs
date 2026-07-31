@@ -545,6 +545,33 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
 }
 
 #[test]
+fn deferred_write_scanner_diagnostic_survives_shipout_before_later_reports() {
+    // TeX82 §§446 and 1370: the opening brace is a vacuous integer, so the
+    // nested write expansion reports and inserts zero. The report belongs to
+    // the job transcript, not the page transaction, and precedes the next
+    // source-level diagnostic after shipout.
+    let stores = run_source(br"\shipout\hbox{\write-1{\number{}}}\errmessage{later report}\end");
+    let terminal = std::str::from_utf8(
+        stores
+            .world()
+            .memory_terminal_output()
+            .expect("memory terminal"),
+    )
+    .expect("terminal is UTF-8");
+    let missing = terminal
+        .find("Missing number, treated as zero")
+        .expect("deferred write scanner diagnostic survives shipout");
+    let later = terminal
+        .find("later report")
+        .expect("following diagnostic remains visible");
+    assert!(missing < later, "{terminal}");
+    assert!(terminal.contains("<to be read again>"));
+    let log = std::str::from_utf8(stores.world().memory_log_output().expect("memory log"))
+        .expect("log is UTF-8");
+    assert!(log.contains("A number should have been here; I inserted `0'."));
+}
+
+#[test]
 fn deferred_write_unbalanced_recovery_stops_at_endwrite() {
     let stores = run_source(
         br"\def\missingright{\iftrue{\else}\fi}\shipout\hbox{\write16{before\missingright after}}\count0=37\end",

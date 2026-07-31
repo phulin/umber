@@ -1661,13 +1661,14 @@ impl CommandProcessor<'_> {
         // Universe, owns that level, so capture its display while it is live
         // for both immediate and deferred reporting.
         let context = self.command.output_open_context(&self.state);
-        // §380 performs an undefined-control-sequence expansion before
-        // §444 reaches its vacuous constant. The command core cannot render
-        // §370 until the borrowed processor episode returns to the executor;
-        // queue this later report behind it so the two World-facing reports
-        // retain their detection order. With no pending command diagnostic,
-        // preserve the scanner's immediate error path.
-        if !self.command.semantic_diagnostics.is_empty() {
+        // §380 performs an undefined-control-sequence expansion before §444
+        // reaches its vacuous constant. Queue behind any already-detected
+        // command report. §1370's nested deferred-write processor must also
+        // queue even when this is its first diagnostic: it runs inside an
+        // artifact transaction, where direct transcript effects are staging
+        // scratch and would be consumed at commit.
+        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::MissingNumber { context });

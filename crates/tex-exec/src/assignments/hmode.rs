@@ -232,7 +232,22 @@ pub(crate) fn append_whatsit(
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
-    nest.current_list_mutation().push(Node::Whatsit(whatsit));
+    let classic_extension = matches!(
+        whatsit,
+        tex_state::node::Whatsit::OpenOut { .. }
+            | tex_state::node::Whatsit::CloseOut { .. }
+            | tex_state::node::Whatsit::DeferredWrite { .. }
+            | tex_state::node::Whatsit::Special { .. }
+    );
+    let node = Node::Whatsit(whatsit);
+    if classic_extension {
+        // TeX82 §1043 reaches these four extension subtypes through
+        // `append_to_vlist` in outer vertical mode, where `tail` is the page
+        // contribution list rather than the otherwise-empty mode list.
+        crate::vertical::append_vertical_contribution(nest, stores, node);
+    } else {
+        nest.current_list_mutation().push(node);
+    }
     Ok(())
 }
 

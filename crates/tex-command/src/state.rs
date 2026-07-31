@@ -188,6 +188,17 @@ impl CommandState {
         self.input.output_open_context(stores, &self.parameters)
     }
 
+    /// Whether TeX82 §1370's artificial deferred-write input is live.
+    pub(crate) fn expanding_deferred_write(&self) -> bool {
+        self.input.levels.iter().any(|level| {
+            matches!(
+                level,
+                InputLevel::Tokens(cursor)
+                    if cursor.trace == ReplayTrace::Stored(StoredReplayReason::Write)
+            )
+        })
+    }
+
     /// Schedules one completed `\\discretionary` part for canonical replay.
     ///
     /// This is deliberately a stored command level, not an executor-owned

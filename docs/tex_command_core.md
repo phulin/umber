@@ -2792,6 +2792,14 @@ Semantic recovery and diagnostic presentation are separate:
 - the host formatter resolves paths, lines, columns, excerpts, and macro
   traces lazily.
 
+Nested command episodes retain the same boundary. In particular, TeX82
+§1370 expands deferred writes during shipout: scanner recovery is recorded in
+command state with its live §82 context, then rendered by the executor after
+the artifact transaction, so transaction scratch cannot consume terminal or
+log diagnostics. TeX82 §1043 extension whatsits in outer vertical mode enter
+the page contribution list directly; leaving them on the mode nest delays
+their write expansion past the page that canonically owns it.
+
 Batch/nonstop transcript fixtures compare canonical wording and order where
 the project claims transcript parity. Host-specific paths, banners, terminal
 interaction, and display widths are normalized only through explicit fixture

@@ -47,20 +47,27 @@ fn base_whatsit_scanners_construct_each_canonical_subtype() {
         );
     }
 
-    let nodes = control.modes.current_list().nodes();
-    assert!(matches!(
-        nodes,
-        [
-            Node::Whatsit(Whatsit::OpenOut { slot, path }),
-            Node::Whatsit(Whatsit::DeferredWrite { sink: PrintSink::Log, .. }),
-            Node::Whatsit(Whatsit::CloseOut { slot: close }),
-            Node::Whatsit(Whatsit::Special { class, payload }),
-        ] if slot == &StreamSlot::new(2)
-            && path == "trace"
-            && close == &Some(StreamSlot::new(2))
-            && class == "dvi"
-            && payload == b"expanded"
-    ));
+    let nodes = stores
+        .page_contributions()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(
+            nodes.as_slice(),
+            [
+                Node::Whatsit(Whatsit::OpenOut { slot, path }),
+                Node::Whatsit(Whatsit::DeferredWrite { sink: PrintSink::Log, .. }),
+                Node::Whatsit(Whatsit::CloseOut { slot: close }),
+                Node::Whatsit(Whatsit::Special { class, payload }),
+            ] if slot == &StreamSlot::new(2)
+                && path == "trace"
+                && close == &Some(StreamSlot::new(2))
+                && class == "dvi"
+                && payload == b"expanded"
+        ),
+        "{nodes:?}"
+    );
 }
 
 #[test]
