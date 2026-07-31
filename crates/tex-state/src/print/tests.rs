@@ -250,6 +250,57 @@ fn print_esc_uses_escapechar_and_omits_it_when_out_of_range() {
 }
 
 #[test]
+fn print_esc_renders_live_eight_bit_escapechar_as_tex_character_string() {
+    use crate::env::banks::IntParam;
+
+    for (escape, expected) in [
+        (0, "^^@global"),
+        (31, "^^_global"),
+        (32, " global"),
+        (94, "^global"),
+        (126, "~global"),
+        (127, "^^?global"),
+        (128, "^^80global"),
+        (255, "^^ffglobal"),
+        (-1, "global"),
+        (256, "global"),
+    ] {
+        let mut universe = Universe::new();
+        universe.set_int_param(IntParam::ESCAPE_CHAR, escape);
+        universe.set_int_param(IntParam::NEWLINE_CHAR, -1);
+        Printer::new(&mut universe, Selector::TermAndLog).print_esc("global");
+        assert_eq!(terminal_text(&universe), expected, "escapechar={escape}");
+    }
+}
+
+#[test]
+fn character_string_honors_newline_before_caret_rendering_on_active_selectors() {
+    use crate::env::banks::IntParam;
+
+    for selector in [Selector::TermOnly, Selector::LogOnly, Selector::TermAndLog] {
+        let mut universe = Universe::new();
+        universe.set_int_param(IntParam::NEWLINE_CHAR, 127);
+        Printer::new(&mut universe, selector)
+            .print("prefix")
+            .print_character_string('\u{7f}')
+            .print_character_string('\0');
+
+        let wanted = match selector {
+            Selector::TermOnly => PrintSink::Terminal,
+            Selector::LogOnly => PrintSink::Log,
+            Selector::TermAndLog => PrintSink::TerminalAndLog,
+            Selector::NoPrint => unreachable!(),
+        };
+        assert_eq!(sink_text(&universe, wanted), "prefix\n^^@");
+    }
+
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::NEWLINE_CHAR, 127);
+    Printer::new(&mut universe, Selector::NoPrint).print_character_string('\u{7f}');
+    assert!(universe.world().effect_records().is_empty());
+}
+
+#[test]
 fn sprint_cs_distinguishes_named_active_and_null_control_sequences() {
     use crate::interner::ControlSequenceKind;
 

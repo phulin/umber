@@ -58,6 +58,25 @@ fn tracingcommands_reports_each_reswitch_command_with_live_selector_and_mode() {
 }
 
 #[test]
+fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
+    // TeX82 §§58--59/63/298: `print_cmd_chr` reaches `print_esc`, whose
+    // escape prefix is printed as a one-character string rather than by the
+    // raw `print_char` primitive.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=1\\tracingonline=1\\escapechar=127\\global\\count0=1\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    assert!(terminal.contains("{^^?global}\n{^^?count}"), "{terminal:?}");
+    assert!(!terminal.as_bytes().contains(&127), "{terminal:?}");
+}
+
+#[test]
 fn disabled_tracingcommands_emits_no_command_diagnostic() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

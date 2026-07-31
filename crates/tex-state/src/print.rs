@@ -86,6 +86,7 @@ impl Default for ErrorContextWidths {
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
 use crate::scaled::Scaled;
+use crate::token_show::append_tex_print_char;
 use crate::universe::{InteractionMode, Universe};
 use crate::world::PrintSink;
 
@@ -227,24 +228,69 @@ impl<'a> Printer<'a> {
         self.selector = selector;
     }
 
-    /// tex.web §59's `print`. §60's `slow_print` differs only in how the
-    /// string pool is consulted, which Umber has no analogue for.
+    /// tex.web §§59--60's content-based `print`/`slow_print` analogue.
+    ///
+    /// Umber carries string contents rather than string-pool numbers. Each
+    /// eight-bit character therefore crosses §59's one-character-string
+    /// path, as §60 `slow_print` does, while larger Unicode scalars pass
+    /// through unchanged.
     pub fn print(&mut self, text: &str) -> &mut Self {
+        let mut rendered = String::with_capacity(text.len());
+        for character in text.chars() {
+            if character == '\n' {
+                rendered.push('\n');
+            } else if self.is_newline_character(character) {
+                self.write_raw(&rendered);
+                rendered.clear();
+                self.print_ln();
+            } else {
+                append_tex_print_char(character, &mut rendered);
+            }
+        }
+        self.write_raw(&rendered)
+    }
+
+    /// tex.web §58's `print_char`.
+    pub fn print_char(&mut self, character: char) -> &mut Self {
+        if self.is_newline_character(character) {
+            return self.print_ln();
+        }
+        let mut buffer = [0u8; 4];
+        self.write_raw(character.encode_utf8(&mut buffer))
+    }
+
+    /// tex.web §59's `print(c)` for a one-character string.
+    ///
+    /// This differs deliberately from §58's [`Self::print_char`]: an active
+    /// selector expands non-printable eight-bit character strings to TeX's
+    /// `^^` spelling. The new-line test happens first, and the characters in
+    /// the expanded spelling are then emitted with `new_line_char` disabled.
+    pub fn print_character_string(&mut self, character: char) -> &mut Self {
+        if self.is_newline_character(character) {
+            return self.print_ln();
+        }
+        let mut rendered = String::new();
+        append_tex_print_char(character, &mut rendered);
+        self.write_raw(&rendered)
+    }
+
+    fn is_newline_character(&self, character: char) -> bool {
+        u32::try_from(self.universe.int_param(IntParam::NEWLINE_CHAR))
+            .ok()
+            .and_then(char::from_u32)
+            == Some(character)
+    }
+
+    fn write_raw(&mut self, text: &str) -> &mut Self {
         if let Some(sink) = self.selector.sink() {
             self.universe.world_mut().write_text(sink, text);
         }
         self
     }
 
-    /// tex.web §58's `print_char`.
-    pub fn print_char(&mut self, character: char) -> &mut Self {
-        let mut buffer = [0u8; 4];
-        self.print(character.encode_utf8(&mut buffer))
-    }
-
     /// tex.web §57's `print_ln`.
     pub fn print_ln(&mut self) -> &mut Self {
-        self.print("\n")
+        self.write_raw("\n")
     }
 
     /// tex.web §62's `print_nl`: prints `text` at the start of a line.
@@ -272,7 +318,7 @@ impl<'a> Printer<'a> {
         if (0..256).contains(&escape)
             && let Some(character) = u32::try_from(escape).ok().and_then(char::from_u32)
         {
-            self.print_char(character);
+            self.print_character_string(character);
         }
         self.print(name)
     }
