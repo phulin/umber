@@ -5,6 +5,7 @@ use tex_command::{
     SourceRegistration,
 };
 use tex_state::hyphenation::PatternSpec;
+use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
 
 use super::*;
@@ -61,11 +62,15 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
 }
 
 #[test]
-fn etex_fire_up_discards_empty_sparse_botmark_before_enquiry_replay() {
-    // e-TeX 2.6 `etex.ch` [26.1396] discards an empty old `botmarks`
-    // pointer during `fire_up_init`; the later `topmarks` enquiry therefore
-    // must not install a `mark_text` input level.
+fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
+    // TeX82 §1012 preserves an empty class-zero `bot_mark` pointer as the new
+    // `top_mark`, while e-TeX 2.6 `etex.ch` [26.1396] discards an empty old
+    // sparse `botmarks` pointer. Only the later `topmarks0` enquiry therefore
+    // installs and retires a `mark_text` input level.
     let mut stores = Universe::new_with_plain_catcodes();
+    // Stage the exact post-fire-up state proved by output.rs's white-box
+    // regression, then cross the command processor's enquiry boundary.
+    stores.set_page_mark_class(PageMark::Top, 0, tex_state::ids::TokenListId::EMPTY);
     let mut control = canonical_etex_initex(&mut stores);
     register_source(
         &mut control,
@@ -75,12 +80,17 @@ fn etex_fire_up_discards_empty_sparse_botmark_before_enquiry_replay() {
 
     run_to_end_observed(&mut control, &mut stores, &mut observations);
 
-    assert!(
-        !observations.0.iter().any(|event| matches!(
-            event,
-            CommandObservation::Input(record) if record.reason == InputReason::Mark
-        )),
-        "an absent topmarks value must not push or retire a mark-text level"
+    assert_eq!(
+        observations
+            .0
+            .iter()
+            .filter(|event| matches!(
+                event,
+                CommandObservation::Input(record) if record.reason == InputReason::Mark
+            ))
+            .count(),
+        2,
+        "the present-empty class-zero mark pushes and retires; sparse class one remains absent"
     );
 }
 

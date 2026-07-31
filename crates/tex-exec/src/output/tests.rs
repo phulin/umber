@@ -148,6 +148,24 @@ fn fire_up_discards_an_empty_sparse_bot_mark_before_top_mark_assignment() {
 }
 
 #[test]
+fn fire_up_preserves_an_empty_class_zero_bot_mark_as_current_marks() {
+    // TeX82 §1012 assigns `top_mark:=bot_mark` without inspecting the stored
+    // token list. e-TeX [26.1396]'s empty-list deletion applies only to its
+    // sparse mark-class nodes, not class zero's TeX82 `cur_mark` array.
+    let mut stores = Universe::new();
+    stores.set_page_mark_class(PageMark::Bot, 0, tex_state::ids::TokenListId::EMPTY);
+
+    update_page_marks_at_fire_up(&mut stores, &[]);
+
+    for mark in [PageMark::Top, PageMark::First, PageMark::Bot] {
+        assert_eq!(
+            stores.page_mark_class_value(mark, 0),
+            Some(tex_state::ids::TokenListId::EMPTY)
+        );
+    }
+}
+
+#[test]
 fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
     let mut stores = Universe::new();
     let old = boxed(&mut stores, false);

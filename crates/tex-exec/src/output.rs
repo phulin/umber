@@ -205,7 +205,14 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
         let old_bot = stores.page_mark_class_value(PageMark::Bot, class);
         stores.clear_page_mark_class(PageMark::Top, class);
         stores.clear_page_mark_class(PageMark::First, class);
-        let top = old_bot.filter(|tokens| *tokens != tex_state::ids::TokenListId::EMPTY);
+        // TeX82 §1012 copies class zero's `bot_mark` pointer even when its
+        // token list is empty. e-TeX 2.6 `etex.ch` [26.1396] adds the empty
+        // list deletion only for sparse mark-class nodes.
+        let top = if class == 0 {
+            old_bot
+        } else {
+            old_bot.filter(|tokens| *tokens != tex_state::ids::TokenListId::EMPTY)
+        };
         match top {
             Some(top) => stores.set_page_mark_class(PageMark::Top, class, top),
             None => stores.clear_page_mark_class(PageMark::Bot, class),
