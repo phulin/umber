@@ -191,9 +191,9 @@ dump or load is a hard failure; there is no INITEX fallback. The priming
 transcript and log are construction evidence only and are never copied into a
 case channel.
 
-The allowlist contains exactly 90 loaded jobs: the original 35 scanner,
-input-expansion, and conditional cases, plus 55 main-control cases. The
-main-control cohort is every `main-control/*` fixture except
+The allowlist contains exactly 108 loaded jobs: the original 35 scanner,
+input-expansion, and conditional cases, 55 main-control cases, and all 18
+alignment cases. The main-control cohort is every `main-control/*` fixture except
 `hyphenation-data`, `hyphenation-errors`, and
 `final-cleanup-end-or-dump`. Its job-local contract is one declared input,
 three TFM resources, six terminal-interaction cases, and 51 empty plus four
@@ -201,6 +201,12 @@ file DVI channels. Capturing the cohort under genuine loaded framing changes
 55 terminal banners, 55 normalized-log banners, and five event counts from
 the obsolete INITEX captures; projections, status, DVI, effects, resources,
 and interaction declarations do not change.
+
+The alignment cohort contributes two job-local TFM resources, 17 clean jobs,
+the exact `fatal:confusion(256 spans)` job, and ten empty plus eight file DVI
+channels. Genuine loaded framing changes only its 18 terminal and 18
+normalized-log banners; event counts, projections, statuses, mode
+transitions, DVI, effects, and resources remain unchanged.
 
 Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
 with its `source`, any `inputs` files (written as the manifest's exact

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "preamble-global-prefix",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.preamble-tabskip-and-delimiters",
       "source": "preamble-global-prefix.tex",
       "provenance": {

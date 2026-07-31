@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "finish-orchestration",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.finish-orchestration",
       "source": "finish-orchestration.tex",
       "provenance": {

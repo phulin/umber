@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "noalign-everycr-row-packaging",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.package-unset-row",
       "source": "noalign-everycr-row-packaging.tex",
       "font_inputs": {

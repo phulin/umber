@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "display-halign-nested",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.display-finish",
       "source": "display-halign-nested.tex",
       "font_inputs": {

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "running-rules",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.set-list-and-running-rules",
       "source": "running-rules.tex",
       "provenance": {

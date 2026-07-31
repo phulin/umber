@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "display-finished-list",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.display-finish",
       "source": "display-finished-list.tex",
       "provenance": {

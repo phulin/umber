@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "span-start",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.span-start",
       "source": "span-start.tex",
       "provenance": {

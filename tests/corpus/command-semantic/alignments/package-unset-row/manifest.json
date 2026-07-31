@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "package-unset-row",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.package-unset-row",
       "source": "package-unset-row.tex",
       "provenance": {

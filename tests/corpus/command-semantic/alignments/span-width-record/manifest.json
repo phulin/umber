@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "span-width-record",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.record-span-width",
       "source": "span-width-record.tex",
       "provenance": {

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "align-peek-crcr-restart",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.row-lookahead-noalign-finish",
       "source": "align-peek-crcr-restart.tex",
       "provenance": {

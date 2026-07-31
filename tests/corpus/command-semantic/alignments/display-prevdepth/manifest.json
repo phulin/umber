@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "display-prevdepth",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.initialize-spec-and-mode",
       "source": "display-prevdepth.tex",
       "provenance": {

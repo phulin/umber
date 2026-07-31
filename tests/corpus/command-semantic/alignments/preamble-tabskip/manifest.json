@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "preamble-tabskip",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.preamble-tabskip-and-delimiters",
       "source": "preamble-tabskip.tex",
       "provenance": {

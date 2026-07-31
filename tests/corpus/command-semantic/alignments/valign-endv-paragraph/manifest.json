@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "valign-endv-paragraph",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.endv-validation-and-off-save",
       "source": "valign-endv-paragraph.tex",
       "provenance": {

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "misplaced-delimiter-recovery",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
       "source": "misplaced-delimiter-recovery.tex",
       "provenance": {
