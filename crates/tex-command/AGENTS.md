@@ -60,9 +60,13 @@ print channel of its own.
   streams need `open_registered_source_as` (`umber2-johp.245`). It also owns
   `SourceRegistration::with_name` (§537's `a_make_name_string`) and
   `FileFramingEvent`, the queued `Open`/`Close` record of when a `File` level
-  opened or exhausted. `tex-command` still prints nothing: `CommandState`
-  accumulates the queue and `take_file_framing_events` drains it for a later
-  layer to render as tex.web's `(name`/`)` transcript bracketing.
+  opened or exhausted. The queue exists because the input stack is reached
+  from places that hold no `Universe`; `CommandState::render_file_framing_events`
+  prints it as tex.web's `(name`/`)` bracketing through
+  `tex_state::file_framing`, and the processor drains it the instant a source
+  retires, because §362 prints its `)` ahead of the `check_outer_validity`
+  diagnostic on the next line. Whatever the core could not render itself the
+  engine drains once per step.
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
   and focused line-contract tests.

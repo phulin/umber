@@ -68,29 +68,47 @@ Printing is `tex-state`'s (`Printer` over §54's `selector`), file opening is
 placed:
 
 - **`tex-state`** gains §76's `history` on `ErrorChannel`, beside the
-  `error_count` §82 already maintains there.
+  `error_count` §82 already maintains there, and `file_framing.rs`: §54's
+  `open_parens` plus the three prints that maintain it (§537's `(name`,
+  §362's `)`, §1335's `␣)` apiece). Both are print-adjacent `World` state and
+  both roll back with the effects that carried what they count.
 - **`tex-command`** gains a _name_ on an opened source (§537's
   `a_make_name_string`, which Umber's anonymous byte registrations had no
-  place for) and a drained queue of file-framing events. It still prints
-  nothing: the queue records that a named file opened or that one retired, in
-  order, and the engine renders it.
+  place for) and a queue of file-framing events, which it renders itself
+  through `tex_state::file_framing`.
 
-  The queue lives on `CommandState` rather than on the short-lived
-  `CommandProcessor` that carries `take_restricted_integer_recoveries`. A
-  processor-scoped accumulator is discarded when a step rolls back, which is
-  right for a diagnostic scanned and printed inside one step -- but an open
-  and its matching close are normally in _different_ steps, so a
-  processor-scoped queue would lose every open before its close arrived.
-  `CommandState`'s own step snapshot is a wholesale clone and restore, so a
-  field there is captured and rolled back with everything else: a rolled-back
-  open prints no paren, and a committed one cannot be dropped.
-- **`tex-exec`** gains `job.rs`, which owns the banner, the `**` line, the
-  `open_parens` count, and the §1332 tail, and drains the command layer's
-  queue once per step. A retained `CanonicalEngineSession` has already opened
-  its root before command execution, so it routes that §537 opening directly
-  through the same job owner: the terminal-only startup print and
-  `open_parens` mutation remain one operation, and §1335 can close an
-  unconsumed root with `␣)`.
+  The queue exists because §537's push and §362's pop are input-stack
+  operations, reached from methods that hold no `Universe`; it lives on
+  `CommandState` rather than on the short-lived `CommandProcessor` because an
+  open and its matching close are normally in _different_ steps, so a
+  processor-scoped accumulator would lose every open before its close
+  arrived. `CommandState`'s own step snapshot is a wholesale clone and
+  restore, so a field there is captured and rolled back with everything else.
+
+  **When it drains is part of the contract.** §362 is
+
+  ```text
+  print_char(")"); decr(open_parens); ... end_file_reading;
+  check_outer_validity;
+  ```
+
+  -- the `)` precedes a diagnostic printed one statement later from inside
+  `get_next`, where no engine driver is on the stack. The processor therefore
+  drains the instant a source retires. Leaving it for the end of the step put
+  `Incomplete \iffalse` and the runaway family _inside_ a file bracket
+  tex.web had already closed.
+- **`tex-exec`** gains `job.rs`, which owns the banner, the `**` line, and
+  the §1332 tail, and drains whatever residue the command core could not
+  render once per step. A retained `CanonicalEngineSession` has already
+  opened its root before command execution, so it routes that §537 opening
+  directly through `tex_state::file_framing` as a terminal-only print, and
+  §1335 can close an unconsumed root with `␣)`.
+
+The same ordering rule binds the diagnostics that share these channels: a
+report the command core detects has to be _printed_ by the command core.
+§§433--437's restricted-integer range error was queued for the executor to
+render, which put `! Bad register code (256).` after the `)` of the file it
+was still reading; it now reports from inside `scan_restricted_integer`.
 
 ## Why the banner says pdfTeX
 

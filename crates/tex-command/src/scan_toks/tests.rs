@@ -86,25 +86,25 @@ fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-
-    let scanned = processor
-        .scan_toks(ScanToksMode::General { expanded: false })
-        .expect("§403 recovery supplies the required opening brace");
-    assert_eq!(
-        processor
-            .state
-            .tokens(scanned.replacement_text.token_list()),
-        &[Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter,
-        }]
-    );
-    assert_eq!(
-        processor.command.alignment.align_state,
-        crate::processor::TOP_LEVEL_ALIGN_STATE
-    );
-    drop(processor);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let scanned = processor
+            .scan_toks(ScanToksMode::General { expanded: false })
+            .expect("§403 recovery supplies the required opening brace");
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }]
+        );
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
+    }
     assert!(diagnostic_text(&universe).starts_with("! Missing { inserted."));
 }
 

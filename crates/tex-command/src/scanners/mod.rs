@@ -9,7 +9,7 @@ mod structured;
 mod token_list;
 
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
-pub use restricted::{RestrictedInteger, RestrictedIntegerClass, RestrictedIntegerRecovery};
+pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, ExpandedWriteText,

@@ -1,6 +1,8 @@
-//! Direct tests for tex.web's job framing: the start-up banner, §537/§362's
-//! `(name`/`)` bracketing, §1335's final-cleanup tail, and §1333's DVI/
-//! transcript report. See `docs/job_framing.md` for the full account.
+//! Direct tests for tex.web's job framing: the start-up banner, §1335's
+//! final-cleanup tail, and §1333's DVI/transcript report. See
+//! `docs/job_framing.md` for the full account. §537/§362's `(name`/`)`
+//! bracketing is tested next to the state it maintains, in
+//! `tex_state::file_framing`.
 
 use super::*;
 
@@ -180,127 +182,6 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         1,
         "begin_job must print the banner only once even when called twice"
     );
-}
-
-#[test]
-fn open_paren_prints_a_bare_name_when_the_line_is_empty() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-
-    render_file_framing_events(
-        &mut job,
-        &mut stores,
-        vec![FileFramingEvent::Open {
-            name: "a.tex".into(),
-        }],
-    );
-
-    assert_eq!(terminal_text(&stores), "(a.tex");
-    assert_eq!(job.open_parens, 1);
-}
-
-#[test]
-fn open_paren_prints_a_leading_space_when_the_line_already_has_content() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-
-    render_file_framing_events(
-        &mut job,
-        &mut stores,
-        vec![
-            FileFramingEvent::Open { name: "a".into() },
-            FileFramingEvent::Close,
-            FileFramingEvent::Open { name: "b".into() },
-        ],
-    );
-
-    assert_eq!(terminal_text(&stores), "(a) (b");
-    assert_eq!(job.open_parens, 1);
-}
-
-#[test]
-fn open_paren_breaks_the_line_when_the_name_would_overflow_max_print_line() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-    let long_name = "x".repeat(80);
-
-    render_file_framing_events(
-        &mut job,
-        &mut stores,
-        vec![FileFramingEvent::Open {
-            name: long_name.as_str().into(),
-        }],
-    );
-
-    // §537 breaks *before* the name because it cannot fit on the rest of the
-    // line, and §58 then breaks again the instant `(` plus the name reaches
-    // `max_print_line`: 78 of the 80 characters share the line with the open
-    // paren and the last two start the next.
-    assert_eq!(
-        terminal_text(&stores),
-        format!("\n({}\n{}", "x".repeat(78), "x".repeat(2))
-    );
-}
-
-#[test]
-fn close_paren_prints_a_bare_close_and_decrements_open_parens() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-
-    render_file_framing_events(
-        &mut job,
-        &mut stores,
-        vec![
-            FileFramingEvent::Open {
-                name: "a.tex".into(),
-            },
-            FileFramingEvent::Close,
-        ],
-    );
-
-    assert_eq!(terminal_text(&stores), "(a.tex)");
-    assert_eq!(job.open_parens, 0);
-}
-
-#[test]
-fn close_open_parens_prints_a_leading_space_before_each_close() {
-    // §1335's `final_cleanup`: a file still open at `\end` closes with
-    // `print(" )")`, once per still-open paren.
-    let mut stores = Universe::new();
-    let mut job = JobFraming {
-        open_parens: 2,
-        ..JobFraming::default()
-    };
-
-    close_open_parens(&mut job, &mut stores);
-
-    assert_eq!(terminal_text(&stores), " ) )");
-    assert_eq!(job.open_parens, 0);
-}
-
-#[test]
-fn close_open_parens_is_a_no_op_when_nothing_is_open() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-
-    close_open_parens(&mut job, &mut stores);
-
-    assert!(terminal_text(&stores).is_empty());
-}
-
-#[test]
-fn retained_startup_input_is_closed_by_final_cleanup() {
-    // TeX82 §§537/1335: a retained driver opens the root outside the command
-    // input queue, but `open_parens` must still make an abandoned root close.
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-
-    open_startup_input(&mut job, &mut stores, "./trip.tex");
-    close_open_parens(&mut job, &mut stores);
-
-    assert_eq!(terminal_text(&stores), "(./trip.tex )");
-    assert_eq!(log_text(&stores), " )");
-    assert_eq!(job.open_parens, 0);
 }
 
 const HISTORY_NOTE: &str = "(see the transcript file for additional information)";

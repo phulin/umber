@@ -65,6 +65,20 @@ impl CommandContext<'_> {
         self.universe.print_err(text)
     }
 
+    /// tex.web §537's `(name`, through the live command aggregate borrow.
+    pub fn print_file_open(&mut self, name: &str) {
+        crate::file_framing::print_file_open(self.universe, name);
+    }
+
+    /// tex.web §362's bare `)`.
+    ///
+    /// §362 prints this from inside `get_next`, one statement ahead of
+    /// `check_outer_validity`, so the command core has to be able to reach it
+    /// without waiting for the engine driver; see [`crate::file_framing`].
+    pub fn print_file_close(&mut self) {
+        crate::file_framing::print_file_close(self.universe);
+    }
+
     /// Resumes a scanner report around tex.web's intervening `back_error`.
     pub fn resume_error_report(
         &mut self,

@@ -1403,7 +1403,17 @@ impl CommandProcessor<'_> {
                             // EOF in a nested `\\input` must insert frozen
                             // `\\fi` above the parent, rather than allowing
                             // the parent's next token to escape `pass_text`.
-                            match self.retire_and_restart(identity)? {
+                            let restart = self.retire_and_restart(identity)?;
+                            // §362 prints its `)` *before* `end_file_reading`
+                            // and `check_outer_validity`, so the bracket the
+                            // retirement just queued has to reach the
+                            // transcript here, not when the step ends: the
+                            // very next thing `recover_runaway_eof` may print
+                            // is `Incomplete \if...` or a runaway report,
+                            // which tex.web puts outside the file it has
+                            // already closed.
+                            self.command.render_file_framing_events(&mut self.state);
+                            match restart {
                                 RetirementRestart::Stop => return Ok(None),
                                 RetirementRestart::Continue => {
                                     if self.recover_runaway_eof()? {

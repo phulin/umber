@@ -2039,11 +2039,11 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_observer(&mut recorder);
-
-    assert_eq!(next_character(&mut processor), 't');
-    drop(processor);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 't');
+    }
     assert!(
         !recorder
             .0

@@ -656,7 +656,7 @@ impl CanonicalMainControl {
     /// mutation beside the print lets §1335 close an input abandoned by
     /// `\end` or `\dump`, just as it closes command-opened inputs.
     pub fn open_startup_input(&mut self, stores: &mut Universe, name: &str) {
-        crate::job::open_startup_input(&mut self.job, stores, name);
+        crate::job::open_startup_input(stores, name);
     }
 
     /// Declares that this session was restored from a dumped format, so
@@ -684,13 +684,18 @@ impl CanonicalMainControl {
         crate::job::finish_job(stores, self.capabilities.job_name(), dvi);
     }
 
-    /// Renders one step's drained §537/§362 file-bracketing queue. Every step
-    /// driver (`step_once`, `alignment_step_once`, `step_with_observer_once`)
-    /// calls this once, immediately after it reports the step's other
-    /// diagnostics.
+    /// Renders whatever §537/§362 bracketing the command core queued but had
+    /// no `Universe` in hand to print.
+    ///
+    /// The command core renders every event at the point tex.web prints it
+    /// whenever it can -- §362's `)` has to precede the
+    /// `check_outer_validity` diagnostic printed a line later inside
+    /// `get_next` -- so what reaches here is the residue. Every step driver
+    /// (`step_once`, `alignment_step_once`, `step_with_observer_once`) calls
+    /// this once, immediately after it reports the step's other diagnostics.
     fn drain_file_framing_events(&mut self, stores: &mut Universe) {
-        let events = self.command.take_file_framing_events();
-        crate::job::render_file_framing_events(&mut self.job, stores, events);
+        self.command
+            .render_file_framing_events(&mut stores.command_context());
     }
 
     /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
@@ -707,7 +712,7 @@ impl CanonicalMainControl {
         dump: bool,
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) {
-        crate::job::close_open_parens(&mut self.job, stores);
+        crate::job::close_open_parens(stores);
         report_incomplete_conditions(stores, incomplete_conditions);
         crate::job::print_history_note(stores);
         if dump && !self.initex {
@@ -1189,12 +1194,6 @@ impl CanonicalMainControl {
             )?;
             diagnostics.extend(
                 processor
-                    .take_restricted_integer_recoveries()
-                    .into_iter()
-                    .map(PendingDiagnostic::RestrictedInteger),
-            );
-            diagnostics.extend(
-                processor
                     .take_semantic_diagnostics()
                     .into_iter()
                     .map(PendingDiagnostic::Command),
@@ -1650,12 +1649,6 @@ impl CanonicalMainControl {
                     &mut diagnostics,
                 )?,
             };
-            diagnostics.extend(
-                processor
-                    .take_restricted_integer_recoveries()
-                    .into_iter()
-                    .map(PendingDiagnostic::RestrictedInteger),
-            );
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -2933,12 +2926,6 @@ impl CanonicalMainControl {
                     &mut diagnostics,
                 )?,
             };
-            diagnostics.extend(
-                processor
-                    .take_restricted_integer_recoveries()
-                    .into_iter()
-                    .map(PendingDiagnostic::RestrictedInteger),
-            );
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -14195,18 +14182,17 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// A tex.web recoverable-error report that scanning detects but only the
 /// stomach can print.
 ///
-/// The command core owns no `World` text sink, so a scan that must diagnose
-/// *and still run its command* cannot print at the point of detection. This
-/// is the same split `report_restricted_integer_recovery` already makes for
-/// §§433-437; steps whose recovery is fully described by the step itself
-/// (`missing_to`, `recovered`, ...) keep carrying it there instead.
+/// The remaining reports here are ones whose semantic transition completes
+/// before the World-facing executor sees them. A scan that can print at the
+/// point of detection does -- §§433-437's range recovery moved into
+/// `scan_restricted_integer` for exactly that reason -- because a queued
+/// report lands after everything the rest of the step emits, including
+/// §362's `)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
     /// A command-owned diagnostic whose semantic transition completed before
     /// the World-facing executor could render it.
     Command(tex_command::CommandSemanticDiagnostic),
-    /// TeX82 §§433-§437's shared `print_err`/`help2`/`int_error`.
-    RestrictedInteger(tex_command::RestrictedIntegerRecovery),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
     PrefixOnNonPrefixedCommand(tex_command::PrintCommand, String),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
@@ -14279,14 +14265,6 @@ fn report_pending_diagnostics(
                     ])
                     .context(context);
                 report.error();
-            }
-            PendingDiagnostic::RestrictedInteger(recovery) => {
-                report_restricted_integer_recovery(
-                    stores,
-                    recovery.class,
-                    recovery.scanned,
-                    &recovery.context,
-                )?;
             }
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
@@ -14472,24 +14450,6 @@ fn report_font_parameter_recovery(
 /// The recovery itself belongs to the restricted scan (`tex_command`'s
 /// `RestrictedIntegerClass`); only the terminal report is a stomach-side
 /// effect, because the command core owns no `World` text sink.
-fn report_restricted_integer_recovery(
-    stores: &mut Universe,
-    class: RestrictedIntegerClass,
-    scanned: i32,
-    context: &str,
-) -> Result<(), ExecError> {
-    let mut report = stores.print_err(class.message());
-    report
-        .help(&[class.help(), "I changed this one to zero."])
-        .context(context.to_owned());
-    match report.int_error(scanned) {
-        tex_state::print::ErrorOutcome::Continue => Ok(()),
-        tex_state::print::ErrorOutcome::FatalErrorLimit => {
-            Err(ExecError::Fatal(FatalError::TooManyErrors))
-        }
-    }
-}
-
 /// Converts a command-core failure into its `ExecError` counterpart,
 /// preserving the originating `CommandError` variant and message. Only
 /// `MissingInput` and `PdfNavigation` map onto dedicated `ExecError` variants

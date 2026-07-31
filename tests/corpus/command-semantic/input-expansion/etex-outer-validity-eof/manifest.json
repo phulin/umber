@@ -41,19 +41,15 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./etex-outer-validity-eof.tex)",
-            "actual": "(./etex-outer-validity-eof.tex"
-          }
+          "mismatch": { "line": 7, "expected": "<*> etex-outer-validity-eof.tex", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
           "mismatch": {
-            "line": 4,
-            "expected": "(./etex-outer-validity-eof.tex)",
-            "actual": "(./etex-outer-validity-eof.tex"
+            "line": 8,
+            "expected": "<*> etex-outer-validity-eof.tex",
+            "actual": "The file ended while I was skipping conditional text."
           }
         },
         "dvi": { "kind": "empty" },

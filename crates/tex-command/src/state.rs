@@ -1,5 +1,6 @@
 //! Future-relevant state and discardable runtime ownership.
 
+use tex_state::CommandContext;
 use tex_state::input::TracedTokenList;
 use tex_state::token::TracedTokenWord;
 
@@ -339,18 +340,48 @@ impl CommandState {
     pub fn take_semantic_diagnostics(&mut self) -> Vec<CommandSemanticDiagnostic> {
         self.semantic_diagnostics.drain(..).collect()
     }
-    /// Drains the queued §537/§362 file-bracketing transitions, in order.
+    /// Drains the queued §537/§362 file-bracketing transitions, in order,
+    /// without rendering them.
     ///
-    /// `tex-command` never prints (see the crate's `AGENTS.md`); this hands
-    /// the engine exactly the ordered `Open`/`Close` record it needs to
-    /// render tex.web's `(name` and `)` transcript bracketing itself. The
-    /// executor is expected to call this once per committed step -- draining
-    /// after a rolled-back step is harmless but pointless, since rollback
-    /// already restored the whole [`CommandState`] to its pre-step value and
-    /// left nothing queued that the step added.
+    /// The queue exists because §537's push and §362's pop are input-stack
+    /// operations, and the input stack is reached from places that hold no
+    /// `Universe`. Prefer [`Self::render_file_framing_events`], which is the
+    /// same drain followed by the print; this raw form is for callers that
+    /// only want to observe the transitions.
     #[must_use]
     pub fn take_file_framing_events(&mut self) -> Vec<FileFramingEvent> {
         std::mem::take(&mut self.file_framing_events)
+    }
+
+    /// Drains the queue and prints tex.web's `(name` and `)` bracketing for
+    /// each transition, in order.
+    ///
+    /// Callers must drain at every point where tex.web itself would already
+    /// have printed, not merely once per step. §362 is why:
+    ///
+    /// ```text
+    /// print_char(")"); decr(open_parens); ... end_file_reading;
+    /// check_outer_validity;
+    /// ```
+    ///
+    /// `check_outer_validity` reports `Incomplete \if...` and the runaway
+    /// family from inside `get_next`, so a `)` left queued until the step
+    /// ends puts that diagnostic *inside* a file bracket tex.web had already
+    /// closed. §54's `open_parens` therefore lives on `World`
+    /// ([`tex_state::file_framing`]) and both the command core and the engine
+    /// driver render through it.
+    ///
+    /// Draining after a rolled-back step is harmless but pointless: rollback
+    /// restores the whole [`CommandState`] to its pre-step value and the
+    /// `Universe` snapshot takes both the prints and `open_parens` back with
+    /// it.
+    pub fn render_file_framing_events(&mut self, context: &mut CommandContext<'_>) {
+        for event in self.file_framing_events.drain(..) {
+            match event {
+                FileFramingEvent::Open { name } => context.print_file_open(&name),
+                FileFramingEvent::Close => context.print_file_close(),
+            }
+        }
     }
 
     /// Returns the committed observation for an executor-applied alignment

@@ -1585,6 +1585,19 @@ pub struct WorldSnapshot {
     shell_escape_len: usize,
     artifact_commit_len: usize,
     commit_mode: WorldCommitMode,
+    /// tex.web §54's `open_parens`: a step that printed `(name` and is then
+    /// abandoned must take the count back with the print, or §1335 would
+    /// close a paren nobody opened.
+    file_framing: crate::file_framing::FileFraming,
+    /// tex.web §76's `history` and §82's `error_count`.
+    ///
+    /// These roll back with the effects that carried the reports they count.
+    /// A rolled-back step's diagnostic is truncated out of the effect log, so
+    /// leaving the tallies behind would count errors no channel ever showed
+    /// -- and, since Umber re-runs a step suspended for a missing resource,
+    /// would count the same report once per attempt. §82's hundredth-error
+    /// transition reads this count, so the two have to move together.
+    error_channel: crate::print::ErrorChannel,
 }
 
 /// Cursor into World-owned state for semantic convergence hashing.
@@ -1629,6 +1642,7 @@ pub struct World {
     effect_commit_poison: Option<WorldError>,
     commit_mode: WorldCommitMode,
     error_channel: crate::print::ErrorChannel,
+    file_framing: crate::file_framing::FileFraming,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
     #[cfg(test)]
@@ -1674,6 +1688,7 @@ impl Clone for World {
             effect_commit_poison: self.effect_commit_poison.clone(),
             commit_mode: self.commit_mode,
             error_channel: self.error_channel.clone(),
+            file_framing: self.file_framing,
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
             #[cfg(test)]
@@ -1891,6 +1906,7 @@ impl World {
             effect_commit_poison: None,
             commit_mode: WorldCommitMode::Eager,
             error_channel: crate::print::ErrorChannel::default(),
+            file_framing: crate::file_framing::FileFraming::default(),
             execution_tracing: false,
             execution_trace: Vec::new(),
             #[cfg(test)]
@@ -1912,6 +1928,19 @@ impl World {
     #[must_use]
     pub const fn error_channel(&self) -> &crate::print::ErrorChannel {
         &self.error_channel
+    }
+
+    /// tex.web §54's `open_parens`, which §537, §362, and §1335 maintain
+    /// between them; see [`crate::file_framing`] for why it is print-adjacent
+    /// state here rather than driver state.
+    pub const fn file_framing_mut(&mut self) -> &mut crate::file_framing::FileFraming {
+        &mut self.file_framing
+    }
+
+    /// Read access to the same state.
+    #[must_use]
+    pub const fn file_framing(&self) -> &crate::file_framing::FileFraming {
+        &self.file_framing
     }
 
     /// Enables or disables non-semantic execution tracing.
@@ -3493,6 +3522,8 @@ impl World {
             shell_escape_len: self.shell_escapes.len(),
             artifact_commit_len: self.artifact_pos(),
             commit_mode: self.commit_mode,
+            file_framing: self.file_framing,
+            error_channel: self.error_channel.clone(),
         }
     }
 
@@ -3536,6 +3567,8 @@ impl World {
             Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
         }
         self.commit_mode = snapshot.commit_mode;
+        self.file_framing = snapshot.file_framing;
+        self.error_channel = snapshot.error_channel.clone();
     }
 
     /// Restores a checkpoint on a freshly cloned generation while detaching
@@ -3564,6 +3597,8 @@ impl World {
             self.committed_artifacts = Arc::new(Vec::new());
         }
         self.commit_mode = snapshot.commit_mode;
+        self.file_framing = snapshot.file_framing;
+        self.error_channel = snapshot.error_channel.clone();
     }
 
     fn allocate_input_record(&mut self) -> InputRecordId {

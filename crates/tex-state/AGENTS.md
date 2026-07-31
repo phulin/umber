@@ -33,6 +33,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/tests.rs`: Unit tests for environment write barriers, grouping, globals, aftergroup, font banks, and raw restore behavior.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
 - `src/epoch/tests.rs`: Unit tests for epoch ordering, raw values, and overflow behavior.
+- `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
 - `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
 - `src/format_container.rs`: Portable schema-11 format-image header, section directory, compatibility fingerprints, checksum, and structural validation.
 - `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, and geometry tests.

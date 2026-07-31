@@ -219,17 +219,17 @@ fn othercases_print_errors_without_inventing_events_and_preserve_the_partial_wor
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = CommandProcessor::new(
-            &mut command,
-            &mut runtime,
-            universe.command_context(),
-            CommandHostContext::new(&mut capabilities),
-        )
-        .with_observer(&mut recorder);
-
-        let scanned = processor.scan_hyphenation_data(kind).expect("group scans");
-        assert_eq!(words(&scanned), vec!["ab"]);
-        drop(processor);
+        {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder);
+            let scanned = processor.scan_hyphenation_data(kind).expect("group scans");
+            assert_eq!(words(&scanned), vec!["ab"]);
+        }
         assert!(
             !recorder
                 .0

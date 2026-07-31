@@ -47,12 +47,16 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 2, "expected": "(./classification.tex)", "actual": "(./classification.tex" }
+          "mismatch": { "line": 6, "expected": "<*> classification.tex", "actual": "" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.13",
-          "mismatch": { "line": 3, "expected": "(./classification.tex)", "actual": "(./classification.tex" }
+          "mismatch": {
+            "line": 7,
+            "expected": "<*> classification.tex",
+            "actual": "The file ended while I was skipping conditional text."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }

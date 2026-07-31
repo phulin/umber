@@ -88,11 +88,6 @@ pub struct CommandProcessor<'a> {
     /// `\\par` terminates the failed match, but must not become a visible
     /// §394 `back_error` replay token.
     pub(crate) eof_recovered_while_matching: bool,
-    /// Ordered §§433-§437 reports detected during this bounded operation.
-    ///
-    /// This is processor-local rather than snapshot state: the executor
-    /// claims it before ending the borrow and prints through `Universe`.
-    pub(crate) restricted_integer_recoveries: Vec<crate::RestrictedIntegerRecovery>,
     /// Web2C's process-local `expand_depth_count` contribution from nested
     /// e-TeX expression primitives. Parentheses use `scan_expr`'s explicit
     /// stack and do not enter this counter.
@@ -168,7 +163,6 @@ impl<'a> CommandProcessor<'a> {
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
-            restricted_integer_recoveries: Vec::new(),
             expression_depth: 0,
         }
     }
@@ -182,11 +176,6 @@ impl<'a> CommandProcessor<'a> {
 
     pub(crate) fn charge_command_action(&mut self) -> Result<(), crate::CommandError> {
         self.fuel.charge()
-    }
-
-    /// Claims restricted-integer reports in their scan-detection order.
-    pub fn take_restricted_integer_recoveries(&mut self) -> Vec<crate::RestrictedIntegerRecovery> {
-        std::mem::take(&mut self.restricted_integer_recoveries)
     }
 
     /// Claims command-owned semantic diagnostics in detection order.

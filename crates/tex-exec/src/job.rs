@@ -5,12 +5,16 @@
 //! and why the pieces live where they do. In short: printing is
 //! `tex-state`'s (`tex_state::print::Printer` over §54's `selector`), file
 //! opening is `tex-command`'s (§537's `start_input` is an input-stack
-//! operation, queued as a drained [`tex_command::FileFramingEvent`] rather
-//! than printed), and the job lifecycle -- when a job starts, when a file's
-//! open/close reaches the transcript, and how a job ends -- is
-//! `CanonicalMainControl`'s, because it is the one layer that sees a
+//! operation), and the job lifecycle -- when a job starts and how it ends --
+//! is `CanonicalMainControl`'s, because it is the one layer that sees a
 //! `Universe` and a driver both. This module is where that lifecycle lives;
 //! `canonical_main_control.rs` only exposes it.
+//!
+//! The per-file `(name`/`)` bracketing is the one piece that is *not* here:
+//! §362 prints its `)` from inside `get_next`, ahead of the
+//! `check_outer_validity` diagnostic it must precede, so §54's `open_parens`
+//! is print-adjacent state on `World` and both layers render through
+//! [`tex_state::file_framing`].
 //!
 //! tex.web spreads the pieces this module owns across:
 //! - §61 `wterm(banner)` and §536 `open_log_file`: the start-up banner.
@@ -25,12 +29,10 @@
 //! - §1333 `close_files_and_terminate`: §642's DVI page report and the
 //!   "Transcript written on..." note.
 
-use std::sync::Arc;
-
-use tex_command::{CommandHostCapabilities, FileFramingEvent};
+use tex_command::CommandHostCapabilities;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::print::{ErrorHistory, MAX_PRINT_LINE, Printer, Selector};
+use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
 
 /// tex.web's `banner`: the reference engine's own start-up string.
@@ -43,20 +45,21 @@ use tex_state::world::PrintSink;
 /// place either crate spells it.
 pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
 
-/// tex.web §54's `open_parens`, plus enough to make [`begin_job`] a one-shot.
+/// Enough job state to make [`begin_job`] a one-shot.
 ///
-/// Both fields are engine state that lives outside `Universe`, alongside
-/// `CanonicalMainControl`'s other replay-owned fields (`next_alignment_identity`,
-/// `boxes`, ...): a step that prints `(name` or `)` and then rolls back must
-/// have `open_parens` roll back with it, so `CanonicalStepSnapshot` captures
-/// and restores this whole value exactly as it does those.
+/// This is engine state that lives outside `Universe`, alongside
+/// `CanonicalMainControl`'s other replay-owned fields
+/// (`next_alignment_identity`, `boxes`, ...), so `CanonicalStepSnapshot`
+/// captures and restores it exactly as it does those.
+///
+/// §54's `open_parens` is deliberately *not* here. It is print-adjacent state
+/// on `World` -- see [`tex_state::file_framing`] -- because §362 prints its
+/// `)` from inside `get_next`, one line ahead of the `check_outer_validity`
+/// diagnostic it must precede, where no engine driver is on the stack.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct JobFraming {
     /// Guards [`begin_job`] against printing the banner twice.
     started: bool,
-    /// tex.web §54's `open_parens`: how many `(` have been printed with no
-    /// matching `)` yet.
-    open_parens: u32,
 }
 
 /// Immutable facts about a serialized `.dvi` file that only the driver which
@@ -272,61 +275,9 @@ pub(crate) fn begin_job(
         .print_ln();
 }
 
-/// Renders one step's drained §537/§362 file-bracketing queue.
-///
-/// Every driver that advances the engine (`step_once`, `alignment_step_once`,
-/// `step_with_observer_once`) must call this once per step, immediately after
-/// it reports the step's other diagnostics -- see `docs/job_framing.md` for
-/// why the queue lives on `tex_command::CommandState` rather than here.
-pub(crate) fn render_file_framing_events(
-    job: &mut JobFraming,
-    stores: &mut Universe,
-    events: Vec<FileFramingEvent>,
-) {
-    if events.is_empty() {
-        return;
-    }
-    let mut printer = stores.printer();
-    for event in events {
-        match event {
-            FileFramingEvent::Open { name } => open_paren(job, &mut printer, &name),
-            FileFramingEvent::Close => close_paren(job, &mut printer),
-        }
-    }
-}
-
-/// tex.web §537's `(name`.
-///
-/// The line-break decision tests `term_offset` alone, exactly as tex.web
-/// does -- not `file_offset`/`log_offset` -- even though the resulting
-/// `print_ln` or space is written through the ambient selector to every
-/// channel it routes to. This is tex.web's own asymmetry, not an
-/// approximation of it.
-fn open_paren(job: &mut JobFraming, printer: &mut Printer<'_>, name: &Arc<str>) {
-    let term_offset = printer.terminal_offset();
-    if term_offset + name.chars().count() > MAX_PRINT_LINE - 2 {
-        printer.print_ln();
-    } else if term_offset > 0 || printer.log_offset() > 0 {
-        printer.print_char(' ');
-    }
-    printer.print_char('(');
-    job.open_parens = job.open_parens.saturating_add(1);
-    printer.print(name);
-}
-
-/// tex.web §362's bare `)`.
-fn close_paren(job: &mut JobFraming, printer: &mut Printer<'_>) {
-    printer.print_char(')');
-    job.open_parens = job.open_parens.saturating_sub(1);
-}
-
 /// tex.web §1335's `while open_parens>0 do begin print(" )"); decr(open_parens); end`.
-pub(crate) fn close_open_parens(job: &mut JobFraming, stores: &mut Universe) {
-    let mut printer = stores.printer();
-    while job.open_parens > 0 {
-        printer.print(" )");
-        job.open_parens -= 1;
-    }
+pub(crate) fn close_open_parens(stores: &mut Universe) {
+    tex_state::file_framing::print_remaining_file_closes(stores);
 }
 
 /// Records and prints the retained session's already-opened root source.
@@ -335,11 +286,8 @@ pub(crate) fn close_open_parens(job: &mut JobFraming, stores: &mut Universe) {
 /// so this opening cannot arrive through [`FileFramingEvent`]. It is still
 /// TeX82 §537's `print_char("("); incr(open_parens)`: §1335 must therefore
 /// see it when `\end` or `\dump` abandons the still-open root.
-pub(crate) fn open_startup_input(job: &mut JobFraming, stores: &mut Universe, name: &str) {
-    Printer::new(stores, Selector::TermOnly)
-        .print_char('(')
-        .print(name);
-    job.open_parens = job.open_parens.saturating_add(1);
+pub(crate) fn open_startup_input(stores: &mut Universe, name: &str) {
+    tex_state::file_framing::print_startup_file_open(stores, name);
 }
 
 /// tex.web §1335's "(see the transcript file for additional information)"

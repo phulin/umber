@@ -1024,10 +1024,10 @@ fn child_endinput_retires_true_to_false_before_multiline_parent_resumes() {
             Arc::<[u8]>::from(b"c\\endinput\nx".as_slice()),
         ),
     );
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-
-    assert_eq!(chars(&mut processor), "c p ");
-    drop(processor);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(chars(&mut processor), "c p ");
+    }
     assert!(
         !command.input.force_eof,
         "TeX82 §362 clears force_eof before retiring the child"
@@ -1221,16 +1221,26 @@ fn etex_mark_class_enquiries_share_extended_register_scan_and_recovery() {
         ReplayTrace::BackedUp,
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(rendered(&mut processor), "ABCDEZ");
+    }
 
-    assert_eq!(rendered(&mut processor), "ABCDEZ");
-    assert_eq!(
-        processor.take_restricted_integer_recoveries(),
-        vec![crate::RestrictedIntegerRecovery {
-            class: crate::RestrictedIntegerClass::Register,
-            scanned: -1,
-            context: String::new(),
-        }]
+    // e-TeX's `scan_register_num` rejects `-1` and reports it from inside the
+    // scan, so `\topmarks-1` reads mark class zero and the diagnostic is
+    // already on the channel.
+    let reported: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        reported.contains("! Bad register code (-1)."),
+        "expected e-TeX's register-range report, got {reported:?}"
     );
 }
 
@@ -1970,19 +1980,20 @@ fn undefined_semantic_diagnostic_survives_unobserved_execution_and_snapshot_retr
                runtime: &mut CommandRuntime,
                universe: &mut Universe,
                capabilities: &mut CommandHostCapabilities| {
-        let mut processor = processor(command, runtime, universe, capabilities);
-        let resumed = processor
-            .get_x_token()
-            .expect("undefined recovery is finite")
-            .expect("following token resumes");
-        assert_eq!(
-            resumed.spelling().semantic_token(),
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            }
-        );
-        drop(processor);
+        {
+            let mut processor = processor(command, runtime, universe, capabilities);
+            let resumed = processor
+                .get_x_token()
+                .expect("undefined recovery is finite")
+                .expect("following token resumes");
+            assert_eq!(
+                resumed.spelling().semantic_token(),
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                }
+            );
+        }
         command.take_semantic_diagnostics()
     };
 

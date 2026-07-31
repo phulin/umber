@@ -103,20 +103,6 @@ pub struct RestrictedInteger {
     pub provenance: ScalarProvenance,
 }
 
-/// A TeX82 §§433-§437 restricted scan whose rejected value must be reported.
-///
-/// The command core owns detection and ordering, while the executor owns the
-/// terminal/log sink. Keeping the class and unrecovered `scan_int` value
-/// together prevents consumers from reconstructing either after `cur_val`
-/// has already become zero.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RestrictedIntegerRecovery {
-    pub class: RestrictedIntegerClass,
-    pub scanned: i32,
-    /// TeX82 §82's input display at the point the range error was detected.
-    pub context: String,
-}
-
 impl CommandProcessor<'_> {
     /// Performs TeX82 §433-§437's restricted integer scan.
     ///
@@ -131,13 +117,25 @@ impl CommandProcessor<'_> {
         let accepted = class.accepts(self.command.profile(), scanned.value);
         let recovered = !accepted;
         if recovered {
+            // §433-§437 report from inside the scan, before the command that
+            // asked for the register ever runs. Reporting here rather than
+            // handing the executor a queued recovery is what keeps the report
+            // ahead of everything the rest of the step prints -- §362's `)`
+            // in particular, which a still-open file emits the moment its
+            // last line is consumed, and which tex.web puts *after* this
+            // diagnostic because the file is still open while `scan_int`
+            // reads from it.
             let context = self.command.output_open_context(&self.state);
-            self.restricted_integer_recoveries
-                .push(RestrictedIntegerRecovery {
-                    class,
-                    scanned: scanned.value,
-                    context,
-                });
+            let mut report = self.state.print_err(class.message());
+            report
+                .help(&[class.help(), "I changed this one to zero."])
+                .context(context);
+            // §82's hundredth error is `history:=fatal_error_stop; jump_out`,
+            // which never returns to the interrupted scan.
+            if let tex_state::print::ErrorOutcome::FatalErrorLimit = report.int_error(scanned.value)
+            {
+                return Err(CommandError::Fatal(crate::FatalError::TooManyErrors));
+            }
         }
         Ok(RestrictedInteger {
             value: if accepted { scanned.value } else { 0 },
