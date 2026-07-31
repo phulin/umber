@@ -551,7 +551,10 @@ mod tests {
         assert_eq!(provenance.generated_source_backings(), 0);
         assert_eq!(provenance.source_map_bytes(), 0);
         assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
-        assert_eq!(loaded.universe.interaction_mode(), tex_state::InteractionMode::ErrorStop);
+        assert_eq!(
+            loaded.universe.interaction_mode(),
+            tex_state::InteractionMode::ErrorStop
+        );
     }
 
     #[test]
@@ -628,8 +631,8 @@ mod tests {
         let source = Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]);
         let recipe = FormatRecipe::raw_tex82();
         let cache_root = TempDir::new().expect("cache");
-        let fixture = ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe)
-            .expect("raw format");
+        let fixture =
+            ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw format");
         let mut loaded_observations = Recorder::default();
         let loaded = fixture
             .load(test_world())
