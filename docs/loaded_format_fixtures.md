@@ -56,6 +56,14 @@ attached to the error. A crash or malformed response publishes nothing and a
 later call starts an independent worker. The response repeats the recipe
 identity and authenticates the image bytes with SHA-256; the parent checks
 both and performs a complete frozen-format decode before cache publication.
+Reader completion and wall-deadline classification share one synchronized
+event state. A reader result published before the supervisor acquires that
+state for an expired-deadline decision participates in the decision, so an
+observed exit with both pipes closed completes normally. If the supervisor
+acquires the state first and a pipe is still unresolved, the deadline wins;
+this finitely bounds pipes held open by inherited descriptors. Reader
+publication wakes the supervisor, while a two-millisecond maximum wait keeps
+live-child RSS sampling continuous.
 Platforms without supported RSS supervision reject construction explicitly.
 On Linux both the cooperative worker check and the parent supervisor convert
 `/proc/*/statm` resident pages with the checked runtime page size; unavailable,

@@ -3,7 +3,7 @@
 use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -162,6 +162,112 @@ enum WorkerResidentSetError {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Default)]
+struct ReaderCompletions {
+    stdout: Option<Result<Vec<u8>, FormatFixtureError>>,
+    stderr: Option<Result<Vec<u8>, FormatFixtureError>>,
+}
+
+#[cfg(target_os = "linux")]
+struct ReaderEvents {
+    completions: Mutex<ReaderCompletions>,
+    published: Condvar,
+}
+
+#[cfg(target_os = "linux")]
+impl ReaderEvents {
+    fn new() -> Self {
+        Self {
+            completions: Mutex::new(ReaderCompletions::default()),
+            published: Condvar::new(),
+        }
+    }
+
+    fn publish(
+        &self,
+        is_stdout: bool,
+        result: Result<Vec<u8>, FormatFixtureError>,
+    ) -> Result<(), FormatFixtureError> {
+        let mut completions = self.lock()?;
+        let slot = if is_stdout {
+            &mut completions.stdout
+        } else {
+            &mut completions.stderr
+        };
+        *slot = Some(result);
+        self.published.notify_one();
+        Ok(())
+    }
+
+    fn decide(
+        &self,
+        status: Option<std::process::ExitStatus>,
+        wall_time_exceeded: bool,
+    ) -> Result<SupervisionAction, FormatFixtureError> {
+        let mut completions = self.lock()?;
+        if matches!(completions.stdout, Some(Err(_)))
+            && let Some(Err(error)) = completions.stdout.take()
+        {
+            return Ok(SupervisionAction::Complete(Err(error)));
+        }
+        if matches!(completions.stderr, Some(Err(_)))
+            && let Some(Err(error)) = completions.stderr.take()
+        {
+            return Ok(SupervisionAction::Complete(Err(error)));
+        }
+        if let Some(observed) = status
+            && completions.stdout.is_some()
+            && completions.stderr.is_some()
+        {
+            let stdout = completions
+                .stdout
+                .take()
+                .expect("checked resolved stdout")
+                .expect("checked successful stdout");
+            let stderr = completions
+                .stderr
+                .take()
+                .expect("checked resolved stderr")
+                .expect("checked successful stderr");
+            return Ok(SupervisionAction::Complete(if observed.success() {
+                Ok(CollectedWorkerOutput { stdout, stderr })
+            } else {
+                Err(FormatFixtureError::WorkerCrashed(
+                    observed.code(),
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                ))
+            }));
+        }
+        if wall_time_exceeded {
+            return Ok(SupervisionAction::WallTimeExceeded);
+        }
+        Ok(if status.is_some() {
+            SupervisionAction::WaitForPipes
+        } else {
+            SupervisionAction::CheckResidentSet
+        })
+    }
+
+    fn wait_for_publication(&self, duration: Duration) -> Result<(), FormatFixtureError> {
+        let completions = self.lock()?;
+        let _ = self
+            .published
+            .wait_timeout(completions, duration)
+            .map_err(|_| reader_state_poisoned())?;
+        Ok(())
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ReaderCompletions>, FormatFixtureError> {
+        self.completions.lock().map_err(|_| reader_state_poisoned())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn reader_state_poisoned() -> FormatFixtureError {
+    FormatFixtureError::WorkerProtocol("worker reader state poisoned".into())
+}
+
+#[cfg(target_os = "linux")]
 fn reconcile_process_disappearance(
     status: &mut Option<std::process::ExitStatus>,
     observe_exit: impl FnOnce() -> std::io::Result<Option<std::process::ExitStatus>>,
@@ -173,38 +279,6 @@ fn reconcile_process_disappearance(
         }
         Ok(None) => Err(FormatFixtureError::ResidentSetUnsupported),
         Err(error) => Err(FormatFixtureError::Worker(error.to_string())),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn decide_supervision_action(
-    status: Option<std::process::ExitStatus>,
-    stdout: &mut Option<Vec<u8>>,
-    stderr: &mut Option<Vec<u8>>,
-    wall_time_exceeded: bool,
-) -> SupervisionAction {
-    if let Some(observed) = status
-        && stdout.is_some()
-        && stderr.is_some()
-    {
-        let stdout = stdout.take().expect("checked resolved stdout");
-        let stderr = stderr.take().expect("checked resolved stderr");
-        return SupervisionAction::Complete(if observed.success() {
-            Ok(CollectedWorkerOutput { stdout, stderr })
-        } else {
-            Err(FormatFixtureError::WorkerCrashed(
-                observed.code(),
-                String::from_utf8_lossy(&stderr).into_owned(),
-            ))
-        });
-    }
-    if wall_time_exceeded {
-        return SupervisionAction::WallTimeExceeded;
-    }
-    if status.is_some() {
-        SupervisionAction::WaitForPipes
-    } else {
-        SupervisionAction::CheckResidentSet
     }
 }
 
@@ -233,22 +307,6 @@ fn read_bounded(
 }
 
 #[cfg(target_os = "linux")]
-fn drain_available(
-    receiver: &mpsc::Receiver<(bool, Result<Vec<u8>, FormatFixtureError>)>,
-    stdout: &mut Option<Vec<u8>>,
-    stderr: &mut Option<Vec<u8>>,
-) -> Result<(), FormatFixtureError> {
-    while let Ok((is_stdout, result)) = receiver.try_recv() {
-        match result {
-            Ok(bytes) if is_stdout => *stdout = Some(bytes),
-            Ok(bytes) => *stderr = Some(bytes),
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
 #[allow(
     clippy::disallowed_methods,
     reason = "native format-worker supervisor measures real wall time outside deterministic engine state"
@@ -261,23 +319,18 @@ fn supervise_and_collect(
     stdout_limit: usize,
     stderr_limit: usize,
 ) -> Result<CollectedWorkerOutput, FormatFixtureError> {
-    let (sender, receiver) = mpsc::channel();
-    let stdout_sender = sender.clone();
+    let events = Arc::new(ReaderEvents::new());
+    let stdout_events = Arc::clone(&events);
     let stdout_reader = std::thread::spawn(move || {
-        let _ = stdout_sender.send((true, read_bounded(stdout, stdout_limit, "worker stdout")));
+        let _ = stdout_events.publish(true, read_bounded(stdout, stdout_limit, "worker stdout"));
     });
+    let stderr_events = Arc::clone(&events);
     let stderr_reader = std::thread::spawn(move || {
-        let _ = sender.send((false, read_bounded(stderr, stderr_limit, "worker stderr")));
+        let _ = stderr_events.publish(false, read_bounded(stderr, stderr_limit, "worker stderr"));
     });
     let started = Instant::now();
     let mut status = None;
-    let mut stdout = None;
-    let mut stderr = None;
-    let result = 'supervision: loop {
-        if let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr) {
-            terminate(child);
-            break 'supervision Err(error);
-        }
+    let result = loop {
         if status.is_none() {
             match child.try_wait() {
                 Ok(Some(observed)) => status = Some(observed),
@@ -288,22 +341,14 @@ fn supervise_and_collect(
                 }
             }
         }
-        // A reader can enqueue after the first drain but before `try_wait`
-        // observes exit. Reconcile only completions already available now:
-        // genuinely open inherited pipes remain unresolved and retain the
-        // original wall-time bound.
-        if status.is_some()
-            && let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr)
-        {
-            terminate(child);
-            break 'supervision Err(error);
-        }
-        match decide_supervision_action(
-            status,
-            &mut stdout,
-            &mut stderr,
-            started.elapsed() > guards.wall_time,
-        ) {
+        let action = match events.decide(status, started.elapsed() >= guards.wall_time) {
+            Ok(action) => action,
+            Err(error) => {
+                terminate(child);
+                break Err(error);
+            }
+        };
+        match action {
             SupervisionAction::Complete(completed) => break completed,
             SupervisionAction::WallTimeExceeded => {
                 terminate(child);
@@ -322,10 +367,6 @@ fn supervise_and_collect(
                         terminate(child);
                         break Err(error);
                     }
-                    if let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr) {
-                        terminate(child);
-                        break 'supervision Err(error);
-                    }
                     continue;
                 }
                 Err(WorkerResidentSetError::Unsupported) => {
@@ -335,7 +376,11 @@ fn supervise_and_collect(
             },
             SupervisionAction::WaitForPipes => {}
         }
-        std::thread::sleep(Duration::from_millis(2));
+        let remaining = guards.wall_time.saturating_sub(started.elapsed());
+        if let Err(error) = events.wait_for_publication(remaining.min(Duration::from_millis(2))) {
+            terminate(child);
+            break Err(error);
+        }
     };
     if result.is_err() {
         terminate(child);
@@ -578,10 +623,15 @@ mod tests {
     #[test]
     fn completed_exit_and_drains_resolve_before_expired_wall_time() {
         let success = std::process::ExitStatus::from_raw(0);
-        let mut stdout = Some(b"response".to_vec());
-        let mut stderr = Some(Vec::new());
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(b"response".to_vec()))
+            .expect("stdout publication");
+        events
+            .publish(false, Ok(Vec::new()))
+            .expect("stderr publication");
         assert!(matches!(
-            decide_supervision_action(Some(success), &mut stdout, &mut stderr, true),
+            events.decide(Some(success), true).expect("decision"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..
@@ -589,10 +639,15 @@ mod tests {
         ));
 
         let crash = std::process::ExitStatus::from_raw(9 << 8);
-        let mut stdout = Some(Vec::new());
-        let mut stderr = Some(b"diagnostic".to_vec());
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(Vec::new()))
+            .expect("stdout publication");
+        events
+            .publish(false, Ok(b"diagnostic".to_vec()))
+            .expect("stderr publication");
         assert!(matches!(
-            decide_supervision_action(Some(crash), &mut stdout, &mut stderr, true),
+            events.decide(Some(crash), true).expect("decision"),
             SupervisionAction::Complete(Err(FormatFixtureError::WorkerCrashed(
                 Some(9),
                 diagnostic
@@ -603,59 +658,77 @@ mod tests {
     #[test]
     fn expired_wall_time_still_bounds_open_pipes_and_live_children() {
         let success = std::process::ExitStatus::from_raw(0);
-        let mut stdout = Some(Vec::new());
-        let mut open_stderr = None;
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(Vec::new()))
+            .expect("stdout publication");
         assert!(matches!(
-            decide_supervision_action(Some(success), &mut stdout, &mut open_stderr, false),
+            events.decide(Some(success), false).expect("decision"),
             SupervisionAction::WaitForPipes
         ));
         assert!(matches!(
-            decide_supervision_action(Some(success), &mut stdout, &mut open_stderr, true),
+            events.decide(Some(success), true).expect("decision"),
             SupervisionAction::WallTimeExceeded
         ));
 
-        let mut open_stdout = None;
-        let mut open_stderr = None;
+        let events = ReaderEvents::new();
         assert!(matches!(
-            decide_supervision_action(None, &mut open_stdout, &mut open_stderr, false),
+            events.decide(None, false).expect("decision"),
             SupervisionAction::CheckResidentSet
         ));
         assert!(matches!(
-            decide_supervision_action(None, &mut open_stdout, &mut open_stderr, true),
+            events.decide(None, true).expect("decision"),
             SupervisionAction::WallTimeExceeded
         ));
     }
 
     #[test]
-    fn exit_observation_redrains_completions_enqueued_after_initial_drain() {
-        let (sender, receiver) = mpsc::channel();
+    fn deadline_classification_precedes_late_reader_publication() {
+        let success = std::process::ExitStatus::from_raw(0);
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(Vec::new()))
+            .expect("stdout publication");
+        assert!(matches!(
+            events.decide(Some(success), true).expect("decision"),
+            SupervisionAction::WallTimeExceeded
+        ));
+        events
+            .publish(false, Ok(Vec::new()))
+            .expect("late stderr publication remains memory-safe");
+    }
+
+    #[test]
+    fn reader_publication_after_old_final_drain_wins_before_deadline_classification() {
+        let events = Arc::new(ReaderEvents::new());
         let release = Arc::new(Barrier::new(2));
-        let enqueued = Arc::new(Barrier::new(2));
+        let published = Arc::new(Barrier::new(2));
+        let producer_events = Arc::clone(&events);
         let sender_release = Arc::clone(&release);
-        let sender_enqueued = Arc::clone(&enqueued);
+        let sender_published = Arc::clone(&published);
         let producer = std::thread::spawn(move || {
             sender_release.wait();
-            sender
-                .send((true, Ok(b"response".to_vec())))
-                .expect("stdout completion receiver remains live");
-            sender
-                .send((false, Ok(Vec::new())))
-                .expect("stderr completion receiver remains live");
-            sender_enqueued.wait();
+            producer_events
+                .publish(true, Ok(b"response".to_vec()))
+                .expect("stdout publication");
+            producer_events
+                .publish(false, Ok(Vec::new()))
+                .expect("stderr publication");
+            sender_published.wait();
         });
 
-        let mut stdout = None;
-        let mut stderr = None;
-        drain_available(&receiver, &mut stdout, &mut stderr).expect("initial empty drain succeeds");
-        assert!(stdout.is_none() && stderr.is_none());
-
-        release.wait();
-        enqueued.wait();
-        let status = Some(std::process::ExitStatus::from_raw(0));
-        drain_available(&receiver, &mut stdout, &mut stderr)
-            .expect("post-exit reconciliation succeeds");
+        // This empty decision is the state the old final `try_recv` drain
+        // observed. The barriers place publication after that observation and
+        // before the expired-deadline classification.
         assert!(matches!(
-            decide_supervision_action(status, &mut stdout, &mut stderr, true),
+            events.decide(None, false).expect("pre-exit decision"),
+            SupervisionAction::CheckResidentSet
+        ));
+        release.wait();
+        published.wait();
+        let status = Some(std::process::ExitStatus::from_raw(0));
+        assert!(matches!(
+            events.decide(status, true).expect("atomic classification"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..
@@ -673,19 +746,16 @@ mod tests {
             Ok(Some(std::process::ExitStatus::from_raw(0)))
         })
         .expect("fresh exit observation reconciles vanished proc entry");
-        let (sender, receiver) = mpsc::channel();
-        sender
-            .send((true, Ok(b"authenticated-response".to_vec())))
-            .expect("stdout completion");
-        sender
-            .send((false, Ok(Vec::new())))
-            .expect("stderr completion");
-        let mut stdout = None;
-        let mut stderr = None;
-        drain_available(&receiver, &mut stdout, &mut stderr).expect("post-exit drain");
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(b"authenticated-response".to_vec()))
+            .expect("stdout publication");
+        events
+            .publish(false, Ok(Vec::new()))
+            .expect("stderr publication");
 
         assert!(matches!(
-            decide_supervision_action(initial_status, &mut stdout, &mut stderr, true),
+            events.decide(initial_status, true).expect("decision"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..
