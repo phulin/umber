@@ -1,6 +1,5 @@
 use std::cell::Cell;
 
-use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
@@ -8,6 +7,7 @@ use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::scaled::Scaled;
+use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
 use tex_typeset::math::MathLayoutReader;
 use tex_typeset::math::{
@@ -282,6 +282,14 @@ impl MathParamState for LoweredMathSink<'_> {
 
 impl MathLayoutSink for LoweredMathSink<'_> {
     fn finish_math_hlist(&mut self, list: FrozenHList, layout: &dyn MathLayoutReader) {
+        for packed in layout.source_box_pack_observations() {
+            self.stores
+                .record_geometry_observation(GeometryObservation::Hpack {
+                    width_sp: i64::from(packed.width.raw()),
+                    height_sp: i64::from(packed.height.raw()),
+                    depth_sp: i64::from(packed.depth.raw()),
+                });
+        }
         let mut root = std::mem::take(&mut self.root_nodes);
         root.clear();
         root.reserve(list.node_count());

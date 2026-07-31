@@ -446,6 +446,12 @@ extents. Only a source list used directly as a horizontal math field is
 measured as an hlist. This keeps lowering iterative while avoiding fictitious
 horizontal sums across the rows of an already-packed vbox.
 
+TeX.web §754 installs a `sub_box` nucleus directly as the noad's new hlist.
+The canonical geometry projection records horizontal source-box
+materialization at the completed-layout boundary using the box's authoritative
+dimensions. It does not repack or remeasure the source box, so output and
+glue-set metadata remain unchanged.
+
 ## 8. Page builder and output routine
 
 The page builder lives in `tex-exec` with its mutable roots owned by

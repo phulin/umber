@@ -525,7 +525,14 @@ fn translate_noad<S: MathTypesetState>(
             &mut delta,
         ),
         (_, MathField::Empty) => ctx.layout.empty(),
-        (_, MathField::SubBox(list)) => source_list(ctx, *list),
+        (_, MathField::SubBox(list)) => {
+            let list = source_list(ctx, *list);
+            if let Some(MathNode::HList(boxed)) = ctx.layout.single_node(list) {
+                let boxed = boxed.clone();
+                ctx.layout.observe_source_box_pack(&boxed);
+            }
+            list
+        }
         (_, MathField::SubMlist(list)) => {
             // TeX82's mlist2 branch always hpacks a sub-mlist nucleus. This
             // structural box is distinct from clean_box's later reuse of a

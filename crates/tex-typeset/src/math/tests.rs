@@ -837,6 +837,46 @@ fn fraction_reuses_single_explicit_numerator_box() {
 }
 
 #[test]
+fn direct_sub_box_nucleus_records_one_source_box_pack() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let explicit = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(120),
+        height: sc(7),
+        depth: sc(1),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubBox(explicit),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert_eq!(
+        layout.source_box_pack_observations(),
+        &[MathPackObservation {
+            width: sc(120),
+            height: sc(7),
+            depth: sc(1),
+        }]
+    );
+
+    let empty = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::Empty,
+    ))]);
+    let layout = mlist_to_hlist(&universe, empty, Style::TEXT, false, &params);
+    assert!(layout.source_box_pack_observations().is_empty());
+}
+
+#[test]
 fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);

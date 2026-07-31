@@ -14,6 +14,7 @@ mod tests;
 pub struct MathLayout {
     nodes: Vec<MathNode>,
     root: FrozenHList,
+    source_box_packs: Vec<MathPackObservation>,
 }
 
 impl MathLayout {
@@ -56,12 +57,24 @@ impl MathLayout {
 /// Read-only access to formula-local structural spans during sink lowering.
 pub trait MathLayoutReader {
     fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
+    fn source_box_pack_observations(&self) -> &[MathPackObservation];
 }
 
 impl MathLayoutReader for MathLayout {
     fn math_nodes(&self, list: FrozenHList) -> &[MathNode] {
         self.nodes(list)
     }
+
+    fn source_box_pack_observations(&self) -> &[MathPackObservation] {
+        &self.source_box_packs
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathPackObservation {
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
 }
 
 /// An immutable, measured horizontal-list span in a [`MathLayout`].
@@ -177,11 +190,15 @@ pub enum BoxAxis {
 
 pub(crate) struct MathLayoutBuilder {
     nodes: Vec<MathNode>,
+    source_box_packs: Vec<MathPackObservation>,
 }
 
 impl MathLayoutBuilder {
     pub(crate) fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            source_box_packs: Vec::new(),
+        }
     }
 
     pub(crate) fn finish(self, root: FrozenHList) -> MathLayout {
@@ -192,6 +209,7 @@ impl MathLayoutBuilder {
         MathLayout {
             nodes: self.nodes,
             root,
+            source_box_packs: self.source_box_packs,
         }
     }
 
@@ -207,6 +225,14 @@ impl MathLayoutBuilder {
         let mut meas = Measurement::ZERO;
         self.measure_hnodes(start, end, &mut meas);
         self.span(start, end, meas)
+    }
+
+    pub(crate) fn observe_source_box_pack(&mut self, boxed: &MathBox) {
+        self.source_box_packs.push(MathPackObservation {
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+        });
     }
 
     /// Stores the already-boxed child payload of a source box.

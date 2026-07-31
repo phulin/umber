@@ -35,6 +35,7 @@ pub use delimiters::left_right_delimiter_target;
 pub(crate) use delimiters::test_var_delimiter;
 pub use model::{
     BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathLayoutReader, MathNode,
+    MathPackObservation,
 };
 pub(crate) use model::{MathLayoutBuilder, boxed_node, hlist_extents, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
