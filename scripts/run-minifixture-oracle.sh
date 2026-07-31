@@ -406,6 +406,13 @@ run_one_case() {
   local status=0
   (
     cd "$run_dir"
+    # `printf` runs its format once even with no arguments, so a case that
+    # declares no terminal lines still hands the engine one empty line. That
+    # is deliberate and load-bearing: it is what lets tex.web §360's `*`
+    # prompt (or §83's `? ` prompt) succeed once before the next read reaches
+    # end of file, which is the shape most of this corpus captured. Umber's
+    # side reproduces the same stdin -- see `terminal_stdin` in
+    # tools/tex-command-stream/src/semantic.rs.
     printf '%s\n' "${terminal_lines[@]}" |
       env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
         SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \

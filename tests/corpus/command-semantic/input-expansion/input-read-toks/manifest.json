@@ -45,16 +45,8 @@
       "channels": {
         "events": 45,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 3, "expected": "*", "actual": "*(Please type a command or say `\\end')" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 6, "expected": "! Emergency stop.", "actual": "(Please type a command or say `\\end')" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

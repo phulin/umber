@@ -1042,12 +1042,29 @@ fn dumped_format_identity(name: &str, universe: &Universe) -> tex_exec::Preloade
     }
 }
 
+/// The terminal lines this case's engine run reads, byte-for-byte what the
+/// oracle harness pipes into the reference engine.
+///
+/// `scripts/run-minifixture-oracle.sh` builds that stdin with
+/// `printf '%s\n' "${terminal_lines[@]}"`, and `printf` runs its format once
+/// even with no arguments, so a case that declares no lines still hands the
+/// engine one empty line -- enough for §360's `*` prompt or §83's `? ` prompt
+/// to succeed once before the next read hits end of file. Comparing channels
+/// only means anything when both engines are given the same input, so this is
+/// the same rule rather than "the declared lines".
+fn terminal_stdin(case: &Case) -> Vec<String> {
+    if case.terminal_lines.is_empty() {
+        return vec![String::new()];
+    }
+    case.terminal_lines.clone()
+}
+
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let mut universe = Universe::new();
-    for line in &case.terminal_lines {
+    for line in terminal_stdin(case) {
         universe
             .world_mut()
-            .push_memory_terminal_line(line.clone())
+            .push_memory_terminal_line(line)
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
     let mut control = match case.profile {

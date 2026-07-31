@@ -120,7 +120,7 @@ pub struct CanonicalMainControl {
     /// `buffer` for the whole run -- §360's `*` prompt reads over it, and a
     /// failed read (§71) leaves it untouched. Umber retires the base level as
     /// soon as `scan_startup_file_name` has consumed it, so the line has to be
-    /// kept here for [`crate::job::print_terminal_exhausted`] to render.
+    /// kept here for [`crate::job::prompt_for_more_input`] to render.
     /// Empty when no startup line was scanned, which is §313's own display for
     /// a base level whose consumed and pending text are both empty.
     startup_terminal_line: String,
@@ -1257,7 +1257,7 @@ impl CanonicalMainControl {
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
-            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
+            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -1725,7 +1725,7 @@ impl CanonicalMainControl {
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
         } else if matches!(result, ReplayStep::EndOfInput) {
-            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
+            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -3059,7 +3059,7 @@ impl CanonicalMainControl {
         {
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
         } else if matches!(result, Ok(ReplayStep::EndOfInput)) {
-            crate::job::print_terminal_exhausted(stores, &self.startup_terminal_line);
+            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);

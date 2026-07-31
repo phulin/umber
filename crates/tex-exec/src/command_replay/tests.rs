@@ -6314,13 +6314,13 @@ fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register()
     );
     run_to_end(&mut control, &mut universe);
 
-    // `terminal_text` merges the terminal and log channels, so §362's retry
-    // message -- printed once per channel with different line breaks around
-    // it (`crate::job::print_terminal_exhausted`'s doc comment) -- appears
-    // twice here even though each real channel shows it only once.
+    // These tests register a root source directly, so no §331 `**` line was
+    // ever scanned and the base terminal buffer is empty: §360's `limit=start`
+    // holds on its very first pass, which is why `(Please type a command or
+    // say `\\end')` precedes the one `*` this seeds no terminal line to answer.
     assert_eq!(
         terminal_text(&universe),
-        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...box12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvbox\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...box12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvbox\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n",
         "off_save should be the only recovery; the replay must retain operand 12"
     );
     let box_zero = universe
@@ -6358,13 +6358,13 @@ fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_b
     );
     run_to_end(&mut control, &mut universe);
 
-    // `terminal_text` merges the terminal and log channels, so §362's retry
-    // message -- printed once per channel with different line breaks around
-    // it (`crate::job::print_terminal_exhausted`'s doc comment) -- appears
-    // twice here even though each real channel shows it only once.
+    // These tests register a root source directly, so no §331 `**` line was
+    // ever scanned and the base terminal buffer is empty: §360's `limit=start`
+    // holds on its very first pass, which is why `(Please type a command or
+    // say `\\end')` precedes the one `*` this seeds no terminal line to answer.
     assert_eq!(
         terminal_text(&universe),
-        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...ox12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvcopy\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n"
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...ox12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvcopy\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n"
     );
     assert!(
         universe.box_reg(12).is_some(),
@@ -10660,16 +10660,14 @@ fn canonical_ignorespaces_at_eof_ends_without_recovery() {
     run_to_end(&mut control, &mut universe);
 
     // §406's own skip invents nothing: the only diagnostic present is
-    // §362/§93's ordinary terminal-exhaustion sequence, identical to what a
+    // §360/§93's ordinary terminal-exhaustion sequence, identical to what a
     // completely empty job produces once its last file closes with no
-    // `\end` in sight. `terminal_text` merges the terminal and log channels,
-    // so the retry message -- printed once per channel with different line
-    // breaks around it (`crate::job::print_terminal_exhausted`'s doc
-    // comment) -- appears twice here even though each real channel shows it
-    // only once.
+    // `\end` in sight. No §331 `**` line was scanned, so §360's `limit=start`
+    // holds at once and its `(Please type...)` precedes the single `*` that
+    // then reaches end of file.
     assert_eq!(
         terminal_text(&universe),
-        "\n*\n(Please type a command or say `\\end')(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
+        "(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \n\
          End of file on the terminal!\n\n"
     );
 }

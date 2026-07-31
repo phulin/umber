@@ -321,7 +321,7 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
 /// tex.web §313's `<*>` context: `show_context`'s rendering for the
 /// bottom-of-stack terminal source level.
 ///
-/// [`print_terminal_exhausted`] is the only site that has to spell this out.
+/// [`prompt_for_more_input`] is the only site that has to spell this out.
 /// Everywhere else `tex-command`'s `output_open_context` renders context from
 /// a live input level, but here input has genuinely run out and Umber has
 /// already retired the base level, so the stack it would walk is empty.
@@ -332,15 +332,16 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
 /// that is depends on the interaction mode, and it is the same test §360
 /// itself makes:
 ///
-/// - `interaction>nonstop_mode`: §360 ran `first:=start; prompt_input("*")`,
-///   so the terminal read that precedes the failing one overwrote `buffer`
-///   with an empty line (`limit=start`) and there is nothing left to
-///   pseudoprint. This is the run whose help line is `End of file on the
-///   terminal!`.
-/// - otherwise: §360 went straight to `fatal_error`, `buffer` was never
-///   rewritten, and it still holds §331's `**` line naming the root file.
-///   This is the run whose help line is `*** (job aborted, no legal \end
-///   found)`.
+/// - `interaction>nonstop_mode`: §360 ran `first:=start; prompt_input("*")`
+///   before the read that failed, and every captured oracle log for that path
+///   pseudoprints nothing at all -- including the fixtures whose very first
+///   `*` fails, so it is the prompt's own `first:=start`, not a preceding
+///   successful read, that empties the pseudoprinted range. This is the run
+///   whose help line is `End of file on the terminal!`.
+/// - otherwise: §360 went straight to `fatal_error` without touching `first`,
+///   `buffer` was never rewritten, and it still holds §331's `**` line naming
+///   the root file. This is the run whose help line is `*** (job aborted, no
+///   legal \end found)`.
 ///
 /// §31 drops the line's trailing space before setting `limit`, so the
 /// terminator the `**` line ends with is not part of `startup_terminal_line`.
@@ -361,9 +362,9 @@ fn terminal_exhausted_context(
     )
 }
 
-/// tex.web §360/§362's `*` prompt -- printed when the last input file has
-/// closed and the job has not yet seen `\end`/`\dump` -- followed by §71's
-/// `term_input` failing and §93's `fatal_error` it raises.
+/// tex.web §360's `*` prompt loop -- reached when the last input file has
+/// closed and the job has not yet seen `\end`/`\dump` -- and §71's
+/// `term_input` failing at the end of it.
 ///
 /// A driver calls this the moment a step reports
 /// [`crate::MainControlStep::EndOfInput`], mirroring how
@@ -379,50 +380,66 @@ fn terminal_exhausted_context(
 /// unconditional `finish_job` call is what §642's report and the transcript
 /// note still reach.
 ///
-/// tex.web's own `get_next` silently accepts one empty terminal line before
-/// a second attempt actually fails, and the reference engine's redirected
-/// terminal stream needs one such retry before every minifixture's genuine
-/// exhaustion in this corpus except a handful with additional pending
-/// recoveries (each consuming one further retry) -- a host stdin-reading
-/// nuance `tex_state::print`'s module doc already documents as unmodeled
-/// here. This reproduces the dominant one-retry (two-`*`, one-message)
-/// shape; a fixture needing zero or several retries remains a residual
-/// divergence, not a wrong shape for the ordinary case.
+/// §360 prompts exactly once per pass and prints `(Please type a command or
+/// say `\end')` only when `limit=start` -- when the line the base terminal
+/// level's buffer holds is empty. Nothing else rewrites that buffer: §483's
+/// `\read` and §83's `? ` prompt each read into a level of their own, and
+/// `end_file_reading` restores `limit` when it pops. So the test is exactly
+/// "the previous pass of this loop read an empty line", and before the first
+/// pass it is §331's `**` line. The loop repeats because tex.web returns to
+/// `get_next` after each accepted line and arrives back here once that line
+/// is used up.
 ///
-/// The retry's own message line (`"(Please type...)"`) is a second, smaller
-/// case of the same per-channel divergence: every captured oracle log shows
-/// it on its own line (`print_nl`'s smart break, column already open from
-/// the `*` this function just printed), while every captured oracle
-/// *terminal* runs it straight onto the `*`'s line with no break at all.
-/// Nothing in §362 conditions that message on the channel, so this treats it
-/// as another fact about the reference engine's terminal handling this layer
-/// does not model (see `tex_state::print`'s module doc) and reproduces it
-/// directly rather than deriving it from one shared smart `print_nl` call.
-pub(crate) fn print_terminal_exhausted(stores: &mut Universe, startup_terminal_line: &str) {
-    // tex.web §362's `interaction>nonstop_mode`.
-    let interactive = !matches!(
-        stores.interaction_mode(),
-        tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
-    );
-    if interactive {
-        {
-            let mut printer = stores.printer();
-            printer.print_ln();
-            printer.print_char('*');
-        }
-        stores
-            .world_mut()
-            .write_text(PrintSink::Log, "\n(Please type a command or say `\\end')");
-        stores.world_mut().write_text(
-            PrintSink::Terminal,
-            "(Please type a command or say `\\end')",
-        );
-        {
-            let mut printer = stores.printer();
-            printer.print_ln();
-            printer.print_char('*');
-        }
+/// The per-channel asymmetry the corpus shows -- every oracle log puts the
+/// message on its own line while every oracle terminal runs it straight onto
+/// the preceding `*` -- is §71's, not §360's, and this derives it rather than
+/// hard-coding it: `term_input` echoes the accepted line with `selector`
+/// decremented to `log_only`, so its closing `print_ln` opens a fresh column
+/// in the transcript while leaving the terminal's own column where the user's
+/// carriage return put it (`term_offset:=0`). The next pass's `print_nl` then
+/// breaks for the transcript and not for the terminal.
+///
+/// What an accepted line's *tokens* do is not modelled. An empty line
+/// contributes only `\endlinechar`, whose `\par` is a no-op in the vertical
+/// or restricted horizontal mode §360 is reached in, so the corpus -- which
+/// types nothing else at this prompt -- is unaffected; a non-empty line is
+/// read, echoed, and then discarded rather than executed.
+pub(crate) fn prompt_for_more_input(stores: &mut Universe, startup_terminal_line: &str) {
+    // tex.web §360's `else fatal_error("*** (job aborted...)")`.
+    if !stores
+        .command_context()
+        .interaction_permits_terminal_input()
+    {
+        report_emergency_stop(stores, startup_terminal_line, false);
+        return;
     }
+    // §360's `limit=start`, carried across passes: §331's `**` line is what
+    // the buffer holds until this loop's own first read replaces it.
+    let mut buffered_line_is_empty = startup_terminal_line.is_empty();
+    loop {
+        if buffered_line_is_empty {
+            stores
+                .printer()
+                .print_nl("(Please type a command or say `\\end')");
+        }
+        stores.printer().print_ln();
+        // §71's `prompt_input("*")`: the prompt, `term_input`'s read, and --
+        // on success -- its transcript echo, all owned by `input_ln`.
+        let line = stores
+            .command_context()
+            .input_ln(tex_state::CommandLineSource::Terminal { prompt: "*" });
+        let Some(line) = line else {
+            // §71's `fatal_error("End of file on the terminal!")`.
+            report_emergency_stop(stores, startup_terminal_line, true);
+            return;
+        };
+        buffered_line_is_empty = line.is_empty();
+    }
+}
+
+/// §93's `fatal_error`: `print_err("Emergency stop")` with the caller's one
+/// help line, reported through §82's `error` by `succumb`.
+fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, interactive: bool) {
     let context = terminal_exhausted_context(stores, startup_terminal_line, interactive);
     let mut report = stores.print_err("Emergency stop");
     report.context(context);
