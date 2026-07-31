@@ -22,13 +22,13 @@ The cache key is a canonical, domain-separated encoding of:
 
 - format-container schema, ABI, and lookup-configuration fingerprints;
 - command-state and command-observation schema versions;
-- stable engine profile bytes and primitive-registry fingerprint;
-- the format producer-contract version;
+- the installed INITEX universe's actual primitive registry and live meanings;
+- the producer implementation version and compiled feature contract;
 - ordered construction sources and typed resources, including logical names,
   kinds, byte lengths, and SHA-256 hashes;
 - distribution identity and fixed TeX job clock;
 - cumulative command fuel, wall-time, and resident-set limits; and
-- relevant build configuration.
+- producer-derived build configuration.
 
 The encoding contains no Cargo target directory, executable path, checkout
 path, temporary path, or host cache path. Changing any semantic or generation
@@ -40,16 +40,21 @@ guard input selects a disjoint key.
 it creates a memory `World` with the recipe clock, installs the selected fresh
 primitive profile, and drives a retained `CanonicalEngineSession` with the
 ordered source and typed-resource closure. Command fuel is enforced in the
-engine. The fixture harness also carries finite cumulative wall-time and RSS
-limits; process-level tests run below `scripts/run-umber-guarded.py` so those
-two limits remain independently enforced if engine progress stops.
+engine. The fixture harness checks cumulative wall-time and RSS after every
+committed canonical command step and cooperatively interrupts the retained
+session before it can return success. Platforms without a supported RSS
+counter reject construction explicitly. Process-level tests additionally run
+below `scripts/run-umber-guarded.py`.
 
 After a successful construction episode, the quiescent `Universe` produces a
 schema-validated deterministic image. `FormatCacheStore` writes an entry to a
-same-directory temporary file, syncs it, and publishes with a no-clobber
-rename. Racing publishers accept the already-valid winner. A partial temporary
-file is never visible; a stale, truncated, mismatched, checksum-invalid, or
-decoder-invalid destination is removed and regenerated.
+same-directory temporary file, syncs it, publishes with a no-clobber rename,
+and syncs the containing directory. Per-key exclusion makes invalid-entry
+quarantine identity-safe against peer replacement. Existing authority
+components and entries are inspected without following links. Racing
+publishers accept the already-valid winner. A partial temporary file is never
+visible; a stale, truncated, mismatched, checksum-invalid, or decoder-invalid
+destination is removed and regenerated.
 
 Generated entries live only in the platform cache or an explicitly supplied
 test cache. They are ignored runtime data and are never fixture authorities in
@@ -79,7 +84,9 @@ matrix; it is not an automatic fallback from a cache or load failure.
 
 The substrate tests cover identity invalidation, byte-identical independent
 builds, cache failure atomicity, concurrent publication, corrupt-entry
-recovery, format schema and exclusion properties, live-registry reload, one
-representative command-semantic loaded case, and one explicit fresh-versus-
-loaded semantic-state invariant. Every engine execution has positive finite
-fuel, and all actual test runs use the repository timeout/RSS guard.
+recovery, adversarial symlink authority, format schema and exclusion
+properties, live-registry reload, the discovered
+`main-control/final-cleanup-end-or-dump` corpus case through raw-TeX82 loaded
+execution, and one explicit fresh-versus-loaded semantic-state invariant.
+Every engine execution has positive finite fuel, and all actual test runs use
+the repository timeout/RSS guard.

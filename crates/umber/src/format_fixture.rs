@@ -1,5 +1,6 @@
 //! Generic, guarded construction and loaded execution of generated formats.
 
+use std::cell::Cell;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -65,7 +66,6 @@ pub struct FormatRecipe {
     pub distribution_identity: Arc<[u8]>,
     pub clock: JobClock,
     pub guards: FormatGenerationGuards,
-    pub build_configuration: Arc<[u8]>,
 }
 
 impl FormatRecipe {
@@ -91,18 +91,21 @@ impl FormatRecipe {
                 wall_time: Duration::from_secs(10),
                 resident_bytes: 512 * 1024 * 1024,
             },
-            build_configuration: Arc::from(&b"raw-tex82;canonical-session"[..]),
         }
     }
 
     pub fn identity(&self) -> Result<FormatCacheIdentity, FormatFixtureError> {
         self.guards.validate()?;
         let profile = self.engine.command_profile();
+        let mut registry = Universe::with_world(World::memory_with_clock(self.clock));
+        self.engine.prepare_initex(&mut registry);
+        let registry_state = registry.snapshot().state_hash();
         let semantic = framed_hash(&[
             &tex_state::CHECKPOINT_STATE_HASH_SCHEMA_VERSION.to_le_bytes(),
             &COMMAND_OBSERVATION_SCHEMA_VERSION.to_le_bytes(),
             &profile.to_stable_bytes(),
             &profile.fingerprint().get().to_le_bytes(),
+            &registry_state.to_le_bytes(),
         ]);
         let source = framed_hash(&[
             self.construction_source_name.as_bytes(),
@@ -117,6 +120,8 @@ impl FormatRecipe {
         ]);
         let producer = framed_hash(&[
             &PRODUCER_CONTRACT_VERSION.to_le_bytes(),
+            env!("CARGO_PKG_VERSION").as_bytes(),
+            build_feature_contract(),
             self.format_name.as_bytes(),
         ]);
         Ok(FormatCacheIdentity::fixture(FormatFixtureIdentity {
@@ -131,7 +136,7 @@ impl FormatRecipe {
                 month: self.clock.month,
                 year: self.clock.year,
             },
-            build_configuration: FormatFingerprint::sha256(&self.build_configuration),
+            build_configuration: FormatFingerprint::sha256(build_feature_contract()),
             semantic_contract: FormatFingerprint::new(semantic),
             producer_contract: FormatFingerprint::new(producer),
             resource_closure: FormatFingerprint::new(resources),
@@ -181,17 +186,14 @@ impl LoadedFormatFixture {
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_fuel_limit(self.recipe.guards.command_fuel)?;
         session.register_authored_root(source_name, source)?;
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "native format-fixture guard measures host wall time independently of TeX's fixed job clock"
-        )]
-        let started = Instant::now();
+        let guards = GuardCheckpoints::new(self.recipe.guards)?;
+        let mut checkpoints = &guards;
         let result = session.run_with_observer(
             &mut RecipeResourceHost::new(&self.recipe.resources),
-            &mut NoCheckpoints,
+            &mut checkpoints,
             observer,
-        )?;
-        enforce_host_guards(started, self.recipe.guards)?;
+        );
+        let result = finish_guarded_run(result, &guards)?;
         Ok(LoadedFormatRun {
             result,
             universe: self.universe,
@@ -238,16 +240,13 @@ fn construct_format(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError
         &recipe.construction_source_name,
         Arc::clone(&recipe.construction_source),
     )?;
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "native format-fixture guard measures host wall time independently of TeX's fixed job clock"
-    )]
-    let started = Instant::now();
+    let guards = GuardCheckpoints::new(recipe.guards)?;
+    let mut checkpoints = &guards;
     let result = session.run(
         &mut RecipeResourceHost::new(&recipe.resources),
-        &mut NoCheckpoints,
-    )?;
-    enforce_host_guards(started, recipe.guards)?;
+        &mut checkpoints,
+    );
+    let result = finish_guarded_run(result, &guards)?;
     if !result.dumped_format {
         return Err(FormatFixtureError::ConstructionDidNotDump);
     }
@@ -257,14 +256,79 @@ fn construct_format(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError
         .map_err(|error| FormatFixtureError::Format(error.to_string()))
 }
 
+#[cfg(test)]
 struct NoCheckpoints;
-
+#[cfg(test)]
 impl CheckpointSink for NoCheckpoints {
     fn wants_checkpoint(&self, _boundary: tex_exec::EngineBoundary) -> bool {
         false
     }
 
     fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GuardFailure {
+    WallTime,
+    ResidentSet,
+}
+
+struct GuardCheckpoints {
+    started: Instant,
+    guards: FormatGenerationGuards,
+    failure: Cell<Option<GuardFailure>>,
+}
+
+impl GuardCheckpoints {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "native format-fixture guard measures host wall time independently of TeX's fixed job clock"
+    )]
+    fn new(guards: FormatGenerationGuards) -> Result<Self, FormatFixtureError> {
+        current_resident_bytes()?;
+        Ok(Self {
+            started: Instant::now(),
+            guards,
+            failure: Cell::new(None),
+        })
+    }
+}
+
+impl CheckpointSink for &GuardCheckpoints {
+    fn wants_checkpoint(&self, _boundary: tex_exec::EngineBoundary) -> bool {
+        false
+    }
+
+    fn stop_requested(&self) -> bool {
+        let failure = if self.started.elapsed() > self.guards.wall_time {
+            Some(GuardFailure::WallTime)
+        } else {
+            match current_resident_bytes() {
+                Ok(bytes) if bytes > self.guards.resident_bytes => Some(GuardFailure::ResidentSet),
+                Ok(_) => None,
+                Err(_) => Some(GuardFailure::ResidentSet),
+            }
+        };
+        self.failure.set(failure);
+        failure.is_some()
+    }
+
+    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+}
+
+fn finish_guarded_run<T>(
+    result: Result<T, CanonicalSessionError>,
+    guards: &GuardCheckpoints,
+) -> Result<T, FormatFixtureError> {
+    match (result, guards.failure.get()) {
+        (Err(CanonicalSessionError::CooperativeStopRequested), Some(GuardFailure::WallTime)) => {
+            Err(FormatFixtureError::WallTimeExceeded)
+        }
+        (Err(CanonicalSessionError::CooperativeStopRequested), Some(GuardFailure::ResidentSet)) => {
+            Err(FormatFixtureError::ResidentSetExceeded)
+        }
+        (result, _) => result.map_err(FormatFixtureError::from),
+    }
 }
 
 struct RecipeResourceHost<'a> {
@@ -333,27 +397,25 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
     }
 }
 
-fn enforce_host_guards(
-    started: Instant,
-    guards: FormatGenerationGuards,
-) -> Result<(), FormatFixtureError> {
-    if started.elapsed() > guards.wall_time {
-        return Err(FormatFixtureError::WallTimeExceeded);
-    }
-    if current_resident_bytes().is_some_and(|bytes| bytes > guards.resident_bytes) {
-        return Err(FormatFixtureError::ResidentSetExceeded);
-    }
-    Ok(())
-}
-
-fn current_resident_bytes() -> Option<u64> {
+#[cfg(target_os = "linux")]
+fn current_resident_bytes() -> Result<u64, FormatFixtureError> {
     #[allow(
         clippy::disallowed_methods,
         reason = "native format-fixture host policy reads the process RSS counter"
     )]
-    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-    let pages = statm.split_whitespace().nth(1)?.parse::<u64>().ok()?;
-    Some(pages.saturating_mul(4096))
+    let statm = std::fs::read_to_string("/proc/self/statm")
+        .map_err(|_| FormatFixtureError::ResidentSetUnsupported)?;
+    let pages = statm
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(FormatFixtureError::ResidentSetUnsupported)?;
+    Ok(pages.saturating_mul(4096))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_resident_bytes() -> Result<u64, FormatFixtureError> {
+    Err(FormatFixtureError::ResidentSetUnsupported)
 }
 
 fn resource_closure_hash(resources: &[FormatResource]) -> [u8; 32] {
@@ -403,6 +465,14 @@ fn framed_hash(fields: &[&[u8]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+const fn build_feature_contract() -> &'static [u8] {
+    if cfg!(feature = "shadow") {
+        b"umber-format-producer-v1;shadow"
+    } else {
+        b"umber-format-producer-v1;default"
+    }
+}
+
 fn hash_field(hasher: &mut Sha256, field: &[u8]) {
     hasher.update((field.len() as u64).to_le_bytes());
     hasher.update(field);
@@ -423,6 +493,7 @@ pub enum FormatFixtureError {
     UnboundedGuard,
     WallTimeExceeded,
     ResidentSetExceeded,
+    ResidentSetUnsupported,
     ConstructionDidNotDump,
     PublishedEntryMissing,
     Format(String),
@@ -458,230 +529,4 @@ impl From<tex_command::CommandFuelLimitError> for FormatFixtureError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Barrier};
-    use std::thread;
-
-    use tempfile::TempDir;
-    use tex_command::{CommandObservation, CommandObserver};
-    use tex_state::env::banks::IntParam;
-
-    use super::*;
-
-    #[derive(Default)]
-    struct Recorder(Vec<CommandObservation>);
-
-    impl CommandObserver for Recorder {
-        fn committed(&mut self, observation: CommandObservation) {
-            self.0.push(observation);
-        }
-    }
-
-    fn test_world() -> World {
-        World::memory_with_clock(JobClock {
-            time: 7 * 60,
-            second: 8,
-            day: 9,
-            month: 10,
-            year: 2031,
-        })
-    }
-
-    #[test]
-    fn recipe_identity_invalidates_every_fixture_input_class() {
-        let original = FormatRecipe::raw_tex82();
-        let original_key = original.identity().expect("identity").key();
-        let mut mutations = Vec::new();
-
-        let mut recipe = original.clone();
-        recipe.engine = EngineMode::ETex;
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.format_name.push_str("-other");
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.construction_source_name.push_str(".other");
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.construction_source = Arc::from(&b"\\relax\\dump\n"[..]);
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.resources.push(FormatResource::Input {
-            logical_name: "fixture.tex".into(),
-            source_kind: RegisteredSourceKind::Generated,
-            bytes: Arc::from(&b"\\relax"[..]),
-        });
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.distribution_identity = Arc::from(&b"other-distribution"[..]);
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.clock.second += 1;
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.guards.command_fuel += 1;
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.guards.wall_time += Duration::from_nanos(1);
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.guards.resident_bytes += 1;
-        mutations.push(recipe);
-        let mut recipe = original.clone();
-        recipe.build_configuration = Arc::from(&b"other-build"[..]);
-        mutations.push(recipe);
-
-        for mutation in mutations {
-            assert_ne!(
-                mutation.identity().expect("mutated identity").key(),
-                original_key
-            );
-        }
-    }
-
-    #[test]
-    fn independent_raw_builds_are_byte_identical_and_cache_reload_is_fresh() {
-        let first_cache = TempDir::new().expect("first cache");
-        let second_cache = TempDir::new().expect("second cache");
-        let recipe = FormatRecipe::raw_tex82();
-        let first = ensure_format(&FormatCacheStore::new(first_cache.path()), &recipe)
-            .expect("first construction");
-        let second = ensure_format(&FormatCacheStore::new(second_cache.path()), &recipe)
-            .expect("second construction");
-        assert_eq!(first.image(), second.image());
-
-        let loaded = first.load(test_world()).expect("fresh load");
-        assert!(loaded.universe.world().effect_records().is_empty());
-        let provenance = loaded.universe.provenance_stats();
-        assert_eq!(provenance.origin_records(), 0);
-        assert_eq!(provenance.origin_list_entries(), 0);
-        assert_eq!(provenance.source_regions(), 0);
-        assert_eq!(provenance.generated_source_backings(), 0);
-        assert_eq!(provenance.source_map_bytes(), 0);
-        assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
-        assert_eq!(
-            loaded.universe.interaction_mode(),
-            tex_state::InteractionMode::ErrorStop
-        );
-    }
-
-    #[test]
-    fn construction_failure_publishes_no_entry() {
-        let cache_root = TempDir::new().expect("cache");
-        let cache = FormatCacheStore::new(cache_root.path());
-        let mut recipe = FormatRecipe::raw_tex82();
-        recipe.construction_source = Arc::from(&b"\\end\n"[..]);
-        assert!(matches!(
-            ensure_format(&cache, &recipe),
-            Err(FormatFixtureError::ConstructionDidNotDump)
-        ));
-        assert!(
-            cache
-                .load(&recipe.identity().expect("identity"))
-                .expect("cache remains readable")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn concurrent_ensure_deduplicates_without_clobbering() {
-        let cache_root = TempDir::new().expect("cache");
-        let cache = Arc::new(FormatCacheStore::new(cache_root.path()));
-        let recipe = Arc::new(FormatRecipe::raw_tex82());
-        let barrier = Arc::new(Barrier::new(5));
-        let mut workers = Vec::new();
-        for _ in 0..4 {
-            let cache = Arc::clone(&cache);
-            let recipe = Arc::clone(&recipe);
-            let barrier = Arc::clone(&barrier);
-            workers.push(thread::spawn(move || {
-                barrier.wait();
-                ensure_format(&cache, &recipe)
-                    .expect("concurrent ensure")
-                    .image()
-                    .to_vec()
-            }));
-        }
-        barrier.wait();
-        let images: Vec<_> = workers
-            .into_iter()
-            .map(|worker| worker.join().expect("worker"))
-            .collect();
-        assert!(images.windows(2).all(|pair| pair[0] == pair[1]));
-    }
-
-    #[test]
-    fn representative_command_semantic_case_runs_loaded() {
-        let cache_root = TempDir::new().expect("cache");
-        let fixture = ensure_format(
-            &FormatCacheStore::new(cache_root.path()),
-            &FormatRecipe::raw_tex82(),
-        )
-        .expect("raw format");
-        let mut observations = Recorder::default();
-        let run = fixture
-            .load(test_world())
-            .expect("load")
-            .run(
-                "loaded-count-arithmetic.tex",
-                Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]),
-                &mut observations,
-            )
-            .expect("loaded run");
-
-        assert_eq!(run.universe.count(0), 12);
-        assert!(!observations.0.is_empty());
-        assert!(!run.result.dumped_format);
-    }
-
-    #[test]
-    fn explicit_fresh_seam_matches_loaded_semantic_state() {
-        let source = Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]);
-        let recipe = FormatRecipe::raw_tex82();
-        let cache_root = TempDir::new().expect("cache");
-        let fixture =
-            ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw format");
-        let mut loaded_observations = Recorder::default();
-        let loaded = fixture
-            .load(test_world())
-            .expect("load")
-            .run(
-                "equivalence.tex",
-                Arc::clone(&source),
-                &mut loaded_observations,
-            )
-            .expect("loaded run");
-
-        let (fresh, fresh_observations) =
-            run_explicit_fresh_compatibility(&recipe, "equivalence.tex", source);
-        assert_eq!(loaded.universe.count(0), fresh.count(0));
-        assert_eq!(loaded_observations.0, fresh_observations);
-    }
-
-    fn run_explicit_fresh_compatibility(
-        recipe: &FormatRecipe,
-        source_name: &str,
-        source: Arc<[u8]>,
-    ) -> (Universe, Vec<CommandObservation>) {
-        let mut universe = Universe::with_world(test_world());
-        recipe.engine.prepare_initex(&mut universe);
-        let mut session =
-            CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
-        session
-            .set_fuel_limit(recipe.guards.command_fuel)
-            .expect("finite fresh fuel");
-        session
-            .register_authored_root(source_name, source)
-            .expect("fresh root");
-        let mut recorder = Recorder::default();
-        let result = session
-            .run_with_observer(
-                &mut RecipeResourceHost::new(&recipe.resources),
-                &mut NoCheckpoints,
-                &mut recorder,
-            )
-            .expect("fresh compatibility run");
-        assert!(!result.dumped_format);
-        (universe, recorder.0)
-    }
-}
+mod tests;

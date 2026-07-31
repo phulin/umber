@@ -23,6 +23,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
 - `src/format_fixture.rs`: generic content-addressed format recipes, guarded retained-session construction, fresh loaded-universe reconstruction, typed resource fulfillment, and the raw TeX82 loaded-fixture first slice.
+- `src/format_fixture/tests.rs`: format identity, cooperative budget, failure atomicity, cache reload, concurrency, and loaded-execution coverage.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
 - `src/classic_bib.rs`: native host-file staging and artifact publication for the in-process classic `bibtex` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.

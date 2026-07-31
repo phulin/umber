@@ -286,3 +286,50 @@ fn store_refuses_unvalidated_format_bytes() {
         Err(FormatCacheError::InvalidFormat(_))
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn symlink_namespace_and_entry_are_never_followed() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().expect("tempdir");
+    let outside = TempDir::new().expect("outside");
+    let cache = FormatCacheStore::new(temp.path());
+    symlink(outside.path(), temp.path().join(DIRECTORY)).expect("namespace symlink");
+    assert!(
+        cache
+            .store(&identity(FormatEngineMode::Latex), &format())
+            .is_err()
+    );
+    assert!(
+        fs::read_dir(outside.path())
+            .expect("outside readable")
+            .next()
+            .is_none()
+    );
+
+    fs::remove_file(temp.path().join(DIRECTORY)).expect("remove namespace symlink");
+    fs::create_dir(temp.path().join(DIRECTORY)).expect("real namespace");
+    let target = outside.path().join("target");
+    fs::write(&target, b"untouched").expect("target");
+    let key = identity(FormatEngineMode::Latex);
+    symlink(&target, cache.path(&key)).expect("entry symlink");
+    assert!(cache.load(&key).is_err());
+    assert_eq!(fs::read(&target).expect("target remains"), b"untouched");
+}
+
+#[test]
+fn validation_failure_never_replaces_a_live_entry() {
+    let temp = TempDir::new().expect("tempdir");
+    let cache = FormatCacheStore::new(temp.path());
+    let key = identity(FormatEngineMode::Latex);
+    let bytes = format();
+    cache.store(&key, &bytes).expect("initial entry");
+    let before = fs::read(cache.path(&key)).expect("live entry");
+
+    assert!(matches!(
+        cache.store(&key, b"not a format"),
+        Err(FormatCacheError::InvalidFormat(_))
+    ));
+    assert_eq!(fs::read(cache.path(&key)).expect("entry survives"), before);
+}

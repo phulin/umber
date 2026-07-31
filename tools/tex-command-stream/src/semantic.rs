@@ -188,6 +188,7 @@ pub enum SessionProfile {
     EtexInitex,
     EtexLoaded,
     Production,
+    RawTex82Loaded,
 }
 
 /// tex.web's four `-interaction` modes, spelled exactly as pdfTeX's own flag
@@ -1123,6 +1124,19 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         }
         SessionProfile::Production => {
             let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
+            let mut control = CanonicalMainControl::new();
+            control.set_preloaded_format(dumped_format_identity("production", &universe));
+            control
+        }
+        SessionProfile::RawTex82Loaded => {
+            let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
+            let image = universe
+                .dump_format()
+                .map_err(|error| format!("raw TeX82 format creation: {error}"))?;
+            universe = Universe::from_format(tex_state::World::memory(), &image)
+                .map_err(|error| format!("raw TeX82 format restore: {error}"))?;
+            tex_command::register_tex82_expandable_primitives(&mut universe);
+            tex_exec::register_unexpandable_primitives(&mut universe);
             let mut control = CanonicalMainControl::new();
             control.set_preloaded_format(dumped_format_identity("production", &universe));
             control

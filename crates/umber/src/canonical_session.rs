@@ -139,6 +139,7 @@ pub enum CanonicalSessionError {
         need: CanonicalResourceNeed,
         attempts: u8,
     },
+    CooperativeStopRequested,
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
     Execution(tex_exec::ExecError),
@@ -161,6 +162,9 @@ impl fmt::Display for CanonicalSessionError {
                 formatter,
                 "canonical resource retry made no progress after {attempts} attempts: {need:?}"
             ),
+            Self::CooperativeStopRequested => {
+                formatter.write_str("canonical session stopped by its cooperative guard")
+            }
             Self::SourceRegistration(error) => error.fmt(formatter),
             Self::CommandSummary(error) => error.fmt(formatter),
             Self::Execution(error) => error.fmt(formatter),
@@ -379,6 +383,9 @@ impl<'a> CanonicalEngineSession<'a> {
                 }
                 CanonicalStepResult::Progress(step) => {
                     self.publish_completed_boundaries(checkpoints)?;
+                    if checkpoints.stop_requested() {
+                        return Err(CanonicalSessionError::CooperativeStopRequested);
+                    }
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                         self.terminated = true;
                         return self.finish();
@@ -457,6 +464,9 @@ impl<'a> CanonicalEngineSession<'a> {
                 }
                 CanonicalStepResult::Progress(step) => {
                     self.publish_completed_boundaries(checkpoints)?;
+                    if checkpoints.stop_requested() {
+                        return Err(CanonicalSessionError::CooperativeStopRequested);
+                    }
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                         // TeX82 §§81, 93, 1332, 1335: source exhaustion and
                         // scanned or fatal stops all converge at the one
