@@ -59,7 +59,12 @@ both and performs a complete frozen-format decode before cache publication.
 Platforms without supported RSS supervision reject construction explicitly.
 On Linux both the cooperative worker check and the parent supervisor convert
 `/proc/*/statm` resident pages with the checked runtime page size; unavailable,
-invalid, or overflowing measurements fail closed.
+invalid, or overflowing measurements fail closed. If only the supervised
+process's proc entry vanishes after it was observed live, the parent first
+reobserves process exit and drains completed pipes. A confirmed exit continues
+through ordinary authenticated completion or crash handling; a still-live
+process, malformed accounting data, or any other accounting failure remains a
+fail-closed `ResidentSetUnsupported` error.
 These internal guards complement the outer `scripts/run-umber-guarded.py`
 defense.
 

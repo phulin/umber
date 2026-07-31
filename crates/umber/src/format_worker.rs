@@ -1,5 +1,6 @@
 //! Authenticated process boundary for bounded format construction.
 
+use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::{Arc, mpsc};
@@ -155,6 +156,27 @@ enum SupervisionAction {
 }
 
 #[cfg(target_os = "linux")]
+enum WorkerResidentSetError {
+    ProcessVanished,
+    Unsupported,
+}
+
+#[cfg(target_os = "linux")]
+fn reconcile_process_disappearance(
+    status: &mut Option<std::process::ExitStatus>,
+    observe_exit: impl FnOnce() -> std::io::Result<Option<std::process::ExitStatus>>,
+) -> Result<(), FormatFixtureError> {
+    match observe_exit() {
+        Ok(Some(observed)) => {
+            *status = Some(observed);
+            Ok(())
+        }
+        Ok(None) => Err(FormatFixtureError::ResidentSetUnsupported),
+        Err(error) => Err(FormatFixtureError::Worker(error.to_string())),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn decide_supervision_action(
     status: Option<std::process::ExitStatus>,
     stdout: &mut Option<Vec<u8>>,
@@ -293,9 +315,22 @@ fn supervise_and_collect(
                     break Err(FormatFixtureError::ResidentSetExceeded);
                 }
                 Ok(_) => {}
-                Err(error) => {
+                Err(WorkerResidentSetError::ProcessVanished) => {
+                    if let Err(error) =
+                        reconcile_process_disappearance(&mut status, || child.try_wait())
+                    {
+                        terminate(child);
+                        break Err(error);
+                    }
+                    if let Err(error) = drain_available(&receiver, &mut stdout, &mut stderr) {
+                        terminate(child);
+                        break 'supervision Err(error);
+                    }
+                    continue;
+                }
+                Err(WorkerResidentSetError::Unsupported) => {
                     terminate(child);
-                    break Err(error);
+                    break Err(FormatFixtureError::ResidentSetUnsupported);
                 }
             },
             SupervisionAction::WaitForPipes => {}
@@ -326,10 +361,23 @@ fn terminate(child: &mut Child) {
     clippy::disallowed_methods,
     reason = "native format-worker host policy reads the supervised child RSS counter"
 )]
-fn worker_rss(pid: u32) -> Result<u64, FormatFixtureError> {
+fn worker_rss(pid: u32) -> Result<u64, WorkerResidentSetError> {
     let path = format!("/proc/{pid}/statm");
-    crate::linux_rss::resident_bytes(std::path::Path::new(&path))
-        .ok_or(FormatFixtureError::ResidentSetUnsupported)
+    resident_set_from_statm_result(std::fs::read_to_string(path))
+}
+
+#[cfg(target_os = "linux")]
+fn resident_set_from_statm_result(
+    statm: std::io::Result<String>,
+) -> Result<u64, WorkerResidentSetError> {
+    let statm = statm.map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            WorkerResidentSetError::ProcessVanished
+        } else {
+            WorkerResidentSetError::Unsupported
+        }
+    })?;
+    crate::linux_rss::resident_bytes_from_statm(&statm).ok_or(WorkerResidentSetError::Unsupported)
 }
 
 fn worker_executable() -> Result<std::path::PathBuf, FormatFixtureError> {
@@ -614,6 +662,65 @@ mod tests {
             })) if response == b"response"
         ));
         producer.join().expect("completion producer");
+    }
+
+    #[test]
+    fn vanished_proc_after_live_observation_reconciles_exit_and_drains() {
+        let mut initial_status = None;
+        assert!(initial_status.is_none());
+
+        reconcile_process_disappearance(&mut initial_status, || {
+            Ok(Some(std::process::ExitStatus::from_raw(0)))
+        })
+        .expect("fresh exit observation reconciles vanished proc entry");
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send((true, Ok(b"authenticated-response".to_vec())))
+            .expect("stdout completion");
+        sender
+            .send((false, Ok(Vec::new())))
+            .expect("stderr completion");
+        let mut stdout = None;
+        let mut stderr = None;
+        drain_available(&receiver, &mut stdout, &mut stderr).expect("post-exit drain");
+
+        assert!(matches!(
+            decide_supervision_action(initial_status, &mut stdout, &mut stderr, true),
+            SupervisionAction::Complete(Ok(CollectedWorkerOutput {
+                stdout: response,
+                ..
+            })) if response == b"authenticated-response"
+        ));
+    }
+
+    #[test]
+    fn vanished_proc_without_exit_remains_fail_closed() {
+        let mut status = None;
+        assert!(matches!(
+            reconcile_process_disappearance(&mut status, || Ok(None)),
+            Err(FormatFixtureError::ResidentSetUnsupported)
+        ));
+        assert!(status.is_none());
+    }
+
+    #[test]
+    fn only_missing_proc_entry_is_reconcilable() {
+        assert!(matches!(
+            resident_set_from_statm_result(Err(std::io::Error::from(ErrorKind::NotFound))),
+            Err(WorkerResidentSetError::ProcessVanished)
+        ));
+        assert!(matches!(
+            resident_set_from_statm_result(Err(std::io::Error::from(ErrorKind::PermissionDenied))),
+            Err(WorkerResidentSetError::Unsupported)
+        ));
+        assert!(matches!(
+            resident_set_from_statm_result(Ok("malformed".into())),
+            Err(WorkerResidentSetError::Unsupported)
+        ));
+        assert!(matches!(
+            resident_set_from_statm_result(Ok(format!("0 {}", u64::MAX))),
+            Err(WorkerResidentSetError::Unsupported)
+        ));
     }
 
     fn helper(script: &str) -> Child {

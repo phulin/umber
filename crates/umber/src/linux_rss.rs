@@ -8,7 +8,11 @@ use std::path::Path;
 )]
 pub(crate) fn resident_bytes(path: &Path) -> Option<u64> {
     let statm = std::fs::read_to_string(path).ok()?;
-    resident_bytes_from_statm(&statm, runtime_page_size()?)
+    resident_bytes_from_statm(&statm)
+}
+
+pub(crate) fn resident_bytes_from_statm(statm: &str) -> Option<u64> {
+    resident_bytes_with_page_size(statm, runtime_page_size()?)
 }
 
 #[allow(
@@ -37,7 +41,7 @@ fn page_size_from_auxv(auxv: &[u8]) -> Option<u64> {
     None
 }
 
-fn resident_bytes_from_statm(statm: &str, page_size: u64) -> Option<u64> {
+fn resident_bytes_with_page_size(statm: &str, page_size: u64) -> Option<u64> {
     if page_size == 0 {
         return None;
     }
@@ -52,15 +56,18 @@ mod tests {
     #[test]
     fn converts_resident_pages_with_supplied_runtime_page_size() {
         assert_eq!(
-            resident_bytes_from_statm("100 3 2 1 0 0 0", 65_536),
+            resident_bytes_with_page_size("100 3 2 1 0 0 0", 65_536),
             Some(196_608)
         );
     }
 
     #[test]
     fn rejects_invalid_page_size_and_overflow() {
-        assert_eq!(resident_bytes_from_statm("100 3", 0), None);
-        assert_eq!(resident_bytes_from_statm("0 18446744073709551615", 2), None);
+        assert_eq!(resident_bytes_with_page_size("100 3", 0), None);
+        assert_eq!(
+            resident_bytes_with_page_size("0 18446744073709551615", 2),
+            None
+        );
     }
 
     #[test]
