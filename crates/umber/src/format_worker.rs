@@ -11,9 +11,15 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 #[cfg(target_os = "linux")]
 use rustix::fd::OwnedFd;
 #[cfg(target_os = "linux")]
+use rustix::pipe::pipe;
+#[cfg(target_os = "linux")]
 use rustix::process::{Pid, PidfdFlags, pidfd_open};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use tex_command::RegisteredSourceKind;
 use tex_state::{JobClock, Universe, World};
 
@@ -24,6 +30,9 @@ use crate::format_fixture::{
 };
 
 const PROTOCOL: u32 = 1;
+const AUTH_KEY_BYTES: usize = 32;
+const AUTH_FD_ENV: &str = "UMBER_INTERNAL_FORMAT_WORKER_AUTH_FD";
+const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v1\0";
 const MAX_WORKER_STDOUT_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 64 * 1024;
 const MAX_WORKER_STDERR_BYTES: usize = 1024 * 1024;
 
@@ -55,6 +64,7 @@ struct Response {
     identity: [u8; 32],
     image_sha256: [u8; 32],
     result: Result<Vec<u8>, String>,
+    authenticator: [u8; 32],
 }
 
 pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError> {
@@ -70,13 +80,24 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
         let request_bytes = bincode::serialize(&request)
             .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
         let executable = worker_executable()?;
-        let mut child = Command::new(executable)
+        let executable_path = format!("/proc/self/fd/{}", executable.as_raw_fd());
+        let mut auth_key = [0_u8; AUTH_KEY_BYTES];
+        getrandom::fill(&mut auth_key)
+            .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
+        let (auth_reader, auth_writer) =
+            pipe().map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
+        File::from(auth_writer)
+            .write_all(&auth_key)
+            .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
+        let mut child = Command::new(executable_path)
             .arg("__format-worker")
+            .env(AUTH_FD_ENV, auth_reader.as_raw_fd().to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
+        drop(auth_reader);
         let Some(mut stdin) = child.stdin.take() else {
             terminate(&mut child);
             return Err(FormatFixtureError::WorkerProtocol(
@@ -133,16 +154,7 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
         }
         let response: Response = bincode::deserialize(&collected.stdout)
             .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
-        if response.protocol != PROTOCOL || response.identity != identity {
-            return Err(FormatFixtureError::WorkerIdentityMismatch);
-        }
-        let image = response.result.map_err(FormatFixtureError::Worker)?;
-        if <[u8; 32]>::from(Sha256::digest(&image)) != response.image_sha256 {
-            return Err(FormatFixtureError::WorkerIdentityMismatch);
-        }
-        Universe::from_format(World::memory(), &image)
-            .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-        Ok(image)
+        validate_response(response, identity, &auth_key)
     }
 }
 
@@ -498,25 +510,109 @@ fn resident_set_from_statm_result(
     crate::linux_rss::resident_bytes_from_statm(&statm).ok_or(WorkerResidentSetError::Unsupported)
 }
 
-fn worker_executable() -> Result<std::path::PathBuf, FormatFixtureError> {
-    if let Some(path) = std::env::var_os("UMBER_FORMAT_WORKER") {
-        return Ok(path.into());
-    }
+#[cfg(target_os = "linux")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the native supervisor opens the trusted executable once to remove pathname substitution and TOCTOU"
+)]
+fn worker_executable() -> Result<File, FormatFixtureError> {
     let current = std::env::current_exe()
         .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-    if current
+    let path = if current
         .parent()
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str())
         == Some("deps")
     {
-        return Ok(current
+        current
             .parent()
             .and_then(|path| path.parent())
             .expect("deps has parent")
-            .join("umber"));
+            .join("umber")
+    } else {
+        current
+    };
+    File::open(path).map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))
+}
+
+fn response_authenticator(
+    key: &[u8; AUTH_KEY_BYTES],
+    protocol: u32,
+    identity: &[u8; 32],
+    image_sha256: &[u8; 32],
+    result: &Result<Vec<u8>, String>,
+) -> Result<[u8; 32], String> {
+    let encoded = bincode::serialize(&(protocol, identity, image_sha256, result))
+        .map_err(|error| error.to_string())?;
+    let mut ipad = [0x36_u8; 64];
+    let mut opad = [0x5c_u8; 64];
+    for (index, byte) in key.iter().enumerate() {
+        ipad[index] ^= byte;
+        opad[index] ^= byte;
     }
-    Ok(current)
+    let mut inner = Sha256::new();
+    inner.update(ipad);
+    inner.update(AUTH_DOMAIN);
+    inner.update(encoded);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    outer.update(inner);
+    Ok(outer.finalize().into())
+}
+
+fn validate_response(
+    response: Response,
+    identity: [u8; 32],
+    auth_key: &[u8; AUTH_KEY_BYTES],
+) -> Result<Vec<u8>, FormatFixtureError> {
+    let expected_authenticator = response_authenticator(
+        auth_key,
+        response.protocol,
+        &response.identity,
+        &response.image_sha256,
+        &response.result,
+    )
+    .map_err(FormatFixtureError::WorkerProtocol)?;
+    if response.protocol != PROTOCOL
+        || response.identity != identity
+        || response.authenticator != expected_authenticator
+    {
+        return Err(FormatFixtureError::WorkerIdentityMismatch);
+    }
+    let image = response.result.map_err(FormatFixtureError::Worker)?;
+    if <[u8; 32]>::from(Sha256::digest(&image)) != response.image_sha256 {
+        return Err(FormatFixtureError::WorkerIdentityMismatch);
+    }
+    Universe::from_format(World::memory(), &image)
+        .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
+    Ok(image)
+}
+
+fn auth_key_from_environment() -> Result<[u8; AUTH_KEY_BYTES], String> {
+    let descriptor: i32 = std::env::var(AUTH_FD_ENV)
+        .map_err(|_| "missing worker authentication channel".to_owned())?
+        .parse()
+        .map_err(|_| "invalid worker authentication channel".to_owned())?;
+    let path = format!("/proc/self/fd/{descriptor}");
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the trusted worker reads its parent-owned one-shot authentication pipe"
+    )]
+    let mut channel = File::open(path).map_err(|_| "invalid worker authentication channel")?;
+    let mut key = [0_u8; AUTH_KEY_BYTES];
+    channel
+        .read_exact(&mut key)
+        .map_err(|_| "invalid worker authentication channel")?;
+    let mut trailing = [0_u8; 1];
+    if channel
+        .read(&mut trailing)
+        .map_err(|_| "invalid worker authentication channel")?
+        != 0
+    {
+        return Err("invalid worker authentication channel".into());
+    }
+    Ok(key)
 }
 
 impl Request {
@@ -622,6 +718,7 @@ impl Resource {
     reason = "native format-worker IPC owns its process standard streams"
 )]
 pub fn run_format_worker() -> Result<(), String> {
+    let auth_key = auth_key_from_environment()?;
     let request: Request =
         bincode::deserialize_from(std::io::stdin()).map_err(|error| error.to_string())?;
     if request.protocol != PROTOCOL {
@@ -641,11 +738,19 @@ pub fn run_format_worker() -> Result<(), String> {
     let image_sha256 = result
         .as_ref()
         .map_or([0; 32], |image| Sha256::digest(image).into());
+    let authenticator = response_authenticator(
+        &auth_key,
+        PROTOCOL,
+        &actual_identity,
+        &image_sha256,
+        &result,
+    )?;
     let response = Response {
         protocol: PROTOCOL,
         identity: actual_identity,
         image_sha256,
         result,
+        authenticator,
     };
     bincode::serialize_into(std::io::stdout(), &response).map_err(|error| error.to_string())
 }
@@ -692,6 +797,57 @@ mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
     use std::sync::Barrier;
+    use tempfile::TempDir;
+    use umber_fetch::FormatCacheStore;
+
+    #[test]
+    fn forged_decoder_valid_response_cannot_publish() {
+        let recipe = FormatRecipe::raw_tex82();
+        let identity = recipe.identity().expect("identity");
+        let identity_bytes = identity.key().bytes();
+        let image = construct_format_in_worker(&recipe).expect("decoder-valid image");
+        Universe::from_format(World::memory(), &image).expect("forgery is decoder-valid");
+
+        let parent_key = [0x19; AUTH_KEY_BYTES];
+        let attacker_key = [0x73; AUTH_KEY_BYTES];
+        let image_sha256 = Sha256::digest(&image).into();
+        let result = Ok(image);
+        let authenticator = response_authenticator(
+            &attacker_key,
+            PROTOCOL,
+            &identity_bytes,
+            &image_sha256,
+            &result,
+        )
+        .expect("attacker response");
+        let response = Response {
+            protocol: PROTOCOL,
+            identity: identity_bytes,
+            image_sha256,
+            result,
+            authenticator,
+        };
+
+        let cache_root = TempDir::new().expect("cache root");
+        let cache = FormatCacheStore::new(cache_root.path());
+        let accepted = validate_response(response, identity_bytes, &parent_key);
+        if let Ok(image) = &accepted {
+            cache
+                .store(&identity, image)
+                .expect("publish accepted image");
+        }
+        assert!(matches!(
+            accepted,
+            Err(FormatFixtureError::WorkerIdentityMismatch)
+        ));
+        assert!(
+            cache
+                .load(&identity)
+                .expect("cache remains readable")
+                .is_none(),
+            "a forged decoder-valid worker response must leave no cache entry"
+        );
+    }
 
     #[test]
     fn completed_exit_and_drains_resolve_before_expired_wall_time() {

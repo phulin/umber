@@ -23,7 +23,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
 - `src/format_fixture.rs`: generic content-addressed format recipes, fresh loaded-universe reconstruction, typed resource fulfillment, and the raw TeX82 loaded-fixture first slice.
-- `src/format_worker.rs`: authenticated recipe/result protocol and killable native wall/RSS-supervised format-construction process.
+- `src/format_worker.rs`: stable-executable, per-child authenticated recipe/result protocol and killable native wall/RSS-supervised format-construction process.
 - `src/linux_rss.rs`: checked runtime-page-size Linux resident-set conversion shared by cooperative and parent format guards.
 - `src/format_fixture/tests.rs`: format identity, worker budget, failure atomicity, cache reload, concurrency, and loaded-execution coverage.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.

@@ -1390,6 +1390,7 @@ dependencies = [
  "bib-engine",
  "bincode",
  "flate2",
+ "getrandom 0.3.4",
  "hayro-syntax",
  "md-5",
  "parity-harness",

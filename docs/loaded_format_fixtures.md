@@ -42,7 +42,16 @@ contains the expected cache identity; the worker reconstructs the recipe and
 recomputes that identity before creating a memory `World`, installing the
 selected fresh primitive profile, and driving the retained
 `CanonicalEngineSession`. The ordered typed-resource closure and finite
-command-fuel limit remain inside that worker.
+command-fuel limit remain inside that worker. Production opens the running
+Umber executable (or Cargo's sibling Umber binary for a test executable) once
+and executes that stable descriptor through `/proc/self/fd`; no environment
+variable or caller path can substitute worker code, and path replacement after
+the open cannot change the executed image. The parent creates a fresh random
+authentication key for that child episode and supplies it through a private
+inherited one-shot pipe, independently of the serialized request. The worker
+authenticates the complete result envelope with HMAC-SHA-256, binding the
+protocol, recipe identity, image digest, and success or diagnostic payload to
+the trusted child.
 
 The parent samples worker wall time and RSS independently of command return or
 cooperative engine checkpoints while bounded readers concurrently drain both
@@ -52,10 +61,11 @@ The parent kills and reaps the worker when either resource bound or either
 pipe limit is exceeded, so one non-returning, allocating, or pipe-saturating
 command cannot hold the fixture harness. Reader, writer, and process errors
 also terminate and reap before returning; bounded crash diagnostics remain
-attached to the error. A crash or malformed response publishes nothing and a
-later call starts an independent worker. The response repeats the recipe
-identity and authenticates the image bytes with SHA-256; the parent checks
-both and performs a complete frozen-format decode before cache publication.
+attached to the error. A crash, malformed response, or authentication failure
+publishes nothing and a later call starts an independent worker. The response
+repeats the recipe identity and image SHA-256; the parent verifies both,
+verifies the child-episode authenticator, and performs a complete frozen-format
+decode before cache publication.
 Reader completion and wall-deadline classification share one synchronized
 event state. At the deadline, the supervisor holds that state while sampling
 the worker's Linux pidfd: readiness is reaped into the actual exit status
@@ -145,3 +155,6 @@ dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
+The worker-boundary regression additionally submits a decoder-valid image with
+a forged authenticator and proves that the recipe key remains absent from the
+cache.

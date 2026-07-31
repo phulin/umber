@@ -48,7 +48,8 @@ umber-fetch = { path = "../umber-fetch" }
 umber-interrupt = { path = "../umber-interrupt" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1", features = ["event", "process"] }
+getrandom = "0.3"
+rustix = { version = "1.1", features = ["event", "pipe", "process"] }
 
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }
