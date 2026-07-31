@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -157,6 +158,38 @@ fn independent_raw_builds_are_byte_identical_and_cache_reload_is_fresh() {
 }
 
 #[test]
+fn concurrent_cache_miss_spawns_exactly_one_real_construction_worker() {
+    let cache_root = TempDir::new().expect("cache");
+    let cache = Arc::new(FormatCacheStore::new(cache_root.path()));
+    let recipe = Arc::new(FormatRecipe::raw_tex82());
+    let spawns = Arc::new(AtomicUsize::new(0));
+    let launcher =
+        Arc::new(crate::umber_format_worker_launcher().with_spawn_counter(Arc::clone(&spawns)));
+    let barrier = Arc::new(Barrier::new(5));
+    let mut threads = Vec::new();
+    for _ in 0..4 {
+        let cache = Arc::clone(&cache);
+        let recipe = Arc::clone(&recipe);
+        let launcher = Arc::clone(&launcher);
+        let barrier = Arc::clone(&barrier);
+        threads.push(thread::spawn(move || {
+            barrier.wait();
+            super::ensure_format(&cache, &recipe, &launcher).expect("concurrent ensure")
+        }));
+    }
+    barrier.wait();
+    let fixtures: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("join"))
+        .collect();
+    assert_eq!(spawns.load(Ordering::SeqCst), 1);
+    assert!(fixtures.windows(2).all(|pair| {
+        pair[0].image() == pair[1].image()
+            && pair[0].construction_evidence() == pair[1].construction_evidence()
+    }));
+}
+
+#[test]
 fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
     let cache_root = TempDir::new().expect("cache");
     let cache = FormatCacheStore::new(cache_root.path());
@@ -271,7 +304,9 @@ fn construction_failure_publishes_no_entry() {
     ));
     assert!(
         cache
-            .load(&recipe.identity().expect("identity"))
+            .load_entry(&recipe.identity().expect("identity"), |bytes| {
+                tex_observe::decode_detached_evidence(bytes).map(|_| ())
+            })
             .expect("cache remains readable")
             .is_none()
     );

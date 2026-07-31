@@ -52,6 +52,7 @@ umber-interrupt = { path = "../umber-interrupt" }
 [target.'cfg(target_os = "linux")'.dependencies]
 getrandom = "0.3"
 rustix = { version = "1.1", features = ["event", "pipe", "process"] }
+subtle = "2.6"
 zeroize = "1.8"
 
 [dev-dependencies]

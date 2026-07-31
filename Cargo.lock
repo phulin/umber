@@ -1410,6 +1410,7 @@ dependencies = [
  "rustix",
  "serde",
  "sha2",
+ "subtle",
  "tempfile",
  "test-support",
  "tex-arith",

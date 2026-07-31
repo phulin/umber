@@ -79,6 +79,7 @@ pub struct FormatCacheClock {
 /// Complete semantic preimage for one generated format-cache entry.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FormatCacheIdentity {
+    entry_kind: FormatCacheEntryKind,
     engine_mode: FormatEngineMode,
     format_schema: u32,
     format_abi_fingerprint: u64,
@@ -92,6 +93,13 @@ pub struct FormatCacheIdentity {
     resource_closure: FormatFingerprint,
     generation_guards: FormatFingerprint,
     job_clock: FormatCacheClock,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+enum FormatCacheEntryKind {
+    ImageOnly = 1,
+    CompoundEvidence = 2,
 }
 
 /// Complete generic-fixture inputs grouped for construction of a cache identity.
@@ -121,6 +129,7 @@ impl FormatCacheIdentity {
         build_configuration: FormatFingerprint,
     ) -> Self {
         Self {
+            entry_kind: FormatCacheEntryKind::ImageOnly,
             engine_mode,
             format_schema: Universe::FORMAT_SCHEMA_VERSION,
             format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
@@ -141,6 +150,7 @@ impl FormatCacheIdentity {
     #[must_use]
     pub fn fixture(fixture: FormatFixtureIdentity) -> Self {
         Self {
+            entry_kind: FormatCacheEntryKind::CompoundEvidence,
             engine_mode: fixture.engine_mode,
             format_schema: Universe::FORMAT_SCHEMA_VERSION,
             format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
@@ -163,8 +173,9 @@ impl FormatCacheIdentity {
         let mut bytes = Vec::with_capacity(KEY_DOMAIN.len() + 320);
         bytes.extend_from_slice(KEY_DOMAIN);
         bytes.extend_from_slice(&KEY_SCHEMA.to_le_bytes());
+        bytes.push(self.entry_kind as u8);
         bytes.push(self.engine_mode as u8);
-        bytes.extend_from_slice(&[0; 3]);
+        bytes.extend_from_slice(&[0; 2]);
         bytes.extend_from_slice(&self.format_schema.to_le_bytes());
         bytes.extend_from_slice(&self.format_abi_fingerprint.to_le_bytes());
         bytes.extend_from_slice(&self.lookup_configuration_fingerprint.to_le_bytes());
@@ -242,6 +253,7 @@ pub enum FormatCacheError {
     },
     InvalidFormat(String),
     FormatTooLarge(u64),
+    WrongEntryKind,
 }
 
 impl FormatCacheError {
@@ -273,6 +285,9 @@ impl fmt::Display for FormatCacheError {
                     "format image is {bytes} bytes; limit is {MAX_FORMAT_BYTES}"
                 )
             }
+            Self::WrongEntryKind => {
+                write!(f, "format cache API does not match identity entry kind")
+            }
         }
     }
 }
@@ -281,7 +296,7 @@ impl Error for FormatCacheError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::InvalidFormat(_) | Self::FormatTooLarge(_) => None,
+            Self::InvalidFormat(_) | Self::FormatTooLarge(_) | Self::WrongEntryKind => None,
         }
     }
 }
@@ -327,6 +342,9 @@ impl FormatCacheStore {
         &self,
         identity: &FormatCacheIdentity,
     ) -> Result<Option<ValidatedFormatImage>, FormatCacheError> {
+        if identity.entry_kind != FormatCacheEntryKind::ImageOnly {
+            return Err(FormatCacheError::WrongEntryKind);
+        }
         let authority = self.authority(false)?;
         let Some(authority) = authority else {
             return Ok(None);
@@ -382,6 +400,9 @@ impl FormatCacheStore {
         identity: &FormatCacheIdentity,
         format: &[u8],
     ) -> Result<(), FormatCacheError> {
+        if identity.entry_kind != FormatCacheEntryKind::ImageOnly {
+            return Err(FormatCacheError::WrongEntryKind);
+        }
         if format.len() as u64 > MAX_FORMAT_BYTES {
             return Err(FormatCacheError::FormatTooLarge(format.len() as u64));
         }
@@ -412,6 +433,9 @@ impl FormatCacheStore {
         identity: &FormatCacheIdentity,
         validate_evidence: impl Fn(&[u8]) -> Result<(), String>,
     ) -> Result<Option<ValidatedFormatEntry>, FormatCacheError> {
+        if identity.entry_kind != FormatCacheEntryKind::CompoundEvidence {
+            return Err(FormatCacheError::WrongEntryKind);
+        }
         let Some(authority) = self.authority(false)? else {
             return Ok(None);
         };
@@ -466,6 +490,9 @@ impl FormatCacheStore {
         evidence: &[u8],
         validate_evidence: impl Fn(&[u8]) -> Result<(), String>,
     ) -> Result<(), FormatCacheError> {
+        if identity.entry_kind != FormatCacheEntryKind::CompoundEvidence {
+            return Err(FormatCacheError::WrongEntryKind);
+        }
         if image.len() as u64 > MAX_FORMAT_BYTES {
             return Err(FormatCacheError::FormatTooLarge(image.len() as u64));
         }
@@ -513,6 +540,9 @@ impl FormatCacheStore {
     where
         E: From<FormatCacheError>,
     {
+        if identity.entry_kind != FormatCacheEntryKind::CompoundEvidence {
+            return Err(E::from(FormatCacheError::WrongEntryKind));
+        }
         let authority = self
             .authority(true)
             .map_err(E::from)?

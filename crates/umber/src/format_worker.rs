@@ -19,6 +19,10 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
+use subtle::ConstantTimeEq;
 use tex_command::RegisteredSourceKind;
 use tex_state::{JobClock, Universe, World};
 #[cfg(target_os = "linux")]
@@ -83,10 +87,20 @@ struct ConstructionResultWire {
     evidence: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct FormatWorkerLauncher {
     route: WorkerRoute,
+    #[cfg(test)]
+    spawn_counter: Option<Arc<AtomicUsize>>,
 }
+
+impl PartialEq for FormatWorkerLauncher {
+    fn eq(&self, other: &Self) -> bool {
+        self.route == other.route
+    }
+}
+
+impl Eq for FormatWorkerLauncher {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WorkerRoute {
@@ -101,6 +115,8 @@ impl FormatWorkerLauncher {
     pub const fn production() -> Self {
         Self {
             route: WorkerRoute::Production,
+            #[cfg(test)]
+            spawn_counter: None,
         }
     }
 
@@ -109,7 +125,15 @@ impl FormatWorkerLauncher {
     pub const fn registered_libtest(test_name: &'static str) -> Self {
         Self {
             route: WorkerRoute::Libtest(test_name),
+            #[cfg(test)]
+            spawn_counter: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_spawn_counter(mut self, counter: Arc<AtomicUsize>) -> Self {
+        self.spawn_counter = Some(counter);
+        self
     }
 }
 
@@ -164,6 +188,10 @@ pub(crate) fn construct(
     #[cfg(target_os = "linux")]
     {
         let launcher = launcher.ok_or(FormatFixtureError::WorkerBootstrapUnregistered)?;
+        #[cfg(test)]
+        if let Some(counter) = &launcher.spawn_counter {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
         let identity = recipe.identity()?.key().bytes();
         let request = Request::from_recipe(recipe, identity)?;
         let request_bytes = bincode::serialize(&request)
@@ -774,7 +802,7 @@ fn validate_response(
     .map_err(FormatFixtureError::WorkerProtocol)?;
     if response.protocol != PROTOCOL
         || response.identity != identity
-        || response.authenticator != expected_authenticator
+        || !bool::from(response.authenticator.ct_eq(&expected_authenticator))
     {
         return Err(FormatFixtureError::WorkerIdentityMismatch);
     }

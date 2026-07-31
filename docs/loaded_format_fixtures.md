@@ -127,9 +127,11 @@ evidence schema and limits, so image-only entries are disjoint.
 `FormatCacheStore` compound entry schema 2 writes the validated image and
 opaque caller-validated evidence to one entry in one publication. The legacy
 image-only API remains a separate entry schema for external cache CLI users;
-the evidence-aware fixture path never accepts it. `FormatCacheStore` writes an entry to a
-same-directory temporary file, syncs it, publishes with a no-clobber rename,
-and syncs the containing directory. Per-key exclusion remains held through
+the cache identity pins which entry kind its API may access, so legacy load or
+store calls cannot inspect, quarantine, or publish an evidence-aware key.
+`FormatCacheStore` writes an entry to a same-directory temporary file, syncs
+it, publishes with a no-clobber rename, and syncs the containing directory.
+Per-key exclusion remains held through
 validation, quarantine, construction, and publication, making invalid-entry
 replacement identity-safe and ensuring concurrent callers construct a missing
 or semantic-invalid key only once. Existing authority components and entries

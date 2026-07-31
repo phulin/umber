@@ -31,6 +31,13 @@ fn identity(mode: FormatEngineMode) -> FormatCacheIdentity {
     )
 }
 
+fn compound_identity(mode: FormatEngineMode) -> FormatCacheIdentity {
+    FormatCacheIdentity {
+        entry_kind: FormatCacheEntryKind::CompoundEvidence,
+        ..identity(mode)
+    }
+}
+
 fn format() -> Vec<u8> {
     Universe::new().dump_format().expect("schema-11 format")
 }
@@ -39,9 +46,13 @@ fn format() -> Vec<u8> {
 fn canonical_key_covers_every_identity_component() {
     let original = identity(FormatEngineMode::Latex);
     assert_eq!(original.key(), original.clone().key());
+    assert_ne!(
+        original.key(),
+        compound_identity(FormatEngineMode::Latex).key()
+    );
     assert_eq!(
         original.key().hex(),
-        "4f79d3f7b43b6f2afba2634d8f776fadb3915a04bdc33d8253f3de7ed24c9ad1"
+        "80c4e174f4d04b7cc04b38922f4690b442e35674c4857ff281d6492d273c1e61"
     );
 
     let mutations = [
@@ -201,8 +212,8 @@ fn entry_encoding_is_deterministic_and_preserves_exact_format_bytes() {
 fn compound_entry_is_atomic_and_rejects_missing_corrupt_and_cross_key_evidence() {
     let temp = TempDir::new().expect("tempdir");
     let cache = FormatCacheStore::new(temp.path());
-    let key = identity(FormatEngineMode::Latex);
-    let other = identity(FormatEngineMode::PdfLatex);
+    let key = compound_identity(FormatEngineMode::Latex);
+    let other = compound_identity(FormatEngineMode::PdfLatex);
     let image = format();
     let evidence = b"bounded-evidence-v1";
     let validator = |bytes: &[u8]| {
@@ -240,20 +251,24 @@ fn compound_entry_is_atomic_and_rejects_missing_corrupt_and_cross_key_evidence()
             .is_none()
     );
 
-    cache.store(&key, &image).expect("legacy image-only store");
     assert!(
-        cache
-            .load_entry(&key, validator)
-            .expect("missing evidence rejection")
-            .is_none()
+        matches!(
+            cache.store(&key, &image),
+            Err(FormatCacheError::WrongEntryKind)
+        ),
+        "legacy store must not publish an evidence-aware key"
     );
+    assert!(matches!(
+        cache.load(&key),
+        Err(FormatCacheError::WrongEntryKind)
+    ));
 }
 
 #[test]
 fn invalid_compound_entry_is_regenerated_once_under_the_key_lock() {
     let temp = TempDir::new().expect("tempdir");
     let cache = Arc::new(FormatCacheStore::new(temp.path()));
-    let key = identity(FormatEngineMode::Latex);
+    let key = compound_identity(FormatEngineMode::Latex);
     let image = format();
     cache
         .store_entry(&key, &image, b"syntactically-opaque", |_| Ok(()))

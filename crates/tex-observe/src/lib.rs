@@ -123,9 +123,44 @@ pub fn decode_detached_evidence(bytes: &[u8]) -> Result<DetachedEvidence, String
     if minimum_bytes > bytes.len() {
         return Err("truncated detached evidence frames".into());
     }
+    // Validate every frame boundary and JSON resource bound before allocating
+    // event vectors or asking serde to construct any values. A forged large
+    // count in a short payload must remain a cheap rejection.
+    let mut preflight_offset = 20usize;
+    for _ in 0..frame_count {
+        let length_end = preflight_offset
+            .checked_add(4)
+            .ok_or("detached evidence length overflow")?;
+        let length = usize::try_from(u32::from_le_bytes(
+            bytes
+                .get(preflight_offset..length_end)
+                .ok_or("truncated detached evidence")?
+                .try_into()
+                .map_err(|_| "truncated detached evidence")?,
+        ))
+        .map_err(|_| "invalid event length")?;
+        if length > MAX_EVIDENCE_EVENT_BYTES {
+            return Err("detached evidence event exceeds byte limit".into());
+        }
+        let event_end = length_end
+            .checked_add(length)
+            .ok_or("detached evidence length overflow")?;
+        validate_json_shape(
+            bytes
+                .get(length_end..event_end)
+                .ok_or("truncated detached evidence")?,
+        )?;
+        preflight_offset = event_end;
+    }
+    if preflight_offset != bytes.len() {
+        return Err("trailing detached evidence data".into());
+    }
     let mut offset = 20usize;
     let mut decode_stream = |count: usize| -> Result<Vec<NormalizedEvent>, String> {
-        let mut events = Vec::with_capacity(count);
+        // Grow only as events successfully deserialize. The declared count is
+        // bounded and fully frame-scanned above, but must not itself trigger a
+        // large typed allocation for malformed event payloads.
+        let mut events = Vec::new();
         for sequence in 0..count {
             let end = offset
                 .checked_add(4)
