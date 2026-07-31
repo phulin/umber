@@ -261,10 +261,6 @@ enum TripEngineProfile {
 }
 
 impl TripEngineProfile {
-    fn from_etex(etex: bool) -> Self {
-        if etex { Self::ETex } else { Self::Tex82 }
-    }
-
     fn recipe(self) -> FormatRecipe {
         match self {
             Self::Tex82 => FormatRecipe::raw_tex82(),
@@ -333,6 +329,10 @@ fn canonical_source_identity_selects_startup_input_name_independently_of_staging
 
 #[test]
 fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
+    let source: Arc<[u8]> = Arc::from(&b"fixture source"[..]);
+    let tripos: Arc<[u8]> = Arc::from(&b"tripos"[..]);
+    let tfm: Arc<[u8]> = Arc::from(&b"tfm"[..]);
+    let mut identities = Vec::new();
     for (profile, fixture_name, source_name, engine, format_name) in [
         (
             TripEngineProfile::Tex82,
@@ -353,29 +353,71 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
             profile,
             fixture_name,
             source_name,
-            Arc::from(&b"fixture source"[..]),
-            Arc::from(&b"tripos"[..]),
-            Arc::from(&b"tfm"[..]),
+            Arc::clone(&source),
+            Arc::clone(&tripos),
+            Arc::clone(&tfm),
         );
         assert_eq!(recipe.engine, engine);
         assert_eq!(recipe.engine.command_profile(), engine.command_profile());
         assert_eq!(recipe.format_name, format_name);
         assert_eq!(recipe.construction_source_name, source_name);
-        assert!(matches!(
-            &recipe.resources[0],
-            FormatResource::Input {
-                logical_name,
-                source_kind: RegisteredSourceKind::Generated,
-                ..
-            } if logical_name == "tripos.tex"
-        ));
-        assert!(matches!(
-            &recipe.resources[1],
-            FormatResource::Tfm { logical_name, .. }
-                if logical_name == &format!("{fixture_name}.tfm")
-        ));
-        recipe.identity().expect("recipe identity");
+        assert_eq!(recipe.construction_source, source);
+        assert_eq!(
+            recipe.resources,
+            vec![
+                FormatResource::Input {
+                    logical_name: "tripos.tex".into(),
+                    source_kind: RegisteredSourceKind::Generated,
+                    bytes: Arc::clone(&tripos),
+                },
+                FormatResource::Tfm {
+                    logical_name: format!("{fixture_name}.tfm"),
+                    bytes: Arc::clone(&tfm),
+                },
+            ]
+        );
+        assert_eq!(
+            recipe.distribution_identity.as_ref(),
+            b"pinned-trip-public-format-boundary-v1"
+        );
+        assert_eq!(
+            recipe.clock,
+            JobClock {
+                time: 13 * 60 + 36,
+                second: 0,
+                day: 9,
+                month: 7,
+                year: 2026,
+            }
+        );
+        assert_eq!(
+            recipe.construction_interaction,
+            tex_state::InteractionMode::Nonstop
+        );
+        assert_eq!(recipe.construction_error_context_widths.error_line(), 64);
+        assert_eq!(
+            recipe.construction_error_context_widths.half_error_line(),
+            32
+        );
+        assert_eq!(
+            recipe.guards,
+            FormatGenerationGuards {
+                command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+                wall_time: Duration::from_secs(1_800),
+                resident_bytes: 6 * 1024 * 1024 * 1024,
+            }
+        );
+        let identity = recipe.identity().expect("recipe identity");
+        assert_eq!(
+            identity.key(),
+            recipe.identity().expect("stable recipe identity").key()
+        );
+        identities.push(identity.key());
     }
+    assert_ne!(
+        identities[0], identities[1],
+        "TeX82 and e-TeX choices must select disjoint cache identities"
+    );
 }
 
 #[test]
@@ -1228,14 +1270,19 @@ fn format_image_contract_excludes_runtime_state_and_rebuilds_registry() {
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
-fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
+fn run_two_phase_fixture(
+    profile: TripEngineProfile,
+    source_name: &str,
+    local_name: &str,
+    gate: &GateAssets,
+) {
     let root = &gate.repo_root;
     let fixture_name = gate.name;
     let fixture = &gate.oracle;
     let source = root.join("third_party/trip").join(source_name);
 
     let source_bytes = fs::read(&source).expect("read conformance source");
-    let source_bytes = if etex {
+    let source_bytes = if profile == TripEngineProfile::ETex {
         let source = String::from_utf8(source_bytes).expect("e-TRIP source is UTF-8");
         format!(
             "%% Local e-TeX 2.6 compatibility adaptation; the official etrip.tex remains unchanged.\n%% Renamed and modified as required by the e-TeX distribution terms.\n{}",
@@ -1252,7 +1299,6 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     );
     let tfm: Arc<[u8]> =
         Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).expect("read conformance TFM"));
-    let profile = TripEngineProfile::from_etex(etex);
     let recipe = trip_format_recipe(
         profile,
         fixture_name,
@@ -1396,7 +1442,7 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
 #[ignore = "manual direct canonical TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
-        run_two_phase_fixture("trip.tex", "trip.tex", false, gate);
+        run_two_phase_fixture(TripEngineProfile::Tex82, "trip.tex", "trip.tex", gate);
     });
 }
 
@@ -1404,6 +1450,11 @@ fn e2e_conformance_trip_canonical() {
 #[ignore = "manual full-document e-TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_etrip() {
     assets::with_gate("etrip", |gate| {
-        run_two_phase_fixture("etrip.tex", "etrip-local.tex", true, gate);
+        run_two_phase_fixture(
+            TripEngineProfile::ETex,
+            "etrip.tex",
+            "etrip-local.tex",
+            gate,
+        );
     });
 }
