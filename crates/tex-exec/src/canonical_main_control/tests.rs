@@ -5248,7 +5248,13 @@ fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     assert!(!control.dumped_format());
     assert!(control.format_dump_receipt().is_none());
     let output = terminal_text(&stores);
-    assert!(output.contains("! Too late for \\patterns."), "{output}");
+    // §1252's production branch, which is a different rejection from §960's
+    // "Too late" one and carries no help lines.
+    assert!(
+        output.contains("! Patterns can be loaded only by INITEX.\nl.1 \\patterns\n"),
+        "{output}"
+    );
+    assert!(!output.contains("Too late for"), "{output}");
     assert!(
         output.contains("(\\dump is performed only by INITEX)"),
         "{output}"

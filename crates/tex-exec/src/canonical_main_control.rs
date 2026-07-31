@@ -4236,9 +4236,18 @@ enum ScannedStep {
         words: Vec<Vec<char>>,
         pattern_specs: Vec<tex_state::hyphenation::PatternSpec>,
         patterns: bool,
-        /// TeX82 §960 reports before §473 scans and discards the group, so
-        /// §82's context must be captured at the pre-scan cursor.
-        too_late_context: Option<String>,
+        /// §82's context for whichever of the two `\patterns` rejections the
+        /// apply seam raises. Both report before the braced group is read --
+        /// §960's `trie_not_ready=false` branch before §473 discards it, and
+        /// §1252's production branch before its own `repeat get_token` flush --
+        /// so the context has to be captured at the pre-scan cursor, with
+        /// `\patterns` behind it and the group still ahead.
+        rejection_context: String,
+        /// Whether §960's trie was already built, which is the half of the
+        /// rejection test the command core can see. The other half -- whether
+        /// tex.web's `init`/`tini` split would have produced this binary at
+        /// all -- is the session's, and is applied with it.
+        trie_built: bool,
     },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
@@ -7097,18 +7106,22 @@ fn scan_command(
             // command core -- knows which binary tex.web's `init`/`tini`
             // split would have produced.
             let patterns = primitive == UnexpandablePrimitive::Patterns;
-            if patterns && !processor.hyphenation_patterns_open() {
+            // Captured for both seams before anything of the group is read:
+            // the two rejections §1252 can raise each report at this cursor.
+            let rejection_context = processor.error_context();
+            let trie_built = patterns && !processor.hyphenation_patterns_open();
+            if trie_built {
                 // TeX82 §960's `trie_not_ready=false` branch diagnoses and
                 // discards with `scan_toks(false,false)`. Unlike §961's
                 // pattern-word loop, §473 therefore enters `absorbing`
                 // before §403 reads the opening brace.
-                let context = processor.error_context();
                 let _ = processor.scan_balanced_text(false).map_err(command_error)?;
                 return Ok(ScannedStep::HyphenationData {
                     words: Vec::new(),
                     pattern_specs: Vec::new(),
                     patterns: true,
-                    too_late_context: Some(context),
+                    rejection_context,
+                    trie_built,
                 });
             }
             let scanned = processor
@@ -7122,7 +7135,8 @@ fn scan_command(
                 words: scanned.words,
                 pattern_specs: scanned.patterns,
                 patterns,
-                too_late_context: None,
+                rejection_context,
+                trie_built,
             })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
@@ -11780,18 +11794,26 @@ fn apply_scanned_step(
             words,
             pattern_specs,
             patterns,
-            too_late_context,
+            rejection_context,
+            trie_built,
         } => {
-            // TeX82 §1252: `\patterns` is `init`-only. Production TeX reports
-            // "Patterns can be loaded only by INITEX", flushes the braced
-            // group, and returns with the trie unchanged; `\hyphenation`
-            // stays legal in both binaries.
-            if patterns && (!command.initex || too_late_context.is_some()) {
+            // TeX82 §1252 rejects `\patterns` for two different reasons, and
+            // the two do not share a message. The `init`/`tini` split comes
+            // first: a production binary has no `new_patterns` to call, so it
+            // reports "Patterns can be loaded only by INITEX" with `help0`
+            // and flushes the braced group. Only INITEX reaches §960, whose
+            // own `trie_not_ready=false` guard is the "Too late" one, and it
+            // does carry help. `\hyphenation` is legal in both binaries.
+            if patterns && !command.initex {
+                let mut report = stores.print_err("Patterns can be loaded only by INITEX");
+                report.context(rejection_context);
+                report.error();
+                return Ok(ReplayStep::Continue);
+            }
+            if trie_built {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
-                if let Some(context) = too_late_context {
-                    report.context(context);
-                }
+                report.context(rejection_context);
                 report.error();
                 return Ok(ReplayStep::Continue);
             }
