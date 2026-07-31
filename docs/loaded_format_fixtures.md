@@ -140,7 +140,8 @@ different cache identity or fails validation; loading never guesses a legacy
 profile.
 
 `FormatRecipe::production_pdftex14027` is the explicit public production
-pdfTeX 1.40.27 recipe. It selects the exact `Pdftex14027` profile and
+pdfTeX 1.40.27 recipe. Its format name is `production`, matching the pinned
+oracle's `-fmt=production` identity. It selects the exact `Pdftex14027` profile and
 fingerprint, prepares the combined TeX82, e-TeX 2.6, and pdfTeX primitive
 registry and parameter defaults in INITEX, and reaches construction completion
 only through its own `\dump`. It uses the same authenticated worker,
@@ -197,8 +198,10 @@ dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
 The production pdfTeX invariant reuses one cache identity, proves that loaded
 TeX82, e-TeX, and pdfTeX live meanings include `\pdfsavepos`, and verifies that
-the construction world, effects, artifacts, provenance, interaction, and
-clock do not cross into the loaded runtime.
+the enabled PDF backend and default `\pdfoutput=0` survive the immutable image
+without a frozen first-shipout mode, while the construction world, effects,
+artifacts, provenance, interaction, and clock do not cross into the loaded
+runtime.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
 

@@ -145,7 +145,7 @@ impl FormatRecipe {
     pub fn production_pdftex14027() -> Self {
         Self {
             engine: EngineMode::PdfTex,
-            format_name: "production-pdftex14027".into(),
+            format_name: "production".into(),
             construction_source_name: "production-pdftex14027.ini".into(),
             construction_source: Arc::from(&b"\\dump\n"[..]),
             resources: Vec::new(),

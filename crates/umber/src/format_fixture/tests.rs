@@ -241,6 +241,9 @@ fn production_pdftex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_
     assert_eq!(provenance.source_regions(), 0);
     assert_eq!(provenance.generated_source_backings(), 0);
     assert_eq!(provenance.source_map_bytes(), 0);
+    assert!(loaded.universe.pdf_output_enabled());
+    assert_eq!(loaded.universe.int_param(IntParam::PDF_OUTPUT), 0);
+    assert_eq!(loaded.universe.fixed_pdf_output_parameters(), None);
     assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
     assert_eq!(
         loaded.universe.interaction_mode(),
