@@ -26,20 +26,8 @@
       "channels": {
         "events": 58,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 3,
-            "expected": "! Missing `to' inserted.",
-            "actual": "\\target=! Missing `to' inserted."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 4, "expected": "! Missing `to' inserted.", "actual": "\\target=alpha" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

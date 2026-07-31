@@ -11363,25 +11363,15 @@ fn apply_scanned_step(
                     stores.world_mut().close_in(slot);
                 }
                 // TeX82 §482 has already collected the list inside the
-                // command core; §1225's remaining work is its recovery
-                // report and the definition.
+                // command core, which also reported §1225's missing-`to`
+                // recovery at the point tex.web reports it; the definition is
+                // all that is left.
                 InputStreamRequest::Read {
                     target,
                     global,
-                    missing_to,
                     tokens,
                     ..
                 } => {
-                    if missing_to {
-                        let context = command.state.output_open_context(&stores.command_context());
-                        let mut report = stores.print_err("Missing `to' inserted");
-                        report.help(&[
-                            "You should have said `\\read<number> to \\cs'.",
-                            "I'm going to look for the \\cs now.",
-                        ]);
-                        report.context(context);
-                        report.error();
-                    }
                     let parameters = stores.intern_token_list(&[]);
                     let meaning =
                         MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list());

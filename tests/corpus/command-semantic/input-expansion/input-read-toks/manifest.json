@@ -48,12 +48,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": { "line": 2, "expected": "(./input-read-toks.tex)", "actual": "(./input-read-toks.tex" }
+          "mismatch": { "line": 3, "expected": "*", "actual": "*(Please type a command or say `\\end')" }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": { "line": 3, "expected": "(./input-read-toks.texR", "actual": "(./input-read-toks.tex" }
+          "mismatch": { "line": 6, "expected": "! Emergency stop.", "actual": "(Please type a command or say `\\end')" }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }

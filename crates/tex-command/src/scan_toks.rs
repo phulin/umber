@@ -963,11 +963,14 @@ impl CommandProcessor<'_> {
             .filter(|slot| *slot < tex_state::world::STREAM_SLOT_COUNT as u8)
             .map(tex_state::world::StreamSlot::new);
         let mut tokens = Vec::new();
-        // §484: "The value of `n` is set negative so that additional prompts
-        // will not be given in the case of multi-line input."
-        let mut prompted = false;
+        // §484's own `n`, which decides whether the user is prompted at all:
+        // a negative stream is prompted with the empty string, so `\read-1 to
+        // \x` never prints `\x=`. §484 then assigns `n:=-1` after prompting,
+        // "so that additional prompts will not be given in the case of
+        // multi-line input" -- one variable serving both rules.
+        let mut prompt_number = stream;
         loop {
-            self.read_toks_line(slot, target, raw_catcodes, &mut prompted, &mut tokens)?;
+            self.read_toks_line(slot, target, raw_catcodes, &mut prompt_number, &mut tokens)?;
             if self.command.alignment.align_state == TEMPLATE_ALIGN_STATE {
                 return Ok(tokens);
             }
@@ -980,7 +983,7 @@ impl CommandProcessor<'_> {
         slot: Option<tex_state::world::StreamSlot>,
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
-        prompted: &mut bool,
+        prompt_number: &mut i32,
         tokens: &mut Vec<TracedTokenWord>,
     ) -> Result<(), CommandError> {
         // §483 calls `begin_file_reading` before §484-§486 acquire the line.
@@ -1001,7 +1004,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }),
         );
-        let (line, file_ended, name_class) = self.acquire_read_line(slot, target, prompted)?;
+        let (line, file_ended, name_class) = self.acquire_read_line(slot, target, prompt_number)?;
         self.command
             .finish_read_line(level, name_class, line.into_bytes())
             .map_err(|_| CommandError::input_invariant())?;
@@ -1076,7 +1079,7 @@ impl CommandProcessor<'_> {
         &mut self,
         slot: Option<tex_state::world::StreamSlot>,
         target: tex_state::interner::Symbol,
-        prompted: &mut bool,
+        prompt_number: &mut i32,
     ) -> Result<(String, bool, crate::input::SourceNameClass), CommandError> {
         // §483: `if read_open[m]=closed then <terminal> else <the file>`.
         if let Some(slot) = slot
@@ -1096,11 +1099,12 @@ impl CommandProcessor<'_> {
         if !self.state.interaction_permits_terminal_input() {
             return Err(CommandError::input_invariant());
         }
-        let prompt = if *prompted {
+        let prompt = if *prompt_number < 0 {
             String::new()
         } else {
-            *prompted = true;
-            format!("\n\\{}=", self.state.resolve(target))
+            let prompt = format!("\n\\{}=", self.state.resolve(target));
+            *prompt_number = -1;
+            prompt
         };
         let line = self
             .state

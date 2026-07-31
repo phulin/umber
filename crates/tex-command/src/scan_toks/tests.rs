@@ -2296,6 +2296,53 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
 }
 
 #[test]
+fn read_toks_prompts_only_for_a_nonnegative_stream() {
+    // TeX82 §484: `if n<0 then prompt_input("") else begin wake_up_terminal;
+    // print_ln; sprint_cs(r); prompt_input("="); n:=-1; end`. The test is on
+    // §1225's *scanned* `n`, not on §482's clamped `m`: 99 and 3 both reach
+    // the terminal, 99 because §482 clamped it to the never-open stream 16 and
+    // 3 because nobody opened it, yet both still announce themselves as
+    // `\line=` because the announcement tests `n`. Only a negative stream --
+    // which is equally clamped to 16 -- reads silently. §484 then sets
+    // `n:=-1`, so the second line of a multi-line read is never prompted again.
+    for (stream, expected) in [(-1_i32, ""), (99, "\n\\line="), (3, "\n\\line=")] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        for line in ["{first", "second}"] {
+            universe
+                .world_mut()
+                .push_memory_terminal_line(line)
+                .expect("terminal input registers");
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let target = processor.state.intern_control_sequence("line");
+            processor
+                .read_toks(stream, target, false)
+                .expect("terminal read collects");
+        }
+        // §484's prompt is still in the rollback-capable live effect suffix
+        // at this point, not the committed memory backend.
+        let mut terminal = String::new();
+        for record in universe.world().effect_records() {
+            if let tex_state::world::EffectRecord::StreamWrite { sink, text } = record
+                && matches!(
+                    sink,
+                    tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog
+                )
+            {
+                terminal.push_str(text);
+            }
+        }
+        assert_eq!(terminal, expected, "§484's prompt for \\read{stream}");
+    }
+}
+
+#[test]
 fn read_toks_disables_alignment_delimiters_and_restores_scanner_state() {
     // §482: `s:=align_state; align_state:=1000000` for the collection's whole
     // duration, so an alignment tab in the line is stored as an ordinary

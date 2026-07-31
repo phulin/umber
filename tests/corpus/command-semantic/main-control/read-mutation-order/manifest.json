@@ -29,20 +29,8 @@
       "channels": {
         "events": 41,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 2, "expected": "(./read-mutation-order.tex )", "actual": "(./read-mutation-order.tex" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./read-mutation-order.texalpha",
-            "actual": "(./read-mutation-order.tex"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

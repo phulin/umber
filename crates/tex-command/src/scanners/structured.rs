@@ -862,9 +862,6 @@ pub enum InputStreamRequest {
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
         global: bool,
-        /// tex.web §1225's `if not scan_keyword("to")`, which reports
-        /// "Missing `to' inserted" and then scans the target anyway.
-        missing_to: bool,
         tokens: tex_state::TracedTokenList,
     },
 }
@@ -1902,8 +1899,20 @@ impl CommandProcessor<'_> {
                 let stream = self.scan_integer()?.value;
                 // tex.web §1225 reports a missing `to` and inserts it, then
                 // runs `get_r_token` regardless: the keyword is recovered,
-                // not required.
-                let missing_to = !self.scan_keyword("to")?.value;
+                // not required. §1225 reports it *here*, between the failed
+                // keyword and `get_r_token`, so §82's context still shows the
+                // target as `<to be read again>` and no `read_toks` prompt has
+                // been printed yet.
+                if !self.scan_keyword("to")?.value {
+                    let context = self.command.output_open_context(&self.state);
+                    let mut report = self.state.print_err("Missing `to' inserted");
+                    report.help(&[
+                        "You should have said `\\read<number> to \\cs'.",
+                        "I'm going to look for the \\cs now.",
+                    ]);
+                    report.context(context);
+                    report.error();
+                }
                 // §1215's `get_r_token`. A frozen or non-control-sequence
                 // target still needs §1215's "Missing control sequence
                 // inserted" recovery, which Umber cannot yet name because it
@@ -1922,7 +1931,6 @@ impl CommandProcessor<'_> {
                     stream,
                     target,
                     global: read_global,
-                    missing_to,
                     tokens,
                 })
             }

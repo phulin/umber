@@ -29,16 +29,8 @@
       "channels": {
         "events": 52,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 2, "expected": "(./read-to-definition.tex )", "actual": "(./read-to-definition.tex" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.14",
-          "mismatch": { "line": 3, "expected": "(./read-to-definition.texalpha", "actual": "(./read-to-definition.tex" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
