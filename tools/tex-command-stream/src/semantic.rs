@@ -1297,9 +1297,9 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
     let fixture = umber::ensure_format(&umber_fetch::FormatCacheStore::new(cache.path()), &recipe)
         .map_err(|error| format!("ensure raw TeX82 format: {error}"))?;
     let mut world = tex_state::World::memory();
-    for line in &case.terminal_lines {
+    for line in terminal_stdin(case) {
         world
-            .push_memory_terminal_line(line.clone())
+            .push_memory_terminal_line(line)
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
     let mut recorder = Recorder::default();

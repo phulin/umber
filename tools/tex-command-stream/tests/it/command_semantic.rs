@@ -56,6 +56,65 @@ fn declared_command_semantic_cases_match() {
     );
 }
 
+#[test]
+fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
+    let case: Case = serde_json::from_value(serde_json::json!({
+        "id": "raw-loaded-empty-terminal-read",
+        "property_id": "tex82.assignment.read-to-definition",
+        "profile": "raw-tex82-loaded",
+        "source": "raw-loaded-empty-terminal-read.tex",
+        "provenance": {
+            "authority": "tex.web",
+            "manifest": "tests/tex82-oracle-manifest.txt",
+            "sections": [360, 484, 1225]
+        },
+        "projection": {
+            "kind": "observations",
+            "kinds": ["input", "recovery"]
+        },
+        "expected": [],
+        "expectation": {"kind": "pass"}
+    }))
+    .expect("bounded regression case is valid");
+    let run = execute(br"\read-1 to\line\end", &case)
+        .expect("the oracle's implicit empty terminal line satisfies the terminal read");
+    let channels = CapturedChannels::capture(&run);
+    assert_eq!(channels.events, 25);
+    assert_eq!(channels.status, "clean");
+    assert_eq!(
+        channels.stream(StreamChannel::Terminal),
+        concat!(
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "(preloaded format=production)\n",
+            "(./raw-loaded-empty-terminal-read.tex )\n",
+            "No pages of output.\n",
+            "Transcript written on raw-loaded-empty-terminal-read.log.\n"
+        )
+        .as_bytes()
+    );
+    assert_eq!(
+        channels.stream(StreamChannel::Log),
+        concat!(
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "(preloaded format=production 2026.3.1)  1 JAN 1970 00:00\n",
+            "**raw-loaded-empty-terminal-read.tex\n",
+            "(./raw-loaded-empty-terminal-read.tex\n",
+            " )\n",
+            "No pages of output.\n"
+        )
+        .as_bytes()
+    );
+    assert_eq!(
+        project(&run, &case.projection),
+        [
+            "input:push:terminal",
+            "input:retire:terminal",
+            "input:retire:file",
+            "input:stop:terminal",
+        ]
+    );
+}
+
 fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<ChannelFailure> {
     let contract = declared
         .case
