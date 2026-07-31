@@ -47,6 +47,9 @@ command-fuel limit remain inside that worker. A production consumer calls
 `dispatch_format_worker` before ordinary argument parsing and passes
 `FormatWorkerLauncher::production`; a libtest consumer installs
 `register_format_worker_test_bootstrap!` and passes its exact registered route.
+The reserved production sentinel is worker-owned: its exact one-argument form
+enters the worker, while any trailing argument returns a worker error before
+ordinary application dispatch. Unrelated arguments remain application-owned.
 No executable path, arbitrary argument, or environment value is used to infer
 support. An absent capability fails before current-image selection, spawn, or
 cache publication. Production opens `/proc/self/exe` and executes that stable

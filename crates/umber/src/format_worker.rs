@@ -113,11 +113,34 @@ impl FormatWorkerLauncher {
 pub fn dispatch_format_worker() -> Option<Result<(), String>> {
     let mut arguments = std::env::args_os();
     let _program = arguments.next();
-    match (arguments.next(), arguments.next()) {
-        (Some(argument), None) if argument == PRODUCTION_WORKER_ARGUMENT => {
-            Some(run_format_worker())
+    match classify_production_worker_arguments(arguments) {
+        ProductionWorkerInvocation::Exact => Some(run_format_worker()),
+        ProductionWorkerInvocation::Malformed => Some(Err(
+            "reserved __format-worker invocation accepts no trailing arguments".into(),
+        )),
+        ProductionWorkerInvocation::Unrelated => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProductionWorkerInvocation {
+    Exact,
+    Malformed,
+    Unrelated,
+}
+
+fn classify_production_worker_arguments(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> ProductionWorkerInvocation {
+    match arguments.next() {
+        Some(argument) if argument == PRODUCTION_WORKER_ARGUMENT => {
+            if arguments.next().is_none() {
+                ProductionWorkerInvocation::Exact
+            } else {
+                ProductionWorkerInvocation::Malformed
+            }
         }
-        _ => None,
+        _ => ProductionWorkerInvocation::Unrelated,
     }
 }
 
@@ -953,12 +976,34 @@ fn decode_source_kind(tag: u8) -> Result<RegisteredSourceKind, String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::fs;
     use std::io::{Seek, SeekFrom};
     use std::os::unix::process::ExitStatusExt;
     use std::sync::Barrier;
     use tempfile::TempDir;
     use umber_fetch::FormatCacheStore;
+
+    #[test]
+    fn production_worker_argument_classification_is_fail_closed() {
+        let classify = |arguments: &[&str]| {
+            classify_production_worker_arguments(arguments.iter().map(OsString::from))
+        };
+
+        assert_eq!(
+            classify(&[PRODUCTION_WORKER_ARGUMENT]),
+            ProductionWorkerInvocation::Exact
+        );
+        assert_eq!(
+            classify(&[PRODUCTION_WORKER_ARGUMENT, "trailing"]),
+            ProductionWorkerInvocation::Malformed
+        );
+        assert_eq!(classify(&[]), ProductionWorkerInvocation::Unrelated);
+        assert_eq!(
+            classify(&["__format-worker-unrelated", "trailing"]),
+            ProductionWorkerInvocation::Unrelated
+        );
+    }
 
     #[test]
     fn test_image_bootstrap_selects_exactly_one_worker_entry() {

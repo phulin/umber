@@ -29,6 +29,49 @@ fn exits_successfully() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
+fn reserved_format_worker_invocations_are_owned_before_application_dispatch() {
+    let directory = tempfile::tempdir().expect("create isolated worker cache root");
+    let cache_home = directory.path().join("cache");
+    let run = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .args(arguments)
+            .env("XDG_CACHE_HOME", &cache_home)
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .output()
+            .expect("run production worker route")
+    };
+
+    let malformed = run(&["__format-worker", "trailing"]);
+    assert_eq!(malformed.status.code(), Some(70));
+    assert!(malformed.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&malformed.stderr),
+        "umber format worker: reserved __format-worker invocation accepts no trailing arguments\n"
+    );
+    assert!(
+        !cache_home.exists(),
+        "malformed reserved invocation must not initialize the application cache"
+    );
+
+    let exact = run(&["__format-worker"]);
+    assert_eq!(exact.status.code(), Some(70));
+    assert!(String::from_utf8_lossy(&exact.stderr).starts_with("umber format worker: "));
+    assert!(
+        !cache_home.exists(),
+        "exact worker dispatch without a request must not initialize the application cache"
+    );
+
+    let unrelated = run(&["__format-worker-unrelated"]);
+    assert_eq!(unrelated.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unrelated.stderr).starts_with("umber: "));
+    assert!(
+        !cache_home.exists(),
+        "unrelated ordinary parsing must not initialize the application cache"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn format_cache_cli_stores_restores_and_reports_misses() {
     let directory = tempfile::tempdir().expect("create format cache fixture");
     let closure = directory.path().join("closure.index");
