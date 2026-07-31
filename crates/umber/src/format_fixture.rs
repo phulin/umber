@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 use tex_command::{CommandObserver, FontResource, RegisteredSourceKind, SourceRegistration};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink};
+use tex_observe::{
+    DetachedEvidence, LiveSessionTranslator, LiveSource, decode_detached_evidence,
+    encode_detached_evidence,
+};
+use tex_oracle::SchemaVersion;
 use tex_state::{JobClock, Universe, World};
 use umber_fetch::{
     FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
@@ -20,8 +25,8 @@ use crate::{
     CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode, RunResult,
 };
 
-const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v1\0";
-const PRODUCER_CONTRACT_VERSION: u32 = 1;
+const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
+const PRODUCER_CONTRACT_VERSION: u32 = 2;
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 1;
 
 /// Positive cumulative limits for one format construction or loaded job.
@@ -177,6 +182,12 @@ impl FormatRecipe {
             &profile.to_stable_bytes(),
             &profile.fingerprint().get().to_le_bytes(),
             &registry_state.to_le_bytes(),
+            &tex_observe::EVIDENCE_CODEC_SCHEMA.to_le_bytes(),
+            &(tex_observe::MAX_EVIDENCE_EVENTS_PER_STREAM as u64).to_le_bytes(),
+            &(tex_observe::MAX_EVIDENCE_EVENT_BYTES as u64).to_le_bytes(),
+            &(tex_observe::MAX_EVIDENCE_STRING_BYTES as u64).to_le_bytes(),
+            &(tex_observe::MAX_EVIDENCE_NESTING_DEPTH as u64).to_le_bytes(),
+            &(tex_observe::MAX_EVIDENCE_BYTES as u64).to_le_bytes(),
         ]);
         let source = framed_hash(&[
             self.construction_source_name.as_bytes(),
@@ -221,12 +232,19 @@ impl FormatRecipe {
 pub struct FormatFixture {
     recipe: FormatRecipe,
     image: ValidatedFormatImage,
+    evidence: DetachedEvidence,
 }
 
 impl FormatFixture {
     #[must_use]
     pub fn image(&self) -> &[u8] {
         self.image.as_bytes()
+    }
+
+    /// Detached construction-only canonical semantic and geometry evidence.
+    #[must_use]
+    pub fn construction_evidence(&self) -> &DetachedEvidence {
+        &self.evidence
     }
 
     pub fn load(&self, world: World) -> Result<LoadedFormatFixture, FormatFixtureError> {
@@ -370,50 +388,69 @@ pub fn ensure_format(
     launcher: &crate::FormatWorkerLauncher,
 ) -> Result<FormatFixture, FormatFixtureError> {
     let identity = recipe.identity()?;
-    if let Some(image) = cache.load(&identity)? {
-        return Ok(FormatFixture {
-            recipe: recipe.clone(),
-            image,
-        });
-    }
-    let image = crate::format_worker::construct(Some(launcher), recipe)?;
-    cache.store(&identity, &image)?;
-    let image = cache
-        .load(&identity)?
-        .ok_or(FormatFixtureError::PublishedEntryMissing)?;
+    let entry = cache.ensure_entry::<FormatFixtureError>(
+        &identity,
+        |bytes| decode_detached_evidence(bytes).map(|_| ()),
+        || {
+            let result = crate::format_worker::construct(Some(launcher), recipe)?;
+            Ok((result.image, result.evidence))
+        },
+    )?;
     Ok(FormatFixture {
         recipe: recipe.clone(),
-        image,
+        image: entry.image().clone(),
+        evidence: decode_detached_evidence(entry.evidence())
+            .map_err(FormatFixtureError::Evidence)?,
     })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConstructionResult {
+    pub image: Vec<u8>,
+    pub evidence: Vec<u8>,
 }
 
 pub(crate) fn construct_format_in_worker(
     recipe: &FormatRecipe,
-) -> Result<Vec<u8>, FormatFixtureError> {
+) -> Result<ConstructionResult, FormatFixtureError> {
     recipe.guards.validate()?;
     let mut universe = Universe::with_world(World::memory_with_clock(recipe.clock));
     recipe.engine.prepare_initex(&mut universe);
     let mut session =
         CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session.set_fuel_limit(recipe.guards.command_fuel)?;
-    session.register_authored_root(
+    let root = session.register_authored_root(
         &recipe.construction_source_name,
         Arc::clone(&recipe.construction_source),
     )?;
+    let mut observer = LiveSessionTranslator::for_root(
+        SchemaVersion::V2,
+        "terminal",
+        LiveSource {
+            name: recipe.construction_source_name.clone(),
+            source: root,
+            bytes: Arc::clone(&recipe.construction_source),
+        },
+    );
+    observer.record_source_open("terminal", &recipe.construction_source_name, root);
     let guards = GuardCheckpoints::new(recipe.guards)?;
     let mut checkpoints = &guards;
-    let result = session.run(
+    let result = session.run_with_observer(
         &mut RecipeResourceHost::new(&recipe.resources),
         &mut checkpoints,
+        &mut observer,
     );
     let result = finish_guarded_run(result, &guards)?;
     if !result.dumped_format {
         return Err(FormatFixtureError::ConstructionDidNotDump);
     }
-    session
+    let image = session
         .stores()
         .dump_format()
-        .map_err(|error| FormatFixtureError::Format(error.to_string()))
+        .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
+    let evidence = encode_detached_evidence(&observer.finalize_detached_evidence())
+        .map_err(FormatFixtureError::Evidence)?;
+    Ok(ConstructionResult { image, evidence })
 }
 
 #[cfg(test)]
@@ -645,8 +682,8 @@ pub enum FormatFixtureError {
     ResidentSetExceeded,
     ResidentSetUnsupported,
     ConstructionDidNotDump,
-    PublishedEntryMissing,
     Format(String),
+    Evidence(String),
     Cache(FormatCacheError),
     Session(Box<CanonicalSessionError>),
     Fuel(tex_command::CommandFuelLimitError),

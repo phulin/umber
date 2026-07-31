@@ -1420,6 +1420,7 @@ dependencies = [
  "tex-fonts",
  "tex-incr",
  "tex-lex",
+ "tex-observe",
  "tex-oracle",
  "tex-out",
  "tex-state",

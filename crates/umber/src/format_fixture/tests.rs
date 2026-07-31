@@ -136,6 +136,10 @@ fn independent_raw_builds_are_byte_identical_and_cache_reload_is_fresh() {
     let second = ensure_format(&FormatCacheStore::new(second_cache.path()), &recipe)
         .expect("second construction");
     assert_eq!(first.image(), second.image());
+    assert_eq!(
+        first.construction_evidence(),
+        second.construction_evidence()
+    );
 
     let loaded = first.load(test_world()).expect("fresh load");
     assert!(loaded.universe.world().effect_records().is_empty());
@@ -160,6 +164,10 @@ fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
     let first = ensure_format(&cache, &recipe).expect("raw e-TeX construction");
     let second = ensure_format(&cache, &recipe).expect("raw e-TeX cache hit");
     assert_eq!(first.image(), second.image());
+    assert_eq!(
+        first.construction_evidence(),
+        second.construction_evidence()
+    );
 
     let loaded = second.load(test_world()).expect("raw e-TeX load");
     assert_eq!(

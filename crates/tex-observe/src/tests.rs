@@ -1,4 +1,63 @@
 use super::*;
+
+#[test]
+fn detached_evidence_codec_round_trips_and_rejects_sequence_and_stream_confusion() {
+    let mut semantic = Normalizer::new();
+    let mut geometry = Normalizer::new();
+    let evidence = DetachedEvidence {
+        semantic: vec![semantic.normalize(Event::Effect(EffectEvent {
+            kind: EffectKind::Terminate,
+            channel: "engine".into(),
+            value: CanonicalValue::None,
+        }))],
+        geometry: vec![geometry.normalize(Event::Geometry(GeometryEvent::Hpack {
+            width_sp: 1,
+            height_sp: 2,
+            depth_sp: 3,
+        }))],
+    };
+    let encoded = encode_detached_evidence(&evidence).expect("encode");
+    assert_eq!(
+        decode_detached_evidence(&encoded).expect("decode"),
+        evidence
+    );
+    let mut gapped = evidence.clone();
+    gapped.semantic[0].sequence = 1;
+    assert!(encode_detached_evidence(&gapped).is_err());
+    let mut confused = evidence;
+    confused.semantic.push(confused.geometry.remove(0));
+    assert!(encode_detached_evidence(&confused).is_err());
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(decode_detached_evidence(&trailing).is_err());
+}
+
+#[test]
+fn detached_evidence_decoder_rejects_bounds_before_event_decode() {
+    let mut impossible_count = Vec::from(EVIDENCE_MAGIC);
+    impossible_count.extend_from_slice(&EVIDENCE_CODEC_SCHEMA.to_le_bytes());
+    impossible_count.extend_from_slice(&(MAX_EVIDENCE_EVENTS_PER_STREAM as u32).to_le_bytes());
+    impossible_count.extend_from_slice(&0_u32.to_le_bytes());
+    assert!(decode_detached_evidence(&impossible_count).is_err());
+
+    let framed = |json: &[u8]| {
+        let mut bytes = Vec::from(EVIDENCE_MAGIC);
+        bytes.extend_from_slice(&EVIDENCE_CODEC_SCHEMA.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(json);
+        bytes
+    };
+    let oversized_string = format!("\"{}\"", "x".repeat(MAX_EVIDENCE_STRING_BYTES + 1));
+    assert!(decode_detached_evidence(&framed(oversized_string.as_bytes())).is_err());
+    let nested = format!(
+        "{}0{}",
+        "[".repeat(MAX_EVIDENCE_NESTING_DEPTH + 1),
+        "]".repeat(MAX_EVIDENCE_NESTING_DEPTH + 1)
+    );
+    assert!(decode_detached_evidence(&framed(nested.as_bytes())).is_err());
+}
 use crate::translation::*;
 use tex_command::ScannerRecord;
 use tex_state::token::Catcode;

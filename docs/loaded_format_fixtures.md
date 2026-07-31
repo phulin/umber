@@ -111,11 +111,29 @@ These internal guards complement the outer `scripts/run-umber-guarded.py`
 defense.
 
 After a successful construction episode, the quiescent `Universe` produces a
-schema-validated deterministic image. `FormatCacheStore` writes an entry to a
+schema-validated deterministic image and `tex-observe` finalizes detached
+command-v1 semantic plus geometry-v2 evidence. Evidence codec schema 1 uses
+independently zero-based streams and hard limits of 1,000,000 events per
+stream, 1 MiB per canonical event, 256 KiB per encoded string, nesting depth
+64, and 64 MiB total. Decoding rejects impossible frame counts before event
+allocation, unknown fields, noncanonical encoding, gaps or duplicates,
+stream-kind confusion, trailing bytes, malformed values, and every limit
+violation before deserializing the affected payload.
+
+Worker protocol 2 authenticates the complete success or error envelope,
+recipe identity, image digest, and evidence digest under the per-child key.
+The evidence-aware format identity is producer contract 2 and includes the
+evidence schema and limits, so image-only entries are disjoint.
+`FormatCacheStore` compound entry schema 2 writes the validated image and
+opaque caller-validated evidence to one entry in one publication. The legacy
+image-only API remains a separate entry schema for external cache CLI users;
+the evidence-aware fixture path never accepts it. `FormatCacheStore` writes an entry to a
 same-directory temporary file, syncs it, publishes with a no-clobber rename,
-and syncs the containing directory. Per-key exclusion makes invalid-entry
-quarantine identity-safe against peer replacement. Existing authority
-components and entries are inspected without following links. Racing
+and syncs the containing directory. Per-key exclusion remains held through
+validation, quarantine, construction, and publication, making invalid-entry
+replacement identity-safe and ensuring concurrent callers construct a missing
+or semantic-invalid key only once. Existing authority components and entries
+are inspected without following links. Racing
 publishers accept the already-valid winner. A partial temporary file is never
 visible; a stale, truncated, mismatched, checksum-invalid, or decoder-invalid
 destination is removed and regenerated.

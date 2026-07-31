@@ -26,20 +26,21 @@ use zeroize::Zeroizing;
 
 use crate::EngineMode;
 use crate::format_fixture::{
-    FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,
+    ConstructionResult, FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,
     construct_format_in_worker,
 };
 
-const PROTOCOL: u32 = 1;
+const PROTOCOL: u32 = 2;
 const AUTH_KEY_BYTES: usize = 32;
-const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V1\0";
-const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V1\0";
+const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V2\0";
+const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V2\0";
 const TEST_WORKER_ENV: &str = "UMBER_INTERNAL_CURRENT_IMAGE_TEST_WORKER";
 const PRODUCTION_WORKER_ARGUMENT: &str = "__format-worker";
-const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v1\0";
+const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v2\0";
 const FRAME_LENGTH_BYTES: usize = size_of::<u64>();
 const MAX_WORKER_REQUEST_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 16 * 1024 * 1024;
-const MAX_WORKER_STDOUT_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 64 * 1024;
+const MAX_WORKER_STDOUT_BYTES: usize =
+    crate::SessionLimits::FORMAT_IMAGE_BYTES + tex_observe::MAX_EVIDENCE_BYTES + 64 * 1024;
 const MAX_WORKER_RESPONSE_BYTES: usize =
     MAX_WORKER_STDOUT_BYTES - RESPONSE_PREFIX.len() - FRAME_LENGTH_BYTES;
 const MAX_WORKER_STDERR_BYTES: usize = 1024 * 1024;
@@ -71,8 +72,15 @@ struct Response {
     protocol: u32,
     identity: [u8; 32],
     image_sha256: [u8; 32],
-    result: Result<Vec<u8>, String>,
+    evidence_sha256: [u8; 32],
+    result: Result<ConstructionResultWire, String>,
     authenticator: [u8; 32],
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ConstructionResultWire {
+    image: Vec<u8>,
+    evidence: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,7 +155,7 @@ fn classify_production_worker_arguments(
 pub(crate) fn construct(
     launcher: Option<&FormatWorkerLauncher>,
     recipe: &FormatRecipe,
-) -> Result<Vec<u8>, FormatFixtureError> {
+) -> Result<ConstructionResult, FormatFixtureError> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = recipe;
@@ -728,9 +736,10 @@ fn response_authenticator(
     protocol: u32,
     identity: &[u8; 32],
     image_sha256: &[u8; 32],
-    result: &Result<Vec<u8>, String>,
+    evidence_sha256: &[u8; 32],
+    result: &Result<ConstructionResultWire, String>,
 ) -> Result<[u8; 32], String> {
-    let encoded = bincode::serialize(&(protocol, identity, image_sha256, result))
+    let encoded = bincode::serialize(&(protocol, identity, image_sha256, evidence_sha256, result))
         .map_err(|error| error.to_string())?;
     let mut ipad = Zeroizing::new([0x36_u8; 64]);
     let mut opad = Zeroizing::new([0x5c_u8; 64]);
@@ -753,12 +762,13 @@ fn validate_response(
     response: Response,
     identity: [u8; 32],
     auth_key: &[u8; AUTH_KEY_BYTES],
-) -> Result<Vec<u8>, FormatFixtureError> {
+) -> Result<ConstructionResult, FormatFixtureError> {
     let expected_authenticator = response_authenticator(
         auth_key,
         response.protocol,
         &response.identity,
         &response.image_sha256,
+        &response.evidence_sha256,
         &response.result,
     )
     .map_err(FormatFixtureError::WorkerProtocol)?;
@@ -768,13 +778,20 @@ fn validate_response(
     {
         return Err(FormatFixtureError::WorkerIdentityMismatch);
     }
-    let image = response.result.map_err(FormatFixtureError::Worker)?;
-    if <[u8; 32]>::from(Sha256::digest(&image)) != response.image_sha256 {
+    let result = response.result.map_err(FormatFixtureError::Worker)?;
+    if <[u8; 32]>::from(Sha256::digest(&result.image)) != response.image_sha256
+        || <[u8; 32]>::from(Sha256::digest(&result.evidence)) != response.evidence_sha256
+    {
         return Err(FormatFixtureError::WorkerIdentityMismatch);
     }
-    Universe::from_format(World::memory(), &image)
+    Universe::from_format(World::memory(), &result.image)
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-    Ok(image)
+    tex_observe::decode_detached_evidence(&result.evidence)
+        .map_err(FormatFixtureError::Evidence)?;
+    Ok(ConstructionResult {
+        image: result.image,
+        evidence: result.evidence,
+    })
 }
 
 fn read_auth_key(channel: &mut impl Read) -> Result<Zeroizing<[u8; AUTH_KEY_BYTES]>, String> {
@@ -909,21 +926,31 @@ pub fn run_format_worker() -> Result<(), String> {
     if actual_identity != claimed_identity {
         return Err("format-worker request identity mismatch".into());
     }
-    let result = construct_format_in_worker(&recipe).map_err(|error| error.to_string());
+    let result = construct_format_in_worker(&recipe)
+        .map(|result| ConstructionResultWire {
+            image: result.image,
+            evidence: result.evidence,
+        })
+        .map_err(|error| error.to_string());
     let image_sha256 = result
         .as_ref()
-        .map_or([0; 32], |image| Sha256::digest(image).into());
+        .map_or([0; 32], |result| Sha256::digest(&result.image).into());
+    let evidence_sha256 = result
+        .as_ref()
+        .map_or([0; 32], |result| Sha256::digest(&result.evidence).into());
     let authenticator = response_authenticator(
         &auth_key,
         PROTOCOL,
         &actual_identity,
         &image_sha256,
+        &evidence_sha256,
         &result,
     )?;
     let response = Response {
         protocol: PROTOCOL,
         identity: actual_identity,
         image_sha256,
+        evidence_sha256,
         result,
         authenticator,
     };
@@ -1101,18 +1128,24 @@ mod tests {
         let recipe = FormatRecipe::raw_tex82();
         let identity = recipe.identity().expect("identity");
         let identity_bytes = identity.key().bytes();
-        let image = construct_format_in_worker(&recipe).expect("decoder-valid image");
-        Universe::from_format(World::memory(), &image).expect("forgery is decoder-valid");
+        let constructed = construct_format_in_worker(&recipe).expect("decoder-valid image");
+        Universe::from_format(World::memory(), &constructed.image)
+            .expect("forgery is decoder-valid");
 
         let parent_key = [0x19; AUTH_KEY_BYTES];
         let attacker_key = [0x73; AUTH_KEY_BYTES];
-        let image_sha256 = Sha256::digest(&image).into();
-        let result = Ok(image);
+        let image_sha256 = Sha256::digest(&constructed.image).into();
+        let evidence_sha256 = Sha256::digest(&constructed.evidence).into();
+        let result = Ok(ConstructionResultWire {
+            image: constructed.image,
+            evidence: constructed.evidence,
+        });
         let authenticator = response_authenticator(
             &attacker_key,
             PROTOCOL,
             &identity_bytes,
             &image_sha256,
+            &evidence_sha256,
             &result,
         )
         .expect("attacker response");
@@ -1120,6 +1153,7 @@ mod tests {
             protocol: PROTOCOL,
             identity: identity_bytes,
             image_sha256,
+            evidence_sha256,
             result,
             authenticator,
         };
@@ -1127,9 +1161,11 @@ mod tests {
         let cache_root = TempDir::new().expect("cache root");
         let cache = FormatCacheStore::new(cache_root.path());
         let accepted = validate_response(response, identity_bytes, &parent_key);
-        if let Ok(image) = &accepted {
+        if let Ok(result) = &accepted {
             cache
-                .store(&identity, image)
+                .store_entry(&identity, &result.image, &result.evidence, |bytes| {
+                    tex_observe::decode_detached_evidence(bytes).map(|_| ())
+                })
                 .expect("publish accepted image");
         }
         assert!(matches!(
@@ -1138,11 +1174,121 @@ mod tests {
         ));
         assert!(
             cache
-                .load(&identity)
+                .load_entry(&identity, |bytes| tex_observe::decode_detached_evidence(
+                    bytes
+                )
+                .map(|_| ()))
                 .expect("cache remains readable")
                 .is_none(),
             "a forged decoder-valid worker response must leave no cache entry"
         );
+    }
+
+    #[test]
+    fn missing_tampered_and_cross_identity_evidence_are_rejected() {
+        let recipe = FormatRecipe::raw_tex82();
+        let identity = recipe.identity().expect("identity").key().bytes();
+        let other_identity = FormatRecipe::raw_etex26()
+            .identity()
+            .expect("other identity")
+            .key()
+            .bytes();
+        let constructed = construct_format_in_worker(&recipe).expect("construction");
+        let key = [0x2d; AUTH_KEY_BYTES];
+
+        let result = Ok(ConstructionResultWire {
+            image: constructed.image.clone(),
+            evidence: Vec::new(),
+        });
+        let image_sha256 = Sha256::digest(&constructed.image).into();
+        let evidence_sha256 = Sha256::digest([]).into();
+        let authenticator = response_authenticator(
+            &key,
+            PROTOCOL,
+            &identity,
+            &image_sha256,
+            &evidence_sha256,
+            &result,
+        )
+        .expect("missing-evidence authenticator");
+        assert!(matches!(
+            validate_response(
+                Response {
+                    protocol: PROTOCOL,
+                    identity,
+                    image_sha256,
+                    evidence_sha256,
+                    result,
+                    authenticator,
+                },
+                identity,
+                &key,
+            ),
+            Err(FormatFixtureError::Evidence(_))
+        ));
+
+        let valid_result = Ok(ConstructionResultWire {
+            image: constructed.image,
+            evidence: constructed.evidence,
+        });
+        let valid_payload = valid_result.as_ref().expect("valid construction result");
+        let image_sha256 = Sha256::digest(&valid_payload.image).into();
+        let evidence_sha256 = Sha256::digest(&valid_payload.evidence).into();
+        let authenticator = response_authenticator(
+            &key,
+            PROTOCOL,
+            &other_identity,
+            &image_sha256,
+            &evidence_sha256,
+            &valid_result,
+        )
+        .expect("cross-identity authenticator");
+        assert!(matches!(
+            validate_response(
+                Response {
+                    protocol: PROTOCOL,
+                    identity: other_identity,
+                    image_sha256,
+                    evidence_sha256,
+                    result: valid_result.clone(),
+                    authenticator,
+                },
+                identity,
+                &key,
+            ),
+            Err(FormatFixtureError::WorkerIdentityMismatch)
+        ));
+
+        let authenticator = response_authenticator(
+            &key,
+            PROTOCOL,
+            &identity,
+            &image_sha256,
+            &evidence_sha256,
+            &valid_result,
+        )
+        .expect("valid authenticator");
+        let mut tampered = valid_result;
+        tampered
+            .as_mut()
+            .expect("valid construction result")
+            .evidence
+            .push(0);
+        assert!(matches!(
+            validate_response(
+                Response {
+                    protocol: PROTOCOL,
+                    identity,
+                    image_sha256,
+                    evidence_sha256,
+                    result: tampered,
+                    authenticator,
+                },
+                identity,
+                &key,
+            ),
+            Err(FormatFixtureError::WorkerIdentityMismatch)
+        ));
     }
 
     #[test]

@@ -24,6 +24,9 @@ const ENTRY_MAGIC: [u8; 8] = *b"UMBRFCHE";
 const ENTRY_SCHEMA: u32 = 1;
 const ENTRY_HEADER_LEN: usize = 56;
 const MAX_FORMAT_BYTES: u64 = 256 * 1024 * 1024;
+const COMPOUND_ENTRY_SCHEMA: u32 = 2;
+const COMPOUND_HEADER_LEN: usize = 96;
+const MAX_OPAQUE_EVIDENCE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Driver mode whose initialized state is captured by a generated format.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -212,6 +215,24 @@ impl ValidatedFormatImage {
     }
 }
 
+/// One atomically cached image plus caller-validated opaque evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedFormatEntry {
+    image: ValidatedFormatImage,
+    evidence: Vec<u8>,
+}
+
+impl ValidatedFormatEntry {
+    #[must_use]
+    pub fn image(&self) -> &ValidatedFormatImage {
+        &self.image
+    }
+    #[must_use]
+    pub fn evidence(&self) -> &[u8] {
+        &self.evidence
+    }
+}
+
 #[derive(Debug)]
 pub enum FormatCacheError {
     Io {
@@ -385,6 +406,144 @@ impl FormatCacheStore {
         }
     }
 
+    /// Loads one compound entry while holding the per-key lock through opaque validation.
+    pub fn load_entry(
+        &self,
+        identity: &FormatCacheIdentity,
+        validate_evidence: impl Fn(&[u8]) -> Result<(), String>,
+    ) -> Result<Option<ValidatedFormatEntry>, FormatCacheError> {
+        let Some(authority) = self.authority(false)? else {
+            return Ok(None);
+        };
+        let name = self.name(identity);
+        let _lock = authority.lock(&name)?;
+        self.load_entry_locked(&authority, &name, identity, &validate_evidence)
+    }
+
+    fn load_entry_locked(
+        &self,
+        authority: &native::Authority,
+        name: &str,
+        identity: &FormatCacheIdentity,
+        validate_evidence: &impl Fn(&[u8]) -> Result<(), String>,
+    ) -> Result<Option<ValidatedFormatEntry>, FormatCacheError> {
+        let path = authority.path(name);
+        let Some(mut file) = authority.open_entry(name)? else {
+            return Ok(None);
+        };
+        let length = file
+            .metadata()
+            .map_err(|error| FormatCacheError::io("inspect", &path, error))?
+            .len();
+        if length > MAX_FORMAT_BYTES + MAX_OPAQUE_EVIDENCE_BYTES + 4096 {
+            authority.quarantine(name)?;
+            return Ok(None);
+        }
+        let mut bytes = Vec::with_capacity(length as usize);
+        file.read_to_end(&mut bytes)
+            .map_err(|error| FormatCacheError::io("read", &path, error))?;
+        let Some((image, evidence)) = decode_compound_entry(&bytes, identity) else {
+            authority.quarantine(name)?;
+            return Ok(None);
+        };
+        if Universe::from_format(World::memory(), image).is_err()
+            || validate_evidence(evidence).is_err()
+        {
+            authority.quarantine(name)?;
+            return Ok(None);
+        }
+        Ok(Some(ValidatedFormatEntry {
+            image: ValidatedFormatImage(image.to_vec()),
+            evidence: evidence.to_vec(),
+        }))
+    }
+
+    /// Validates and atomically publishes image and opaque evidence as one entry.
+    pub fn store_entry(
+        &self,
+        identity: &FormatCacheIdentity,
+        image: &[u8],
+        evidence: &[u8],
+        validate_evidence: impl Fn(&[u8]) -> Result<(), String>,
+    ) -> Result<(), FormatCacheError> {
+        if image.len() as u64 > MAX_FORMAT_BYTES {
+            return Err(FormatCacheError::FormatTooLarge(image.len() as u64));
+        }
+        if evidence.len() as u64 > MAX_OPAQUE_EVIDENCE_BYTES {
+            return Err(FormatCacheError::InvalidFormat(
+                "opaque evidence exceeds cache limit".into(),
+            ));
+        }
+        Universe::from_format(World::memory(), image)
+            .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
+        validate_evidence(evidence).map_err(FormatCacheError::InvalidFormat)?;
+        let authority = self.authority(true)?.expect("created authority");
+        let name = self.name(identity);
+        let _lock = authority.lock(&name)?;
+        if self
+            .load_entry_locked(&authority, &name, identity, &validate_evidence)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let entry = encode_compound_entry(identity, image, evidence);
+        loop {
+            if authority.publish(&name, &entry)? {
+                return Ok(());
+            }
+            if self
+                .load_entry_locked(&authority, &name, identity, &validate_evidence)?
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Returns a validated compound entry, constructing at most once while the key is locked.
+    ///
+    /// Decoder-invalid evidence is quarantined and regenerated without releasing the lock, so
+    /// another process cannot replace the inspected pathname between validation and retry.
+    pub fn ensure_entry<E>(
+        &self,
+        identity: &FormatCacheIdentity,
+        validate_evidence: impl Fn(&[u8]) -> Result<(), String>,
+        construct: impl FnOnce() -> Result<(Vec<u8>, Vec<u8>), E>,
+    ) -> Result<ValidatedFormatEntry, E>
+    where
+        E: From<FormatCacheError>,
+    {
+        let authority = self
+            .authority(true)
+            .map_err(E::from)?
+            .expect("create_namespace=true always returns an authority");
+        let name = self.name(identity);
+        let _lock = authority.lock(&name).map_err(E::from)?;
+        if let Some(entry) = self
+            .load_entry_locked(&authority, &name, identity, &validate_evidence)
+            .map_err(E::from)?
+        {
+            return Ok(entry);
+        }
+        let (image, evidence) = construct()?;
+        validate_compound_payload(&image, &evidence, &validate_evidence).map_err(E::from)?;
+        let encoded = encode_compound_entry(identity, &image, &evidence);
+        loop {
+            if authority.publish(&name, &encoded).map_err(E::from)? {
+                return Ok(ValidatedFormatEntry {
+                    image: ValidatedFormatImage(image),
+                    evidence,
+                });
+            }
+            if let Some(entry) = self
+                .load_entry_locked(&authority, &name, identity, &validate_evidence)
+                .map_err(E::from)?
+            {
+                return Ok(entry);
+            }
+        }
+    }
+
     fn name(&self, identity: &FormatCacheIdentity) -> String {
         format!("sha256-{}", identity.key().hex())
     }
@@ -450,6 +609,75 @@ fn decode_entry<'a>(entry: &'a [u8], identity: &FormatCacheIdentity) -> Option<&
     }
     let payload = &entry[metadata_end..payload_end];
     (Sha256::digest(payload).as_slice() == &entry[24..56]).then_some(payload)
+}
+
+fn encode_compound_entry(identity: &FormatCacheIdentity, image: &[u8], evidence: &[u8]) -> Vec<u8> {
+    let metadata = identity.canonical_bytes();
+    let mut entry =
+        Vec::with_capacity(COMPOUND_HEADER_LEN + metadata.len() + image.len() + evidence.len());
+    entry.extend_from_slice(&ENTRY_MAGIC);
+    entry.extend_from_slice(&COMPOUND_ENTRY_SCHEMA.to_le_bytes());
+    entry.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+    entry.extend_from_slice(&(image.len() as u64).to_le_bytes());
+    entry.extend_from_slice(&(evidence.len() as u64).to_le_bytes());
+    entry.extend_from_slice(&Sha256::digest(image));
+    entry.extend_from_slice(&Sha256::digest(evidence));
+    entry.extend_from_slice(&metadata);
+    entry.extend_from_slice(image);
+    entry.extend_from_slice(evidence);
+    entry
+}
+
+fn validate_compound_payload(
+    image: &[u8],
+    evidence: &[u8],
+    validate_evidence: &impl Fn(&[u8]) -> Result<(), String>,
+) -> Result<(), FormatCacheError> {
+    if image.len() as u64 > MAX_FORMAT_BYTES {
+        return Err(FormatCacheError::FormatTooLarge(image.len() as u64));
+    }
+    if evidence.len() as u64 > MAX_OPAQUE_EVIDENCE_BYTES {
+        return Err(FormatCacheError::InvalidFormat(
+            "opaque evidence exceeds cache limit".into(),
+        ));
+    }
+    Universe::from_format(World::memory(), image)
+        .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
+    validate_evidence(evidence).map_err(FormatCacheError::InvalidFormat)
+}
+
+fn decode_compound_entry<'a>(
+    entry: &'a [u8],
+    identity: &FormatCacheIdentity,
+) -> Option<(&'a [u8], &'a [u8])> {
+    if entry.len() < COMPOUND_HEADER_LEN
+        || entry[..8] != ENTRY_MAGIC
+        || read_u32(entry, 8)? != COMPOUND_ENTRY_SCHEMA
+    {
+        return None;
+    }
+    let metadata_len = usize::try_from(read_u32(entry, 12)?).ok()?;
+    let image_len = usize::try_from(read_u64(entry, 16)?).ok()?;
+    let evidence_len = usize::try_from(read_u64(entry, 24)?).ok()?;
+    if image_len as u64 > MAX_FORMAT_BYTES || evidence_len as u64 > MAX_OPAQUE_EVIDENCE_BYTES {
+        return None;
+    }
+    let metadata_end = COMPOUND_HEADER_LEN.checked_add(metadata_len)?;
+    let image_end = metadata_end.checked_add(image_len)?;
+    let evidence_end = image_end.checked_add(evidence_len)?;
+    if evidence_end != entry.len()
+        || entry[COMPOUND_HEADER_LEN..metadata_end] != identity.canonical_bytes()
+    {
+        return None;
+    }
+    let image = &entry[metadata_end..image_end];
+    let evidence = &entry[image_end..evidence_end];
+    if Sha256::digest(image).as_slice() != &entry[32..64]
+        || Sha256::digest(evidence).as_slice() != &entry[64..96]
+    {
+        return None;
+    }
+    Some((image, evidence))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {

@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -194,6 +195,103 @@ fn entry_encoding_is_deterministic_and_preserves_exact_format_bytes() {
 
     assert_eq!(first, second);
     assert_eq!(decode_entry(&first, &key), Some(bytes.as_slice()));
+}
+
+#[test]
+fn compound_entry_is_atomic_and_rejects_missing_corrupt_and_cross_key_evidence() {
+    let temp = TempDir::new().expect("tempdir");
+    let cache = FormatCacheStore::new(temp.path());
+    let key = identity(FormatEngineMode::Latex);
+    let other = identity(FormatEngineMode::PdfLatex);
+    let image = format();
+    let evidence = b"bounded-evidence-v1";
+    let validator = |bytes: &[u8]| {
+        (bytes == evidence)
+            .then_some(())
+            .ok_or_else(|| "invalid evidence".into())
+    };
+    cache
+        .store_entry(&key, &image, evidence, validator)
+        .expect("compound store");
+    let hit = cache
+        .load_entry(&key, validator)
+        .expect("load")
+        .expect("hit");
+    assert_eq!(hit.image().as_bytes(), image);
+    assert_eq!(hit.evidence(), evidence);
+
+    fs::copy(cache.path(&key), cache.path(&other)).expect("cross-key copy");
+    assert!(
+        cache
+            .load_entry(&other, validator)
+            .expect("cross-key rejection")
+            .is_none()
+    );
+    assert!(!cache.path(&other).exists());
+
+    let path = cache.path(&key);
+    let mut forged = fs::read(&path).expect("entry");
+    forged[64] ^= 0x80;
+    fs::write(&path, forged).expect("forge evidence digest");
+    assert!(
+        cache
+            .load_entry(&key, validator)
+            .expect("digest rejection")
+            .is_none()
+    );
+
+    cache.store(&key, &image).expect("legacy image-only store");
+    assert!(
+        cache
+            .load_entry(&key, validator)
+            .expect("missing evidence rejection")
+            .is_none()
+    );
+}
+
+#[test]
+fn invalid_compound_entry_is_regenerated_once_under_the_key_lock() {
+    let temp = TempDir::new().expect("tempdir");
+    let cache = Arc::new(FormatCacheStore::new(temp.path()));
+    let key = identity(FormatEngineMode::Latex);
+    let image = format();
+    cache
+        .store_entry(&key, &image, b"syntactically-opaque", |_| Ok(()))
+        .expect("seed semantically invalid evidence");
+
+    let constructions = Arc::new(AtomicUsize::new(0));
+    let barrier = Arc::new(Barrier::new(5));
+    let mut threads = Vec::new();
+    for _ in 0..4 {
+        let cache = Arc::clone(&cache);
+        let key = key.clone();
+        let image = image.clone();
+        let constructions = Arc::clone(&constructions);
+        let barrier = Arc::clone(&barrier);
+        threads.push(thread::spawn(move || {
+            barrier.wait();
+            cache
+                .ensure_entry::<FormatCacheError>(
+                    &key,
+                    |bytes| {
+                        (bytes == b"canonical-evidence")
+                            .then_some(())
+                            .ok_or_else(|| "invalid semantic evidence".into())
+                    },
+                    || {
+                        constructions.fetch_add(1, Ordering::SeqCst);
+                        Ok((image, b"canonical-evidence".to_vec()))
+                    },
+                )
+                .expect("locked regeneration")
+        }));
+    }
+    barrier.wait();
+    for thread in threads {
+        let entry = thread.join().expect("join");
+        assert_eq!(entry.evidence(), b"canonical-evidence");
+    }
+    assert_eq!(constructions.load(Ordering::SeqCst), 1);
 }
 
 #[test]

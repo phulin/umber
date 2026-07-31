@@ -12,7 +12,7 @@ pub use fetch::{
 };
 pub use format_cache::{
     FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
-    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatImage,
+    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatEntry, ValidatedFormatImage,
 };
 pub use manifest::{ManifestFetchError, fetch_manifest, fetch_manifest_cancellable};
 
