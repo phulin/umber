@@ -958,12 +958,6 @@ pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> Stri
         .collect()
 }
 
-/// Writes text to both printable sinks, for a report built as one string
-/// rather than through the print primitives.
-pub(crate) fn write_terminal_and_log(stores: &mut Universe, text: &str) {
-    write_diagnostic(stores, text);
-}
-
 fn write_diagnostic(stores: &mut Universe, text: &str) {
     stores
         .world_mut()

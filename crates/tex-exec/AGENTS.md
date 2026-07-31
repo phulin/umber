@@ -74,6 +74,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/mode/journal.rs`: production generation-checked nested inverse journal behind the typed mode-list mutation boundary and the authoritative canonical aggregate mode rollback path.
 - `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
+- `src/pack_report.rs`: TeX82 selector-aware overfull and underfull box diagnostics.
+- `src/pack_report/tests.rs`: interaction-mode channel and ordering coverage for packed-box diagnostics.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
 - `src/paragraph_memo.rs`: centralized fail-before-mutation accepted-history paragraph validation, generation-interned exact-stamp observations and typed semantic dependency tiers, accepted-history-owned hlist/finished-line mounts, ordered count/integer-parameter redo, full source-transition checks, lazy accepted-generation diagnostic provenance, barrier classification, and telemetry.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.

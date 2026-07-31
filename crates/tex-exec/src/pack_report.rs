@@ -23,6 +23,9 @@
 //! `warning_issued` on the way, which is what makes §1335 tell the terminal
 //! the transcript has more.
 
+#[cfg(test)]
+mod tests;
+
 use std::fmt::Write as _;
 
 use tex_state::Universe;
@@ -120,7 +123,11 @@ fn report_one(
         headline.push_str(&short_display(stores, children));
         headline.push('\n');
     }
-    crate::diagnostics::write_terminal_and_log(stores, &headline);
+    // TeX82 §§660/674 use the ordinary `print_ln`/`print_nl` primitives for
+    // the headline and abbreviated hlist. Their live §54 selector is
+    // therefore authoritative: batch mode writes the report to the log only,
+    // while the other interaction modes write it to terminal and log.
+    stores.printer().print(&headline);
 
     // §663/§675: `begin_diagnostic; show_box(r); end_diagnostic(true)`.
     // §198 shows the packed box itself, not its list: at `\showboxdepth`'s
