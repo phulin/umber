@@ -54,6 +54,13 @@ error-context widths, positive guards, authored-root name/kind/bytes, typed
 resources, terminal lines, and command observer are all explicit. The request
 has no `World` field.
 
+The provider's loaded resource host gives job resources precedence, then may
+reopen authenticated recipe resources. This preserves the ordinary format
+boundary where a job can request an input or TFM that was also present during
+construction without making the job duplicate format-owned bytes or weakening
+the recipe identity. In particular, redefining a preloaded font by its original
+name remains deterministic in a fresh `World`.
+
 `prepare` uses `FormatCacheStore::from_environment`, hence the existing native
 Umber platform cache (`$XDG_CACHE_HOME/umber` when set, otherwise the platform
 cache directory, such as `$HOME/.cache/umber` on Linux). This is ignored,

@@ -345,7 +345,7 @@ impl LoadedFormatFixture {
         let checkpoints = GuardCheckpoints::new(guards)?;
         let mut checkpoint_sink = &checkpoints;
         let result = session.run_with_observer(
-            &mut LoadedResourceHost::new(resources),
+            &mut LoadedResourceHost::new(resources, &self.recipe.resources),
             &mut checkpoint_sink,
             observer,
         );
@@ -359,12 +359,19 @@ impl LoadedFormatFixture {
 }
 
 struct LoadedResourceHost<'a> {
-    resources: &'a [LoadedFormatResource],
+    job_resources: &'a [LoadedFormatResource],
+    format_resources: &'a [FormatResource],
 }
 
 impl<'a> LoadedResourceHost<'a> {
-    fn new(resources: &'a [LoadedFormatResource]) -> Self {
-        Self { resources }
+    fn new(
+        job_resources: &'a [LoadedFormatResource],
+        format_resources: &'a [FormatResource],
+    ) -> Self {
+        Self {
+            job_resources,
+            format_resources,
+        }
     }
 }
 
@@ -376,7 +383,7 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
     ) -> CanonicalResourceOutcome {
         match need {
             CanonicalResourceNeed::Input { name } => self
-                .resources
+                .job_resources
                 .iter()
                 .find_map(|resource| match resource {
                     LoadedFormatResource::Input {
@@ -393,9 +400,30 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                     )),
                     _ => None,
                 })
+                .or_else(|| {
+                    self.format_resources
+                        .iter()
+                        .find_map(|resource| match resource {
+                            FormatResource::Input {
+                                logical_name,
+                                source_kind,
+                                bytes,
+                            } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
+                                CanonicalResourceFulfillment::Input {
+                                    name: logical_name.clone(),
+                                    source: SourceRegistration::new(
+                                        *source_kind,
+                                        Arc::clone(bytes),
+                                    )
+                                    .with_name(format!("./{logical_name}")),
+                                },
+                            )),
+                            _ => None,
+                        })
+                })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
             CanonicalResourceNeed::Font { request } => self
-                .resources
+                .job_resources
                 .iter()
                 .find_map(|resource| match resource {
                     LoadedFormatResource::Tfm {
@@ -418,6 +446,32 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         ))
                     }
                     _ => None,
+                })
+                .or_else(|| {
+                    self.format_resources
+                        .iter()
+                        .find_map(|resource| match resource {
+                            FormatResource::Tfm {
+                                logical_name,
+                                bytes,
+                            } if Path::new(logical_name).file_stem()
+                                == Some(std::ffi::OsStr::new(&request.name)) =>
+                            {
+                                let content = world
+                                    .register_selected_file(logical_name, Arc::clone(bytes))
+                                    .ok()?;
+                                Some(CanonicalResourceOutcome::Fulfilled(
+                                    CanonicalResourceFulfillment::Font {
+                                        request: request.clone(),
+                                        resource: Box::new(FontResource::Tfm {
+                                            metrics: content,
+                                            opentype: None,
+                                        }),
+                                    },
+                                ))
+                            }
+                            _ => None,
+                        })
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
             CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,

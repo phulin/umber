@@ -256,6 +256,33 @@ fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
     assert!(!second_observer.0.is_empty());
 }
 
+#[test]
+fn loaded_job_can_reopen_an_authenticated_construction_font() {
+    let cache = TempDir::new().expect("cache");
+    let provider = provider(&cache);
+    let mut recipe = FormatRecipe::raw_tex82();
+    recipe.resources.push(crate::FormatResource::Tfm {
+        logical_name: "cmr10.tfm".into(),
+        bytes: Arc::from(&include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm")[..]),
+    });
+    let fixture = provider
+        .prepare(&recipe)
+        .expect("prepare with font closure");
+    let mut recorder = Recorder::default();
+    let run = provider
+        .run(
+            &fixture,
+            job(
+                b"\\font\\tenrm=cmr10 \\tenrm X\\shipout\\hbox{X}\\end\n",
+                &mut recorder,
+            ),
+        )
+        .expect("loaded job reopens construction font");
+
+    assert!(!run.result.dvi_pages.is_empty());
+    assert!(!run.universe.world().input_records().is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 #[ignore = "subprocess-only helper"]
