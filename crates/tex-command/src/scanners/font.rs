@@ -52,9 +52,24 @@ impl CommandProcessor<'_> {
                 // §577 reports before §327's `back_error` backs up the
                 // rejected command. The fixed diagnostic has no operand.
                 self.observe_error_diagnostic("missing_font_identifier");
+                let deferred = {
+                    let mut report = self.state.print_err("Missing font identifier");
+                    report.help(&[
+                        "I was looking for a control sequence whose",
+                        "current meaning has been defined by \\font.",
+                    ]);
+                    report.defer()
+                };
+                // §577's `back_error` is `back_input; error`: the rejected
+                // command is restored before §82 renders §310's display, so
+                // §314 names it on its own `<to be read again>␣` line.
                 // `scan_font_ident` backs up a non-font command. Its normal
                 // main-control delivery is therefore still command-owned.
                 self.back_input(command)?;
+                let context = self.command.output_open_context(&self.state);
+                let mut report = self.state.resume_error_report(deferred);
+                report.context(context);
+                report.error();
                 Ok(tex_state::font::NULL_FONT)
             }
         }

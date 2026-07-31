@@ -34,24 +34,8 @@
       "channels": {
         "events": 37,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": {
-            "line": 2,
-            "expected": "(./expansion-conversions.tex",
-            "actual": "(./expansion-conversions.tex)"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./expansion-conversions.tex",
-            "actual": "(./expansion-conversions.tex)"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
