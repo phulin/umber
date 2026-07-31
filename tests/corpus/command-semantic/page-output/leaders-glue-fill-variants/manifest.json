@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-glue-fill-variants",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-glue-fill-variants.tex",
       "provenance": {
@@ -28,7 +29,7 @@
         "command:leader_ship:100",
         "command:leader_ship:101",
         "command:leader_ship:102",
-        "artifact:41c9b516894292e82bb256e9271ad5a50c20831a5ab0ad41f2356be358c222ed"
+        "artifact:9e385b8d7e9621dbd95bf318dcf30b630daae2bd06cd5a506b0e8c7ab31f8d21"
       ],
       "channels": {
         "events": 1376,

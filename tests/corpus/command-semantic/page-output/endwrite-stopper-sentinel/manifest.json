@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "endwrite-stopper-sentinel",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.deferred-write-expansion",
       "source": "endwrite-stopper-sentinel.tex",
       "provenance": {

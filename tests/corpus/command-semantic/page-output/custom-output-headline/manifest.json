@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "custom-output-headline",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.output.selection-and-default",
       "source": "custom-output-headline.tex",
       "font_inputs": {
@@ -30,7 +31,7 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:245d5045ea52f9bf47d991e07f25e6d1991b8ed36d46f7ef295dd8bec4b1d09d",
+        "artifact:b129017a0251e3ac7bf39a95072354d945295b2946e9b80772a165eaa359c2df",
         "artifact:135e18ff351e374676ca21dc7ca83dfe03050fd417eef2c810dd4eafabe892e7"
       ],
       "channels": {

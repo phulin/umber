@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "mark-output-headers-multi-page",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.output.fire-up-packaging",
       "source": "mark-output-headers-multi-page.tex",
       "font_inputs": {
@@ -34,7 +35,7 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:cc2ddac0a6c0cf1545f0bbc5b7e4b60cb4f100082bd95149f02d29ef47501ee8",
+        "artifact:5b728518c2818743066fcd2752ffddab1512d2ae2b8ca6a9779f962ca70bff18",
         "artifact:e63e7a54392204a20844134389a294bd839de948eba6b0d6dce13d3a424cccc1",
         "artifact:ca8d411f2d11cb66c1458c44110fdf428fd72936b91bc3aaac4656e20dd4f531",
         "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"

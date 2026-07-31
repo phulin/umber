@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "count-write-and-text",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.deferred-write-expansion",
       "source": "count-write-and-text.tex",
       "font_inputs": {
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:d349b10bd5a0ab95c1fdacb9c2685e9c43db388bdf526367aa1a8fe46de378de"
+        "artifact:0d98c980d2c4196eb02fb8dcdf47194219f36c79d285f625d9f1871535c3e1d1"
       ],
       "channels": {
         "events": 257,

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "page-state-freeze-single-box",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.page.state-and-freeze",
       "source": "page-state-freeze-single-box.tex",
       "font_inputs": {
@@ -28,7 +29,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:8c0670ae6a4148d8b6ac2d823d0dbfc6734f5f59a01f5dcf05b0e9f72963e081"
+        "artifact:f2b4d6a3a2d7fd150fbdc4b22950ff6f44748727e6b91fe24484e717bd223523"
       ],
       "channels": {
         "events": 397,

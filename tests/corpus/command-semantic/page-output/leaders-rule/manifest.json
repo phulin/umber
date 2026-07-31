@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-rule",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-rule.tex",
       "provenance": {
@@ -34,7 +35,7 @@
         "command:leader_ship:100",
         "command:leader_ship:101",
         "command:leader_ship:102",
-        "artifact:3edfed93b9a2de69e3a7147e9e51649929d26368376e7502213f200bc965b60a"
+        "artifact:b5a036deb44e819bca8159d5a5ef22cfa162d2d823601756f2636a219d597288"
       ],
       "channels": {
         "events": 1908,

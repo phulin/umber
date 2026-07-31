@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-negative-kern-degenerate",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-negative-kern-degenerate.tex",
       "provenance": {
@@ -40,7 +41,7 @@
         "command:leader_ship:100",
         "command:leader_ship:100",
         "command:leader_ship:100",
-        "artifact:7fbebb9398c615aa7cb0ce3e25211379a16e09791d18f03e150ecdda1345a5e5"
+        "artifact:e8bfe7f437816179c0565d07fe09678dcbb13d4b2cb3c2b3102ebd6d946bfd58"
       ],
       "channels": {
         "events": 1589,

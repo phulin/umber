@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "single-glyph",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "single-glyph.tex",
       "font_inputs": {
@@ -28,7 +29,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:9d3629876a58031dace171eb1bd766e0c242ef760a544c9e598a5cb6903ce485"
+        "artifact:44f1366006e5e124f10412ac574d281295917428349335e23acb95867f99cc1a"
       ],
       "channels": {
         "events": 121,

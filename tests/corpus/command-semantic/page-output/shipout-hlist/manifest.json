@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "shipout-hlist",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "shipout-hlist.tex",
       "provenance": {
@@ -25,7 +26,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:9e4902630a016fc5bfd5a4def4473e79cfa97a8766cb03f3839cbf1df1d02531"
+        "artifact:7af1b81af73f5d2a35698e9fdd4177eefdbccc1021fd85f0ad460191e23c260d"
       ],
       "channels": {
         "events": 107,

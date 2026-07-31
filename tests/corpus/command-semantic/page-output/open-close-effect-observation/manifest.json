@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "open-close-effect-observation",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.open-write-close-dispatch",
       "source": "open-close-effect-observation.tex",
       "provenance": {

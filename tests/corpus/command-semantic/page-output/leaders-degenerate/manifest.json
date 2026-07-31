@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-degenerate",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-degenerate.tex",
       "provenance": {
@@ -51,7 +52,7 @@
         "command:leader_ship:102",
         "command:leader_ship:102",
         "command:leader_ship:102",
-        "artifact:8b371acd1a6359a60d4ea2b2486221a2afb06fbde83efe8e0089c38b1e8e91ae"
+        "artifact:8cd7111658a967358e41a8d8cd3dc9e00e89b3b5a167b4e4d6b9044e102377e8"
       ],
       "channels": {
         "events": 2988,

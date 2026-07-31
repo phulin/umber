@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "insertion-split-footnote",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.output.insertion-distribution",
       "source": "insertion-split-footnote.tex",
       "font_inputs": {
@@ -29,7 +30,7 @@
       "expected": [
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:7c1e3783aaa7a7607f2620fea7d5f3d5faccb0cbb50e8f3b82d7e21def9e72d3",
+        "artifact:4755908ec6efdf7622690924739994c5e101b57a5923438ce0ddd5c46b1057e8",
         "artifact:329b437e508dbce5854ffb8d4a5665f69794ba2fcf279e7d8cfc9996ead03d3c"
       ],
       "channels": {

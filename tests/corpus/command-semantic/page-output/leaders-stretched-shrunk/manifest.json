@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-stretched-shrunk",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-stretched-shrunk.tex",
       "provenance": {
@@ -31,7 +32,7 @@
         "command:leader_ship:102",
         "command:leader_ship:100",
         "command:leader_ship:102",
-        "artifact:cef0c9402e5d30042dcf61391da88e72c45a5e52ee79716160a18c69cef8b018"
+        "artifact:c1520ebcb3a04ebfffd01eb182c222e85244103e2e670b7ea0d8cf777dda40d0"
       ],
       "channels": {
         "events": 2324,

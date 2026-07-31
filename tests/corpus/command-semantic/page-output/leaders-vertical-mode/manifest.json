@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-vertical-mode",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.vlist-traversal",
       "source": "leaders-vertical-mode.tex",
       "provenance": {
@@ -27,7 +28,7 @@
         "command:leader_ship:101",
         "command:leader_ship:102",
         "command:leader_ship:99",
-        "artifact:31147b714dacdb1e5687770c4630d75436c2eb259684a22ae497dd2f064b7d5c"
+        "artifact:915aa2e1659babc0c4b2097d907f3aefe2efe7b1076e81f77612c0edf17cfeb6"
       ],
       "channels": {
         "events": 1175,

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "setlanguage-replay",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.whatsits.language-state",
       "source": "setlanguage-replay.tex",
       "provenance": {

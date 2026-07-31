@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "page-break-cost-forced",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.page.break-cost-selection",
       "source": "page-break-cost-forced.tex",
       "font_inputs": {
@@ -30,7 +31,7 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:30bb4867ed9118c8521975cf106552fe5a4f00b479197a1513adb20d3b1831f8",
+        "artifact:98a91d1817be1586e40666ed8aa8d9449361a85490d05f24eca5a0c3e49f895f",
         "artifact:97ad124b29a9e2417dc8006d945734ee7a03246f8ecfae6b5d0112578b214eae",
         "artifact:49fd71f35c3f3711f1fb5a133a1923c8f1939d91b3e2d880b11a95ee6cf1e167"
       ],

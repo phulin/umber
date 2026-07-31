@@ -198,6 +198,15 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         })
         .collect();
     assert_eq!(math.len(), 34);
+    let page_output: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (name.starts_with("page-output/")
+                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
+                .then_some(name.as_str())
+        })
+        .collect();
+    assert_eq!(page_output.len(), 30);
     let allowlist = std::fs::read_to_string(
         repository_root().join("tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases"),
     )
@@ -213,9 +222,10 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         .chain(main_control.iter().copied())
         .chain(alignments.iter().copied())
         .chain(math.iter().copied())
+        .chain(page_output.iter().copied())
         .collect();
     assert_eq!(allowlisted, expected_allowlist);
-    assert_eq!(allowlisted.len(), 142);
+    assert_eq!(allowlisted.len(), 172);
     for (name, profile) in EXCLUDED {
         assert_eq!(by_name[*name].profile, *profile, "{name}");
         assert_eq!(
@@ -416,6 +426,66 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
     );
     assert!(
         math_selected
+            .iter()
+            .all(|case| { case.channels.as_ref().expect("validated channels").status == "clean" })
+    );
+
+    let page_output_selected: Vec<_> = page_output.iter().map(|name| by_name[*name]).collect();
+    assert_eq!(
+        page_output_selected
+            .iter()
+            .map(|case| case.inputs.len())
+            .sum::<usize>(),
+        0
+    );
+    assert_eq!(
+        page_output_selected
+            .iter()
+            .map(|case| case.font_inputs.len())
+            .sum::<usize>(),
+        13
+    );
+    assert_eq!(
+        page_output_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::File
+                )
+            })
+            .count(),
+        26
+    );
+    assert_eq!(
+        page_output_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::Empty
+                )
+            })
+            .count(),
+        3
+    );
+    let dvi_xfails: Vec<_> = page_output
+        .iter()
+        .filter(|name| {
+            matches!(
+                by_name[**name]
+                    .channels
+                    .as_ref()
+                    .expect("validated channels")
+                    .dvi,
+                StreamDisposition::Xfail { .. }
+            )
+        })
+        .copied()
+        .collect();
+    assert_eq!(dvi_xfails, ["page-output/special-in-shipped-hbox"]);
+    assert!(
+        page_output_selected
             .iter()
             .all(|case| { case.channels.as_ref().expect("validated channels").status == "clean" })
     );

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-shipout-widths",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-shipout-widths.tex",
       "provenance": {
@@ -29,7 +30,7 @@
         "command:leader_ship:100",
         "command:leader_ship:101",
         "command:leader_ship:102",
-        "artifact:5d31c51a8c0dbe840c8c0f9e28a879e36858ffc6c99e5258a190a5f536f445bb"
+        "artifact:ce35d9e34c80c8d592d26bb0a1765a11cfdbccaffab6bc9b7e7d92226f911d18"
       ],
       "channels": {
         "events": 1041,

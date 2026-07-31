@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "output-default-empty",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.output.selection-and-default",
       "source": "output-default-empty.tex",
       "font_inputs": {
@@ -26,7 +27,7 @@
         "include_artifact_hashes": true
       },
       "expected": [
-        "artifact:7f9c25782d6f7e5aa6e2597f85339c42b677834ea81aa4ea48926acc84e488b7"
+        "artifact:e0481dcb7c69b6986d0216c7733f037b2eddbb8d1154e5fd8165ddaa33825358"
       ],
       "channels": {
         "events": 355,

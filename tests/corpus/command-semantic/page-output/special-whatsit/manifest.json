@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "special-whatsit",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.special-output",
       "source": "special-whatsit.tex",
       "provenance": {

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-write-special-payload",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-write-special-payload.tex",
       "provenance": {
@@ -26,7 +27,7 @@
       "expected": [
         "command:leader_ship:99",
         "command:leader_ship:100",
-        "artifact:b0b73f7933d9f7557c1f63a86bafa5083876a9851cd64b84eb250d4e16127ce7"
+        "artifact:62899d18e6f2c0f6aa603150b7172be7d035cc4d0c8182eed6a1b45c16950556"
       ],
       "channels": {
         "events": 395,

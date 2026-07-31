@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-vertical-fil-rule",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.vlist-traversal",
       "source": "leaders-vertical-fil-rule.tex",
       "provenance": {
@@ -30,7 +31,7 @@
         "command:leader_ship:102",
         "command:leader_ship:100",
         "command:leader_ship:100",
-        "artifact:210fc79ff57c5a87f1584a35ebba1a956596a2b492661d3a80590694a8a56e16"
+        "artifact:e8973a0456f1840d8634a90fccbeb98aa9f95702a53589cd657e966ba2d9185b"
       ],
       "channels": {
         "events": 1371,

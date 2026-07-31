@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-box-variants",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.shipout.hlist-traversal",
       "source": "leaders-box-variants.tex",
       "provenance": {
@@ -32,7 +33,7 @@
         "command:leader_ship:100",
         "command:leader_ship:101",
         "command:leader_ship:102",
-        "artifact:df3b13c7f1ffcfcc007c241c9b5c38adbc0684074bf9bdd2f5bd32471568bf02"
+        "artifact:b9b4cc5b33b0aa7071ef931e168480ce092aa90ddb791c57067933322d13b748"
       ],
       "channels": {
         "events": 2569,

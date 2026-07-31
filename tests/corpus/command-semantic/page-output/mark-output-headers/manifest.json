@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "mark-output-headers",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.output.fire-up-packaging",
       "source": "mark-output-headers.tex",
       "font_inputs": {
@@ -32,7 +33,7 @@
         "command:leader_ship:99",
         "command:leader_ship:99",
         "command:leader_ship:99",
-        "artifact:02b3a3579ab0516939de7fd5bea8ef5a1fc3e2c93ab8467b5096f08e57cd3334",
+        "artifact:1d5be8c8db56e6ea80e8de92a45093824843f0ddd7c53154929ee2977254405e",
         "artifact:5f7da4be6b8c383978affcc478906538eee58895adab74cdba4f6c6f0b58218a",
         "artifact:a379896e7eb1efb788be4272ce0950d7c02c6193690fe14548fbd751bc4dc4db"
       ],

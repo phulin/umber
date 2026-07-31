@@ -191,9 +191,10 @@ dump or load is a hard failure; there is no INITEX fallback. The priming
 transcript and log are construction evidence only and are never copied into a
 case channel.
 
-The allowlist contains exactly 142 loaded jobs: the original 35 scanner,
+The allowlist contains exactly 172 loaded jobs: the original 35 scanner,
 input-expansion, and conditional cases, 55 main-control cases, all 18
-alignment cases, and all 34 math cases. The main-control cohort is every
+alignment cases, all 34 math cases, and all 30 page-output cases. The
+main-control cohort is every
 `main-control/*` fixture except
 `hyphenation-data`, `hyphenation-errors`, and
 `final-cleanup-end-or-dump`. Its job-local contract is one declared input,
@@ -220,6 +221,17 @@ node trees, math events, remaining page effects, and normalized DVI bytes are
 identical. All other event counts, projection entries, statuses, mode
 transitions, fixture effects, resources, terminal lines, and interaction
 declarations remain unchanged.
+
+The page-output cohort contributes 13 job-local TFM resources, 30 clean jobs,
+three empty DVI channels, 26 file DVI channels, and
+`special-in-shipped-hbox`'s existing pinned DVI xfail. Genuine loaded
+execution changes its 30 terminal and 30 normalized-log banners and 25
+first-page artifact hashes. Those hashes include the job-opening terminal and
+log effects committed before the first shipout: geometry, fonts, counts,
+complete node trees, subsequent-page hashes, normalized DVI, fixture effects,
+resources, events, projections other than those hashes, statuses, and mode
+transitions remain unchanged. The xfail's expected DVI, bug, and mismatch
+fingerprint remain byte-identical.
 
 Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
 with its `source`, any `inputs` files (written as the manifest's exact

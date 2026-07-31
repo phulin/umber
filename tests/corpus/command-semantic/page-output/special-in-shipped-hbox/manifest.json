@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "special-in-shipped-hbox",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.special-output",
       "source": "special-in-shipped-hbox.tex",
       "font_inputs": {
@@ -26,7 +27,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:58fbb52a89457fe20595b3a141a5f88d80a3db9788f1d8ec9c0fd74dd9ab3ee6"
+        "artifact:b5b08fa35bb8d27af274ead02c58dfbbac8391d80afd720edc6c3c4b0980c0f4"
       ],
       "channels": {
         "events": 180,

@@ -5,6 +5,7 @@
   "cases": [
     {
       "id": "leaders-suppress-numbered-stream-effects",
+      "profile": "raw-tex82-loaded",
       "property_id": "tex82.effects.open-write-close-dispatch",
       "source": "leaders-suppress-numbered-stream-effects.tex",
       "provenance": {
