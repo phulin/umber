@@ -402,6 +402,34 @@ fn representative_command_semantic_case_runs_loaded() {
 }
 
 #[test]
+fn loaded_driver_configuration_is_job_local() {
+    let cache_root = TempDir::new().expect("cache");
+    let fixture = ensure_format(
+        &FormatCacheStore::new(cache_root.path()),
+        &FormatRecipe::raw_tex82(),
+    )
+    .expect("raw format");
+    let widths = tex_state::print::ErrorContextWidths::new(64, 32).expect("valid widths");
+    let mut loaded = fixture.load(test_world()).expect("load");
+    loaded.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    loaded.set_error_context_widths(widths);
+    let mut observations = Recorder::default();
+    let run = loaded
+        .run(
+            "configured.tex",
+            Arc::from(&b"\\end\n"[..]),
+            &[],
+            &mut observations,
+        )
+        .expect("configured loaded run");
+    assert_eq!(
+        run.universe.interaction_mode(),
+        tex_state::InteractionMode::Nonstop
+    );
+    assert!(!run.result.dumped_format);
+}
+
+#[test]
 fn explicit_fresh_seam_matches_loaded_semantic_state() {
     let source = Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]);
     let recipe = FormatRecipe::raw_tex82();

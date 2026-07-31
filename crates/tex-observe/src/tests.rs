@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn detached_evidence_uses_the_pinned_header_and_rejects_schema_confusion() {
+    let oracle = b"{\"schema\":1,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let encoded = canonical_evidence_json_lines(&[], oracle, SchemaVersion::V1)
+        .expect("empty detached stream");
+    assert_eq!(encoded, oracle);
+    assert!(canonical_evidence_json_lines(&[], oracle, SchemaVersion::V2).is_err());
+}
+
+#[test]
 fn detached_evidence_codec_round_trips_and_rejects_sequence_and_stream_confusion() {
     let mut semantic = Normalizer::new();
     let mut geometry = Normalizer::new();

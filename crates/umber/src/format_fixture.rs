@@ -88,6 +88,10 @@ pub struct FormatRecipe {
     pub resources: Vec<FormatResource>,
     pub distribution_identity: Arc<[u8]>,
     pub clock: JobClock,
+    /// Driver-selected interaction for the construction episode.
+    pub construction_interaction: tex_state::InteractionMode,
+    /// Driver-selected TeX82 §79 diagnostic widths for construction.
+    pub construction_error_context_widths: tex_state::print::ErrorContextWidths,
     pub guards: FormatGenerationGuards,
 }
 
@@ -109,6 +113,8 @@ impl FormatRecipe {
                 month: 3,
                 year: 2026,
             },
+            construction_interaction: tex_state::InteractionMode::ErrorStop,
+            construction_error_context_widths: tex_state::print::ErrorContextWidths::default(),
             guards: FormatGenerationGuards {
                 command_fuel: 100_000,
                 wall_time: Duration::from_secs(10),
@@ -134,6 +140,8 @@ impl FormatRecipe {
                 month: 3,
                 year: 2026,
             },
+            construction_interaction: tex_state::InteractionMode::ErrorStop,
+            construction_error_context_widths: tex_state::print::ErrorContextWidths::default(),
             guards: FormatGenerationGuards {
                 command_fuel: 100_000,
                 wall_time: Duration::from_secs(10),
@@ -162,6 +170,8 @@ impl FormatRecipe {
                 month: 3,
                 year: 2026,
             },
+            construction_interaction: tex_state::InteractionMode::ErrorStop,
+            construction_error_context_widths: tex_state::print::ErrorContextWidths::default(),
             guards: FormatGenerationGuards {
                 command_fuel: 100_000,
                 wall_time: Duration::from_secs(10),
@@ -188,6 +198,9 @@ impl FormatRecipe {
             &(tex_observe::MAX_EVIDENCE_STRING_BYTES as u64).to_le_bytes(),
             &(tex_observe::MAX_EVIDENCE_NESTING_DEPTH as u64).to_le_bytes(),
             &(tex_observe::MAX_EVIDENCE_BYTES as u64).to_le_bytes(),
+            &[interaction_tag(self.construction_interaction)],
+            &(self.construction_error_context_widths.error_line() as u64).to_le_bytes(),
+            &(self.construction_error_context_widths.half_error_line() as u64).to_le_bytes(),
         ]);
         let source = framed_hash(&[
             self.construction_source_name.as_bytes(),
@@ -273,6 +286,14 @@ impl LoadedFormatFixture {
         self.universe.set_interaction_mode(mode);
     }
 
+    /// Selects the job-local TeX error-context widths after format loading.
+    ///
+    /// These widths are process/driver configuration and are deliberately
+    /// excluded from the immutable format image.
+    pub fn set_error_context_widths(&mut self, widths: tex_state::print::ErrorContextWidths) {
+        self.universe.set_error_context_widths(widths);
+    }
+
     pub fn run(
         mut self,
         source_name: &str,
@@ -289,7 +310,7 @@ impl LoadedFormatFixture {
             day: self.recipe.clock.day,
         });
         session.set_fuel_limit(self.recipe.guards.command_fuel)?;
-        session.register_retained_root(
+        let root_source = session.register_retained_root(
             source_name,
             tex_command::SourceRegistration::new(RegisteredSourceKind::Generated, source)
                 .with_name(format!("./{source_name}")),
@@ -305,6 +326,7 @@ impl LoadedFormatFixture {
         Ok(LoadedFormatRun {
             result,
             universe: self.universe,
+            root_source,
         })
     }
 }
@@ -379,6 +401,8 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
 pub struct LoadedFormatRun {
     pub result: RunResult,
     pub universe: Universe,
+    /// Provenance identity assigned to this job's retained root source.
+    pub root_source: tex_state::SourceId,
 }
 
 /// Ensures one recipe image exists in the validated content-addressed cache.
@@ -416,6 +440,8 @@ pub(crate) fn construct_format_in_worker(
     recipe.guards.validate()?;
     let mut universe = Universe::with_world(World::memory_with_clock(recipe.clock));
     recipe.engine.prepare_initex(&mut universe);
+    universe.set_interaction_mode(recipe.construction_interaction);
+    universe.set_error_context_widths(recipe.construction_error_context_widths);
     let mut session =
         CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session.set_fuel_limit(recipe.guards.command_fuel)?;
@@ -432,7 +458,6 @@ pub(crate) fn construct_format_in_worker(
             bytes: Arc::clone(&recipe.construction_source),
         },
     );
-    observer.record_source_open("terminal", &recipe.construction_source_name, root);
     let guards = GuardCheckpoints::new(recipe.guards)?;
     let mut checkpoints = &guards;
     let result = session.run_with_observer(
@@ -639,6 +664,15 @@ const fn source_kind_tag(kind: RegisteredSourceKind) -> u8 {
         RegisteredSourceKind::Generated => 2,
         RegisteredSourceKind::EditorFragment => 3,
         RegisteredSourceKind::ReadLine => 4,
+    }
+}
+
+const fn interaction_tag(mode: tex_state::InteractionMode) -> u8 {
+    match mode {
+        tex_state::InteractionMode::Batch => 0,
+        tex_state::InteractionMode::Nonstop => 1,
+        tex_state::InteractionMode::Scroll => 2,
+        tex_state::InteractionMode::ErrorStop => 3,
     }
 }
 

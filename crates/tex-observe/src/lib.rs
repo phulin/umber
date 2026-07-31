@@ -57,6 +57,43 @@ pub struct DetachedEvidence {
     pub geometry: Vec<NormalizedEvent>,
 }
 
+/// Encodes already-normalized detached evidence beneath a pinned oracle
+/// stream's exact header.
+///
+/// Construction evidence has no engine- or fixture-owned transport header of
+/// its own. Reusing the independently pinned oracle header binds the portable
+/// values to the comparison profile without reimplementing canonical JSONL in
+/// a host harness.
+pub fn canonical_evidence_json_lines(
+    events: &[NormalizedEvent],
+    oracle: &[u8],
+    schema: SchemaVersion,
+) -> Result<Vec<u8>, String> {
+    let oracle = ObservationStream::from_canonical_json_lines(oracle)
+        .map_err(|error| format!("pinned oracle stream is invalid: {error}"))?;
+    if oracle.header.schema != schema.number() {
+        return Err(format!(
+            "pinned oracle schema {} does not match requested schema {}",
+            oracle.header.schema,
+            schema.number()
+        ));
+    }
+    let mut bytes = serde_json::to_vec(&oracle.header).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    for (sequence, event) in events.iter().enumerate() {
+        if event.sequence != sequence as u64 {
+            return Err(format!(
+                "detached evidence sequence {} is not expected sequence {sequence}",
+                event.sequence
+            ));
+        }
+        bytes.extend_from_slice(&serde_json::to_vec(event).map_err(|error| error.to_string())?);
+        bytes.push(b'\n');
+    }
+    ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
+    Ok(bytes)
+}
+
 /// Versioned hard limits for detached construction-evidence transport.
 pub const EVIDENCE_CODEC_SCHEMA: u32 = 1;
 pub const MAX_EVIDENCE_EVENTS_PER_STREAM: usize = 1_000_000;

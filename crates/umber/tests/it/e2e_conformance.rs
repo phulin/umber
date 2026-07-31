@@ -3,6 +3,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use parity_harness::run_named_fixture_document;
 use parity_harness::{
@@ -11,8 +12,7 @@ use parity_harness::{
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_command::CommandObserver;
-use tex_command::FontResource;
+use tex_command::{CommandObserver, FontResource, RegisteredSourceKind};
 use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink, EngineBoundary, EngineCheckpoint};
 use tex_oracle::{ObservationStream, SchemaVersion};
@@ -24,8 +24,10 @@ use tex_state::{JobClock, Universe, World};
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
     CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode,
-    dvi_from_page_plans,
+    FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource,
+    dvi_from_page_plans, ensure_format,
 };
+use umber_fetch::FormatCacheStore;
 
 #[path = "e2e_conformance/assets.rs"]
 mod assets;
@@ -49,20 +51,54 @@ fn target_dir(repo_root: &Path) -> PathBuf {
 
 struct InProcessRun {
     dvi: Option<Vec<u8>>,
-    format: Option<Vec<u8>>,
     provenance: ProvenanceStats,
     macro_provenance: MacroInvocationProvenanceStats,
     terminal: Vec<u8>,
     log: Vec<u8>,
-    capture: LiveCapture,
+    capture: PhaseCapture,
+}
+
+enum PhaseCapture {
+    Live(LiveCapture),
+    Detached(tex_observe::DetachedEvidence),
+}
+
+impl PhaseCapture {
+    fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
+        match self {
+            Self::Live(capture) => capture.streams(oracle),
+            Self::Detached(evidence) => {
+                let diagnostic = tex_observe::canonical_evidence_json_lines(
+                    &evidence.semantic,
+                    oracle,
+                    SchemaVersion::V1,
+                )
+                .expect("construction semantic evidence encodes under oracle header");
+                tex_command_stream::LiveSessionStreams {
+                    diagnostic: diagnostic.clone(),
+                    stable: diagnostic,
+                }
+            }
+        }
+    }
+
+    fn geometry(&self, oracle: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Live(capture) => capture.geometry(oracle),
+            Self::Detached(evidence) => tex_observe::canonical_evidence_json_lines(
+                &evidence.geometry,
+                oracle,
+                SchemaVersion::V2,
+            )
+            .expect("construction geometry evidence encodes under oracle header"),
+        }
+    }
 }
 
 struct LiveCapture {
     root: LiveSource,
     observations: Vec<tex_command::CommandObservation>,
     outcome: LiveSessionOutcome,
-    terminal: Vec<u8>,
-    log: Vec<u8>,
 }
 
 fn command_stream_for_fixture_phase(
@@ -294,7 +330,6 @@ fn run_file_in_process_captured(
         Ok(run) => run,
         Err(error) => {
             let message = canonical_error_message(&session, &error);
-            let (terminal, log) = transcript_channels(session.stores().world().effect_records());
             *failure = Some(LiveCapture {
                 root: LiveSource {
                     name: canonical_source_name.to_owned(),
@@ -306,8 +341,6 @@ fn run_file_in_process_captured(
                     diagnostic: "canonical_session_error".into(),
                     detail: message.clone(),
                 },
-                terminal,
-                log,
             });
             return Err(message);
         }
@@ -343,12 +376,11 @@ fn run_file_in_process_captured(
     let (terminal, log) = transcript_channels(stores.world().effect_records());
     Ok(InProcessRun {
         dvi,
-        format,
         provenance,
         macro_provenance,
         terminal: terminal.clone(),
         log: log.clone(),
-        capture: LiveCapture {
+        capture: PhaseCapture::Live(LiveCapture {
             root: LiveSource {
                 name: canonical_source_name.to_owned(),
                 source: root_source,
@@ -356,9 +388,7 @@ fn run_file_in_process_captured(
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
-            terminal: terminal.clone(),
-            log: log.clone(),
-        },
+        }),
     })
 }
 
@@ -1003,84 +1033,6 @@ fn format_image_contract_excludes_runtime_state_and_rebuilds_registry() {
     assert_format_image_contract(&format, EngineMode::Tex82);
 }
 
-#[allow(clippy::disallowed_methods)] // Host-side oracle and triage artifact boundary.
-fn compare_trip_failure(
-    root: &Path,
-    fixture_name: &str,
-    phase: &str,
-    capture: &LiveCapture,
-    error: &str,
-) {
-    let oracle_root = target_dir(root).join("trip-oracles").join(fixture_name);
-    let expected_command =
-        fs::read(oracle_root.join(format!("{phase}-command.jsonl"))).expect("command oracle");
-    let expected_geometry =
-        fs::read(oracle_root.join(format!("{phase}-geometry.jsonl"))).expect("geometry oracle");
-    let actual_command = capture.streams(&expected_command).diagnostic;
-    let mut geometry = parity_harness::TripGeometryObserver::default();
-    for observation in capture.observations.iter().cloned() {
-        geometry.committed(observation);
-    }
-    let actual_geometry = (geometry.event_count() != 0).then(|| {
-        geometry
-            .canonical_json_lines(&expected_geometry)
-            .expect("geometry")
-    });
-    let expected_terminal =
-        fs::read(oracle_root.join(format!("{phase}-terminal.txt"))).expect("terminal oracle");
-    let expected_log = fs::read(oracle_root.join(format!("{phase}.log"))).expect("log oracle");
-    let artifact_root = target_dir(root)
-        .join("conformance-artifacts")
-        .join(fixture_name);
-    fs::create_dir_all(&artifact_root).expect("create event artifact directory");
-    fs::write(
-        artifact_root.join(format!("{phase}-command.jsonl")),
-        &actual_command,
-    )
-    .expect("write failed command stream");
-    if let Some(geometry) = &actual_geometry {
-        fs::write(
-            artifact_root.join(format!("{phase}-geometry.jsonl")),
-            geometry,
-        )
-        .expect("write failed geometry stream");
-    }
-    let label = format!("{fixture_name}-{phase}");
-    let identity = format!("failed:sha256:{:x}", Sha256::digest(error.as_bytes()));
-    write_trip_triage_artifact(
-        &target_dir(root).join("conformance-triage"),
-        TripTriageInput {
-            label: &label,
-            phase,
-            expected_source: TripTriageSource {
-                name: &format!("target/trip-oracles/{fixture_name}/{phase}"),
-                identity: "pinned-reference",
-            },
-            actual_source: TripTriageSource {
-                name: "umber failed canonical run",
-                identity: &identity,
-            },
-            expected: TripTriageChannels {
-                initialization_events: None,
-                command_events: Some(&expected_command),
-                geometry_events: Some(&expected_geometry),
-                transcript: &expected_terminal,
-                log: &expected_log,
-                dvi: None,
-            },
-            actual: TripTriageChannels {
-                initialization_events: None,
-                command_events: Some(&actual_command),
-                geometry_events: actual_geometry.as_deref(),
-                transcript: &capture.terminal,
-                log: &capture.log,
-                dvi: None,
-            },
-        },
-    )
-    .expect("write failed-run triage");
-}
-
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
 fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: &GateAssets) {
     let root = &gate.repo_root;
@@ -1088,7 +1040,6 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     let fixture = &gate.oracle;
     let source = root.join("third_party/trip").join(source_name);
 
-    let temp = tempfile::tempdir().expect("create two-phase conformance directory");
     let source_bytes = fs::read(&source).expect("read conformance source");
     let source_bytes = if etex {
         let source = String::from_utf8(source_bytes).expect("e-TRIP source is UTF-8");
@@ -1101,53 +1052,74 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
         source_bytes
     };
     let source_identity = ManifestBoundSource::new(source_name, local_name, &source_bytes);
-    let input = temp.path().join(source_identity.staged_name());
-    fs::write(&input, source_bytes).expect("stage conformance source");
-    fs::copy(
-        root.join("third_party/trip/trip.tfm"),
-        temp.path().join(format!("{fixture_name}.tfm")),
-    )
-    .expect("stage conformance TFM");
-    fs::copy(
-        root.join("third_party/trip/tripos.tex"),
-        temp.path().join("tripos.tex"),
-    )
-    .expect("stage shared TRIP input");
-
-    let engine = if etex {
-        EngineMode::ETex
+    let source_bytes: Arc<[u8]> = Arc::from(source_bytes);
+    let tripos: Arc<[u8]> = Arc::from(
+        fs::read(root.join("third_party/trip/tripos.tex")).expect("read shared TRIP input"),
+    );
+    let tfm: Arc<[u8]> =
+        Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).expect("read conformance TFM"));
+    let mut recipe = if etex {
+        FormatRecipe::raw_etex26()
     } else {
-        EngineMode::Tex82
+        FormatRecipe::raw_tex82()
     };
-    let mut failure = None;
-    let mut initial = run_file_in_process_captured(
-        &input,
-        source_identity.canonical_name(),
-        None,
-        engine,
-        &mut failure,
-    )
-    .unwrap_or_else(|error| {
-        compare_trip_failure(
-            root,
-            fixture_name,
-            "initex",
-            failure.as_ref().expect("failed capture"),
-            &error,
-        );
-        panic!("{fixture_name} format creation failed: {error}")
-    });
-    let format = initial.format.clone();
-    let initex_identity = format
-        .as_deref()
-        .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
-        .unwrap_or_else(|| "absent".to_owned());
-    if format.is_none() {
-        initial.capture.outcome = LiveSessionOutcome::Failed {
-            diagnostic: "missing_format_dump".into(),
-            detail: format!("{fixture_name} did not dump a format"),
-        };
-    }
+    let engine = recipe.engine;
+    recipe.format_name = if etex {
+        "umber-etex26-extended-oracle-clean".into()
+    } else {
+        "umber-tex82-oracle".into()
+    };
+    recipe.construction_source_name = source_identity.canonical_name().to_owned();
+    recipe.construction_source = Arc::clone(&source_bytes);
+    recipe.resources = vec![
+        FormatResource::Input {
+            logical_name: "tripos.tex".into(),
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: Arc::clone(&tripos),
+        },
+        FormatResource::Tfm {
+            logical_name: format!("{fixture_name}.tfm"),
+            bytes: Arc::clone(&tfm),
+        },
+    ];
+    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v1"[..]);
+    recipe.clock = JobClock {
+        time: 13 * 60 + 36,
+        second: 0,
+        day: 9,
+        month: 7,
+        year: 2026,
+    };
+    recipe.construction_interaction = tex_state::InteractionMode::Nonstop;
+    recipe.construction_error_context_widths =
+        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths");
+    recipe.guards = FormatGenerationGuards {
+        command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+        wall_time: Duration::from_secs(1_800),
+        resident_bytes: 6 * 1024 * 1024 * 1024,
+    };
+    let cache_root = tempfile::tempdir().expect("create authenticated format cache");
+    let cache = FormatCacheStore::new(cache_root.path());
+    let first = ensure_format(&cache, &recipe, &super::umber_format_worker_launcher())
+        .unwrap_or_else(|error| panic!("{fixture_name} format creation failed: {error}"));
+    let second = ensure_format(&cache, &recipe, &super::umber_format_worker_launcher())
+        .unwrap_or_else(|error| panic!("{fixture_name} format cache hit failed: {error}"));
+    assert_eq!(first.image(), second.image(), "cache hit image changed");
+    assert_eq!(
+        first.construction_evidence(),
+        second.construction_evidence(),
+        "cache hit construction evidence changed"
+    );
+    let format = second.image().to_vec();
+    let initex_identity = format!("sha256:{:x}", Sha256::digest(&format));
+    let initial = InProcessRun {
+        dvi: None,
+        provenance: ProvenanceStats::default(),
+        macro_provenance: MacroInvocationProvenanceStats::default(),
+        terminal: Vec::new(),
+        log: Vec::new(),
+        capture: PhaseCapture::Detached(second.construction_evidence().clone()),
+    };
     compare_trip_phase(
         root,
         fixture_name,
@@ -1160,26 +1132,67 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
             contract: PhaseParityContract::DumpConstruction,
         },
     );
-    let format = format.unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
     assert_format_image_contract(&format, engine);
-    let mut failure = None;
-    let loaded = run_file_in_process_captured(
-        &input,
-        source_identity.canonical_name(),
-        Some(&format),
-        engine,
-        &mut failure,
-    )
-    .unwrap_or_else(|error| {
-        compare_trip_failure(
-            root,
-            fixture_name,
-            "format-loaded",
-            failure.as_ref().expect("failed capture"),
-            &error,
-        );
-        panic!("{fixture_name} format-loaded run failed: {error}")
-    });
+    let mut loaded_fixture = second
+        .load(World::memory_with_clock(recipe.clock))
+        .expect("load authenticated format into a fresh job world");
+    loaded_fixture.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    loaded_fixture.set_error_context_widths(
+        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths"),
+    );
+    let resources = vec![
+        LoadedFormatResource::Input {
+            logical_name: "tripos.tex".into(),
+            resolved_name: "./tripos.tex".into(),
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: tripos,
+        },
+        LoadedFormatResource::Tfm {
+            logical_name: format!("{fixture_name}.tfm"),
+            bytes: tfm,
+        },
+    ];
+    let mut observers = TripObservers::default();
+    let loaded_run = loaded_fixture
+        .run(
+            source_identity.canonical_name(),
+            Arc::clone(&source_bytes),
+            &resources,
+            &mut observers,
+        )
+        .unwrap_or_else(|error| panic!("{fixture_name} format-loaded run failed: {error}"));
+    let dvi = (!loaded_run.result.dvi_pages.is_empty())
+        .then(|| dvi_from_page_plans(&loaded_run.result.dvi_pages))
+        .transpose()
+        .expect("serialize loaded DVI");
+    let (terminal, log) = transcript_channels(&loaded_run.result.effects);
+    assert!(
+        !terminal
+            .windows(b"Beginning to dump on file".len())
+            .any(|window| window == b"Beginning to dump on file")
+            && !log
+                .windows(b"Beginning to dump on file".len())
+                .any(|window| window == b"Beginning to dump on file"),
+        "construction-only dump diagnostics entered loaded output"
+    );
+    let loaded = InProcessRun {
+        dvi,
+        provenance: loaded_run.universe.provenance_stats(),
+        macro_provenance: loaded_run.universe.macro_invocation_provenance_stats(),
+        terminal: terminal.clone(),
+        log: log.clone(),
+        capture: PhaseCapture::Live(LiveCapture {
+            root: LiveSource {
+                name: source_identity.canonical_name().to_owned(),
+                source: loaded_run.root_source,
+                bytes: source_bytes,
+            },
+            observations: observers.into_captured(),
+            outcome: LiveSessionOutcome::Completed,
+            terminal,
+            log,
+        }),
+    };
     let dvi = loaded
         .dvi
         .clone()

@@ -29,6 +29,7 @@ The cache key is a canonical, domain-separated encoding of:
 - ordered construction sources and typed resources, including logical names,
   kinds, byte lengths, and SHA-256 hashes;
 - distribution identity and fixed TeX job clock;
+- construction interaction mode and TeX82 error-context widths;
 - cumulative command fuel, wall-time, and resident-set limits; and
 - producer-derived build configuration.
 

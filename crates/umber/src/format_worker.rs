@@ -60,6 +60,8 @@ struct Request {
     resources: Vec<Resource>,
     distribution: Vec<u8>,
     clock: [i32; 5],
+    construction_interaction: u8,
+    construction_error_context_widths: [u64; 2],
     fuel: u64,
     wall_ns: u64,
     resident_bytes: u64,
@@ -848,6 +850,11 @@ impl Request {
                 recipe.clock.month,
                 recipe.clock.year,
             ],
+            construction_interaction: interaction_tag(recipe.construction_interaction),
+            construction_error_context_widths: [
+                recipe.construction_error_context_widths.error_line() as u64,
+                recipe.construction_error_context_widths.half_error_line() as u64,
+            ],
             fuel: recipe.guards.command_fuel,
             wall_ns: recipe
                 .guards
@@ -878,6 +885,16 @@ impl Request {
                 month: self.clock[3],
                 year: self.clock[4],
             },
+            construction_interaction: decode_interaction(self.construction_interaction)?,
+            construction_error_context_widths: tex_state::print::ErrorContextWidths::new(
+                self.construction_error_context_widths[0]
+                    .try_into()
+                    .map_err(|_| "construction error-line width is not host-representable")?,
+                self.construction_error_context_widths[1]
+                    .try_into()
+                    .map_err(|_| "construction half-error-line width is not host-representable")?,
+            )
+            .ok_or_else(|| "invalid construction error-context widths".to_owned())?,
             guards: FormatGenerationGuards {
                 command_fuel: self.fuel,
                 wall_time: Duration::from_nanos(self.wall_ns),
@@ -1008,6 +1025,23 @@ fn decode_engine(tag: u8) -> Result<EngineMode, String> {
         4 => Ok(EngineMode::Latex),
         5 => Ok(EngineMode::PdfLatex),
         _ => Err("invalid engine tag".into()),
+    }
+}
+const fn interaction_tag(mode: tex_state::InteractionMode) -> u8 {
+    match mode {
+        tex_state::InteractionMode::Batch => 0,
+        tex_state::InteractionMode::Nonstop => 1,
+        tex_state::InteractionMode::Scroll => 2,
+        tex_state::InteractionMode::ErrorStop => 3,
+    }
+}
+fn decode_interaction(tag: u8) -> Result<tex_state::InteractionMode, String> {
+    match tag {
+        0 => Ok(tex_state::InteractionMode::Batch),
+        1 => Ok(tex_state::InteractionMode::Nonstop),
+        2 => Ok(tex_state::InteractionMode::Scroll),
+        3 => Ok(tex_state::InteractionMode::ErrorStop),
+        _ => Err("invalid construction interaction tag".into()),
     }
 }
 const fn source_kind_tag(kind: RegisteredSourceKind) -> u8 {
