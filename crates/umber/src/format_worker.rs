@@ -147,6 +147,46 @@ struct CollectedWorkerOutput {
 }
 
 #[cfg(target_os = "linux")]
+enum SupervisionAction {
+    Complete(Result<CollectedWorkerOutput, FormatFixtureError>),
+    WallTimeExceeded,
+    CheckResidentSet,
+    WaitForPipes,
+}
+
+#[cfg(target_os = "linux")]
+fn decide_supervision_action(
+    status: Option<std::process::ExitStatus>,
+    stdout: &mut Option<Vec<u8>>,
+    stderr: &mut Option<Vec<u8>>,
+    wall_time_exceeded: bool,
+) -> SupervisionAction {
+    if let Some(observed) = status
+        && stdout.is_some()
+        && stderr.is_some()
+    {
+        let stdout = stdout.take().expect("checked resolved stdout");
+        let stderr = stderr.take().expect("checked resolved stderr");
+        return SupervisionAction::Complete(if observed.success() {
+            Ok(CollectedWorkerOutput { stdout, stderr })
+        } else {
+            Err(FormatFixtureError::WorkerCrashed(
+                observed.code(),
+                String::from_utf8_lossy(&stderr).into_owned(),
+            ))
+        });
+    }
+    if wall_time_exceeded {
+        return SupervisionAction::WallTimeExceeded;
+    }
+    if status.is_some() {
+        SupervisionAction::WaitForPipes
+    } else {
+        SupervisionAction::CheckResidentSet
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn read_bounded(
     mut input: impl Read,
     limit: usize,
@@ -216,22 +256,18 @@ fn supervise_and_collect(
                 }
             }
         }
-        if started.elapsed() > guards.wall_time {
-            terminate(child);
-            break Err(FormatFixtureError::WallTimeExceeded);
-        }
-        if let Some(observed) = status {
-            if let (Some(stdout), Some(stderr)) = (stdout.take(), stderr.take()) {
-                if observed.success() {
-                    break Ok(CollectedWorkerOutput { stdout, stderr });
-                }
-                break Err(FormatFixtureError::WorkerCrashed(
-                    observed.code(),
-                    String::from_utf8_lossy(&stderr).into_owned(),
-                ));
+        match decide_supervision_action(
+            status,
+            &mut stdout,
+            &mut stderr,
+            started.elapsed() > guards.wall_time,
+        ) {
+            SupervisionAction::Complete(completed) => break completed,
+            SupervisionAction::WallTimeExceeded => {
+                terminate(child);
+                break Err(FormatFixtureError::WallTimeExceeded);
             }
-        } else {
-            match worker_rss(child.id()) {
+            SupervisionAction::CheckResidentSet => match worker_rss(child.id()) {
                 Ok(rss) if rss > guards.resident_bytes => {
                     terminate(child);
                     break Err(FormatFixtureError::ResidentSetExceeded);
@@ -241,7 +277,8 @@ fn supervise_and_collect(
                     terminate(child);
                     break Err(error);
                 }
-            }
+            },
+            SupervisionAction::WaitForPipes => {}
         }
         std::thread::sleep(Duration::from_millis(2));
     };
@@ -467,6 +504,58 @@ fn decode_source_kind(tag: u8) -> Result<RegisteredSourceKind, String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn completed_exit_and_drains_resolve_before_expired_wall_time() {
+        let success = std::process::ExitStatus::from_raw(0);
+        let mut stdout = Some(b"response".to_vec());
+        let mut stderr = Some(Vec::new());
+        assert!(matches!(
+            decide_supervision_action(Some(success), &mut stdout, &mut stderr, true),
+            SupervisionAction::Complete(Ok(CollectedWorkerOutput {
+                stdout: response,
+                ..
+            })) if response == b"response"
+        ));
+
+        let crash = std::process::ExitStatus::from_raw(9 << 8);
+        let mut stdout = Some(Vec::new());
+        let mut stderr = Some(b"diagnostic".to_vec());
+        assert!(matches!(
+            decide_supervision_action(Some(crash), &mut stdout, &mut stderr, true),
+            SupervisionAction::Complete(Err(FormatFixtureError::WorkerCrashed(
+                Some(9),
+                diagnostic
+            ))) if diagnostic == "diagnostic"
+        ));
+    }
+
+    #[test]
+    fn expired_wall_time_still_bounds_open_pipes_and_live_children() {
+        let success = std::process::ExitStatus::from_raw(0);
+        let mut stdout = Some(Vec::new());
+        let mut open_stderr = None;
+        assert!(matches!(
+            decide_supervision_action(Some(success), &mut stdout, &mut open_stderr, false),
+            SupervisionAction::WaitForPipes
+        ));
+        assert!(matches!(
+            decide_supervision_action(Some(success), &mut stdout, &mut open_stderr, true),
+            SupervisionAction::WallTimeExceeded
+        ));
+
+        let mut open_stdout = None;
+        let mut open_stderr = None;
+        assert!(matches!(
+            decide_supervision_action(None, &mut open_stdout, &mut open_stderr, false),
+            SupervisionAction::CheckResidentSet
+        ));
+        assert!(matches!(
+            decide_supervision_action(None, &mut open_stdout, &mut open_stderr, true),
+            SupervisionAction::WallTimeExceeded
+        ));
+    }
 
     fn helper(script: &str) -> Child {
         Command::new("/bin/sh")
