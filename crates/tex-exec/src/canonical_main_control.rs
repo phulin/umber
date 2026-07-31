@@ -113,7 +113,7 @@ pub struct CanonicalMainControl {
     /// Most jobs use the command profile's dialect. Reference-backed jobs may
     /// deliberately exercise an older semantic profile in a newer engine
     /// binary, so backend banner identity is an independent typed fact.
-    framing_dialect: Option<tex_command::CommandDialect>,
+    engine_binary: Option<crate::job::EngineBinaryIdentity>,
     /// True after TeX82 §1335 has successfully completed an INITEX `\dump`.
     ///
     /// This is a committed termination receipt for the host boundary; it is
@@ -640,9 +640,15 @@ impl CanonicalMainControl {
     /// banner and `**` line precede the root file's own `(`. See
     /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
-        let dialect = self
-            .framing_dialect
-            .unwrap_or_else(|| self.command_profile().dialect());
+        let binary = self
+            .engine_binary
+            .unwrap_or_else(|| match self.command_profile().dialect() {
+                tex_command::CommandDialect::Tex82 => crate::job::EngineBinaryIdentity::Tex82,
+                tex_command::CommandDialect::Etex26 => crate::job::EngineBinaryIdentity::Etex26,
+                tex_command::CommandDialect::Pdftex14027 => {
+                    crate::job::EngineBinaryIdentity::Pdftex14027
+                }
+            });
         let etex = self.command_profile() == CommandProfile::ETEX26;
         // §534's `**` line is exactly what §313 pseudoprints for the base
         // terminal level; a driver that frames the job here rather than
@@ -655,7 +661,7 @@ impl CanonicalMainControl {
             self.initex,
             self.preloaded_format.as_ref(),
             crate::job::JobEngineFraming {
-                dialect,
+                binary,
                 extended_mode: etex,
             },
             first_line,
@@ -681,8 +687,8 @@ impl CanonicalMainControl {
     }
 
     /// Selects the engine binary identity used by startup framing.
-    pub fn set_framing_dialect(&mut self, dialect: tex_command::CommandDialect) {
-        self.framing_dialect = Some(dialect);
+    pub fn set_engine_binary(&mut self, binary: crate::job::EngineBinaryIdentity) {
+        self.engine_binary = Some(binary);
     }
 
     /// tex.web §1333 `close_files_and_terminate`'s prints: §642's DVI page

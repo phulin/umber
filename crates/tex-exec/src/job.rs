@@ -29,7 +29,7 @@
 //! - §1333 `close_files_and_terminate`: §642's DVI page report and the
 //!   "Transcript written on..." note.
 
-use tex_command::{CommandDialect, CommandHostCapabilities};
+use tex_command::{CommandHostCapabilities, CommandProfile};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
@@ -50,17 +50,42 @@ pub const TEX82_BANNER: &str = "This is TeX, Version 3.141592653 (TeX Live 2025)
 /// etex.ch §2's e-TeX 2.6 start-up banner, with the pinned distribution suffix.
 pub const ETEX26_BANNER: &str = "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2025)";
 
-fn banner(dialect: CommandDialect) -> &'static str {
-    match dialect {
-        CommandDialect::Tex82 => TEX82_BANNER,
-        CommandDialect::Etex26 => ETEX26_BANNER,
-        CommandDialect::Pdftex14027 => BANNER,
+/// Immutable identity of the executable whose canonical framing is emitted.
+///
+/// This is deliberately distinct from [`CommandProfile`]: a newer reference
+/// binary may execute an older semantic profile for conformance purposes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineBinaryIdentity {
+    Tex82,
+    Etex26,
+    Pdftex14027,
+}
+
+impl EngineBinaryIdentity {
+    fn banner(self) -> &'static str {
+        match self {
+            Self::Tex82 => TEX82_BANNER,
+            Self::Etex26 => ETEX26_BANNER,
+            Self::Pdftex14027 => BANNER,
+        }
+    }
+
+    /// Whether this binary contains the requested semantic command family.
+    #[must_use]
+    pub const fn supports(self, profile: CommandProfile) -> bool {
+        use tex_command::CommandDialect;
+        matches!(
+            (self, profile.dialect()),
+            (Self::Tex82, CommandDialect::Tex82)
+                | (Self::Etex26, CommandDialect::Tex82 | CommandDialect::Etex26)
+                | (Self::Pdftex14027, _)
+        )
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct JobEngineFraming {
-    pub dialect: CommandDialect,
+    pub binary: EngineBinaryIdentity,
     pub extended_mode: bool,
 }
 
@@ -248,7 +273,7 @@ pub(crate) fn begin_job(
     // The banner itself goes out through §54's `wterm`/`wlog`, which do not
     // advance `term_offset`/`file_offset`; it is longer than
     // `max_print_line` and must stay one unbroken line.
-    let banner = banner(engine.dialect);
+    let banner = engine.binary.banner();
     let terminal_banner = format!("{banner}{}\n", terminal_format_ident(format, initex));
     stores
         .world_mut()

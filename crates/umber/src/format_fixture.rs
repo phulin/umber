@@ -285,7 +285,7 @@ pub struct LoadedFormatFixture {
 
 pub(crate) struct LoadedRunConfiguration {
     pub guards: FormatGenerationGuards,
-    pub framing_dialect: tex_command::CommandDialect,
+    pub engine_binary: tex_exec::EngineBinaryIdentity,
 }
 
 impl LoadedFormatFixture {
@@ -313,7 +313,7 @@ impl LoadedFormatFixture {
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let guards = self.recipe.guards;
-        let framing_dialect = self.recipe.engine.command_profile().dialect();
+        let engine_binary = self.recipe.engine.binary_identity();
         self.run_configured(
             source_name,
             RegisteredSourceKind::Generated,
@@ -321,7 +321,7 @@ impl LoadedFormatFixture {
             resources,
             LoadedRunConfiguration {
                 guards,
-                framing_dialect,
+                engine_binary,
             },
             observer,
         )
@@ -345,7 +345,7 @@ impl LoadedFormatFixture {
             month: self.recipe.clock.month,
             day: self.recipe.clock.day,
         });
-        session.set_framing_dialect(config.framing_dialect);
+        session.set_engine_binary(config.engine_binary);
         session.set_fuel_limit(guards.command_fuel)?;
         let root_source = session.register_retained_root(
             source_name,
@@ -821,6 +821,10 @@ pub enum FormatFixtureError {
     ProviderProfileMismatch {
         expected: EngineMode,
         actual: EngineMode,
+    },
+    ProviderBinaryMismatch {
+        engine: EngineMode,
+        binary: tex_exec::EngineBinaryIdentity,
     },
     ProviderBackendMismatch {
         engine: EngineMode,

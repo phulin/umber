@@ -297,8 +297,8 @@ impl<'a> CanonicalEngineSession<'a> {
     }
 
     /// Selects the engine binary identity used by loaded-job startup framing.
-    pub fn set_framing_dialect(&mut self, dialect: CommandDialect) {
-        self.control.set_framing_dialect(dialect);
+    pub fn set_engine_binary(&mut self, binary: tex_exec::EngineBinaryIdentity) {
+        self.control.set_engine_binary(binary);
     }
 
     #[must_use]

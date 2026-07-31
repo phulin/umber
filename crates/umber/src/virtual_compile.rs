@@ -334,6 +334,17 @@ pub enum EngineMode {
 }
 
 impl EngineMode {
+    #[must_use]
+    pub const fn binary_identity(self) -> tex_exec::EngineBinaryIdentity {
+        match self {
+            Self::Tex82 => tex_exec::EngineBinaryIdentity::Tex82,
+            Self::ETex => tex_exec::EngineBinaryIdentity::Etex26,
+            Self::PdfTex | Self::Latex | Self::PdfLatex => {
+                tex_exec::EngineBinaryIdentity::Pdftex14027
+            }
+        }
+    }
+
     /// The canonical command profile shared by fresh and format-loaded runs.
     #[must_use]
     pub const fn command_profile(self) -> tex_command::CommandProfile {

@@ -17,7 +17,7 @@ pub struct PreparedFormatJob<'a> {
     pub engine: EngineMode,
     /// Engine binary identity for startup framing, independent of the
     /// semantic command profile exercised by the job.
-    pub framing_dialect: tex_command::CommandDialect,
+    pub engine_binary: tex_exec::EngineBinaryIdentity,
     pub backend: OutputCapability,
     pub clock: JobClock,
     pub interaction: InteractionMode,
@@ -75,6 +75,12 @@ impl PreparedFormatProvider {
                 actual: job.engine,
             });
         }
+        if !job.engine_binary.supports(job.engine.command_profile()) {
+            return Err(FormatFixtureError::ProviderBinaryMismatch {
+                engine: job.engine,
+                binary: job.engine_binary,
+            });
+        }
         if job.backend == OutputCapability::Pdf && !job.engine.supports_pdf_output() {
             return Err(FormatFixtureError::ProviderBackendMismatch {
                 engine: job.engine,
@@ -104,7 +110,7 @@ impl PreparedFormatProvider {
             &job.resources,
             LoadedRunConfiguration {
                 guards: job.guards,
-                framing_dialect: job.framing_dialect,
+                engine_binary: job.engine_binary,
             },
             job.observer,
         )

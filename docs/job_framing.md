@@ -114,11 +114,13 @@ was still reading; it now reports from inside `scan_restricted_integer`.
 
 Byte-for-byte comparison against pinned reference engines is the whole point
 of the conformance corpus, so job framing selects the canonical banner from
-the immutable runtime command dialect: TeX82 uses tex.web §2's `TeX` banner,
+the immutable engine-binary identity: TeX82 uses tex.web §2's `TeX` banner,
 e-TeX 2.6 uses etex.ch §2's replacement, and production pdfTeX uses
 pdftex.web §2's replacement. The loaded format name and dump clock remain
-separate framing facts; loading a TeX82 format through the generic provider
-must not turn its banner into pdfTeX's. The pdfTeX string is also the value
+separate framing facts. The binary identity is distinct from the semantic
+command profile, because a newer reference binary can exercise an older
+profile; incompatible combinations fail at the provider boundary. The pdfTeX
+string is also the value
 `umber::pdf_output` writes as PDF producer metadata. A banner that said
 "Umber" would make every committed channel differ on line 1 forever, and the
 difference would carry no information.

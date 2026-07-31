@@ -53,8 +53,8 @@ pub use executor::{
     PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
 };
 pub use job::{
-    BANNER, DviJobOutput, ETEX26_BANNER, FormatDumpReceipt, PreloadedFormat, TEX82_BANNER,
-    confirm_format_dump_publication,
+    BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt, PreloadedFormat,
+    TEX82_BANNER, confirm_format_dump_publication,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,

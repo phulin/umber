@@ -103,7 +103,7 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         true,
         None,
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14027,
             extended_mode: false,
         },
         "show-box.tex",
@@ -141,7 +141,7 @@ fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star
         true,
         None,
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Etex26,
+            binary: EngineBinaryIdentity::Etex26,
             extended_mode: true,
         },
         "etex.tex",
@@ -170,7 +170,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         true,
         None,
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14027,
             extended_mode: false,
         },
         "a.tex",
@@ -182,7 +182,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         true,
         None,
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14027,
             extended_mode: false,
         },
         "a.tex",
@@ -363,7 +363,7 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
         false,
         Some(&format),
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Etex26,
+            binary: EngineBinaryIdentity::Etex26,
             extended_mode: true,
         },
         "etex-loaded-state-reset.tex",
@@ -401,7 +401,7 @@ fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_tex
         false,
         Some(&format),
         JobEngineFraming {
-            dialect: tex_command::CommandDialect::Tex82,
+            binary: EngineBinaryIdentity::Tex82,
             extended_mode: false,
         },
         "trip.tex",
@@ -417,4 +417,16 @@ fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_tex
     let log = log_text(&stores);
     assert!(log.starts_with(TEX82_BANNER));
     assert!(log.contains("(preloaded format=trip 2026.7.9)"));
+}
+
+#[test]
+fn engine_binary_compatibility_is_a_superset_relation_not_a_dialect_alias() {
+    assert!(EngineBinaryIdentity::Tex82.supports(tex_command::CommandProfile::TEX82));
+    assert!(!EngineBinaryIdentity::Tex82.supports(tex_command::CommandProfile::ETEX26));
+    assert!(EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::TEX82));
+    assert!(EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::ETEX26));
+    assert!(!EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::PDFTEX14027));
+    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::TEX82));
+    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::ETEX26));
+    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::PDFTEX14027));
 }

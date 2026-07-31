@@ -53,7 +53,7 @@ fn guards() -> FormatGenerationGuards {
 fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> PreparedFormatJob<'a> {
     PreparedFormatJob {
         engine: EngineMode::Tex82,
-        framing_dialect: tex_command::CommandDialect::Tex82,
+        engine_binary: tex_exec::EngineBinaryIdentity::Tex82,
         backend: OutputCapability::Dvi,
         clock: clock(2031),
         interaction: InteractionMode::ErrorStop,
@@ -199,6 +199,30 @@ fn provider_fails_closed_for_cache_profile_backend_and_guards() {
         Err(FormatFixtureError::ProviderProfileMismatch {
             expected: EngineMode::Tex82,
             actual: EngineMode::ETex,
+        })
+    ));
+
+    let mut recorder = Recorder::default();
+    let mut request = job(b"\\end\n", &mut recorder);
+    request.engine_binary = tex_exec::EngineBinaryIdentity::Etex26;
+    request.engine = EngineMode::PdfTex;
+    assert!(matches!(
+        provider.run(&fixture, request),
+        Err(FormatFixtureError::ProviderProfileMismatch { .. })
+    ));
+
+    let pdf_fixture = provider
+        .prepare(&FormatRecipe::production_pdftex14027())
+        .expect("prepare pdfTeX");
+    let mut recorder = Recorder::default();
+    let mut request = job(b"\\end\n", &mut recorder);
+    request.engine = EngineMode::PdfTex;
+    request.engine_binary = tex_exec::EngineBinaryIdentity::Etex26;
+    assert!(matches!(
+        provider.run(&pdf_fixture, request),
+        Err(FormatFixtureError::ProviderBinaryMismatch {
+            engine: EngineMode::PdfTex,
+            binary: tex_exec::EngineBinaryIdentity::Etex26,
         })
     ));
 
