@@ -2,6 +2,8 @@
 //!
 //! The report intentionally contains identities and a small semantic context,
 //! never copied transcripts, logs, DVI files, or full event streams.
+//! Complete TeX82 §638 shipout allocator-accounting records are parsed and
+//! retained as advisory evidence; every other transcript/log byte still gates.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -66,6 +68,8 @@ pub struct TripTriageVerdict {
     pub gating_mismatch: bool,
     /// The identity-separated geometry projection differed.
     pub advisory_geometry_mismatch: bool,
+    /// TeX82 §638 allocator-accounting records differed after typed removal.
+    pub advisory_memory_usage_mismatch: bool,
 }
 
 impl TripTriageVerdict {
@@ -105,8 +109,10 @@ pub fn write_trip_triage_artifact(
         .dvi
         .map(normalized_dvi_for_comparison)
         .transpose()?;
+    let text = TextComparisons::new(input);
     let gating_divergence =
-        first_gating_divergence(input, expected_dvi.as_deref(), actual_dvi.as_deref())?;
+        first_gating_divergence(input, &text, expected_dvi.as_deref(), actual_dvi.as_deref())?;
+    let memory_usage_divergence = text.memory_usage_divergence();
     let geometry_divergence = event_divergence(
         "geometry_events",
         input.expected.geometry_events,
@@ -114,7 +120,11 @@ pub fn write_trip_triage_artifact(
         None,
         None,
     )?;
-    let Some(divergence) = gating_divergence.as_ref().or(geometry_divergence.as_ref()) else {
+    let Some(divergence) = gating_divergence
+        .as_ref()
+        .or(memory_usage_divergence.as_ref())
+        .or(geometry_divergence.as_ref())
+    else {
         if artifact.exists() {
             fs::remove_file(&artifact)
                 .with_context(|| format!("failed to remove stale {}", artifact.display()))?;
@@ -123,6 +133,7 @@ pub fn write_trip_triage_artifact(
             artifact: None,
             gating_mismatch: false,
             advisory_geometry_mismatch: false,
+            advisory_memory_usage_mismatch: false,
         });
     };
 
@@ -130,11 +141,14 @@ pub fn write_trip_triage_artifact(
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
     let report = report_text(
         input,
-        expected_dvi.as_deref(),
-        actual_dvi.as_deref(),
-        divergence,
-        geometry_divergence.as_ref(),
-        gating_divergence.is_some(),
+        &text,
+        (expected_dvi.as_deref(), actual_dvi.as_deref()),
+        ReportAssessment {
+            primary: divergence,
+            memory_usage: memory_usage_divergence.as_ref(),
+            geometry: geometry_divergence.as_ref(),
+            gating_mismatch: gating_divergence.is_some(),
+        },
     );
     fs::write(&artifact, report)
         .with_context(|| format!("failed to write {}", artifact.display()))?;
@@ -142,11 +156,13 @@ pub fn write_trip_triage_artifact(
         artifact: Some(artifact),
         gating_mismatch: gating_divergence.is_some(),
         advisory_geometry_mismatch: geometry_divergence.is_some(),
+        advisory_memory_usage_mismatch: memory_usage_divergence.is_some(),
     })
 }
 
 fn first_gating_divergence(
     input: TripTriageInput<'_>,
+    text: &TextComparisons,
     expected_dvi: Option<&[u8]>,
     actual_dvi: Option<&[u8]>,
 ) -> Result<Option<Divergence>> {
@@ -161,12 +177,12 @@ fn first_gating_divergence(
     }
     if let Some(divergence) = byte_divergence(
         "transcript",
-        input.expected.transcript,
-        input.actual.transcript,
+        &text.transcript.expected,
+        &text.transcript.actual,
     ) {
         return Ok(Some(divergence));
     }
-    if let Some(divergence) = byte_divergence("log", input.expected.log, input.actual.log) {
+    if let Some(divergence) = byte_divergence("log", &text.log.expected, &text.log.actual) {
         return Ok(Some(divergence));
     }
     Ok(optional_byte_divergence(
@@ -174,6 +190,97 @@ fn first_gating_divergence(
         expected_dvi,
         actual_dvi,
     ))
+}
+
+/// A text channel with only complete TeX82 §638 shipout accounting records
+/// removed. These values expose the reference allocator's variable/dynamic
+/// node occupancy and free-memory gap; they are not engine semantics.
+struct TextComparison {
+    expected: Vec<u8>,
+    actual: Vec<u8>,
+    expected_memory_usage: Vec<Vec<u8>>,
+    actual_memory_usage: Vec<Vec<u8>>,
+}
+
+impl TextComparison {
+    fn new(expected: &[u8], actual: &[u8]) -> Self {
+        let (expected, expected_memory_usage) = split_memory_usage_records(expected);
+        let (actual, actual_memory_usage) = split_memory_usage_records(actual);
+        Self {
+            expected,
+            actual,
+            expected_memory_usage,
+            actual_memory_usage,
+        }
+    }
+
+    fn memory_usage_divergence(&self, channel: &'static str) -> Option<Divergence> {
+        (self.expected_memory_usage != self.actual_memory_usage).then(|| Divergence {
+            channel,
+            position: "records".into(),
+            expected: format!("{} canonical record(s)", self.expected_memory_usage.len()),
+            actual: format!("{} canonical record(s)", self.actual_memory_usage.len()),
+        })
+    }
+}
+
+struct TextComparisons {
+    transcript: TextComparison,
+    log: TextComparison,
+}
+
+impl TextComparisons {
+    fn new(input: TripTriageInput<'_>) -> Self {
+        Self {
+            transcript: TextComparison::new(input.expected.transcript, input.actual.transcript),
+            log: TextComparison::new(input.expected.log, input.actual.log),
+        }
+    }
+
+    fn memory_usage_divergence(&self) -> Option<Divergence> {
+        self.transcript
+            .memory_usage_divergence("transcript.memory_usage")
+            .or_else(|| self.log.memory_usage_divergence("log.memory_usage"))
+    }
+}
+
+fn split_memory_usage_records(bytes: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut records = Vec::new();
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if is_memory_usage_record(line) {
+            records.push(line.to_vec());
+        } else {
+            normalized.extend_from_slice(line);
+        }
+    }
+    (normalized, records)
+}
+
+fn is_memory_usage_record(line: &[u8]) -> bool {
+    const PREFIX: &[u8] = b"Memory usage before: ";
+    const AFTER: &[u8] = b"; after: ";
+    const UNTOUCHED: &[u8] = b"; still untouched: ";
+    let Some(mut rest) = line.strip_prefix(PREFIX) else {
+        return false;
+    };
+    for separator in [b'&', b';', b'&', b';', b'\n'] {
+        let Some(index) = rest.iter().position(|byte| *byte == separator) else {
+            return false;
+        };
+        if index == 0 || !rest[..index].iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        rest = &rest[index..];
+        rest = match separator {
+            b'&' => &rest[1..],
+            b';' if rest.starts_with(AFTER) => &rest[AFTER.len()..],
+            b';' if rest.starts_with(UNTOUCHED) => &rest[UNTOUCHED.len()..],
+            b'\n' if rest == b"\n" => &[],
+            _ => return false,
+        };
+    }
+    rest.is_empty()
 }
 
 fn optional_byte_divergence(
@@ -506,14 +613,20 @@ impl Divergence {
     }
 }
 
+struct ReportAssessment<'a> {
+    primary: &'a Divergence,
+    memory_usage: Option<&'a Divergence>,
+    geometry: Option<&'a Divergence>,
+    gating_mismatch: bool,
+}
+
 fn report_text(
     input: TripTriageInput<'_>,
-    expected_dvi: Option<&[u8]>,
-    actual_dvi: Option<&[u8]>,
-    divergence: &Divergence,
-    geometry_divergence: Option<&Divergence>,
-    gating_mismatch: bool,
+    text: &TextComparisons,
+    dvi: (Option<&[u8]>, Option<&[u8]>),
+    assessment: ReportAssessment<'_>,
 ) -> String {
+    let (expected_dvi, actual_dvi) = dvi;
     let mut out = String::new();
     let command_accounting = event_accounting(
         "command_events",
@@ -535,14 +648,20 @@ fn report_text(
         ("phase", bounded(input.phase, 128)),
         (
             "status",
-            if gating_mismatch {
+            if assessment.gating_mismatch {
                 "gating-mismatch"
+            } else if assessment.memory_usage.is_some() {
+                "advisory-memory-usage-mismatch"
             } else {
                 "advisory-geometry-mismatch"
             }
             .to_string(),
         ),
         ("geometry.policy", "advisory-non-gating".to_string()),
+        (
+            "memory_usage.policy",
+            "tex82-section-638-allocator-accounting-advisory-non-gating".to_string(),
+        ),
         (
             "expected_source.name",
             bounded(input.expected_source.name, 256),
@@ -602,21 +721,41 @@ fn report_text(
         ),
         (
             "geometry_events.advisory_mismatch",
-            geometry_divergence.is_some().to_string(),
+            assessment.geometry.is_some().to_string(),
         ),
         (
             "expected.transcript.sha256",
             sha256(input.expected.transcript),
         ),
         ("actual.transcript.sha256", sha256(input.actual.transcript)),
+        (
+            "expected.transcript.memory_usage.count",
+            text.transcript.expected_memory_usage.len().to_string(),
+        ),
+        (
+            "actual.transcript.memory_usage.count",
+            text.transcript.actual_memory_usage.len().to_string(),
+        ),
         ("expected.log.sha256", sha256(input.expected.log)),
         ("actual.log.sha256", sha256(input.actual.log)),
+        (
+            "expected.log.memory_usage.count",
+            text.log.expected_memory_usage.len().to_string(),
+        ),
+        (
+            "actual.log.memory_usage.count",
+            text.log.actual_memory_usage.len().to_string(),
+        ),
+        (
+            "memory_usage.advisory_mismatch",
+            assessment.memory_usage.is_some().to_string(),
+        ),
         ("expected.normalized_dvi.sha256", option_hash(expected_dvi)),
         ("actual.normalized_dvi.sha256", option_hash(actual_dvi)),
-        ("earliest.channel", divergence.channel.to_string()),
-        ("earliest.position", divergence.position.clone()),
-        ("earliest.expected", divergence.expected.clone()),
-        ("earliest.actual", divergence.actual.clone()),
+        ("earliest.channel", assessment.primary.channel.to_string()),
+        ("earliest.position", assessment.primary.position.clone()),
+        ("earliest.expected", assessment.primary.expected.clone()),
+        ("earliest.actual", assessment.primary.actual.clone()),
     ] {
         bounded_line(&mut out, key, &value);
     }
@@ -1035,6 +1174,61 @@ mod tests {
                 .is_none()
         );
         assert!(!temp.path().join("trip").join(ARTIFACT_NAME).exists());
+    }
+
+    #[test]
+    fn only_complete_shipout_memory_records_are_advisory() {
+        let temp = tempfile::tempdir().expect("temp");
+        let expected_text = b"compute silently for awhile,...\nMemory usage before: 159&313; after: 158&309; still untouched: 19649\n\nOverfull \\hbox\n! Missing number, treated as zero.\narbitrary text\n";
+        let actual_text = b"compute silently for awhile,...\n\nOverfull \\hbox\n! Missing number, treated as zero.\narbitrary text\n";
+        let expected = TripTriageChannels {
+            initialization_events: None,
+            command_events: None,
+            geometry_events: None,
+            transcript: expected_text,
+            log: expected_text,
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            transcript: actual_text,
+            log: actual_text,
+            ..expected
+        };
+        let verdict = write_trip_triage_artifact(temp.path(), input(expected, actual))
+            .expect("advisory comparison");
+        assert!(!verdict.gating_mismatch);
+        assert!(verdict.advisory_memory_usage_mismatch);
+        let report = fs::read_to_string(verdict.expect("advisory report")).expect("report");
+        assert!(
+            report.contains("earliest.channel: transcript.memory_usage"),
+            "{report}"
+        );
+        assert!(
+            report.contains("expected.transcript.memory_usage.count: 1"),
+            "{report}"
+        );
+        assert!(
+            report.contains("actual.transcript.memory_usage.count: 0"),
+            "{report}"
+        );
+
+        for changed in [
+            b"compute silently for awhile,...\n\nOverfull changed\n! Missing number, treated as zero.\narbitrary text\n".as_slice(),
+            b"compute silently for awhile,...\n\n! Missing number, treated as zero.\nOverfull \\hbox\narbitrary text\n".as_slice(),
+            b"compute silently for awhile,...\n\nOverfull \\hbox\n! Missing number, treated as zero.\nchanged text\n".as_slice(),
+            b"compute silently for awhile,...\nMemory usage before: x&313; after: 158&309; still untouched: 19649\n\nOverfull \\hbox\n! Missing number, treated as zero.\narbitrary text\n".as_slice(),
+        ] {
+            let changed = TripTriageChannels {
+                transcript: changed,
+                log: actual_text,
+                ..actual
+            };
+            let verdict = write_trip_triage_artifact(temp.path(), input(expected, changed))
+                .expect("negative control");
+            assert!(verdict.gating_mismatch, "changed text must remain gating");
+            let report = fs::read_to_string(verdict.expect("gating report")).expect("report");
+            assert!(report.contains("earliest.channel: transcript"), "{report}");
+        }
     }
 
     #[test]

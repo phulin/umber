@@ -52,8 +52,13 @@ The harness does not normalize, spoof, or reconstruct those diagnostics. It
 still requires exact construction command streams, deterministic
 schema-valid publication, runtime-state exclusion, registry reconstruction,
 and successful reload. Geometry differences remain visible and countable in a
-non-gating report. The loaded job resumes exact semantic,
-terminal, log, status, effects, and normalized-DVI comparison and requires byte-identical final DVI
+non-gating report. The loaded job resumes exact semantic, terminal, log,
+status, effects, and normalized-DVI comparison. The sole typed text exception
+is TeX82 §638's complete `Memory usage before: ...` shipout record: its
+variable-node, dynamic-node, and free-memory counts expose the reference
+allocator rather than document semantics, so the comparator retains and
+reports those records as advisory while comparing all surrounding text in
+exact order. It requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
 comment. The two-phase format-image path also asserts through the format schema
@@ -146,7 +151,10 @@ stream, or an unbounded log into the artifact.
 Gating channels are compared in semantic diagnostic order: canonical schema-v1
 command events (including manifest/header identity), transcript, log, then
 normalized DVI. The identity-separated schema-v2 geometry stream is compared
-and counted independently as advisory diagnostics. Transcript
+and counted independently as advisory diagnostics. Complete TeX82 §638
+shipout memory-usage records are likewise counted independently as advisory;
+memory-like arbitrary text and every neighboring diagnostic remain byte-exact.
+Transcript
 and log are present only for output-producing phases; successful recipe-owned
 dump construction has no textual output-parity channels. Geometry
 contains ordered `hpack`, `vpack`, and `shipout` records; shipout includes

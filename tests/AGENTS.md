@@ -516,7 +516,10 @@ The ignored `e2e_conformance_trip_canonical` direct-profile probe and
 format-create/format-load helper. Successful recipe-owned dump construction
 gates exact command channels plus structured publication and reload invariants,
 retains advisory geometry reports, and excludes implementation-internal terminal and log
-diagnostics. Loaded execution retains exact terminal and log comparison and applies
+diagnostics. Loaded execution retains exact terminal and log comparison, except
+that complete TeX82 §638 shipout memory-usage records are typed
+allocator-accounting advisories while all surrounding text remains byte-exact,
+and applies
 the same preamble-comment-only, byte-identical final-DVI assertion used by
 Story and Gentle. They never invoke an Umber subprocess.
 Run TRIP with
