@@ -89,8 +89,16 @@ fn every_loaded_command_route_has_only_the_generic_provider_owner() {
     }
 
     let generic = rust_function_body(source, "execute_loaded_format");
-    for required in ["provider", ".prepare(&recipe)", "PreparedFormatJob {", ".run("] {
-        assert!(generic.contains(required), "generic owner requires {required}");
+    for required in [
+        "provider",
+        ".prepare(&recipe)",
+        "PreparedFormatJob {",
+        ".run(",
+    ] {
+        assert!(
+            generic.contains(required),
+            "generic owner requires {required}"
+        );
     }
     for forbidden in [
         concat!("Once", "Lock"),
