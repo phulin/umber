@@ -294,7 +294,7 @@ impl ConditionStack {
         let Some(frame) = self.current() else {
             return (0, 0, 0);
         };
-        let ty = frame.kind.etex_code();
+        let ty = frame.kind.etex_type();
         let branch = match frame.limit {
             IfLimit::Evaluating => 0,
             IfLimit::Or | IfLimit::Else => 1,
@@ -372,20 +372,25 @@ impl CommandProcessor<'_> {
 }
 
 impl ConditionalKind {
-    const fn etex_code(self) -> i32 {
+    /// e-TeX 2.6 `etex.ch`'s `\currentiftype` result.
+    ///
+    /// The enquiry returns `cur_if+1`, not the zero-based `if_test` operand.
+    /// e-TeX's later predicates leave opcode 12 unused by inserting `\ifx`
+    /// at 13, so spell the complete one-based result table explicitly.
+    const fn etex_type(self) -> i32 {
         match self {
-            Self::If => 0,
-            Self::IfCat => 1,
-            Self::IfNum => 2,
-            Self::IfDim => 3,
-            Self::IfOdd => 4,
-            Self::IfVMode => 5,
-            Self::IfHMode => 6,
-            Self::IfMMode => 7,
-            Self::IfInner => 8,
-            Self::IfVoid => 9,
-            Self::IfHBox => 10,
-            Self::IfVBox => 11,
+            Self::If => 1,
+            Self::IfCat => 2,
+            Self::IfNum => 3,
+            Self::IfDim => 4,
+            Self::IfOdd => 5,
+            Self::IfVMode => 6,
+            Self::IfHMode => 7,
+            Self::IfMMode => 8,
+            Self::IfInner => 9,
+            Self::IfVoid => 10,
+            Self::IfHBox => 11,
+            Self::IfVBox => 12,
             Self::IfX => 13,
             Self::IfEof => 14,
             Self::IfTrue => 15,

@@ -4,6 +4,44 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use super::*;
+
+#[test]
+fn etex_current_if_type_is_one_based_and_preserves_unless_sign() {
+    // e-TeX 2.6 `etex.ch` [17.4750--4790] returns `cur_if+1`, or the
+    // corresponding negative value after the `unless_code` prefix.
+    let cases = [
+        (ConditionalKind::If, 1),
+        (ConditionalKind::IfCat, 2),
+        (ConditionalKind::IfNum, 3),
+        (ConditionalKind::IfDim, 4),
+        (ConditionalKind::IfOdd, 5),
+        (ConditionalKind::IfVMode, 6),
+        (ConditionalKind::IfHMode, 7),
+        (ConditionalKind::IfMMode, 8),
+        (ConditionalKind::IfInner, 9),
+        (ConditionalKind::IfVoid, 10),
+        (ConditionalKind::IfHBox, 11),
+        (ConditionalKind::IfVBox, 12),
+        (ConditionalKind::IfX, 13),
+        (ConditionalKind::IfEof, 14),
+        (ConditionalKind::IfTrue, 15),
+        (ConditionalKind::IfFalse, 16),
+        (ConditionalKind::IfCase, 17),
+        (ConditionalKind::IfDefined, 18),
+        (ConditionalKind::IfCsName, 19),
+        (ConditionalKind::IfFontChar, 20),
+        (ConditionalKind::IfInCsName, 21),
+    ];
+
+    assert_eq!(ConditionStack::default().current_etex_values(), (0, 0, 0));
+    for (kind, expected) in cases {
+        for (inverted, signed) in [(false, expected), (true, -expected)] {
+            let mut stack = ConditionStack::default();
+            stack.push_with_inversion(kind, 0, inverted);
+            assert_eq!(stack.current_etex_values(), (1, signed, 0), "{kind:?}");
+        }
+    }
+}
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
