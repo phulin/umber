@@ -18,7 +18,7 @@ native host policy for persistent distribution caching and HTTPS acquisition.
 
 - `src/cache.rs`: platform cache discovery and verified atomic blob storage.
 - `src/fetch.rs`: bounded blocking batch acquisition, cooperative cancellation, retry, and diagnostics.
-- `src/format_cache.rs`: canonical generated-format identity and validated atomic schema-11 entry storage.
+- `src/format_cache.rs`: canonical generated-format identity, including generic producer/semantic/resource/guard contracts, and validated atomic schema-11 entry storage.
 - `src/format_cache/tests.rs`: format-cache identity, validation, recovery, and concurrency tests.
 - `src/manifest.rs`: cancellable bounded HTTPS manifest download and trust-pin verification.
 - `src/lib.rs`: public native cache/fetch contract.

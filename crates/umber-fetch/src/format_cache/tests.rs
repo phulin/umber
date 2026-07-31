@@ -39,7 +39,7 @@ fn canonical_key_covers_every_identity_component() {
     assert_eq!(original.key(), original.clone().key());
     assert_eq!(
         original.key().hex(),
-        "a75f09ab4d472e4dc23a313114059bfe1fdd2a93b5b48c292064484c912a149d"
+        "4f79d3f7b43b6f2afba2634d8f776fadb3915a04bdc33d8253f3de7ed24c9ad1"
     );
 
     let mutations = [
@@ -73,6 +73,22 @@ fn canonical_key_covers_every_identity_component() {
         },
         FormatCacheIdentity {
             build_configuration: FormatFingerprint::sha256(b"debug"),
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            semantic_contract: FormatFingerprint::sha256(b"other semantic contract"),
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            producer_contract: FormatFingerprint::sha256(b"other producer"),
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            resource_closure: FormatFingerprint::sha256(b"other resources"),
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            generation_guards: FormatFingerprint::sha256(b"other guards"),
             ..original.clone()
         },
         FormatCacheIdentity {

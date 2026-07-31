@@ -27,6 +27,8 @@ mod canonical_session;
 pub mod cli_resource;
 mod editor_session;
 mod fixed_point;
+#[cfg(not(target_arch = "wasm32"))]
+mod format_fixture;
 mod input_observation;
 mod input_search;
 mod latex_project;
@@ -50,6 +52,11 @@ pub use editor_session::{
     EditorStabilizationAttempt,
 };
 pub use fixed_point::FixedPointLimits;
+#[cfg(not(target_arch = "wasm32"))]
+pub use format_fixture::{
+    FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,
+    LoadedFormatFixture, LoadedFormatRun, ensure_format,
+};
 pub use input_observation::{
     ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION, AcceptedInputObservation,
     AcceptedInputObservationLedger, InputObservationNamespace, InputObservationOutcome,

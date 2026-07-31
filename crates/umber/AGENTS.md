@@ -22,6 +22,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/first_failure_locator.rs`.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
+- `src/format_fixture.rs`: generic content-addressed format recipes, guarded retained-session construction, fresh loaded-universe reconstruction, typed resource fulfillment, and the raw TeX82 loaded-fixture first slice.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
 - `src/classic_bib.rs`: native host-file staging and artifact publication for the in-process classic `bibtex` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.

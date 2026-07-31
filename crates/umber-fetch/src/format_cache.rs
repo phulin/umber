@@ -11,9 +11,9 @@ use tex_state::{Universe, World};
 
 use crate::cache::platform_cache_root;
 
-const DIRECTORY: &str = "formats-v1";
+const DIRECTORY: &str = "formats-v2";
 const KEY_DOMAIN: &[u8] = b"umber.format-cache.key\0";
-const KEY_SCHEMA: u32 = 1;
+const KEY_SCHEMA: u32 = 2;
 const ENTRY_MAGIC: [u8; 8] = *b"UMBRFCHE";
 const ENTRY_SCHEMA: u32 = 1;
 const ENTRY_HEADER_LEN: usize = 56;
@@ -78,6 +78,10 @@ pub struct FormatCacheIdentity {
     format_closure: FormatFingerprint,
     source_lock: FormatFingerprint,
     build_configuration: FormatFingerprint,
+    semantic_contract: FormatFingerprint,
+    producer_contract: FormatFingerprint,
+    resource_closure: FormatFingerprint,
+    generation_guards: FormatFingerprint,
     job_clock: FormatCacheClock,
 }
 
@@ -101,6 +105,41 @@ impl FormatCacheIdentity {
             format_closure,
             source_lock,
             build_configuration,
+            semantic_contract: FormatFingerprint::sha256(b"legacy-format-cache-cli-v1"),
+            producer_contract: FormatFingerprint::sha256(b"legacy-external-producer-v1"),
+            resource_closure: format_closure,
+            generation_guards: FormatFingerprint::sha256(b"legacy-external-guards-v1"),
+            job_clock,
+        }
+    }
+
+    /// Creates an identity with the complete generic fixture producer contract.
+    #[must_use]
+    pub fn fixture(
+        engine_mode: FormatEngineMode,
+        distribution_snapshot: FormatFingerprint,
+        format_closure: FormatFingerprint,
+        source_lock: FormatFingerprint,
+        job_clock: FormatCacheClock,
+        build_configuration: FormatFingerprint,
+        semantic_contract: FormatFingerprint,
+        producer_contract: FormatFingerprint,
+        resource_closure: FormatFingerprint,
+        generation_guards: FormatFingerprint,
+    ) -> Self {
+        Self {
+            engine_mode,
+            format_schema: Universe::FORMAT_SCHEMA_VERSION,
+            format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
+            lookup_configuration_fingerprint: Universe::FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
+            distribution_snapshot,
+            format_closure,
+            source_lock,
+            build_configuration,
+            semantic_contract,
+            producer_contract,
+            resource_closure,
+            generation_guards,
             job_clock,
         }
     }
@@ -108,7 +147,7 @@ impl FormatCacheIdentity {
     /// Canonical, host-independent key preimage.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(KEY_DOMAIN.len() + 180);
+        let mut bytes = Vec::with_capacity(KEY_DOMAIN.len() + 320);
         bytes.extend_from_slice(KEY_DOMAIN);
         bytes.extend_from_slice(&KEY_SCHEMA.to_le_bytes());
         bytes.push(self.engine_mode as u8);
@@ -121,6 +160,10 @@ impl FormatCacheIdentity {
             self.format_closure,
             self.source_lock,
             self.build_configuration,
+            self.semantic_contract,
+            self.producer_contract,
+            self.resource_closure,
+            self.generation_guards,
         ] {
             bytes.extend_from_slice(&fingerprint.bytes());
         }
