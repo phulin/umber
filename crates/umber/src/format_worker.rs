@@ -270,14 +270,9 @@ fn terminate(child: &mut Child) {
     reason = "native format-worker host policy reads the supervised child RSS counter"
 )]
 fn worker_rss(pid: u32) -> Result<u64, FormatFixtureError> {
-    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm"))
-        .map_err(|_| FormatFixtureError::ResidentSetUnsupported)?;
-    let pages = statm
-        .split_whitespace()
-        .nth(1)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or(FormatFixtureError::ResidentSetUnsupported)?;
-    Ok(pages.saturating_mul(4096))
+    let path = format!("/proc/{pid}/statm");
+    crate::linux_rss::resident_bytes(std::path::Path::new(&path))
+        .ok_or(FormatFixtureError::ResidentSetUnsupported)
 }
 
 fn worker_executable() -> Result<std::path::PathBuf, FormatFixtureError> {

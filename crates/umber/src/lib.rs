@@ -34,6 +34,8 @@ mod format_worker;
 mod input_observation;
 mod input_search;
 mod latex_project;
+#[cfg(target_os = "linux")]
+mod linux_rss;
 mod memory_output;
 mod pdf_import;
 mod pdf_output;

@@ -419,18 +419,8 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
 
 #[cfg(target_os = "linux")]
 fn current_resident_bytes() -> Result<u64, FormatFixtureError> {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "native format-fixture host policy reads the process RSS counter"
-    )]
-    let statm = std::fs::read_to_string("/proc/self/statm")
-        .map_err(|_| FormatFixtureError::ResidentSetUnsupported)?;
-    let pages = statm
-        .split_whitespace()
-        .nth(1)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or(FormatFixtureError::ResidentSetUnsupported)?;
-    Ok(pages.saturating_mul(4096))
+    crate::linux_rss::resident_bytes(Path::new("/proc/self/statm"))
+        .ok_or(FormatFixtureError::ResidentSetUnsupported)
 }
 
 #[cfg(not(target_os = "linux"))]

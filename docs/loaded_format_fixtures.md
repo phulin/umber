@@ -57,6 +57,9 @@ later call starts an independent worker. The response repeats the recipe
 identity and authenticates the image bytes with SHA-256; the parent checks
 both and performs a complete frozen-format decode before cache publication.
 Platforms without supported RSS supervision reject construction explicitly.
+On Linux both the cooperative worker check and the parent supervisor convert
+`/proc/*/statm` resident pages with the checked runtime page size; unavailable,
+invalid, or overflowing measurements fail closed.
 These internal guards complement the outer `scripts/run-umber-guarded.py`
 defense.
 
