@@ -470,6 +470,14 @@ pub enum PhysicalUnit {
     Dd,
     /// Ciceros.
     Cc,
+    /// New didot points, standardized in 1978 as exactly 0.375 mm.
+    ///
+    /// pdfTeX 1.40.27 adds `nd` and `nc` to tex.web §458's unit table with no
+    /// compatibility switch, so they are part of the engine Umber
+    /// reproduces in every dialect rather than a pdfTeX-only extension.
+    Nd,
+    /// New ciceros: `1nc` is exactly `12nd`.
+    Nc,
 }
 
 /// Size override from a TeX `\font` definition.
@@ -497,6 +505,11 @@ impl PhysicalUnit {
             Self::Bp => (7_227, 7_200),
             Self::Dd => (1_238, 1_157),
             Self::Cc => (14_856, 1_157),
+            // pdftex.web picks 685/642 for `nd` rather than the closer
+            // 11183/10481 so that the exact relation `1nc = 12nd` survives
+            // the ratio approximation: 1370/107 is 12 * 685/642.
+            Self::Nd => (685, 642),
+            Self::Nc => (1_370, 107),
         }
     }
 }

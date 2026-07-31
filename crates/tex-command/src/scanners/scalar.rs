@@ -1225,7 +1225,7 @@ impl CommandProcessor<'_> {
                 }
             }
         }
-        let (unit, true_dimension) = if allow_infinite
+        let (unit, magnification) = if allow_infinite
             && !decimal
             && self
                 .last_integer_terminator
@@ -1242,27 +1242,24 @@ impl CommandProcessor<'_> {
             if !matches!(first.meaning(), Meaning::CharToken { ch: 'f', .. }) {
                 return Err(CommandError::input_invariant());
             }
-            (self.scan_infinite_unit_from_fil()?, false)
+            (self.scan_infinite_unit_from_fil()?, None)
         } else {
             self.scan_dimension_unit(allow_infinite, mu)?
         };
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
         let fraction = round_decimal_fraction(&digits);
         // TeX82 §457's "Adjust for the magnification ratio", applied between
-        // recognizing `true` and converting the physical unit: `prepare_mag`
-        // validates and freezes `\mag`, and a magnification other than 1000
-        // divides the scanned quantity by `mag/1000` so that one `true` unit
-        // still measures one physical unit on the magnified page.
+        // recognizing `true` and converting the physical unit: the unit scan
+        // above has already run `prepare_mag`, which validates and freezes
+        // `\mag` and reports at tex.web's own point, and a magnification other
+        // than 1000 divides the scanned quantity by `mag/1000` so that one
+        // `true` unit still measures one physical unit on the magnified page.
         // Every arithmetic failure below is tex.web's `arith_error`, which
         // §460's `attach_sign` turns into "Dimension too large" -- a reported,
         // recoverable error that clamps to `max_dimen` and keeps going, not an
         // abandoned job.
         let mut arith_error = false;
-        let (integer, fraction) = if true_dimension {
-            let (mag, diagnostic) = self.state.prepare_mag();
-            if let Some(diagnostic) = diagnostic {
-                self.prepare_mag_error(diagnostic);
-            }
+        let (integer, fraction) = if let Some(mag) = magnification {
             scale_true_dimension_parts(integer, fraction, mag).unwrap_or_else(|_| {
                 arith_error = true;
                 (integer, fraction)
@@ -1328,14 +1325,19 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §453's "Scan units and set `cur_val`".
     ///
-    /// The returned flag reports that §457's `true` prefix was recognized, so
-    /// the caller applies "Adjust for the magnification ratio" to the integer
-    /// and fractional parts before converting the physical unit.
+    /// The returned magnification is `Some` exactly when §457's `true` prefix
+    /// was recognized, and is the frozen `\mag` that
+    /// `<Adjust for the magnification ratio>` has already validated. §457 runs
+    /// that adjustment the instant `true` is scanned -- *before* it looks for
+    /// `pt` -- so §288's `prepare_mag` report is emitted here rather than by
+    /// the caller: reporting it after the unit had been consumed put the unit
+    /// inside §82's context display, which showed `l.4 \dimen1=1truept`
+    /// where tex.web shows `l.4 \dimen1=1true`.
     fn scan_dimension_unit(
         &mut self,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(DimensionUnit, bool), CommandError> {
+    ) -> Result<(DimensionUnit, Option<i32>), CommandError> {
         // TeX82 §455 first looks for an internal dimension, then probes `em`
         // and `ex`, before accepting `true`, `pt`, or a physical unit.  Each
         // unsuccessful probe owns one `back_input` hand-off.  In particular,
@@ -1343,10 +1345,10 @@ impl CommandProcessor<'_> {
         // internal/`em`/`ex`/`true`/`pt` probes before `scan_keyword("in")`
         // consumes its `i` and its following `n` directly.
         if allow_infinite && self.scan_keyword("fil")?.value {
-            return Ok((self.scan_infinite_unit(Order::Fil)?, false));
+            return Ok((self.scan_infinite_unit(Order::Fil)?, None));
         }
         if let Some(unit) = self.probe_dimension_unit(mu)? {
-            return Ok((DimensionUnit::Internal(unit), false));
+            return Ok((DimensionUnit::Internal(unit), None));
         }
         // §455 recognizes `em` and `ex` before the physical units, and skips
         // both entirely when a mu dimension is required (`if mu then goto
@@ -1365,7 +1367,7 @@ impl CommandProcessor<'_> {
                 if self.scan_keyword(keyword)?.value {
                     let unit = self.state.current_font_parameter(parameter);
                     self.scan_optional_space()?;
-                    return Ok((DimensionUnit::Internal(unit), false));
+                    return Ok((DimensionUnit::Internal(unit), None));
                 }
             }
         }
@@ -1377,11 +1379,21 @@ impl CommandProcessor<'_> {
             if !self.scan_keyword("mu")?.value {
                 self.illegal_unit_mu_error();
             }
-            return Ok((DimensionUnit::Mu, false));
+            return Ok((DimensionUnit::Mu, None));
         }
-        let true_dimension = self.scan_keyword("true")?.value;
+        // §457's `if scan_keyword("true") then <Adjust for the magnification
+        // ratio>`, whose first statement is `prepare_mag`.
+        let magnification = if self.scan_keyword("true")?.value {
+            let (mag, diagnostic) = self.state.prepare_mag();
+            if let Some(diagnostic) = diagnostic {
+                self.prepare_mag_error(diagnostic);
+            }
+            Some(mag)
+        } else {
+            None
+        };
         if self.scan_keyword("pt")?.value {
-            return Ok((DimensionUnit::Physical(PhysicalUnit::Pt), true_dimension));
+            return Ok((DimensionUnit::Physical(PhysicalUnit::Pt), magnification));
         }
         for (keyword, unit) in [
             ("in", PhysicalUnit::In),
@@ -1391,16 +1403,19 @@ impl CommandProcessor<'_> {
             ("bp", PhysicalUnit::Bp),
             ("dd", PhysicalUnit::Dd),
             ("cc", PhysicalUnit::Cc),
+            // pdfTeX 1.40.27 inserts `nd`/`nc` here, between `cc` and `sp`.
+            ("nd", PhysicalUnit::Nd),
+            ("nc", PhysicalUnit::Nc),
             ("sp", PhysicalUnit::Sp),
         ] {
             if self.scan_keyword(keyword)?.value {
-                return Ok((DimensionUnit::Physical(unit), true_dimension));
+                return Ok((DimensionUnit::Physical(unit), magnification));
             }
         }
         // §459's "Complain about unknown unit": TeX assumes `pt` and
         // finishes the job that a hard scanner failure here would abandon.
         self.illegal_unit_pt_error();
-        Ok((DimensionUnit::Physical(PhysicalUnit::Pt), true_dimension))
+        Ok((DimensionUnit::Physical(PhysicalUnit::Pt), magnification))
     }
 
     /// Performs TeX82 §455's internal-dimension unit lookahead.
@@ -1665,7 +1680,8 @@ impl CommandProcessor<'_> {
         report.error();
     }
 
-    /// TeX82 §459's unit recovery for ordinary dimensions.
+    /// TeX82 §459's unit recovery for ordinary dimensions, with pdfTeX
+    /// 1.40.27's `nd`/`nc` named in the help line that lists the units.
     fn illegal_unit_pt_error(&mut self) {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
@@ -1674,7 +1690,7 @@ impl CommandProcessor<'_> {
         report
             .help(&[
                 "Dimensions can be in units of em, ex, in, pt, pc,",
-                "cm, mm, dd, cc, bp, or sp; but yours is a new one!",
+                "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!",
                 "I'll assume that you meant to say pt, for printer's points.",
                 "To recover gracefully from this error, it's best to",
                 "delete the erroneous units; e.g., type `2' to delete",

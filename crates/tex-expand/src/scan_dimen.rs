@@ -1536,6 +1536,8 @@ fn unit_from_tokens(first: Token, second: Token) -> Option<ScannedUnit> {
         ('m', 'm') => Some(physical_unit(PhysicalUnit::Mm)),
         ('d', 'd') => Some(physical_unit(PhysicalUnit::Dd)),
         ('c', 'c') => Some(physical_unit(PhysicalUnit::Cc)),
+        ('n', 'd') => Some(physical_unit(PhysicalUnit::Nd)),
+        ('n', 'c') => Some(physical_unit(PhysicalUnit::Nc)),
         ('s', 'p') => Some(physical_unit(PhysicalUnit::Sp)),
         ('p', 'x') => Some(ScannedUnit::PdfPixel {
             unit: Scaled::from_raw(0),

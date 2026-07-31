@@ -28,7 +28,7 @@
         "terminal-check:scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill=true"
       ],
       "channels": {
-        "events": 446,
+        "events": 456,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

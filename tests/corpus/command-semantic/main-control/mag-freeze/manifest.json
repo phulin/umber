@@ -28,16 +28,8 @@
       "channels": {
         "events": 166,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.23",
-          "mismatch": { "line": 5, "expected": "l.4 \\dimen1=1true", "actual": "l.4 \\dimen1=1truept" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.23",
-          "mismatch": { "line": 6, "expected": "l.4 \\dimen1=1true", "actual": "l.4 \\dimen1=1truept" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

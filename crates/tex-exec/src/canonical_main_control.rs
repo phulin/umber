@@ -5011,9 +5011,11 @@ fn dispatch_main_control_command(
                 processor.back_input(command).map_err(command_error)?;
                 // `back_error` is `back_input` *then* `error`, so §82 renders
                 // the context with the backed-up level already on the stack.
+                let etex = processor.profile().capabilities().supports_etex();
                 diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
                     printed,
                     processor.error_context(),
+                    etex,
                 ));
                 return Ok(ScannedStep::Continue);
             }
@@ -5033,9 +5035,11 @@ fn dispatch_main_control_command(
                 )
             )
         {
+            let etex = processor.profile().capabilities().supports_etex();
             diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
                 tex_command::PrintCommand::from_current(&command),
                 processor.error_context(),
+                etex,
             ));
         }
         // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --
@@ -14194,10 +14198,16 @@ enum PendingDiagnostic {
     /// the World-facing executor could render it.
     Command(tex_command::CommandSemanticDiagnostic),
     /// tex.web §1212's `<Discard erroneous prefixes and return>`.
-    PrefixOnNonPrefixedCommand(tex_command::PrintCommand, String),
+    ///
+    /// The `bool` is `eTeX_ex`: etex.ch rewrites `help_line[0]` to name
+    /// `\protected` alongside `\long`, `\outer`, and `\global`.
+    PrefixOnNonPrefixedCommand(tex_command::PrintCommand, String, bool),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
     /// irrelevant>`.
-    IrrelevantLongOuterPrefix(tex_command::PrintCommand, String),
+    ///
+    /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
+    /// the help: etex.ch prints `' or `\protected'` before `' with `'.
+    IrrelevantLongOuterPrefix(tex_command::PrintCommand, String, bool),
 }
 
 /// tex.web §298's `print_cmd_chr` for the meanings the reports above name.
@@ -14266,25 +14276,31 @@ fn report_pending_diagnostics(
                     .context(context);
                 report.error();
             }
-            PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context) => {
+            PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use a prefix with `");
                 report.print(&command).print_char('\'');
-                report.help(&["I'll pretend you didn't say \\long or \\outer or \\global."]);
+                report.help(if etex {
+                    &["I'll pretend you didn't say \\long or \\outer or \\global or \\protected."]
+                } else {
+                    &["I'll pretend you didn't say \\long or \\outer or \\global."]
+                });
                 report.context(context);
                 report.error();
             }
-            PendingDiagnostic::IrrelevantLongOuterPrefix(command, context) => {
+            PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use `");
-                report
-                    .print_esc("long")
-                    .print("' or `")
-                    .print_esc("outer")
-                    .print("' with `")
-                    .print(&command)
-                    .print_char('\'');
-                report.help(&["I'll pretend you didn't say \\long or \\outer here."]);
+                report.print_esc("long").print("' or `").print_esc("outer");
+                if etex {
+                    report.print("' or `").print_esc("protected");
+                }
+                report.print("' with `").print(&command).print_char('\'');
+                report.help(if etex {
+                    &["I'll pretend you didn't say \\long or \\outer or \\protected here."]
+                } else {
+                    &["I'll pretend you didn't say \\long or \\outer here."]
+                });
                 report.context(context);
                 report.error();
             }

@@ -5598,8 +5598,11 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
     );
     let illegal_text = diagnostic_text(&illegal);
     assert!(illegal_text.contains("! Illegal magnification has been changed to 1000 (40000)."));
+    // §457 runs `<Adjust for the magnification ratio>` -- and therefore
+    // `prepare_mag` -- the instant `true` is scanned, before it looks for
+    // `pt`, so §82's context shows the unit still unread.
     assert!(
-        illegal_text.contains("<to be read again> 1truept\n                          ="),
+        illegal_text.contains("<to be read again> 1true\n                        pt="),
         "{illegal_text}"
     );
     assert!(illegal_text.contains("The magnification ratio must be between 1 and 32768."));
@@ -5630,7 +5633,7 @@ fn true_dimension_scanner_reports_prepare_mag_recoveries() {
         "{incompatible_text}"
     );
     assert!(
-        incompatible_text.contains("<to be read again> 1truept\n                          ="),
+        incompatible_text.contains("<to be read again> 1true\n                        pt="),
         "{incompatible_text}"
     );
     assert!(

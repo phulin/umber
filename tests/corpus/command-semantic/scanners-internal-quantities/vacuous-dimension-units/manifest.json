@@ -36,18 +36,10 @@
         "count:0=7"
       ],
       "channels": {
-        "events": 200,
+        "events": 210,
         "status": "clean",
         "terminal": { "kind": "file" },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.20",
-          "mismatch": {
-            "line": 28,
-            "expected": "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!",
-            "actual": "cm, mm, dd, cc, bp, or sp; but yours is a new one!"
-          }
-        },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

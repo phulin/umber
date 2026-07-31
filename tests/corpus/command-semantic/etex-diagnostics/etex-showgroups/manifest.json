@@ -36,15 +36,7 @@
         "events": 45,
         "status": "clean",
         "terminal": { "kind": "file" },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.17",
-          "mismatch": {
-            "line": 25,
-            "expected": "I'll pretend you didn't say \\long or \\outer or \\global or \\protected.",
-            "actual": "I'll pretend you didn't say \\long or \\outer or \\global."
-          }
-        },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
