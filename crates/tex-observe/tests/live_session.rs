@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use tex_command::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, ObservedToken, OpenedSourceSnapshot,
+    DiagnosticRecord, EffectRecord, GeneratedSourceRecord, GeometryRecord, ObservedToken,
+    OpenedSourceSnapshot, SourceLocation as CommandSourceLocation,
 };
-use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
+use tex_observe::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_oracle::{
     CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
     Normalizer, ObservationHeader, ObservationStream, SchemaVersion, SourceLocation,
@@ -29,6 +30,83 @@ fn translator() -> LiveSessionTranslator {
             bytes: Arc::from(&b"X\n"[..]),
         },
     )
+}
+
+#[test]
+fn extraction_preserves_representative_detached_semantic_and_geometry_evidence() {
+    let generated = SourceId::new(2);
+    let mut translator = LiveSessionTranslator::for_root(
+        SchemaVersion::V2,
+        "terminal",
+        LiveSource {
+            name: "root.tex".into(),
+            source: SourceId::new(1),
+            bytes: Arc::from(&b"R\n"[..]),
+        },
+    );
+    translator.translate_captured([
+        CommandObservation::GeneratedSource(GeneratedSourceRecord {
+            name: "generated".into(),
+            source: OpenedSourceSnapshot {
+                id: generated,
+                bytes: Arc::from(&b"G\n"[..]),
+            },
+        }),
+        CommandObservation::Command(CommandDeliveryRecord {
+            boundary: CommandDeliveryBoundary::Raw,
+            command: "letter".into(),
+            command_operand: None,
+            spelling: ObservedToken::Character {
+                character: 'G',
+                catcode: tex_state::token::Catcode::Letter,
+            },
+            provenance: CommandProvenance {
+                input_level: 2,
+                position: 1,
+                delivery_sequence: 7,
+                has_origin: true,
+                origin: OriginId::UNKNOWN,
+                source_range: None,
+                source_location: Some(CommandSourceLocation::new(generated, 0)),
+            },
+        }),
+        CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "warning",
+            diagnostic: "representative",
+            arguments: Vec::new(),
+        }),
+        CommandObservation::Effect(EffectRecord {
+            kind: "write",
+            detail: "stream:1\0done".into(),
+            source: None,
+            tokens: None,
+        }),
+        CommandObservation::Geometry(GeometryRecord::Hpack {
+            width_sp: 10,
+            height_sp: 20,
+            depth_sp: 3,
+        }),
+    ]);
+
+    let evidence = translator.finalize_detached_evidence();
+    assert_eq!(evidence.semantic.len(), 3);
+    assert_eq!(evidence.geometry.len(), 1);
+    assert_eq!(
+        evidence
+            .semantic
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(evidence.geometry[0].sequence, 0);
+    assert!(matches!(evidence.semantic[0].semantic, Event::Command(_)));
+    assert!(matches!(
+        evidence.semantic[1].semantic,
+        Event::Diagnostic(_)
+    ));
+    assert!(matches!(evidence.semantic[2].semantic, Event::Effect(_)));
+    assert!(matches!(evidence.geometry[0].semantic, Event::Geometry(_)));
 }
 
 fn canonical(events: impl IntoIterator<Item = Event>) -> Vec<u8> {

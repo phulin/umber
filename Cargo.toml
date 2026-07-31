@@ -33,6 +33,7 @@ default-members = [
   "crates/tex-incr",
   "crates/tex-lex",
   "crates/tex-oracle",
+  "crates/tex-observe",
   "crates/tex-out",
   "crates/tex-shape",
   "crates/tex-state",

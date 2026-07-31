@@ -1,0 +1,13 @@
+[package]
+name = "tex-observe"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tex-command = { path = "../tex-command" }
+tex-oracle = { path = "../tex-oracle" }
+tex-state = { path = "../tex-state" }
+
+[lints]
+workspace = true

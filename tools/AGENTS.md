@@ -94,8 +94,8 @@ runtime-caller attribution for persistent engine profiles.
 
 `tools/tex-command-stream` is the offline, test-only canonical command-stream
 comparison runner. It replays TeX82 command fixture inputs through the
-instrumented command boundary, translates the owned observer records into the
-portable `tex-oracle` schema, and reports a ranked worklist of up to
+instrumented command boundary, delegates owned observer translation to the
+lower `tex-observe` crate, and reports a ranked worklist of up to
 `--max-divergences` ordered divergences (stream mismatches and contained
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.

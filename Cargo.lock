@@ -1185,6 +1185,7 @@ dependencies = [
  "test-support",
  "tex-command",
  "tex-exec",
+ "tex-observe",
  "tex-oracle",
  "tex-out",
  "tex-state",
@@ -1261,6 +1262,16 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "tempfile",
+ "tex-state",
+]
+
+[[package]]
+name = "tex-observe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tex-command",
+ "tex-oracle",
  "tex-state",
 ]
 
