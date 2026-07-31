@@ -16,12 +16,39 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 use tex_command::FatalError;
 use tex_state::Universe;
+use umber::{FormatWorkerLauncher, PreparedFormatProvider};
+use umber_fetch::FormatCacheStore;
 
 use tex_command_stream::semantic::channels::compare;
 use tex_command_stream::semantic::*;
 
+struct HermeticFormats {
+    _root: tempfile::TempDir,
+    provider: PreparedFormatProvider,
+}
+
+impl HermeticFormats {
+    fn new() -> Self {
+        let root = tempfile::TempDir::new().expect("hermetic format cache");
+        let provider = PreparedFormatProvider::with_store(
+            FormatCacheStore::new(root.path()),
+            FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap"),
+        );
+        Self {
+            _root: root,
+            provider,
+        }
+    }
+
+    fn execute(&self, source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+        execute_with_provider(source, case, &self.provider)
+    }
+}
+
 #[test]
 fn declared_command_semantic_cases_match() {
+    let root = tempfile::TempDir::new().expect("hermetic persistent format cache");
+    let launcher = FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap");
     let cases =
         load_suite().unwrap_or_else(|error| panic!("invalid command-semantic corpus: {error}"));
     let mut failures = Vec::new();
@@ -29,7 +56,15 @@ fn declared_command_semantic_cases_match() {
         let label = format!("{}/{}", declared.domain, declared.case.id);
         let run = fs::read(declared.fixture_dir.join(&declared.case.source))
             .map_err(|error| format!("source read: {error}"))
-            .and_then(|source| execute(&source, &declared.case));
+            .and_then(|source| {
+                // Independent provider instances exercise persistent reuse;
+                // the shared authority is the store and complete identity.
+                let provider = PreparedFormatProvider::with_store(
+                    FormatCacheStore::new(root.path()),
+                    launcher.clone(),
+                );
+                execute_with_provider(&source, &declared.case, &provider)
+            });
         let actual = run
             .as_ref()
             .map(|run| project(run, &declared.case.projection))
@@ -55,13 +90,53 @@ fn declared_command_semantic_cases_match() {
         cases.len(),
         failures.join("\n")
     );
-    assert_eq!(raw_tex82_format_initializations(), 1);
-    assert_eq!(raw_etex26_format_initializations(), 1);
-    assert_eq!(production_pdftex14027_format_initializations(), 1);
+    let published_entries = fs::read_dir(root.path().join("formats-v2"))
+        .expect("persistent format namespace")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+        .count();
+    assert_eq!(published_entries, 3);
+    let routes = [
+        ExecutionRoute::RawTex82Loaded,
+        ExecutionRoute::RawEtex26Loaded,
+        ExecutionRoute::ProductionPdftex14027Loaded,
+    ];
+    let identities: Vec<_> = routes
+        .into_iter()
+        .map(|route| {
+            let recipe = loaded_format_recipe(route).expect("loaded recipe");
+            assert_eq!(recipe, loaded_format_recipe(route).expect("stable recipe"));
+            let first = PreparedFormatProvider::with_store(
+                FormatCacheStore::new(root.path()),
+                launcher.clone(),
+            )
+            .prepare(&recipe)
+            .expect("first independent provider reuses entry");
+            let second = PreparedFormatProvider::with_store(
+                FormatCacheStore::new(root.path()),
+                launcher.clone(),
+            )
+            .prepare(&recipe)
+            .expect("second independent provider reuses entry");
+            assert_eq!(first.image(), second.image());
+            assert_eq!(
+                first.construction_evidence(),
+                second.construction_evidence()
+            );
+            recipe.identity().expect("bounded complete identity")
+        })
+        .collect();
+    assert!(identities.iter().enumerate().all(|(index, identity)| {
+        identities
+            .iter()
+            .enumerate()
+            .all(|(other_index, other)| index == other_index || identity != other)
+    }));
 }
 
 #[test]
 fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() {
+    let formats = HermeticFormats::new();
     let cases = load_suite().expect("valid command-semantic corpus");
     let run = |name: &str| {
         let declared = cases
@@ -70,7 +145,9 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
             .unwrap_or_else(|| panic!("missing focused case {name}"));
         let source = fs::read(declared.fixture_dir.join(&declared.case.source))
             .unwrap_or_else(|error| panic!("{name} source: {error}"));
-        execute(&source, &declared.case).unwrap_or_else(|error| panic!("{name}: {error}"))
+        formats
+            .execute(&source, &declared.case)
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
     };
     let explicit_end = run("etex-loaded-ifcsname");
     assert_eq!(
@@ -568,6 +645,7 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
 
 #[test]
 fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
+    let formats = HermeticFormats::new();
     let case: Case = serde_json::from_value(serde_json::json!({
         "id": "raw-loaded-empty-terminal-read",
         "property_id": "tex82.assignment.read-to-definition",
@@ -586,7 +664,8 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
         "expectation": {"kind": "pass"}
     }))
     .expect("bounded regression case is valid");
-    let run = execute(br"\read-1 to\line\end", &case)
+    let run = formats
+        .execute(br"\read-1 to\line\end", &case)
         .expect("the oracle's implicit empty terminal line satisfies the terminal read");
     let channels = CapturedChannels::capture(&run);
     assert_eq!(channels.events, 26);
@@ -628,6 +707,7 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
 
 #[test]
 fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
+    let formats = HermeticFormats::new();
     let case: Case = serde_json::from_value(serde_json::json!({
         "id": "raw-loaded-declared-input",
         "property_id": "tex82.input.loaded-job-resource",
@@ -644,7 +724,9 @@ fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
         "inputs": {"child.tex": "\\count0=37 "}
     }))
     .expect("bounded loaded-input regression case is valid");
-    let run = execute(br"\input child\end", &case).expect("declared loaded-job input is available");
+    let run = formats
+        .execute(br"\input child\end", &case)
+        .expect("declared loaded-job input is available");
     let channels = CapturedChannels::capture(&run);
 
     assert_eq!(run.counts[0], 37);
@@ -678,6 +760,7 @@ fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
 
 #[test]
 fn raw_tex82_loaded_reapplies_declared_job_tfm() {
+    let formats = HermeticFormats::new();
     let case: Case = serde_json::from_value(serde_json::json!({
         "id": "raw-loaded-declared-tfm",
         "property_id": "tex82.font.loaded-job-resource",
@@ -700,7 +783,8 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
         }
     }))
     .expect("bounded loaded-font regression case is valid");
-    let run = execute(br"\font\ten=cmr10 \ten\shipout\hbox{A}\end", &case)
+    let run = formats
+        .execute(br"\font\ten=cmr10 \ten\shipout\hbox{A}\end", &case)
         .expect("declared loaded-job TFM is available");
     let channels = CapturedChannels::capture(&run);
 
@@ -726,6 +810,7 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
 
 #[test]
 fn raw_tex82_loaded_preserves_nontrivial_mode_transitions() {
+    let formats = HermeticFormats::new();
     let case: Case = serde_json::from_value(serde_json::json!({
         "id": "raw-loaded-mode-transitions",
         "property_id": "tex82.main-control.loaded-job-outcomes",
@@ -745,7 +830,18 @@ fn raw_tex82_loaded_preserves_nontrivial_mode_transitions() {
     }))
     .expect("bounded loaded-mode regression case is valid");
 
-    let run = execute(br"a\par b\par\end", &case).expect("loaded mode sequence completes");
+    let mutated = formats
+        .execute(br"\count0=123\end", &case)
+        .expect("first loaded job mutates its world");
+    let isolated = formats
+        .execute(br"\end", &case)
+        .expect("second loaded job starts fresh");
+    assert_eq!(mutated.counts[0], 123);
+    assert_eq!(isolated.counts[0], 0);
+
+    let run = formats
+        .execute(br"a\par b\par\end", &case)
+        .expect("loaded mode sequence completes");
 
     assert_eq!(
         run.mode_transitions,
@@ -761,6 +857,7 @@ fn raw_tex82_loaded_preserves_nontrivial_mode_transitions() {
 
 #[test]
 fn raw_tex82_loaded_preserves_fatal_completion_and_channel_status() {
+    let formats = HermeticFormats::new();
     let case: Case = serde_json::from_value(serde_json::json!({
         "id": "raw-loaded-fatal",
         "property_id": "tex82.main-control.loaded-job-outcomes",
@@ -778,7 +875,8 @@ fn raw_tex82_loaded_preserves_fatal_completion_and_channel_status() {
     }))
     .expect("bounded loaded-fatal regression case is valid");
 
-    let run = execute(br"\input unavailable", &case)
+    let run = formats
+        .execute(br"\input unavailable", &case)
         .expect("TeX fatal completion remains a completed loaded run");
 
     assert!(run.fatal.is_some());
@@ -810,6 +908,7 @@ fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<
 /// it is gone.
 #[test]
 fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
+    let formats = HermeticFormats::new();
     let cases =
         load_suite().unwrap_or_else(|error| panic!("invalid command-semantic corpus: {error}"));
     let mut exempt = Vec::new();
@@ -820,7 +919,7 @@ fn only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract() {
         let source = fs::read(declared.fixture_dir.join(&declared.case.source))
             .expect("an exempt case still has a readable source");
         assert!(
-            execute(&source, &declared.case).is_err(),
+            formats.execute(&source, &declared.case).is_err(),
             "{}/{} runs and must therefore declare a channel contract",
             declared.domain,
             declared.case.id

@@ -13,10 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use serde::Deserialize;
 use tex_command::{
@@ -1072,14 +1069,35 @@ fn terminal_stdin(case: &Case) -> Vec<String> {
 }
 
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+    if case.profile.execution_route() != ExecutionRoute::Fresh {
+        let provider = umber::PreparedFormatProvider::from_environment(format_worker_launcher())
+            .map_err(|error| format!("persistent format provider: {error}"))?;
+        return execute_with_provider(source, case, &provider);
+    }
+    execute_fresh(source, case)
+}
+
+/// Executes a case while injecting the persistent provider's store authority.
+///
+/// This is the hermetic test boundary: production callers use [`execute`]'s
+/// platform cache, while tests can scope a real persistent store without
+/// changing format preparation or loaded-job behavior.
+pub fn execute_with_provider(
+    source: &[u8],
+    case: &Case,
+    provider: &umber::PreparedFormatProvider,
+) -> Result<SemanticRun, String> {
     match case.profile.execution_route() {
         ExecutionRoute::ProductionPdftex14027Loaded => {
-            return execute_production_pdftex14027_loaded(source, case);
+            execute_production_pdftex14027_loaded(source, case, provider)
         }
-        ExecutionRoute::RawEtex26Loaded => return execute_raw_etex26_loaded(source, case),
-        ExecutionRoute::RawTex82Loaded => return execute_raw_tex82_loaded(source, case),
-        ExecutionRoute::Fresh => {}
+        ExecutionRoute::RawEtex26Loaded => execute_raw_etex26_loaded(source, case, provider),
+        ExecutionRoute::RawTex82Loaded => execute_raw_tex82_loaded(source, case, provider),
+        ExecutionRoute::Fresh => execute_fresh(source, case),
     }
+}
+
+fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let mut universe = Universe::new();
     for line in terminal_stdin(case) {
         universe
@@ -1256,14 +1274,6 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     Err(format!("exceeded {MAX_STEPS} main-control steps"))
 }
 
-static RAW_TEX82_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
-static RAW_TEX82_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
-static RAW_ETEX26_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
-static RAW_ETEX26_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
-static PRODUCTION_PDFTEX14027_FORMAT: OnceLock<Result<umber::FormatFixture, String>> =
-    OnceLock::new();
-static PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
-
 fn format_worker_launcher() -> umber::FormatWorkerLauncher {
     if std::env::current_exe()
         .ok()
@@ -1276,125 +1286,79 @@ fn format_worker_launcher() -> umber::FormatWorkerLauncher {
     }
 }
 
-fn shared_raw_tex82_format() -> Result<umber::FormatFixture, String> {
-    RAW_TEX82_FORMAT
-        .get_or_init(|| {
-            RAW_TEX82_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
-            let cache =
-                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
-            let mut recipe = umber::FormatRecipe::raw_tex82();
-            recipe.format_name = "production".into();
-            umber::ensure_format(
-                &umber_fetch::FormatCacheStore::new(cache.path()),
-                &recipe,
-                &format_worker_launcher(),
-            )
-            .map_err(|error| format!("ensure raw TeX82 format: {error}"))
-        })
-        .clone()
+fn raw_tex82_recipe() -> umber::FormatRecipe {
+    let mut recipe = umber::FormatRecipe::raw_tex82();
+    recipe.format_name = "production".into();
+    recipe
 }
 
-fn shared_raw_etex26_format() -> Result<umber::FormatFixture, String> {
-    RAW_ETEX26_FORMAT
-        .get_or_init(|| {
-            RAW_ETEX26_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
-            let cache =
-                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
-            let mut recipe = umber::FormatRecipe::raw_etex26();
-            recipe.format_name = "etex-loaded".into();
-            // This loaded-profile cohort intentionally observes both a macro
-            // that survives §1309's format-memory compaction and e-TeX
-            // change [50.1307]'s reset of optional state immediately before
-            // the dump. Build those two pieces through the public recipe's
-            // INITEX source rather than mutating a restored Universe.
-            recipe.construction_source_name = "etex-loaded.ini".into();
-            recipe.construction_source = Arc::from(
-                &b"\\catcode`\\{=1 \\catcode`\\}=2 \\def\\formatmacro{\\relax}\
+fn raw_etex26_recipe() -> umber::FormatRecipe {
+    let mut recipe = umber::FormatRecipe::raw_etex26();
+    recipe.format_name = "etex-loaded".into();
+    // This loaded-profile cohort intentionally observes both a macro that
+    // survives §1309's format-memory compaction and e-TeX change [50.1307]'s
+    // reset of optional state immediately before the dump.
+    recipe.construction_source_name = "etex-loaded.ini".into();
+    recipe.construction_source = Arc::from(
+        &b"\\catcode`\\{=1 \\catcode`\\}=2 \\def\\formatmacro{\\relax}\
 \\catcode`\\{=12 \\catcode`\\}=12 \\TeXXeTstate=1 \\dump\n"[..],
-            );
-            umber::ensure_format(
-                &umber_fetch::FormatCacheStore::new(cache.path()),
-                &recipe,
-                &format_worker_launcher(),
-            )
-            .map_err(|error| format!("ensure raw e-TeX 2.6 format: {error}"))
-        })
-        .clone()
+    );
+    recipe
 }
 
-fn shared_production_pdftex14027_format() -> Result<umber::FormatFixture, String> {
-    PRODUCTION_PDFTEX14027_FORMAT
-        .get_or_init(|| {
-            PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
-            let cache =
-                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
-            umber::ensure_format(
-                &umber_fetch::FormatCacheStore::new(cache.path()),
-                &umber::FormatRecipe::production_pdftex14027(),
-                &format_worker_launcher(),
-            )
-            .map_err(|error| format!("ensure production pdfTeX 1.40.27 format: {error}"))
-        })
-        .clone()
-}
-
-/// Number of shared raw-TeX82 format initialization episodes in this process.
-///
-/// This is exposed for the corpus boundary test that proves all loaded jobs
-/// reuse one recipe identity and image.
+/// Complete command-minifixture recipe for a loaded execution route.
 #[must_use]
-pub fn raw_tex82_format_initializations() -> usize {
-    RAW_TEX82_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
-}
-
-/// Number of shared raw-e-TeX 2.6 format initialization episodes in this process.
-///
-/// This proves the nine loaded e-TeX jobs share one recipe identity and image.
-#[must_use]
-pub fn raw_etex26_format_initializations() -> usize {
-    RAW_ETEX26_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
-}
-
-/// Number of shared production-pdfTeX format initialization episodes in this process.
-///
-/// This proves the production fixture uses one public recipe identity and image.
-#[must_use]
-pub fn production_pdftex14027_format_initializations() -> usize {
-    PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
+pub fn loaded_format_recipe(route: ExecutionRoute) -> Option<umber::FormatRecipe> {
+    match route {
+        ExecutionRoute::RawTex82Loaded => Some(raw_tex82_recipe()),
+        ExecutionRoute::RawEtex26Loaded => Some(raw_etex26_recipe()),
+        ExecutionRoute::ProductionPdftex14027Loaded => {
+            Some(umber::FormatRecipe::production_pdftex14027())
+        }
+        ExecutionRoute::Fresh => None,
+    }
 }
 
 fn execute_production_pdftex14027_loaded(
     source: &[u8],
     case: &Case,
+    provider: &umber::PreparedFormatProvider,
 ) -> Result<SemanticRun, String> {
     execute_loaded_format(
-        shared_production_pdftex14027_format()?,
+        provider,
+        umber::FormatRecipe::production_pdftex14027(),
         source,
         case,
         "production pdfTeX 1.40.27",
     )
 }
 
-fn execute_raw_etex26_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    execute_loaded_format(shared_raw_etex26_format()?, source, case, "raw e-TeX 2.6")
+fn execute_raw_etex26_loaded(
+    source: &[u8],
+    case: &Case,
+    provider: &umber::PreparedFormatProvider,
+) -> Result<SemanticRun, String> {
+    execute_loaded_format(provider, raw_etex26_recipe(), source, case, "raw e-TeX 2.6")
 }
 
-fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
-    execute_loaded_format(shared_raw_tex82_format()?, source, case, "raw TeX82")
+fn execute_raw_tex82_loaded(
+    source: &[u8],
+    case: &Case,
+    provider: &umber::PreparedFormatProvider,
+) -> Result<SemanticRun, String> {
+    execute_loaded_format(provider, raw_tex82_recipe(), source, case, "raw TeX82")
 }
 
 fn execute_loaded_format(
-    fixture: umber::FormatFixture,
+    provider: &umber::PreparedFormatProvider,
+    recipe: umber::FormatRecipe,
     source: &[u8],
     case: &Case,
     format_label: &str,
 ) -> Result<SemanticRun, String> {
-    let mut world = tex_state::World::memory();
-    for line in terminal_stdin(case) {
-        world
-            .push_memory_terminal_line(line)
-            .map_err(|error| format!("terminal line registration: {error}"))?;
-    }
+    let fixture = provider
+        .prepare(&recipe)
+        .map_err(|error| format!("prepare {format_label}: {error}"))?;
     let mut recorder = Recorder::default();
     let mut resources = Vec::with_capacity(case.inputs.len() + case.font_inputs.len());
     for (name, bytes) in &case.inputs {
@@ -1418,16 +1382,23 @@ fn execute_loaded_format(
             bytes: Arc::from(bytes),
         });
     }
-    let mut loaded_fixture = fixture
-        .load(world)
-        .map_err(|error| format!("loaded {format_label} run: {error}"))?;
-    loaded_fixture.set_interaction_mode(case.interaction_mode.engine_mode());
-    let loaded = loaded_fixture
+    let loaded = provider
         .run(
-            &case.source,
-            Arc::<[u8]>::from(source),
-            &resources,
-            &mut recorder,
+            &fixture,
+            umber::PreparedFormatJob {
+                engine: recipe.engine,
+                backend: umber::OutputCapability::Dvi,
+                clock: tex_state::JobClock::default(),
+                interaction: case.interaction_mode.engine_mode(),
+                error_context_widths: tex_state::print::ErrorContextWidths::default(),
+                guards: recipe.guards,
+                source_name: case.source.clone(),
+                source_kind: RegisteredSourceKind::Generated,
+                source: Arc::<[u8]>::from(source),
+                resources,
+                terminal_input: terminal_stdin(case),
+                observer: &mut recorder,
+            },
         )
         .map_err(|error| format!("loaded {format_label} run: {error}"))?;
     let counts = std::array::from_fn(|slot| {
