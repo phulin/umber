@@ -1542,7 +1542,10 @@ mod tests {
         assert!(matches!(
             collect(
                 &mut child,
-                guards(Duration::from_secs(2), 64 * 1024 * 1024),
+                // This regression owns the stdout byte ceiling. A transient
+                // pre-exec shell may inherit the suite process's resident
+                // mappings, so RSS is tested independently.
+                guards(Duration::from_secs(2), u64::MAX),
                 64 * 1024,
                 1024
             ),

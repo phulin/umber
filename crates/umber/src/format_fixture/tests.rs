@@ -197,11 +197,13 @@ fn construction_wall_guard_interrupts_during_execution() {
 fn construction_rss_guard_interrupts_without_allocating() {
     let cache_root = TempDir::new().expect("cache");
     let mut recipe = FormatRecipe::raw_tex82();
+    recipe.construction_source = Arc::from(&b"\\def\\loop{\\loop}\\loop"[..]);
     recipe.guards.resident_bytes = 1;
-    assert!(matches!(
-        ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe),
-        Err(FormatFixtureError::ResidentSetExceeded)
-    ));
+    let result = ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe);
+    assert!(
+        matches!(result, Err(FormatFixtureError::ResidentSetExceeded)),
+        "unexpected low-RSS construction result: {result:?}"
+    );
 }
 
 #[test]
