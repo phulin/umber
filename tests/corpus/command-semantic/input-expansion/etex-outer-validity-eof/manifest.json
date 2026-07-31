@@ -38,20 +38,8 @@
       "channels": {
         "events": 53,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 7, "expected": "<*> etex-outer-validity-eof.tex", "actual": "" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": {
-            "line": 8,
-            "expected": "<*> etex-outer-validity-eof.tex",
-            "actual": "The file ended while I was skipping conditional text."
-          }
-        },
+        "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },
+        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

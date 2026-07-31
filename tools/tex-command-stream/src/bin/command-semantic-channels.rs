@@ -74,8 +74,8 @@ use std::process::ExitCode;
 use tex_command_stream::semantic::{
     CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
     StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
-    first_line_difference, load_suite_with, normalize_channel, project,
-    reclassify_no_error_channel, repository_root,
+    first_line_difference, first_line_difference_in, load_suite_with, normalize_channel, project,
+    reclassify_no_error_channel, repository_root, split_channel_lines, strip_diagnostic_reports,
 };
 
 fn main() -> ExitCode {
@@ -295,6 +295,14 @@ enum ChannelPlan {
         bug: String,
         mismatch: ChannelMismatch,
     },
+    /// The case already declares `xfail-diagnostics` for this channel and it
+    /// still holds: nothing outside a §82 error report diverges. Nothing here
+    /// is derived, which is the point -- a report Umber improves no longer
+    /// moves a pin that regeneration would have to absorb.
+    XfailDiagnostics {
+        bytes: Vec<u8>,
+        bug: String,
+    },
 }
 
 /// A case's complete derived plan: its `expected` projection array (a
@@ -441,6 +449,31 @@ fn plan_channel(
             bytes: oracle_bytes,
         }),
         Some(mismatch) => {
+            // A channel already declared `xfail-diagnostics` derives nothing:
+            // the disposition holds as long as the divergence is still
+            // confined to §82's error reports, and that is the whole claim.
+            // A divergence that escapes them is not something regeneration
+            // may absorb, so it is reported for a human to adjudicate rather
+            // than quietly rewritten into a pin.
+            if let Some(bug) = declared_diagnostics_bug(declared, channel) {
+                let filtered_oracle = strip_diagnostic_reports(&split_channel_lines(&oracle_bytes));
+                let filtered_umber = strip_diagnostic_reports(&split_channel_lines(&umber_bytes));
+                return match first_line_difference_in(&filtered_oracle, &filtered_umber) {
+                    None => Ok(ChannelPlan::XfailDiagnostics {
+                        bytes: oracle_bytes,
+                        bug,
+                    }),
+                    Some(escaped) => Err(format!(
+                        "channel {} declares xfail-diagnostics for {bug} but now diverges \
+                         outside a diagnostic, at filtered line {} (oracle: {:?}, umber: \
+                         {:?}); fix it or restate the disposition by hand before regenerating",
+                        channel.name(),
+                        escaped.line,
+                        escaped.expected,
+                        escaped.actual,
+                    )),
+                };
+            }
             // The bug id is never invented (see this file's module doc).
             // Exactly one of three things decides it, in order:
             //
@@ -497,10 +530,24 @@ fn plan_channel(
 /// disposition, if any. See `plan_channel`'s three-way dispatch: this is
 /// consulted first, and everything except an already-`.13` declaration is
 /// trusted outright rather than re-examined.
+/// The bug a case's manifest declares for one channel's `xfail-diagnostics`
+/// disposition, if it declares that disposition at all.
+fn declared_diagnostics_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<String> {
+    let contract = declared.case.channels.as_ref()?;
+    match contract.stream(channel) {
+        StreamDisposition::XfailDiagnostics { bug } => Some(bug.clone()),
+        StreamDisposition::Empty | StreamDisposition::File | StreamDisposition::Xfail { .. } => {
+            None
+        }
+    }
+}
+
 fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<String> {
     let contract = declared.case.channels.as_ref()?;
     match contract.stream(channel) {
-        StreamDisposition::Xfail { bug, .. } => Some(bug.clone()),
+        StreamDisposition::Xfail { bug, .. } | StreamDisposition::XfailDiagnostics { bug } => {
+            Some(bug.clone())
+        }
         StreamDisposition::Empty | StreamDisposition::File => None,
     }
 }
@@ -515,7 +562,9 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
                         .map_err(|error| format!("{}: {error}", path.display()))?;
                 }
             }
-            ChannelPlan::File { bytes } | ChannelPlan::Xfail { bytes, .. } => {
+            ChannelPlan::File { bytes }
+            | ChannelPlan::Xfail { bytes, .. }
+            | ChannelPlan::XfailDiagnostics { bytes, .. } => {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)
                         .map_err(|error| format!("{}: {error}", parent.display()))?;
@@ -638,6 +687,10 @@ impl ChannelsPlan {
                     mismatch.line,
                     json_string(&mismatch.expected),
                     json_string(&mismatch.actual),
+                ),
+                ChannelPlan::XfailDiagnostics { bug, .. } => format!(
+                    "{{ \"kind\": \"xfail-diagnostics\", \"bug\": {} }}",
+                    json_string(bug),
                 ),
             };
             fields.push(format!("{inner}\"{}\": {disposition}", channel.name()));

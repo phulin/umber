@@ -37,11 +37,7 @@
           "bug": "umber2-alfh.13",
           "mismatch": { "line": 3, "expected": "! This can't happen (256 spans).", "actual": "No pages of output." }
         },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 4, "expected": "! This can't happen (256 spans).", "actual": "No pages of output." }
-        },
+        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

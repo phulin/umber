@@ -41,16 +41,8 @@
       "channels": {
         "events": 301,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 9, "expected": "<recently read> $", "actual": "l.7 $$\\global\\count5=1$$" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.25",
-          "mismatch": { "line": 14, "expected": "<recently read> $", "actual": "l.7 $$\\global\\count5=1$$" }
-        },
+        "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.25" },
+        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.25" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

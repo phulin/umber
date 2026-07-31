@@ -214,6 +214,76 @@ pub enum StreamDisposition {
         bug: String,
         mismatch: ChannelMismatch,
     },
+    /// Umber's diagnostics do not yet match the reference engine's, but
+    /// everything the channel prints *outside* a diagnostic does.
+    ///
+    /// `xfail` writes a whole channel off and checks only that its first
+    /// divergence is still the pinned one, so nothing after that line is
+    /// compared at all and every improvement to a report churns the pin. This
+    /// disposition keeps comparing the channel with tex.web §82's error
+    /// reports removed from both sides (see [`strip_diagnostic_reports`]), so
+    /// the file framing, page output, and job tail a divergent diagnostic
+    /// used to hide stay under test. `bug` names the issue that will retire
+    /// it; the channel matching the reference *raw* is an xpass exactly as it
+    /// is for `xfail`.
+    XfailDiagnostics { bug: String },
+}
+
+/// Removes tex.web §82's error reports from one text channel's lines.
+///
+/// A report is recognizable without knowing which error raised it, because
+/// §82 gives every one of them the same frame:
+///
+/// - `print_err(s)` opens it with `print_nl("! ")`. The one thing that prints
+///   ahead of that is §306's `runaway`: `print_nl("Runaway ")`, the scanner
+///   status's name, `"?"`, `print_ln`, and then one line holding the partial
+///   token list it was collecting.
+/// - `error` then prints `show_context`'s levels and §90's help lines and
+///   closes with its own `print_ln`, so the first empty line at or after the
+///   `!␣` line ends the report. No empty line can occur inside one: a context
+///   level's second line is padding spaces rather than nothing, and no help
+///   line is empty.
+///
+/// §83's `error_stop_mode` arm is deliberately *not* modelled. It returns
+/// from `error` at `prompt_input("? ")` having printed neither help nor the
+/// closing blank line, and on the terminal `term_input`'s `term_offset:=0`
+/// puts whatever prints next on the same physical line as the `? ` -- so
+/// there is no line-level boundary to cut on. A channel whose reports end
+/// that way keeps the `xfail` disposition instead.
+#[must_use]
+pub fn strip_diagnostic_reports<'a>(lines: &[&'a [u8]]) -> Vec<&'a [u8]> {
+    let mut kept = Vec::with_capacity(lines.len());
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        if is_runaway_heading(line) {
+            // §306 prints the heading, then one line of partial token list.
+            index += 2;
+            continue;
+        }
+        if line.starts_with(b"! ") {
+            index += 1;
+            while index < lines.len() && !lines[index].is_empty() {
+                index += 1;
+            }
+            // The empty line is `error`'s own closing `print_ln`.
+            index += 1;
+            continue;
+        }
+        kept.push(line);
+        index += 1;
+    }
+    kept
+}
+
+/// §306's `print_nl("Runaway "); print_esc(...)`, whose four scanner statuses
+/// (§305's `defining`, `matching`, `aligning`, `absorbing`) name the four
+/// headings it can print.
+fn is_runaway_heading(line: &[u8]) -> bool {
+    matches!(
+        line,
+        b"Runaway definition?" | b"Runaway argument?" | b"Runaway preamble?" | b"Runaway text?"
+    )
 }
 
 /// Where an `xfail` channel's observed divergence from its committed
@@ -283,6 +353,30 @@ pub fn validate_xfail_disposition(
     Ok(())
 }
 
+/// Validates one channel's `xfail-diagnostics` disposition: `bug` must be a
+/// concrete Beads id, and the channel must be one whose bytes are a tex.web
+/// print stream at all. `dvi` and `effects` hold no §82 error reports, so
+/// declaring the disposition on either would silently mean "compare
+/// normally" and hide a real divergence behind a bug id.
+pub fn validate_xfail_diagnostics_disposition(
+    channel: StreamChannel,
+    bug: &str,
+) -> Result<(), String> {
+    if !valid_bug_id(bug) {
+        return Err(format!(
+            "channel {} pins malformed bug {bug:?}",
+            channel.name()
+        ));
+    }
+    if !matches!(channel, StreamChannel::Terminal | StreamChannel::Log) {
+        return Err(format!(
+            "channel {} carries no diagnostics, so xfail-diagnostics would compare it normally",
+            channel.name()
+        ));
+    }
+    Ok(())
+}
+
 /// One way a run failed to match its declared channel contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelFailure {
@@ -315,6 +409,17 @@ pub enum ChannelFailure {
         bug: String,
         pinned: ChannelMismatch,
         observed: ChannelMismatch,
+    },
+    /// An `xfail-diagnostics` channel diverged somewhere that is not a
+    /// tex.web §82 error report, which is the part of the channel that
+    /// disposition still holds to the reference engine. Line numbers are
+    /// those of the filtered text, not of the committed file.
+    DiagnosticsAside {
+        channel: &'static str,
+        bug: String,
+        line: usize,
+        declared: String,
+        observed: String,
     },
     /// A channel's bytes could not be brought into comparable form, so no
     /// verdict about them is available. Only the `dvi` channel can reach
@@ -428,6 +533,44 @@ pub fn compare(
                     }),
                 }
             }
+            // Everything outside a §82 error report is still held to the
+            // reference engine byte for byte; the reports themselves are cut
+            // out of both sides. A channel that matches without the cut has
+            // nothing left for `bug` to describe and owes a promotion to
+            // `file`, exactly as an `xfail` channel does.
+            StreamDisposition::XfailDiagnostics { bug } => {
+                let Some(reference) = committed(channel) else {
+                    failures.push(ChannelFailure::MissingFile {
+                        channel: name,
+                        path: format!("expected.{name}"),
+                    });
+                    continue;
+                };
+                let (Some(reference), Some(observed)) = (
+                    normalize_side(channel, &reference, "committed", &mut failures),
+                    normalize_side(channel, observed, "observed", &mut failures),
+                ) else {
+                    continue;
+                };
+                if reference == observed {
+                    failures.push(ChannelFailure::Xpass {
+                        channel: name,
+                        bug: bug.clone(),
+                    });
+                    continue;
+                }
+                let reference = strip_diagnostic_reports(&split_channel_lines(&reference));
+                let observed = strip_diagnostic_reports(&split_channel_lines(&observed));
+                if let Some(divergence) = first_line_difference_in(&reference, &observed) {
+                    failures.push(ChannelFailure::DiagnosticsAside {
+                        channel: name,
+                        bug: bug.clone(),
+                        line: divergence.line,
+                        declared: divergence.expected,
+                        observed: divergence.actual,
+                    });
+                }
+            }
         }
     }
     failures
@@ -443,7 +586,7 @@ pub fn compare(
 /// binary channel's bytes are compared exactly as recorded, with only the
 /// *rendering* of a divergent line (below) falling back to a lossy decode
 /// for a human-readable report.
-fn split_lines(bytes: &[u8]) -> Vec<&[u8]> {
+pub fn split_channel_lines(bytes: &[u8]) -> Vec<&[u8]> {
     if bytes.is_empty() {
         return Vec::new();
     }
@@ -608,10 +751,19 @@ pub fn first_line_difference(declared: &[u8], observed: &[u8]) -> Option<Channel
     if declared == observed {
         return None;
     }
-    let declared_lines = split_lines(declared);
-    let observed_lines = split_lines(observed);
-    let mut declared_lines = declared_lines.into_iter();
-    let mut observed_lines = observed_lines.into_iter();
+    first_line_difference_in(
+        &split_channel_lines(declared),
+        &split_channel_lines(observed),
+    )
+}
+
+/// [`first_line_difference`] over lines a caller has already split, so a
+/// filtered comparison ([`strip_diagnostic_reports`]) reports the line
+/// numbers of what it actually compared.
+#[must_use]
+pub fn first_line_difference_in(declared: &[&[u8]], observed: &[&[u8]]) -> Option<ChannelMismatch> {
+    let mut declared_lines = declared.iter().copied();
+    let mut observed_lines = observed.iter().copied();
     let mut line = 0;
     loop {
         line += 1;

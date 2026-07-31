@@ -40,24 +40,8 @@
       "channels": {
         "events": 76,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 3,
-            "expected": "Runaway definition?",
-            "actual": "! Forbidden control sequence found while scanning definition of \\a."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 4,
-            "expected": "Runaway definition?",
-            "actual": "! Forbidden control sequence found while scanning definition of \\a."
-          }
-        },
+        "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
+        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

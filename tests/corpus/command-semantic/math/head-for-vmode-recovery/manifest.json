@@ -38,24 +38,8 @@
       "channels": {
         "events": 522,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 68,
-            "expected": "! Missing \\cr inserted.",
-            "actual": "! You can't use `\\end' in internal vertical mode."
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.26",
-          "mismatch": {
-            "line": 133,
-            "expected": "! Missing \\cr inserted.",
-            "actual": "! You can't use `\\end' in internal vertical mode."
-          }
-        },
+        "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
+        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },

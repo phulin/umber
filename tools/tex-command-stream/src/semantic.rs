@@ -37,8 +37,9 @@ mod tests;
 
 pub use channels::{
     CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, STREAM_CHANNELS,
-    StreamChannel, StreamDisposition, first_line_difference, normalize_channel,
-    normalize_log_clock, validate_xfail_disposition,
+    StreamChannel, StreamDisposition, first_line_difference, first_line_difference_in,
+    normalize_channel, normalize_log_clock, split_channel_lines, strip_diagnostic_reports,
+    validate_xfail_diagnostics_disposition, validate_xfail_disposition,
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 
@@ -446,7 +447,11 @@ pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> 
                     path.display()
                 ));
             }
-            StreamDisposition::File | StreamDisposition::Xfail { .. } if !present => {
+            StreamDisposition::File
+            | StreamDisposition::Xfail { .. }
+            | StreamDisposition::XfailDiagnostics { .. }
+                if !present =>
+            {
                 return Err(format!(
                     "case {} declares channel {} committed but {} is absent",
                     case.id,
@@ -456,9 +461,16 @@ pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> 
             }
             _ => {}
         }
-        if let StreamDisposition::Xfail { bug, mismatch } = declared {
-            validate_xfail_disposition(channel, bug, mismatch)
-                .map_err(|error| format!("case {}: {error}", case.id))?;
+        match declared {
+            StreamDisposition::Xfail { bug, mismatch } => {
+                validate_xfail_disposition(channel, bug, mismatch)
+                    .map_err(|error| format!("case {}: {error}", case.id))?;
+            }
+            StreamDisposition::XfailDiagnostics { bug } => {
+                validate_xfail_diagnostics_disposition(channel, bug)
+                    .map_err(|error| format!("case {}: {error}", case.id))?;
+            }
+            StreamDisposition::Empty | StreamDisposition::File => {}
         }
     }
     Ok(())

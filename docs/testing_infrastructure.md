@@ -365,10 +365,11 @@ run produces, and the gate compares all of them alongside the projection:
   `tests/corpus/command/tex82` fixture tree and duplicating it here would
   commit an Umber self-golden;
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
-- `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, or `xfail`.
-  A fixture-local `expected.<channel>` file is required for the latter two,
-  and it always holds the pinned reference engine's bytes (see below).
-  The corpus commits 471 applicable files today: 202 terminal, 202 log, and 67
+- `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, `xfail`, or
+  `xfail-diagnostics`. A fixture-local `expected.<channel>` file is required
+  for all but `empty`, and it always holds the pinned reference engine's bytes
+  (see below).
+  The corpus commits 473 applicable files today: 203 terminal, 203 log, and 67
   DVI.
   Terminal and log both grew from a minority of cases to nearly every one once
   job framing gave every run a banner, a `**` line, and a page report or
@@ -395,11 +396,12 @@ risk.
 A case with no `channels` block fails validation. The one exemption is a case
 whose engine run does not complete and therefore has no channels to record;
 it is granted only to a case already pinned as `xfail`, so it expires with the
-bug instead of becoming the escape hatch. Three cases hold it --
-`input-expansion/expansion-conversions`, `input-expansion/input-start-file`,
-and `main-control/read-to-definition` -- and
-`only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` pins that
-set by name and re-runs each to prove it still cannot run.
+bug instead of becoming the escape hatch. No case holds it today: the three
+that used to -- `input-expansion/expansion-conversions`,
+`input-expansion/input-start-file`, and `main-control/read-to-definition` --
+all reach the end of their run,
+and `only_unrunnable_xfail_cases_are_exempt_from_the_channel_contract` keeps
+the set empty by re-running every candidate rather than by anyone remembering.
 
 **Every committed fixture-local `expected.<channel>` file holds the pinned
 reference engine's bytes -- that is the one meaning a committed channel file
@@ -437,6 +439,31 @@ case-level `expectation`'s own pass/xpass/changed-failure discipline:
   divergence next to the one now observed so a shift in behavior is never
   mistaken for the one `bug` names.
 
+`xfail` writes a whole channel off: nothing after the pinned line is compared
+at all, and every improvement to a diagnostic moves the pin and has to be
+absorbed by a regeneration. `xfail-diagnostics` is the narrower disposition
+for the common case where the divergence _is_ the diagnostic. It names a
+`bug`, pins no line, and keeps comparing the channel with tex.web §82's error
+reports cut out of both sides, so the file framing, page output, and job tail
+a divergent report used to hide stay under test. `strip_diagnostic_reports`
+does the cutting, and it recognizes a report without knowing which error
+raised it, because §82 frames every one the same way: §306's
+`Runaway <status>?` heading and its one line of partial token list, then
+`print_err`'s `!␣` line, then `show_context`'s levels and §90's help lines up
+to the first empty line -- which can only be `error`'s own closing
+`print_ln`, since a context level's second line is padding spaces and no help
+line is empty. §83's `error_stop_mode` arm is deliberately not modelled: it
+returns from `error` at `prompt_input("? ")` having printed neither help nor
+that blank line, and on the terminal `term_input`'s `term_offset:=0` puts the
+next output on the same physical line as the `?`, so there is no line-level
+boundary to cut on. A channel whose reports end that way stays `xfail` --
+`main-control/empty-token-register` is the one that does. A divergence that
+escapes the reports fails as `DiagnosticsAside`, naming the bug alongside the
+line that escaped; matching the reference raw is an xpass, exactly as it is
+for `xfail`. Only `terminal` and `log` may declare it, because `dvi` and
+`effects` carry no §82 reports and the disposition would silently mean
+"compare normally" there.
+
 Two byte ranges carry a wall clock that no two runs of the same job can ever
 agree on, and both are normalized -- by one function,
 `tex_command_stream::semantic::normalize_channel`, which the ongoing gate and
@@ -463,37 +490,25 @@ banner. Masking it left exactly one real DVI divergence in the corpus
 (`umber2-86sl`), which had been invisible because the channel fingerprint
 records only the _first_ divergence and the banner always came first.
 
-Final tally, measured at this commit: of 597 non-`effects` channel
-dispositions across 199 cases, 267 are `file`, 196 are `xfail`, and 134 are
-`empty` (the 199 `effects` dispositions are all `empty`; that channel has no
-reference-engine-comparable form at all -- it is Umber's own structured
-rendering of stream opens, closes, writes, and shell escapes, not a
-byte-for-byte reproduction of anything a real TeX writes -- so every case's
-capture is required to be empty rather than ever adjudicated). The 196
-`xfail` channels resolve to 15 bugs:
+Final tally, measured at this commit: of 609 non-`effects` channel
+dispositions across 203 cases, 456 are `file`, 6 are `xfail`, 11 are
+`xfail-diagnostics`, and 136 are `empty` (the 203 `effects` dispositions are
+all `empty`; that channel has no reference-engine-comparable form at all --
+it is Umber's own structured rendering of stream opens, closes, writes, and
+shell escapes, not a byte-for-byte reproduction of anything a real TeX writes
+-- so every case's capture is required to be empty rather than ever
+adjudicated). The 17 divergent channels resolve to 5 bugs:
 
-- `umber2-alfh.14` (show_context accuracy residual): 66
-- `umber2-alfh.16` (missing box diagnostics): 40
-- `umber2-alfh.26` (Umber raises a _different_ error than pdfTeX): 25
-- `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 18
-- `umber2-alfh.25` (a file's `)` is closed early): 14
-- `umber2-alfh.11` (the `*` prompt / terminal-read residual): 11
-- `umber2-alfh.23` (long diagnostic lines are never wrapped): 6
-- `umber2-alfh.18` (a nested `\input` misses its `./` name prefix): 4
-- `umber2-alfh.19` (`\show`'s macro meaning omits a newline): 4
-- `umber2-alfh.24` (a `\write` interleaves into the page marker): 2
-- `umber2-alfh.31` (a `\read` from the terminal is neither echoed nor closed):
-  2
-- `umber2-alfh.17` (e-TeX's pretend-you-didn't-say message omits `\protected`):
-  1
-- `umber2-alfh.20` (Umber does not recognize `nd`/`nc` dimension units): 1
-- `umber2-alfh.21` (an `\openout` notice is never printed to the log): 1
-- `umber2-86sl` (a `\special` is written ahead of the box's glyphs): 1
+- `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 6
+- `umber2-alfh.25` (a file's `)` is closed early): 4
+- `umber2-alfh.26` (Umber raises a _different_ error than pdfTeX): 4
+- `umber2-alfh.11` (the `*` prompt / terminal-read residual): 2
+- `umber2-alfh.22` (a `\special` is written ahead of the box's glyphs): 1
 
 Read those counts as channels, not as defects. `terminal` and `log` are not
 independent evidence: TeX writes most of a job's transcript to both at once
 (§54's `term_and_log`), so one divergence normally pins two channels, and the
-196 above are roughly 97 distinct case-level divergences. The `dvi` channel
+17 above are 9 distinct case-level divergences. The `dvi` channel
 _is_ independent, and after the preamble normalization above it contributes
 exactly one.
 
