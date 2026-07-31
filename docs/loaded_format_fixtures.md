@@ -23,8 +23,8 @@ model rather than adding profile-specific cache branches.
 Every test that drives the complete Umber command-to-output pipeline must use
 one provider contract. The provider accepts a complete `FormatRecipe`, obtains
 its authenticated compound cache entry with `ensure_format`, loads the returned
-`FormatFixture` into a caller-supplied fresh `World`, and runs one authored root
-plus ordered typed `LoadedFormatResource` values through
+`FormatFixture` into a provider-created fresh `World`, and runs one authored
+root plus ordered typed `LoadedFormatResource` values through
 `LoadedFormatFixture::run`. It is not a family adapter: command minifixtures,
 TRIP, e-TRIP, Story, and Gentle supply data to the same API and may not own
 private cache, INITEX, image-decoding, dump, or captured-runner branches.
@@ -38,10 +38,12 @@ explicit phases:
 1. `prepare(recipe)` resolves the persistent native store and returns an
    authenticated `FormatFixture` with detached construction evidence. This is
    the only operation allowed to construct or dump a format.
-2. `run(fixture, job)` creates or accepts a fresh clocked `World`, calls
-   `FormatFixture::load`, applies the typed job configuration, and calls
+2. `run(fixture, job)` creates a fresh memory `World` from the request's job
+   clock, registers only that request's terminal input, calls
+   `FormatFixture::load`, applies the remaining typed job configuration, and calls
    `LoadedFormatFixture::run`. It cannot construct, dump, or reuse a loaded
-   `Universe` or `World` from another job.
+   `Universe` or accept a caller-created `World` whose mutable state cannot be
+   proven fresh.
 
 `prepare` uses `FormatCacheStore::from_environment`, hence the existing native
 Umber platform cache (`$XDG_CACHE_HOME/umber` when set, otherwise the platform
@@ -88,10 +90,14 @@ status never enter loaded-job acceptance. Each loaded run owns a new `World`,
 `Universe`, clock episode, root source, resource host, observer, checkpoints,
 effects, and output assembly. Its job request explicitly supplies engine
 profile compatibility, job clock, interaction mode, TeX82 error-context
-widths, finite command/wall/RSS limits, backend/output policy, authored-root
-identity and bytes, ordered Input/TFM resources, terminal input where needed,
-and observers. The provider rejects profile mismatch or an unbounded guard.
-Geometry remains captured and reported but advisory; command-v1, terminal,
+widths, its own finite command/wall/RSS limits, backend/output policy,
+authored-root identity, source kind and bytes, ordered Input/TFM resources,
+terminal input where needed, and observers. Construction uses only the
+recipe's clock and guards, which remain cache-identity inputs; a job request's
+clock and guards are runtime controls and never select or mutate a format
+entry. The provider rejects profile mismatch, unsupported backend/profile
+combinations, or an unbounded construction or job guard. Geometry remains
+captured and reported but advisory; command-v1, terminal,
 log, effects, status, and normalized DVI remain governed by each fixture's
 existing acceptance contract.
 
@@ -110,6 +116,13 @@ these parity test families; this migration must not silently broaden into its
 incremental-session architecture. Format-construction unit tests remain direct
 tests of `ensure_format`, worker protocol, and cache storage because they test
 the preparation operation itself rather than a full loaded pipeline.
+
+The Plain construction closure is exact rather than host-discovered: it owns
+the pinned `plain.tex` and `hyphen.tex` bytes plus every TFM named by
+`parity_harness::PLAIN_PRELOAD_FONTS`. Those construction resources are loaded
+from repository-controlled inputs before `prepare`; absence fails locally and
+cannot fall through to a system TeX tree or network lookup. Document roots and
+fonts not in that preload inventory remain typed job resources.
 
 ### Ordered implementation decomposition
 
