@@ -6,6 +6,12 @@ use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
+#[cfg(target_os = "linux")]
+use rustix::fd::OwnedFd;
+#[cfg(target_os = "linux")]
+use rustix::process::{Pid, PidfdFlags, pidfd_open};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tex_command::RegisteredSourceKind;
@@ -175,6 +181,49 @@ struct ReaderEvents {
 }
 
 #[cfg(target_os = "linux")]
+struct ProcessExitEvent {
+    pidfd: OwnedFd,
+}
+
+#[cfg(target_os = "linux")]
+impl ProcessExitEvent {
+    fn open(child: &Child) -> Result<Self, FormatFixtureError> {
+        let pid =
+            Pid::from_raw(child.id() as i32).ok_or(FormatFixtureError::ResidentSetUnsupported)?;
+        let pidfd = pidfd_open(pid, PidfdFlags::empty())
+            .map_err(|_| FormatFixtureError::ResidentSetUnsupported)?;
+        Ok(Self { pidfd })
+    }
+
+    fn is_ready(&self) -> Result<bool, FormatFixtureError> {
+        let mut descriptor = [PollFd::new(&self.pidfd, PollFlags::IN)];
+        poll(
+            &mut descriptor,
+            Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }),
+        )
+        .map(|ready| ready == 1)
+        .map_err(|error| FormatFixtureError::Worker(error.to_string()))
+    }
+
+    #[cfg(test)]
+    fn wait_until_ready(&self) -> Result<bool, FormatFixtureError> {
+        let mut descriptor = [PollFd::new(&self.pidfd, PollFlags::IN)];
+        poll(
+            &mut descriptor,
+            Some(&Timespec {
+                tv_sec: 1,
+                tv_nsec: 0,
+            }),
+        )
+        .map(|ready| ready == 1)
+        .map_err(|error| FormatFixtureError::Worker(error.to_string()))
+    }
+}
+
+#[cfg(target_os = "linux")]
 impl ReaderEvents {
     fn new() -> Self {
         Self {
@@ -201,10 +250,17 @@ impl ReaderEvents {
 
     fn decide(
         &self,
-        status: Option<std::process::ExitStatus>,
+        mut status: Option<std::process::ExitStatus>,
         wall_time_exceeded: bool,
+        observe_deadline_exit: impl FnOnce() -> Result<
+            Option<std::process::ExitStatus>,
+            FormatFixtureError,
+        >,
     ) -> Result<SupervisionAction, FormatFixtureError> {
         let mut completions = self.lock()?;
+        if wall_time_exceeded && status.is_none() {
+            status = observe_deadline_exit()?;
+        }
         if matches!(completions.stdout, Some(Err(_)))
             && let Some(Err(error)) = completions.stdout.take()
         {
@@ -319,6 +375,13 @@ fn supervise_and_collect(
     stdout_limit: usize,
     stderr_limit: usize,
 ) -> Result<CollectedWorkerOutput, FormatFixtureError> {
+    let exit_event = match ProcessExitEvent::open(child) {
+        Ok(exit_event) => exit_event,
+        Err(error) => {
+            terminate(child);
+            return Err(error);
+        }
+    };
     let events = Arc::new(ReaderEvents::new());
     let stdout_events = Arc::clone(&events);
     let stdout_reader = std::thread::spawn(move || {
@@ -341,7 +404,17 @@ fn supervise_and_collect(
                 }
             }
         }
-        let action = match events.decide(status, started.elapsed() >= guards.wall_time) {
+        let wall_time_exceeded = started.elapsed() >= guards.wall_time;
+        let action = match events.decide(status, wall_time_exceeded, || {
+            if exit_event.is_ready()? {
+                child
+                    .wait()
+                    .map(Some)
+                    .map_err(|error| FormatFixtureError::Worker(error.to_string()))
+            } else {
+                Ok(None)
+            }
+        }) {
             Ok(action) => action,
             Err(error) => {
                 terminate(child);
@@ -631,7 +704,9 @@ mod tests {
             .publish(false, Ok(Vec::new()))
             .expect("stderr publication");
         assert!(matches!(
-            events.decide(Some(success), true).expect("decision"),
+            events
+                .decide(Some(success), true, || Ok(None))
+                .expect("decision"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..
@@ -647,7 +722,9 @@ mod tests {
             .publish(false, Ok(b"diagnostic".to_vec()))
             .expect("stderr publication");
         assert!(matches!(
-            events.decide(Some(crash), true).expect("decision"),
+            events
+                .decide(Some(crash), true, || Ok(None))
+                .expect("decision"),
             SupervisionAction::Complete(Err(FormatFixtureError::WorkerCrashed(
                 Some(9),
                 diagnostic
@@ -663,21 +740,25 @@ mod tests {
             .publish(true, Ok(Vec::new()))
             .expect("stdout publication");
         assert!(matches!(
-            events.decide(Some(success), false).expect("decision"),
+            events
+                .decide(Some(success), false, || Ok(None))
+                .expect("decision"),
             SupervisionAction::WaitForPipes
         ));
         assert!(matches!(
-            events.decide(Some(success), true).expect("decision"),
+            events
+                .decide(Some(success), true, || Ok(None))
+                .expect("decision"),
             SupervisionAction::WallTimeExceeded
         ));
 
         let events = ReaderEvents::new();
         assert!(matches!(
-            events.decide(None, false).expect("decision"),
+            events.decide(None, false, || Ok(None)).expect("decision"),
             SupervisionAction::CheckResidentSet
         ));
         assert!(matches!(
-            events.decide(None, true).expect("decision"),
+            events.decide(None, true, || Ok(None)).expect("decision"),
             SupervisionAction::WallTimeExceeded
         ));
     }
@@ -690,7 +771,9 @@ mod tests {
             .publish(true, Ok(Vec::new()))
             .expect("stdout publication");
         assert!(matches!(
-            events.decide(Some(success), true).expect("decision"),
+            events
+                .decide(Some(success), true, || Ok(None))
+                .expect("decision"),
             SupervisionAction::WallTimeExceeded
         ));
         events
@@ -721,20 +804,69 @@ mod tests {
         // observed. The barriers place publication after that observation and
         // before the expired-deadline classification.
         assert!(matches!(
-            events.decide(None, false).expect("pre-exit decision"),
+            events
+                .decide(None, false, || Ok(None))
+                .expect("pre-exit decision"),
             SupervisionAction::CheckResidentSet
         ));
         release.wait();
         published.wait();
         let status = Some(std::process::ExitStatus::from_raw(0));
         assert!(matches!(
-            events.decide(status, true).expect("atomic classification"),
+            events
+                .decide(status, true, || Ok(None))
+                .expect("atomic classification"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..
             })) if response == b"response"
         ));
         producer.join().expect("completion producer");
+    }
+
+    #[test]
+    fn exit_event_reconciles_stale_live_sample_at_deadline() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "read ignored || exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn synchronized helper");
+        let exit_event = ProcessExitEvent::open(&child).expect("open process exit event");
+        let stale_status = child.try_wait().expect("prior live observation");
+        assert!(stale_status.is_none());
+
+        let events = ReaderEvents::new();
+        events
+            .publish(true, Ok(b"response".to_vec()))
+            .expect("stdout publication");
+        events
+            .publish(false, Ok(Vec::new()))
+            .expect("stderr publication");
+        drop(child.stdin.take());
+        assert!(
+            exit_event
+                .wait_until_ready()
+                .expect("bounded kernel exit wait"),
+            "helper did not exit"
+        );
+
+        assert!(matches!(
+            events
+                .decide(stale_status, true, || {
+                    assert!(exit_event.is_ready()?);
+                    child
+                        .wait()
+                        .map(Some)
+                        .map_err(|error| FormatFixtureError::Worker(error.to_string()))
+                })
+                .expect("deadline arbitration"),
+            SupervisionAction::Complete(Ok(CollectedWorkerOutput {
+                stdout: response,
+                ..
+            })) if response == b"response"
+        ));
     }
 
     #[test]
@@ -755,7 +887,9 @@ mod tests {
             .expect("stderr publication");
 
         assert!(matches!(
-            events.decide(initial_status, true).expect("decision"),
+            events
+                .decide(initial_status, true, || Ok(None))
+                .expect("decision"),
             SupervisionAction::Complete(Ok(CollectedWorkerOutput {
                 stdout: response,
                 ..

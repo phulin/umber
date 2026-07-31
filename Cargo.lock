@@ -1395,6 +1395,7 @@ dependencies = [
  "parity-harness",
  "png",
  "proptest",
+ "rustix",
  "serde",
  "sha2",
  "tempfile",

@@ -57,13 +57,16 @@ later call starts an independent worker. The response repeats the recipe
 identity and authenticates the image bytes with SHA-256; the parent checks
 both and performs a complete frozen-format decode before cache publication.
 Reader completion and wall-deadline classification share one synchronized
-event state. A reader result published before the supervisor acquires that
-state for an expired-deadline decision participates in the decision, so an
-observed exit with both pipes closed completes normally. If the supervisor
-acquires the state first and a pipe is still unresolved, the deadline wins;
-this finitely bounds pipes held open by inherited descriptors. Reader
-publication wakes the supervisor, while a two-millisecond maximum wait keeps
-live-child RSS sampling continuous.
+event state. At the deadline, the supervisor holds that state while sampling
+the worker's Linux pidfd: readiness is reaped into the actual exit status
+before classification, while non-readiness is the live-at-deadline
+linearization point. A reader result published before that locked arbitration
+participates in the decision, so an exited worker with both pipes closed
+completes normally even when the preceding `try_wait` observed it live. An
+exited worker with an unresolved inherited pipe, or a worker live at the pidfd
+sample, reaches the deadline immediately; this finitely bounds both cases.
+Reader publication wakes the supervisor, while a two-millisecond maximum wait
+keeps live-child RSS sampling continuous.
 Platforms without supported RSS supervision reject construction explicitly.
 On Linux both the cooperative worker check and the parent supervisor convert
 `/proc/*/statm` resident pages with the checked runtime page size; unavailable,

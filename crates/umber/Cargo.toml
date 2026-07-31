@@ -47,6 +47,9 @@ serde.workspace = true
 umber-fetch = { path = "../umber-fetch" }
 umber-interrupt = { path = "../umber-interrupt" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1", features = ["event", "process"] }
+
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
