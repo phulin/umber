@@ -453,7 +453,7 @@ pub(crate) fn execute_showbox(
     // A single smart newline, not an unconditional one: `show_box`'s own
     // open is `print_nl("> \box")`, unlike `show_activities`/`show_ifs`'s
     // `print_nl(""); print_ln`.
-    diagnostic.print_nl(&text);
+    diagnostic.print_nl("").print_rendered(&text);
     diagnostic.end(true);
     complete_show(stores, true, Some(context))?;
     Ok(())
@@ -633,7 +633,7 @@ pub(crate) fn execute_showlists(
     // whatever the terminal/log column held before it ran.
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic.print_nl("").print_ln();
-    diagnostic.print(&text);
+    diagnostic.print_rendered(&text);
     diagnostic.end(true);
     complete_show(stores, true, Some(context))?;
     Ok(())

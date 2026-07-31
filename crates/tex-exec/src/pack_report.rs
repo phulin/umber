@@ -127,7 +127,7 @@ fn report_one(
     // the headline and abbreviated hlist. Their live §54 selector is
     // therefore authoritative: batch mode writes the report to the log only,
     // while the other interaction modes write it to terminal and log.
-    stores.printer().print(&headline);
+    stores.printer().print_rendered(&headline);
 
     // §663/§675: `begin_diagnostic; show_box(r); end_diagnostic(true)`.
     // §198 shows the packed box itself, not its list: at `\showboxdepth`'s
@@ -141,7 +141,7 @@ fn report_one(
     let mut scope = stores.begin_diagnostic();
     // §182 emits `print_ln` ahead of every node it shows, and §198 closes
     // with one of its own; `end_diagnostic(true)` supplies the last.
-    scope.print_ln().print(&dump);
+    scope.print_ln().print_rendered(&dump);
     scope.end(true);
 }
 

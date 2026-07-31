@@ -43,8 +43,9 @@ pub(super) fn retry_unavailable_stream_open(
     report
         .print(&failed_name)
         .print("'.")
-        .print(failed.context())
-        .print("\nPlease type another output file name");
+        .print_rendered(failed.context())
+        .print_rendered("\n")
+        .print("Please type another output file name");
     drop(report);
     let replacement = stores
         .command_context()

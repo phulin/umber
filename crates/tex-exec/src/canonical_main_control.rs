@@ -9610,7 +9610,7 @@ fn print_ship_out_marker_open(
             crate::node_dump::DumpConfig::read(stores),
         );
         let mut diagnostic = stores.begin_diagnostic();
-        diagnostic.print(&text);
+        diagnostic.print_rendered(&text);
         diagnostic.end(true);
     }
 }
@@ -12027,7 +12027,7 @@ fn apply_scanned_step(
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
             // display whenever the file's own `(` had just closed one.
-            stores.printer().print_nl(&format!("> {text}"));
+            stores.printer().print_nl("> ").print_rendered(&text);
             crate::diagnostics::complete_show(stores, false, Some(context))?;
             Ok(ReplayStep::Continue)
         }
@@ -12040,7 +12040,7 @@ fn apply_scanned_step(
             let context = command.state.output_open_context(&stores.command_context());
             let mut diagnostic = stores.begin_diagnostic();
             diagnostic.print_nl("").print_ln();
-            diagnostic.print(&render_showifs(&conditions));
+            diagnostic.print_rendered(&render_showifs(&conditions));
             diagnostic.end(true);
             crate::diagnostics::complete_show(stores, true, Some(context))?;
             Ok(ReplayStep::Continue)
@@ -13228,7 +13228,7 @@ fn apply_scanned_step(
 }
 
 fn print_display_content(stores: &mut Universe, content: &str) {
-    stores.printer().print_nl(content);
+    stores.printer().print_nl("").print_rendered(content);
 }
 
 /// TeX82 §282's `insert_token` arm, the only way an `\aftergroup` token ever
@@ -14577,7 +14577,7 @@ fn issue_terminal_message(stores: &mut Universe, text: &str) {
     } else if printer.terminal_offset() > 0 || printer.log_offset() > 0 {
         printer.print_char(' ');
     }
-    printer.print(text);
+    printer.print_rendered(text);
 }
 
 /// TeX82 §1283's `<Print string s as an error message>`.
@@ -14594,7 +14594,7 @@ fn issue_error_message(
         .error_channel_mut()
         .take_long_help_seen(rendered.is_none() && !interactive);
     let mut report = stores.print_err("");
-    report.print(text);
+    report.print_rendered(text);
     match rendered {
         Some(rendered) => {
             report.use_err_help(rendered);

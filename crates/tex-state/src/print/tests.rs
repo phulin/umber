@@ -301,6 +301,36 @@ fn character_string_honors_newline_before_caret_rendering_on_active_selectors() 
 }
 
 #[test]
+fn content_print_renders_every_character_in_one_atomic_effect() {
+    use crate::env::banks::IntParam;
+
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::NEWLINE_CHAR, 127);
+    Printer::new(&mut universe, Selector::TermAndLog).print("A\u{7f}\n\0\u{80}\u{ff}é");
+
+    assert_eq!(terminal_text(&universe), "A\n^^J^^@^^80^^ff^^e9");
+    assert_eq!(universe.world().effect_records().len(), 1);
+    assert_eq!(
+        universe.world().stream_bufs().terminal_partial_line(),
+        "^^J^^@^^80^^ff^^e9"
+    );
+}
+
+#[test]
+fn raw_print_char_only_applies_newlinechar_and_never_caret_renders() {
+    use crate::env::banks::IntParam;
+
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::NEWLINE_CHAR, 127);
+    Printer::new(&mut universe, Selector::TermAndLog)
+        .print_char('\0')
+        .print_char('\u{7f}')
+        .print_char('\u{80}');
+
+    assert_eq!(terminal_text(&universe).as_bytes(), [0, b'\n', 0xc2, 0x80]);
+}
+
+#[test]
 fn sprint_cs_distinguishes_named_active_and_null_control_sequences() {
     use crate::interner::ControlSequenceKind;
 

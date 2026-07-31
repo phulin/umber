@@ -217,7 +217,7 @@ fn report_runaway(stores: &mut Universe, kind: &str, partial: &[tex_state::token
     printer.print(kind);
     printer.print_char('?');
     printer.print_ln();
-    printer.print(&display);
+    printer.print_rendered(&display);
 }
 
 /// Object-safe host boundary used only by the `\font` assignment.

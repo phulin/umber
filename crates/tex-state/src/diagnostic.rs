@@ -65,6 +65,12 @@ impl<'a> Diagnostic<'a> {
         self
     }
 
+    /// Writes a display already rendered through TeX's print primitives.
+    pub fn print_rendered(&mut self, text: &str) -> &mut Self {
+        self.printer.print_rendered(text);
+        self
+    }
+
     /// tex.web §58's `print_char`.
     pub fn print_char(&mut self, character: char) -> &mut Self {
         self.printer.print_char(character);

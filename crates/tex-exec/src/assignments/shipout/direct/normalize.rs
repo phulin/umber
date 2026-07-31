@@ -684,8 +684,9 @@ fn retry_openout_target(
         report
             .print(&path)
             .print("'.")
-            .print(context)
-            .print("\nPlease type another output file name");
+            .print_rendered(context)
+            .print_rendered("\n")
+            .print("Please type another output file name");
         drop(report);
         let replacement = stores
             .command_context()

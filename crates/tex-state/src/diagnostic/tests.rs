@@ -55,7 +55,7 @@ fn end_diagnostic_closes_the_line_and_optionally_adds_a_blank_one() {
 fn end_diagnostic_on_an_empty_line_emits_nothing_further() {
     let mut universe = Universe::new();
     let mut diagnostic = universe.begin_diagnostic();
-    diagnostic.print("trace\n");
+    diagnostic.print("trace").print_ln();
     diagnostic.end(false);
     assert_eq!(
         routed(&universe),

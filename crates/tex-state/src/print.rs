@@ -237,12 +237,8 @@ impl<'a> Printer<'a> {
     pub fn print(&mut self, text: &str) -> &mut Self {
         let mut rendered = String::with_capacity(text.len());
         for character in text.chars() {
-            if character == '\n' {
+            if self.is_newline_character(character) {
                 rendered.push('\n');
-            } else if self.is_newline_character(character) {
-                self.write_raw(&rendered);
-                rendered.clear();
-                self.print_ln();
             } else {
                 append_tex_print_char(character, &mut rendered);
             }
@@ -272,6 +268,14 @@ impl<'a> Printer<'a> {
         let mut rendered = String::new();
         append_tex_print_char(character, &mut rendered);
         self.write_raw(&rendered)
+    }
+
+    /// Writes text whose characters have already crossed TeX's print
+    /// primitives, such as a completed `show_context` or token display.
+    /// Embedded line feeds are physical `print_ln` results and must not be
+    /// interpreted again through the live `new_line_char`.
+    pub fn print_rendered(&mut self, text: &str) -> &mut Self {
+        self.write_raw(text)
     }
 
     fn is_newline_character(&self, character: char) -> bool {
@@ -458,6 +462,12 @@ impl<'a> ErrorReport<'a> {
         self
     }
 
+    /// Writes text already rendered through TeX's print primitives.
+    pub fn print_rendered(&mut self, text: &str) -> &mut Self {
+        self.printer.print_rendered(text);
+        self
+    }
+
     /// tex.web §58's `print_char`.
     pub fn print_char(&mut self, character: char) -> &mut Self {
         self.printer.print_char(character);
@@ -558,7 +568,7 @@ impl<'a> ErrorReport<'a> {
         // the dialog below, so the rendering outlives this display.
         let context = self.context.take();
         if let Some(context) = &context {
-            self.printer.print(context);
+            self.printer.print_rendered(context);
         }
         // §82: `if interaction=error_stop_mode then <Get user's advice and
         // return>`. There is no second conjunct. Umber used to require a
@@ -601,7 +611,7 @@ impl<'a> ErrorReport<'a> {
             self.printer.set_selector(restore.decr());
         }
         if let Some(rendered) = self.err_help.clone() {
-            self.printer.print_ln().print(&rendered);
+            self.printer.print_ln().print_rendered(&rendered);
         } else {
             let lines = std::mem::take(&mut self.help);
             for line in &lines {
@@ -716,7 +726,7 @@ impl<'a> ErrorReport<'a> {
             .record_error_history();
         self.printer.print_char('.');
         if let Some(context) = context {
-            self.printer.print(context);
+            self.printer.print_rendered(context);
         }
         // §93 reaches `error` in scroll mode, so §82 takes its scrolled tail:
         // `incr(error_count)` and §90's transcript-only help. Whether that
@@ -755,7 +765,7 @@ impl<'a> ErrorReport<'a> {
     /// tex.web §89's `<Print the help information and goto continue>`.
     fn show_help(&mut self) {
         if let Some(rendered) = self.err_help.take() {
-            self.printer.print(&rendered).print_ln();
+            self.printer.print_rendered(&rendered).print_ln();
             return;
         }
         if self.help.is_empty() {
