@@ -45,14 +45,20 @@ selected fresh primitive profile, and driving the retained
 command-fuel limit remain inside that worker.
 
 The parent samples worker wall time and RSS independently of command return or
-cooperative engine checkpoints. It kills and reaps the worker when either
-bound is exceeded, so one non-returning or allocating command cannot hold the
-fixture harness. A crash or malformed response publishes nothing and a later
-call starts an independent worker. The response repeats the recipe identity
-and authenticates the image bytes with SHA-256; the parent checks both and
-performs a complete frozen-format decode before cache publication. Platforms
-without supported RSS supervision reject construction explicitly. These
-internal guards complement the outer `scripts/run-umber-guarded.py` defense.
+cooperative engine checkpoints while bounded readers concurrently drain both
+worker pipes. Standard output is limited to the 256 MiB format-image limit plus
+64 KiB of protocol framing, and diagnostic standard error is limited to 1 MiB.
+The parent kills and reaps the worker when either resource bound or either
+pipe limit is exceeded, so one non-returning, allocating, or pipe-saturating
+command cannot hold the fixture harness. Reader, writer, and process errors
+also terminate and reap before returning; bounded crash diagnostics remain
+attached to the error. A crash or malformed response publishes nothing and a
+later call starts an independent worker. The response repeats the recipe
+identity and authenticates the image bytes with SHA-256; the parent checks
+both and performs a complete frozen-format decode before cache publication.
+Platforms without supported RSS supervision reject construction explicitly.
+These internal guards complement the outer `scripts/run-umber-guarded.py`
+defense.
 
 After a successful construction episode, the quiescent `Universe` produces a
 schema-validated deterministic image. `FormatCacheStore` writes an entry to a

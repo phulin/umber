@@ -1,8 +1,8 @@
 //! Authenticated process boundary for bounded format construction.
 
 use std::io::{Read, Write};
-use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ use crate::format_fixture::{
 };
 
 const PROTOCOL: u32 = 1;
+const MAX_WORKER_STDOUT_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 64 * 1024;
+const MAX_WORKER_STDERR_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 struct Request {
@@ -68,22 +70,61 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| FormatFixtureError::WorkerProtocol("missing worker stdin".into()))?;
-        std::thread::spawn(move || {
-            let _ = stdin.write_all(&request_bytes);
+        let Some(mut stdin) = child.stdin.take() else {
+            terminate(&mut child);
+            return Err(FormatFixtureError::WorkerProtocol(
+                "missing worker stdin".into(),
+            ));
+        };
+        let Some(stdout) = child.stdout.take() else {
+            terminate(&mut child);
+            return Err(FormatFixtureError::WorkerProtocol(
+                "missing worker stdout".into(),
+            ));
+        };
+        let Some(stderr) = child.stderr.take() else {
+            terminate(&mut child);
+            return Err(FormatFixtureError::WorkerProtocol(
+                "missing worker stderr".into(),
+            ));
+        };
+        let writer = std::thread::spawn(move || {
+            stdin
+                .write_all(&request_bytes)
+                .map_err(|error| error.to_string())
         });
-        supervise(&mut child, recipe.guards)?;
-        let mut output = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| FormatFixtureError::WorkerProtocol("missing worker stdout".into()))?
-            .read_to_end(&mut output)
-            .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
-        let response: Response = bincode::deserialize(&output)
+        let collected = supervise_and_collect(
+            &mut child,
+            recipe.guards,
+            stdout,
+            stderr,
+            MAX_WORKER_STDOUT_BYTES,
+            MAX_WORKER_STDERR_BYTES,
+        );
+        let writer_result = writer.join();
+        let collected = match collected {
+            Ok(collected) => collected,
+            Err(error) => {
+                let _ = writer_result;
+                return Err(error);
+            }
+        };
+        match writer_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                terminate(&mut child);
+                return Err(FormatFixtureError::WorkerProtocol(format!(
+                    "worker stdin: {error}"
+                )));
+            }
+            Err(_) => {
+                terminate(&mut child);
+                return Err(FormatFixtureError::WorkerProtocol(
+                    "worker request writer panicked".into(),
+                ));
+            }
+        }
+        let response: Response = bincode::deserialize(&collected.stdout)
             .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
         if response.protocol != PROTOCOL || response.identity != identity {
             return Err(FormatFixtureError::WorkerIdentityMismatch);
@@ -99,34 +140,122 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
 }
 
 #[cfg(target_os = "linux")]
+struct CollectedWorkerOutput {
+    stdout: Vec<u8>,
+    #[allow(dead_code)]
+    stderr: Vec<u8>,
+}
+
+#[cfg(target_os = "linux")]
+fn read_bounded(
+    mut input: impl Read,
+    limit: usize,
+    stream: &'static str,
+) -> Result<Vec<u8>, FormatFixtureError> {
+    let mut output = Vec::with_capacity(limit.min(64 * 1024));
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        let read = input
+            .read(&mut chunk)
+            .map_err(|error| FormatFixtureError::WorkerProtocol(format!("{stream}: {error}")))?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(read) > limit {
+            return Err(FormatFixtureError::WorkerProtocol(format!(
+                "{stream} exceeded {limit} bytes"
+            )));
+        }
+        output.extend_from_slice(&chunk[..read]);
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[allow(
     clippy::disallowed_methods,
     reason = "native format-worker supervisor measures real wall time outside deterministic engine state"
 )]
-fn supervise(child: &mut Child, guards: FormatGenerationGuards) -> Result<(), FormatFixtureError> {
+fn supervise_and_collect(
+    child: &mut Child,
+    guards: FormatGenerationGuards,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) -> Result<CollectedWorkerOutput, FormatFixtureError> {
+    let (sender, receiver) = mpsc::channel();
+    let stdout_sender = sender.clone();
+    let stdout_reader = std::thread::spawn(move || {
+        let _ = stdout_sender.send((true, read_bounded(stdout, stdout_limit, "worker stdout")));
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let _ = sender.send((false, read_bounded(stderr, stderr_limit, "worker stderr")));
+    });
     let started = Instant::now();
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| FormatFixtureError::Worker(error.to_string()))?
-        {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(FormatFixtureError::WorkerCrashed(status.code()))
-            };
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
+    let result = 'supervision: loop {
+        while let Ok((is_stdout, result)) = receiver.try_recv() {
+            match result {
+                Ok(bytes) if is_stdout => stdout = Some(bytes),
+                Ok(bytes) => stderr = Some(bytes),
+                Err(error) => {
+                    terminate(child);
+                    break 'supervision Err(error);
+                }
+            }
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(observed)) => status = Some(observed),
+                Ok(None) => {}
+                Err(error) => {
+                    terminate(child);
+                    break Err(FormatFixtureError::Worker(error.to_string()));
+                }
+            }
         }
         if started.elapsed() > guards.wall_time {
             terminate(child);
-            return Err(FormatFixtureError::WallTimeExceeded);
+            break Err(FormatFixtureError::WallTimeExceeded);
         }
-        let rss = worker_rss(child.id())?;
-        if rss > guards.resident_bytes {
-            terminate(child);
-            return Err(FormatFixtureError::ResidentSetExceeded);
+        if let Some(observed) = status {
+            if let (Some(stdout), Some(stderr)) = (stdout.take(), stderr.take()) {
+                if observed.success() {
+                    break Ok(CollectedWorkerOutput { stdout, stderr });
+                }
+                break Err(FormatFixtureError::WorkerCrashed(
+                    observed.code(),
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                ));
+            }
+        } else {
+            match worker_rss(child.id()) {
+                Ok(rss) if rss > guards.resident_bytes => {
+                    terminate(child);
+                    break Err(FormatFixtureError::ResidentSetExceeded);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    terminate(child);
+                    break Err(error);
+                }
+            }
         }
         std::thread::sleep(Duration::from_millis(2));
+    };
+    if result.is_err() {
+        terminate(child);
     }
+    let stdout_joined = stdout_reader.join();
+    let stderr_joined = stderr_reader.join();
+    if stdout_joined.is_err() || stderr_joined.is_err() {
+        return Err(FormatFixtureError::WorkerProtocol(
+            "worker output reader panicked".into(),
+        ));
+    }
+    result
 }
 
 #[cfg(target_os = "linux")]
@@ -348,10 +477,21 @@ mod tests {
         Command::new("/bin/sh")
             .args(["-c", script])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("spawn bounded helper")
+    }
+
+    fn collect(
+        child: &mut Child,
+        guards: FormatGenerationGuards,
+        stdout_limit: usize,
+        stderr_limit: usize,
+    ) -> Result<CollectedWorkerOutput, FormatFixtureError> {
+        let stdout = child.stdout.take().expect("stdout");
+        let stderr = child.stderr.take().expect("stderr");
+        supervise_and_collect(child, guards, stdout, stderr, stdout_limit, stderr_limit)
     }
 
     fn guards(wall_time: Duration, resident_bytes: u64) -> FormatGenerationGuards {
@@ -366,7 +506,12 @@ mod tests {
     fn supervisor_kills_an_unresponsive_worker_inside_one_command() {
         let mut child = helper("exec sleep 30");
         assert!(matches!(
-            supervise(&mut child, guards(Duration::from_millis(10), u64::MAX)),
+            collect(
+                &mut child,
+                guards(Duration::from_millis(10), u64::MAX),
+                1024,
+                1024
+            ),
             Err(FormatFixtureError::WallTimeExceeded)
         ));
         assert!(child.try_wait().expect("reaped").is_some());
@@ -374,22 +519,76 @@ mod tests {
 
     #[test]
     fn supervisor_rejects_crash_and_a_later_worker_can_succeed() {
-        let mut crashed = helper("exit 9");
+        let mut crashed = helper("printf bounded-diagnostic >&2; exit 9");
         assert!(matches!(
-            supervise(&mut crashed, guards(Duration::from_secs(1), u64::MAX)),
-            Err(FormatFixtureError::WorkerCrashed(Some(9)))
+            collect(
+                &mut crashed,
+                guards(Duration::from_secs(1), u64::MAX),
+                1024,
+                1024
+            ),
+            Err(FormatFixtureError::WorkerCrashed(Some(9), diagnostics))
+                if diagnostics == "bounded-diagnostic"
         ));
         let mut retry = helper("exit 0");
-        supervise(&mut retry, guards(Duration::from_secs(1), u64::MAX))
-            .expect("retry is independent");
+        collect(
+            &mut retry,
+            guards(Duration::from_secs(1), u64::MAX),
+            1024,
+            1024,
+        )
+        .expect("retry is independent");
     }
 
     #[test]
     fn supervisor_enforces_rss_without_dangerous_allocation() {
         let mut child = helper("exec sleep 30");
         assert!(matches!(
-            supervise(&mut child, guards(Duration::from_secs(1), 1)),
+            collect(&mut child, guards(Duration::from_secs(1), 1), 1024, 1024),
             Err(FormatFixtureError::ResidentSetExceeded)
+        ));
+        assert!(child.try_wait().expect("reaped").is_some());
+    }
+
+    #[test]
+    fn drains_stdout_larger_than_pipe_capacity_while_supervising() {
+        let mut child = helper("head -c 262144 /dev/zero");
+        let output = collect(
+            &mut child,
+            guards(Duration::from_secs(2), 64 * 1024 * 1024),
+            262144,
+            1024,
+        )
+        .expect("large response completes");
+        assert_eq!(output.stdout.len(), 262144);
+    }
+
+    #[test]
+    fn drains_saturated_stderr_without_deadlock() {
+        let mut child = helper("head -c 262144 /dev/zero >&2; printf response");
+        let output = collect(
+            &mut child,
+            guards(Duration::from_secs(2), 64 * 1024 * 1024),
+            1024,
+            262144,
+        )
+        .expect("stderr pressure completes");
+        assert_eq!(output.stdout, b"response");
+        assert_eq!(output.stderr.len(), 262144);
+    }
+
+    #[test]
+    fn output_limit_failure_kills_and_reaps_worker() {
+        let mut child = helper("head -c 262144 /dev/zero; exec sleep 30");
+        assert!(matches!(
+            collect(
+                &mut child,
+                guards(Duration::from_secs(2), 64 * 1024 * 1024),
+                64 * 1024,
+                1024
+            ),
+            Err(FormatFixtureError::WorkerProtocol(message))
+                if message.contains("stdout exceeded")
         ));
         assert!(child.try_wait().expect("reaped").is_some());
     }

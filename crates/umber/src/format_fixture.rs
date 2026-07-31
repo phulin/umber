@@ -515,7 +515,7 @@ pub enum FormatFixtureError {
     WorkerSpawn(String),
     WorkerProtocol(String),
     WorkerIdentityMismatch,
-    WorkerCrashed(Option<i32>),
+    WorkerCrashed(Option<i32>, String),
     Worker(String),
 }
 
