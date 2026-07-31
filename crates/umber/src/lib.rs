@@ -41,6 +41,8 @@ mod pdf_import;
 mod pdf_output;
 mod pdf_vf;
 mod pdftex;
+#[cfg(not(target_arch = "wasm32"))]
+mod prepared_format;
 mod tex_fixed_point;
 mod virtual_compile;
 
@@ -82,6 +84,8 @@ pub use pdf_output::{
     pdf_from_committed_artifacts_with_virtual_fonts,
 };
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
+#[cfg(not(target_arch = "wasm32"))]
+pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
 pub use tex_fixed_point::{
     TexFixedPointAttempt, TexFixedPointError, TexFixedPointOptions, TexFixedPointOutput,
     TexFixedPointSession,

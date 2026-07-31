@@ -1,6 +1,6 @@
 # Loaded Format Fixture Substrate
 
-Status: substrate implemented; universal persistent test-provider migration specified
+Status: substrate and universal persistent provider implemented; family migration specified
 
 ## Scope
 
@@ -44,6 +44,15 @@ explicit phases:
    `LoadedFormatFixture::run`. It cannot construct, dump, or reuse a loaded
    `Universe` or accept a caller-created `World` whose mutable state cannot be
    proven fresh.
+
+The implemented boundary is `PreparedFormatProvider`. Its production
+`from_environment` constructor resolves the platform store, while `with_store`
+accepts an already-resolved store for hermetic tests without changing provider
+behavior or adding a fallback. `prepare` accepts `FormatRecipe`; `run` accepts
+`PreparedFormatJob`, whose job clock, profile, output backend, interaction,
+error-context widths, positive guards, authored-root name/kind/bytes, typed
+resources, terminal lines, and command observer are all explicit. The request
+has no `World` field.
 
 `prepare` uses `FormatCacheStore::from_environment`, hence the existing native
 Umber platform cache (`$XDG_CACHE_HOME/umber` when set, otherwise the platform

@@ -249,6 +249,12 @@ pub struct FormatFixture {
 }
 
 impl FormatFixture {
+    /// Engine/profile identity authenticated by this fixture's recipe.
+    #[must_use]
+    pub const fn engine_mode(&self) -> EngineMode {
+        self.recipe.engine
+    }
+
     #[must_use]
     pub fn image(&self) -> &[u8] {
         self.image.as_bytes()
@@ -295,12 +301,33 @@ impl LoadedFormatFixture {
     }
 
     pub fn run(
-        mut self,
+        self,
         source_name: &str,
         source: Arc<[u8]>,
         resources: &[LoadedFormatResource],
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
+        let guards = self.recipe.guards;
+        self.run_configured(
+            source_name,
+            RegisteredSourceKind::Generated,
+            source,
+            resources,
+            guards,
+            observer,
+        )
+    }
+
+    pub(crate) fn run_configured(
+        mut self,
+        source_name: &str,
+        source_kind: RegisteredSourceKind,
+        source: Arc<[u8]>,
+        resources: &[LoadedFormatResource],
+        guards: FormatGenerationGuards,
+        observer: &mut dyn CommandObserver,
+    ) -> Result<LoadedFormatRun, FormatFixtureError> {
+        let guards = guards.validate()?;
         let mut session =
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_preloaded_format(tex_exec::PreloadedFormat {
@@ -309,20 +336,20 @@ impl LoadedFormatFixture {
             month: self.recipe.clock.month,
             day: self.recipe.clock.day,
         });
-        session.set_fuel_limit(self.recipe.guards.command_fuel)?;
+        session.set_fuel_limit(guards.command_fuel)?;
         let root_source = session.register_retained_root(
             source_name,
-            tex_command::SourceRegistration::new(RegisteredSourceKind::Generated, source)
+            tex_command::SourceRegistration::new(source_kind, source)
                 .with_name(format!("./{source_name}")),
         )?;
-        let guards = GuardCheckpoints::new(self.recipe.guards)?;
-        let mut checkpoints = &guards;
+        let checkpoints = GuardCheckpoints::new(guards)?;
+        let mut checkpoint_sink = &checkpoints;
         let result = session.run_with_observer(
             &mut LoadedResourceHost::new(resources),
-            &mut checkpoints,
+            &mut checkpoint_sink,
             observer,
         );
-        let result = finish_guarded_run(result, &guards)?;
+        let result = finish_guarded_run(result, &checkpoints)?;
         Ok(LoadedFormatRun {
             result,
             universe: self.universe,
@@ -727,6 +754,15 @@ pub enum FormatFixtureError {
     WorkerIdentityMismatch,
     WorkerCrashed(Option<i32>, String),
     Worker(String),
+    ProviderProfileMismatch {
+        expected: EngineMode,
+        actual: EngineMode,
+    },
+    ProviderBackendMismatch {
+        engine: EngineMode,
+        backend: crate::OutputCapability,
+    },
+    World(String),
 }
 
 impl fmt::Display for FormatFixtureError {

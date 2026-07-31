@@ -1,0 +1,108 @@
+//! Persistent preparation and fresh loaded-job execution for native fixtures.
+
+use std::sync::Arc;
+
+use tex_command::{CommandObserver, RegisteredSourceKind};
+use tex_state::{InteractionMode, JobClock, World};
+use umber_fetch::FormatCacheStore;
+
+use crate::{
+    EngineMode, FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe,
+    FormatWorkerLauncher, LoadedFormatResource, LoadedFormatRun, OutputCapability, ensure_format,
+};
+
+/// One explicit, job-local execution episode for an authenticated format.
+pub struct PreparedFormatJob<'a> {
+    pub engine: EngineMode,
+    pub backend: OutputCapability,
+    pub clock: JobClock,
+    pub interaction: InteractionMode,
+    pub error_context_widths: tex_state::print::ErrorContextWidths,
+    pub guards: FormatGenerationGuards,
+    pub source_name: String,
+    pub source_kind: RegisteredSourceKind,
+    pub source: Arc<[u8]>,
+    pub resources: Vec<LoadedFormatResource>,
+    pub terminal_input: Vec<String>,
+    pub observer: &'a mut dyn CommandObserver,
+}
+
+/// Native provider for persistent format preparation and isolated loaded jobs.
+#[derive(Clone, Debug)]
+pub struct PreparedFormatProvider {
+    cache: FormatCacheStore,
+    launcher: FormatWorkerLauncher,
+}
+
+impl PreparedFormatProvider {
+    /// Resolves the persistent platform cache through its established environment contract.
+    pub fn from_environment(launcher: FormatWorkerLauncher) -> Result<Self, FormatFixtureError> {
+        Ok(Self::with_store(
+            FormatCacheStore::from_environment()?,
+            launcher,
+        ))
+    }
+
+    /// Injects an explicit store while retaining the production provider behavior.
+    ///
+    /// This constructor supports hermetic tests and callers with an already-resolved
+    /// persistent store; it does not introduce a fallback cache.
+    #[must_use]
+    pub fn with_store(cache: FormatCacheStore, launcher: FormatWorkerLauncher) -> Self {
+        Self { cache, launcher }
+    }
+
+    /// Authenticates or constructs the complete recipe in the persistent store.
+    pub fn prepare(&self, recipe: &FormatRecipe) -> Result<FormatFixture, FormatFixtureError> {
+        ensure_format(&self.cache, recipe, &self.launcher)
+    }
+
+    /// Runs one request in a provider-created fresh memory world.
+    pub fn run(
+        &self,
+        fixture: &FormatFixture,
+        job: PreparedFormatJob<'_>,
+    ) -> Result<LoadedFormatRun, FormatFixtureError> {
+        job.guards.validate()?;
+        let actual = fixture.engine_mode();
+        if job.engine != actual {
+            return Err(FormatFixtureError::ProviderProfileMismatch {
+                expected: job.engine,
+                actual,
+            });
+        }
+        if job.backend == OutputCapability::Pdf && !job.engine.supports_pdf_output() {
+            return Err(FormatFixtureError::ProviderBackendMismatch {
+                engine: job.engine,
+                backend: job.backend,
+            });
+        }
+        if job.backend == OutputCapability::Html {
+            return Err(FormatFixtureError::ProviderBackendMismatch {
+                engine: job.engine,
+                backend: job.backend,
+            });
+        }
+
+        let mut world = World::memory_with_clock(job.clock);
+        for line in job.terminal_input {
+            world
+                .push_memory_terminal_line(line)
+                .map_err(|error| FormatFixtureError::World(error.to_string()))?;
+        }
+        let mut loaded = fixture.load(world)?;
+        loaded.set_interaction_mode(job.interaction);
+        loaded.set_error_context_widths(job.error_context_widths);
+        loaded.run_configured(
+            &job.source_name,
+            job.source_kind,
+            job.source,
+            &job.resources,
+            job.guards,
+            job.observer,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests;
