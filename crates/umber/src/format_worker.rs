@@ -35,6 +35,7 @@ const AUTH_KEY_BYTES: usize = 32;
 const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V1\0";
 const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V1\0";
 const TEST_WORKER_ENV: &str = "UMBER_INTERNAL_CURRENT_IMAGE_TEST_WORKER";
+const PRODUCTION_WORKER_ARGUMENT: &str = "__format-worker";
 const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v1\0";
 const FRAME_LENGTH_BYTES: usize = size_of::<u64>();
 const MAX_WORKER_REQUEST_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 16 * 1024 * 1024;
@@ -74,7 +75,56 @@ struct Response {
     authenticator: [u8; 32],
 }
 
-pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormatWorkerLauncher {
+    route: WorkerRoute,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WorkerRoute {
+    Production,
+    Libtest(&'static str),
+}
+
+impl FormatWorkerLauncher {
+    /// Declares that the current image calls [`dispatch_format_worker`] before
+    /// parsing ordinary application arguments.
+    #[must_use]
+    pub const fn production() -> Self {
+        Self {
+            route: WorkerRoute::Production,
+        }
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn registered_libtest(test_name: &'static str) -> Self {
+        Self {
+            route: WorkerRoute::Libtest(test_name),
+        }
+    }
+}
+
+/// Dispatches an authenticated production worker invocation at process entry.
+///
+/// Returns `None` for an ordinary application invocation. A caller must handle
+/// `Some` immediately and must not continue into its normal main function.
+#[must_use]
+pub fn dispatch_format_worker() -> Option<Result<(), String>> {
+    let mut arguments = std::env::args_os();
+    let _program = arguments.next();
+    match (arguments.next(), arguments.next()) {
+        (Some(argument), None) if argument == PRODUCTION_WORKER_ARGUMENT => {
+            Some(run_format_worker())
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn construct(
+    launcher: Option<&FormatWorkerLauncher>,
+    recipe: &FormatRecipe,
+) -> Result<Vec<u8>, FormatFixtureError> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = recipe;
@@ -82,6 +132,7 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
     }
     #[cfg(target_os = "linux")]
     {
+        let launcher = launcher.ok_or(FormatFixtureError::WorkerBootstrapUnregistered)?;
         let identity = recipe.identity()?.key().bytes();
         let request = Request::from_recipe(recipe, identity)?;
         let request_bytes = bincode::serialize(&request)
@@ -97,7 +148,7 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
         getrandom::fill(&mut *auth_key)
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
         let mut command = Command::new(executable_path);
-        configure_worker_command(&mut command);
+        configure_worker_command(&mut command, launcher);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -546,20 +597,15 @@ fn open_trusted_current_image(path: &str) -> Result<File, FormatFixtureError> {
     clippy::disallowed_methods,
     reason = "native attestation distinguishes Cargo test harness images from the production CLI"
 )]
-fn configure_worker_command(command: &mut Command) {
-    let running_test_image = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.ends_with("deps")))
-        .unwrap_or(false);
-    command.env(TEST_WORKER_ENV, "1");
-    if running_test_image {
-        command.args([
-            "umber_format_worker_bootstrap",
-            "--exact",
-            "--test-threads=1",
-        ]);
-    } else {
-        command.arg("__format-worker");
+fn configure_worker_command(command: &mut Command, launcher: &FormatWorkerLauncher) {
+    match launcher.route {
+        WorkerRoute::Production => {
+            command.arg(PRODUCTION_WORKER_ARGUMENT);
+        }
+        WorkerRoute::Libtest(test_name) => {
+            command.env(TEST_WORKER_ENV, "1");
+            command.args([test_name, "--exact", "--test-threads=1"]);
+        }
     }
 }
 
@@ -917,7 +963,10 @@ mod tests {
     #[test]
     fn test_image_bootstrap_selects_exactly_one_worker_entry() {
         let mut command = Command::new("/proc/self/exe");
-        configure_worker_command(&mut command);
+        configure_worker_command(
+            &mut command,
+            &FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap"),
+        );
         let arguments: Vec<_> = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -936,6 +985,43 @@ mod tests {
                 .find(|(name, _)| *name == TEST_WORKER_ENV)
                 .and_then(|(_, value)| value),
             Some(std::ffi::OsStr::new("1"))
+        );
+    }
+
+    #[test]
+    fn unregistered_consumer_fails_before_executable_selection() {
+        assert!(matches!(
+            construct(None, &FormatRecipe::raw_tex82()),
+            Err(FormatFixtureError::WorkerBootstrapUnregistered)
+        ));
+    }
+
+    #[test]
+    fn production_and_libtest_routes_are_explicit_and_distinct() {
+        let mut production = Command::new("/proc/self/exe");
+        configure_worker_command(&mut production, &FormatWorkerLauncher::production());
+        assert_eq!(
+            production.get_args().collect::<Vec<_>>(),
+            [std::ffi::OsStr::new(PRODUCTION_WORKER_ARGUMENT)]
+        );
+        assert!(
+            production
+                .get_envs()
+                .all(|(name, _)| name != TEST_WORKER_ENV)
+        );
+
+        let mut libtest = Command::new("/proc/self/exe");
+        configure_worker_command(
+            &mut libtest,
+            &FormatWorkerLauncher::registered_libtest("downstream_bootstrap"),
+        );
+        assert_eq!(
+            libtest.get_args().collect::<Vec<_>>(),
+            [
+                std::ffi::OsStr::new("downstream_bootstrap"),
+                std::ffi::OsStr::new("--exact"),
+                std::ffi::OsStr::new("--test-threads=1"),
+            ]
         );
     }
 

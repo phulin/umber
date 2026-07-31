@@ -314,6 +314,7 @@ pub struct LoadedFormatRun {
 pub fn ensure_format(
     cache: &FormatCacheStore,
     recipe: &FormatRecipe,
+    launcher: &crate::FormatWorkerLauncher,
 ) -> Result<FormatFixture, FormatFixtureError> {
     let identity = recipe.identity()?;
     if let Some(image) = cache.load(&identity)? {
@@ -322,7 +323,7 @@ pub fn ensure_format(
             image,
         });
     }
-    let image = crate::format_worker::construct(recipe)?;
+    let image = crate::format_worker::construct(Some(launcher), recipe)?;
     cache.store(&identity, &image)?;
     let image = cache
         .load(&identity)?
@@ -597,6 +598,7 @@ pub enum FormatFixtureError {
     Session(Box<CanonicalSessionError>),
     Fuel(tex_command::CommandFuelLimitError),
     WorkerSpawn(String),
+    WorkerBootstrapUnregistered,
     WorkerProtocol(String),
     WorkerIdentityMismatch,
     WorkerCrashed(Option<i32>, String),

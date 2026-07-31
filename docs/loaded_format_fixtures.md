@@ -36,19 +36,23 @@ guard input selects a disjoint key.
 
 ## Construction
 
-`ensure_format` first asks `FormatCacheStore` for a validated entry. On a miss,
-it sends the complete recipe to a dedicated native worker process. The request
+`ensure_format` requires an explicit `FormatWorkerLauncher` from its binary
+consumer, then asks `FormatCacheStore` for a validated entry. On a miss, it
+sends the complete recipe to a dedicated native worker process. The request
 contains the expected cache identity; the worker reconstructs the recipe and
 recomputes that identity before creating a memory `World`, installing the
 selected fresh primitive profile, and driving the retained
 `CanonicalEngineSession`. The ordered typed-resource closure and finite
-command-fuel limit remain inside that worker. Production opens `/proc/self/exe`
-and executes that stable descriptor through `/proc/self/fd`; each Cargo test
-image that constructs formats registers the repository's exact, single-test
-worker bootstrap. The image re-executes itself with that exact filter, so the
-bootstrap consumes worker mode once before any ordinary test can run or test
-concurrency can begin. Format construction itself never intercepts process
-startup. The current process image is the trust anchor: no sibling
+command-fuel limit remain inside that worker. A production consumer calls
+`dispatch_format_worker` before ordinary argument parsing and passes
+`FormatWorkerLauncher::production`; a libtest consumer installs
+`register_format_worker_test_bootstrap!` and passes its exact registered route.
+No executable path, arbitrary argument, or environment value is used to infer
+support. An absent capability fails before current-image selection, spawn, or
+cache publication. Production opens `/proc/self/exe` and executes that stable
+descriptor through `/proc/self/fd`; a test image re-executes itself with its
+exact filter, so the bootstrap consumes worker mode once before ordinary test
+concurrency can begin. The current process image is the trust anchor: no sibling
 path, public version, feature string, build ID, or hash supplied by selected
 code participates in authentication. Consequently a stale, wrong, or
 attacker-replaced sibling is never selected, while replacement of the proc

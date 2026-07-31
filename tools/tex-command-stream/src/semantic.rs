@@ -1294,8 +1294,13 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
     let cache = tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
     let mut recipe = umber::FormatRecipe::raw_tex82();
     recipe.format_name = "production".into();
-    let fixture = umber::ensure_format(&umber_fetch::FormatCacheStore::new(cache.path()), &recipe)
-        .map_err(|error| format!("ensure raw TeX82 format: {error}"))?;
+    let launcher = umber::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap");
+    let fixture = umber::ensure_format(
+        &umber_fetch::FormatCacheStore::new(cache.path()),
+        &recipe,
+        &launcher,
+    )
+    .map_err(|error| format!("ensure raw TeX82 format: {error}"))?;
     let mut world = tex_state::World::memory();
     for line in terminal_stdin(case) {
         world

@@ -62,7 +62,7 @@ pub use format_fixture::{
     LoadedFormatFixture, LoadedFormatResource, LoadedFormatRun, ensure_format,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use format_worker::run_format_worker;
+pub use format_worker::{FormatWorkerLauncher, dispatch_format_worker, run_format_worker};
 pub use input_observation::{
     ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION, AcceptedInputObservation,
     AcceptedInputObservationLedger, InputObservationNamespace, InputObservationOutcome,
@@ -102,6 +102,11 @@ pub use umber_vfs::FileContentId;
 #[macro_export]
 macro_rules! register_format_worker_test_bootstrap {
     () => {
+        #[must_use]
+        fn umber_format_worker_launcher() -> $crate::FormatWorkerLauncher {
+            $crate::FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap")
+        }
+
         #[test]
         fn umber_format_worker_bootstrap() {
             $crate::run_format_worker_test_bootstrap();

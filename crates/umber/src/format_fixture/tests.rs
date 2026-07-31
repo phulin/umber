@@ -7,6 +7,13 @@ use tex_state::env::banks::IntParam;
 
 use super::*;
 
+fn ensure_format(
+    cache: &FormatCacheStore,
+    recipe: &FormatRecipe,
+) -> Result<FormatFixture, FormatFixtureError> {
+    super::ensure_format(cache, recipe, &crate::umber_format_worker_launcher())
+}
+
 #[derive(Default)]
 struct Recorder(Vec<CommandObservation>);
 
