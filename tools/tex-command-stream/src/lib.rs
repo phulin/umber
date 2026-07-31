@@ -1395,6 +1395,9 @@ fn translate_observation(
                     | "expression_integer"
                     | "current_group_level"
                     | "current_group_type"
+                    | "current_condition_level"
+                    | "current_condition_type"
+                    | "current_condition_branch"
             ) {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),

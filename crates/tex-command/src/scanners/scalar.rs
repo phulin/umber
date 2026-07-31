@@ -2072,14 +2072,15 @@ impl CommandProcessor<'_> {
             },
             Meaning::InternalInteger(integer) => {
                 let value = self.fetch_internal_integer(integer);
-                // e-TeX 2.6 etex.ch [17.4750--4758] observes the two current
-                // group enquiries immediately after they commit their
-                // respective values, before §413's shared internal result.
-                // The neighboring current-if enquiries have distinct
-                // canonical scanner identities and remain generic here.
+                // e-TeX 2.6 etex.ch [17.4750--4790] observes each current
+                // group and current-condition enquiry immediately after it
+                // commits its value, before §413's shared internal result.
                 let enquiry_kind = match integer {
                     InternalInteger::CurrentGroupLevel => Some("current_group_level"),
                     InternalInteger::CurrentGroupType => Some("current_group_type"),
+                    InternalInteger::CurrentIfLevel => Some("current_condition_level"),
+                    InternalInteger::CurrentIfType => Some("current_condition_type"),
+                    InternalInteger::CurrentIfBranch => Some("current_condition_branch"),
                     _ => None,
                 };
                 if let Some(kind) = enquiry_kind {

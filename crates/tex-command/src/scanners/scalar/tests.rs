@@ -3089,7 +3089,7 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
 }
 
 #[test]
-fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
+fn current_group_and_condition_enquiries_have_canonical_scanner_identities() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -3097,6 +3097,8 @@ fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
     let group_type = universe.intern("currentgrouptype").symbol();
     let group_level = universe.intern("currentgrouplevel").symbol();
     let if_level = universe.intern("currentiflevel").symbol();
+    let if_type = universe.intern("currentiftype").symbol();
+    let if_branch = universe.intern("currentifbranch").symbol();
     universe.set_meaning(
         group_type,
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
@@ -3109,12 +3111,22 @@ fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
         if_level,
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentIfLevel),
     );
+    universe.set_meaning(
+        if_type,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentIfType),
+    );
+    universe.set_meaning(
+        if_branch,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentIfBranch),
+    );
     push(
         &mut command,
         vec![
             Token::Cs(group_type),
             Token::Cs(group_level),
             Token::Cs(if_level),
+            Token::Cs(if_type),
+            Token::Cs(if_branch),
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
@@ -3148,6 +3160,20 @@ fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
                 .value,
             0
         );
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("current if type scans")
+                .value,
+            0
+        );
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("current if branch scans")
+                .value,
+            0
+        );
     }
     assert_eq!(
         scanner_kinds(&recorder),
@@ -3158,8 +3184,15 @@ fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
             "current_group_level",
             "internal",
             "integer",
+            "current_condition_level",
             "internal",
-            "integer"
+            "integer",
+            "current_condition_type",
+            "internal",
+            "integer",
+            "current_condition_branch",
+            "internal",
+            "integer",
         ]
     );
     assert!(recorder.0.iter().any(|record| {
@@ -3176,13 +3209,19 @@ fn current_group_enquiries_have_their_own_canonical_scanner_identities() {
                 if scanner.kind == "current_group_level" && scanner.value == "1"
         )
     }));
-    assert!(!recorder.0.iter().any(|record| {
-        matches!(
-            record,
-            CommandObservation::Scanner(scanner)
-                if scanner.kind == "current_if_level"
-        )
-    }));
+    for kind in [
+        "current_condition_level",
+        "current_condition_type",
+        "current_condition_branch",
+    ] {
+        assert!(recorder.0.iter().any(|record| {
+            matches!(
+                record,
+                CommandObservation::Scanner(scanner)
+                    if scanner.kind == kind && scanner.value == "0"
+            )
+        }));
+    }
 }
 
 #[test]
