@@ -738,6 +738,50 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Replays one group's `\aftergroup` tokens in save order.
+    ///
+    /// TeX82 §282 invokes §326 once for every `insert_token` save entry.
+    /// e-TeX 2.6 etex.ch [15.282] optimizes the second and later entries:
+    /// after the first `back_input`, it links each token directly onto that
+    /// same `backed_up` list. Those direct links adjust `align_state`, but do
+    /// not push or observe another input level.
+    pub fn back_input_aftergroup_tokens(
+        &mut self,
+        tokens: impl IntoIterator<Item = TracedTokenWord>,
+    ) -> Result<(), CommandError> {
+        let mut tokens = tokens.into_iter().collect::<Vec<_>>();
+        let Some(last) = tokens.pop() else {
+            return Ok(());
+        };
+        self.back_input_token(last)?;
+        if self.profile().capabilities().supports_etex() {
+            for spelling in tokens.iter().rev() {
+                self.command.alignment.undo_delivery(
+                    AlignmentDeliveryState::back_input_adjustment(spelling.semantic_token()),
+                );
+            }
+            let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
+                unreachable!("back_input above installed a token-list level");
+            };
+            assert_eq!(
+                cursor.index, 0,
+                "no delivery occurs while e-TeX links aftergroup tokens"
+            );
+            let TokenPayload::BackedUp(buffer) = &mut cursor.payload else {
+                unreachable!("back_input above installed a backed-up payload");
+            };
+            buffer.prepend(tokens.into_iter().map(|spelling| BackedUpToken {
+                spelling,
+                source_provenance: None,
+            }));
+        } else {
+            for spelling in tokens.into_iter().rev() {
+                self.back_input_token(spelling)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Performs TeX82 §1095's `head_for_vmode` replay for a stop command.
     ///
     /// In outer horizontal mode, `\\end` is not yet eligible for final

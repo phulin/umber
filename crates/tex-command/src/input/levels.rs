@@ -130,6 +130,15 @@ impl SharedBackedUpBuffer {
     pub(crate) fn get(&self, index: usize) -> Option<BackedUpToken> {
         self.0.get(index).copied()
     }
+
+    /// Prepends tokens to e-TeX's active optimized `backed_up` list.
+    pub(crate) fn prepend(&mut self, prefix: impl IntoIterator<Item = BackedUpToken>) {
+        let prefix = prefix.into_iter().collect::<Vec<_>>();
+        let mut tokens = Vec::with_capacity(prefix.len() + self.0.len());
+        tokens.extend(prefix);
+        tokens.extend(self.0.iter().copied());
+        self.0 = tokens.into();
+    }
 }
 
 /// One restored command plus the source range committed at its first delivery.

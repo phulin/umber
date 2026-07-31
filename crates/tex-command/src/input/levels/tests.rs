@@ -4,8 +4,9 @@ use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
+    SharedBackedUpBuffer, SharedTokenBuffer, StoredReplayReason, TokenBehavior, TokenCursor,
+    TokenPayload,
 };
 use crate::macro_call::MacroArgumentRange;
 
@@ -68,6 +69,32 @@ fn macro_argument_ranges_share_one_contiguous_allocation() {
     };
     assert_eq!(buffer.len(), 3);
     assert_eq!((range.start(), range.end()), (1, 3));
+}
+
+#[test]
+fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
+    let mut buffer = SharedBackedUpBuffer::new(vec![
+        BackedUpToken {
+            spelling: traced('b'),
+            source_provenance: None,
+        },
+        BackedUpToken {
+            spelling: traced('c'),
+            source_provenance: None,
+        },
+    ]);
+
+    buffer.prepend([BackedUpToken {
+        spelling: traced('a'),
+        source_provenance: None,
+    }]);
+
+    assert_eq!(
+        (0..3)
+            .map(|index| buffer.get(index).expect("token exists").spelling)
+            .collect::<Vec<_>>(),
+        [traced('a'), traced('b'), traced('c')]
+    );
 }
 
 #[test]

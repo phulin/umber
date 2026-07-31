@@ -13103,17 +13103,14 @@ fn print_display_content(stores: &mut Universe, content: &str) {
 }
 
 /// TeX82 §282's `insert_token` arm, the only way an `\aftergroup` token ever
-/// re-enters the input.
+/// re-enters the input, plus e-TeX 2.6 etex.ch [15.282]'s optimized form.
 ///
 /// §282 is `unsave`'s `@<Clear off top level from |save_stack|@>`: it walks
 /// the level downwards and, for every `insert_token` entry, runs
-/// §326 `@<Insert token |p| into \TeX's input@>` -- `t:=cur_tok; cur_tok:=p;
-/// back_input; cur_tok:=t`. So each saved token gets its own full §325
-/// `back_input`: its own stack-conservation loop, so a macro body that ended
-/// with the closing brace retires *before* the first backup pushes; its own
-/// one-token `backed_up` level; and its own recovery record. A single level
-/// carrying the whole payload is not the same object and is not observed the
-/// same way.
+/// §326 `@<Insert token |p| into \TeX's input@>`. TeX82 applies one full
+/// `back_input` per token. In extended mode e-TeX applies that full operation
+/// only to the first token and links every remaining token directly onto the
+/// resulting `backed_up` list.
 ///
 /// Because §282 clears the level from the top down while `\aftergroup` saved
 /// from the bottom up, the last-saved token is backed up first and ends up
@@ -13139,15 +13136,10 @@ fn schedule_aftergroup(
             tex_state::token::TracedTokenWord::pack(token, origin)
         })
         .collect::<Vec<_>>();
-    let mut processor = command.processor(stores);
-    let mut result = Ok(());
-    for spelling in traced.into_iter().rev() {
-        if let Err(err) = processor.back_input_token(spelling) {
-            result = Err(command_error(err));
-            break;
-        }
-    }
-    result
+    command
+        .processor(stores)
+        .back_input_aftergroup_tokens(traced)
+        .map_err(command_error)
 }
 
 /// Releases the single pending after-assignment token only after the typed

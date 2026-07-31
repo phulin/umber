@@ -228,6 +228,57 @@ fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
 }
 
 #[test]
+fn etex_optimized_aftergroup_links_tokens_onto_one_backup_level() {
+    // TeX82 §§282/326 create one `backed_up` level per saved token. e-TeX
+    // 2.6 etex.ch [15.282] instead applies `back_input` only once, then links
+    // the remaining tokens onto that level. The TeX82 run is the negative
+    // control for the same bounded source microfixture.
+    for (profile, expected_backups) in [(CommandProfile::TEX82, 3), (CommandProfile::ETEX26, 1)] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = if profile == CommandProfile::ETEX26 {
+            canonical_etex_initex(&mut stores)
+        } else {
+            CanonicalMainControl::tex82_initex(&mut stores)
+        };
+        register_source(
+            &mut control,
+            br"{\aftergroup\relax\aftergroup\relax\aftergroup\relax}\end",
+        );
+        let mut observations = ObservationRecorder::default();
+
+        run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+        let backups = observations
+            .0
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Backup
+                            && record.reason == InputReason::Backup
+                )
+            })
+            .count();
+        let relax_deliveries = observations
+            .0
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Command(command)
+                    if command.boundary == tex_command::CommandDeliveryBoundary::Raw
+                        && command.spelling
+                            == tex_command::ObservedToken::ControlSequence("relax".into())
+                )
+            })
+            .count();
+        assert_eq!(backups, expected_backups, "profile {profile:?}");
+        assert_eq!(relax_deliveries, 6, "profile {profile:?}");
+    }
+}
+
+#[test]
 fn hbox_group_type_respects_box_context_and_vertical_mode() {
     // TeX82 §1083: a register-bound hbox uses hbox_group (e-TeX code 2),
     // even in vertical mode. The neighboring bare hbox is append-like and
