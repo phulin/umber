@@ -1,6 +1,6 @@
 # Loaded Format Fixture Substrate
 
-Status: implemented raw TeX82 and raw e-TeX 2.6 recipes
+Status: substrate implemented; universal persistent test-provider migration specified
 
 ## Scope
 
@@ -17,6 +17,118 @@ e-TeX recipe selects the extended canonical INITEX profile, so construction
 installs the exact TeX82 plus e-TeX primitive registry and no pdfTeX layer.
 Later raw pdfTeX recipes and package formats such as LaTeX extend the same data
 model rather than adding profile-specific cache branches.
+
+## Universal prepared-format test provider
+
+Every test that drives the complete Umber command-to-output pipeline must use
+one provider contract. The provider accepts a complete `FormatRecipe`, obtains
+its authenticated compound cache entry with `ensure_format`, loads the returned
+`FormatFixture` into a caller-supplied fresh `World`, and runs one authored root
+plus ordered typed `LoadedFormatResource` values through
+`LoadedFormatFixture::run`. It is not a family adapter: command minifixtures,
+TRIP, e-TRIP, Story, and Gentle supply data to the same API and may not own
+private cache, INITEX, image-decoding, dump, or captured-runner branches.
+
+The provider belongs in the native `umber` fixture boundary beside
+`FormatRecipe` and `FormatFixture`. Tools and integration tests may supply the
+registered worker launcher required by their executable, but launcher routing
+does not change recipe identity or provider behavior. The operation has two
+explicit phases:
+
+1. `prepare(recipe)` resolves the persistent native store and returns an
+   authenticated `FormatFixture` with detached construction evidence. This is
+   the only operation allowed to construct or dump a format.
+2. `run(fixture, job)` creates or accepts a fresh clocked `World`, calls
+   `FormatFixture::load`, applies the typed job configuration, and calls
+   `LoadedFormatFixture::run`. It cannot construct, dump, or reuse a loaded
+   `Universe` or `World` from another job.
+
+`prepare` uses `FormatCacheStore::from_environment`, hence the existing native
+Umber platform cache (`$XDG_CACHE_HOME/umber` when set, otherwise the platform
+cache directory, such as `$HOME/.cache/umber` on Linux). This is ignored,
+generated runtime data, not a repository `target/` artifact, a provisioned
+native test asset, or a committed fixture. Primary checkouts, linked worktrees,
+and repeated local processes therefore share complete identities. CI may set
+`XDG_CACHE_HOME` to a writable job cache restored by its ordinary cache
+mechanism; a cold or deliberately unshared CI job constructs locally. No
+network, setup script, corpus copy, or committed generated binary is added.
+An unavailable or unwritable platform cache is an explicit provider error,
+not permission to fall back to an invocation-local directory or source-run the
+job.
+
+The existing recipe identity remains the sole reuse authority. It covers the
+container/ABI/lookup and observation schemas, producer and build contracts,
+engine profile and live registry, format name, ordered construction source and
+typed Input/TFM closure by logical identity and bytes, distribution identity,
+fixed construction clock, interaction and error-context widths, and finite
+fuel/wall/RSS guards. A family label, checkout path, cache root, job source,
+job resources, or process lifetime is not part of that identity. Story and
+Gentle share one Plain recipe because their complete construction closure is
+identical; TRIP and e-TRIP retain distinct recipe identities because their
+engine profiles, construction sources, names, and closures differ. Cache
+schema, producer, source, resource, profile, build, evidence, or guard changes
+select a new key rather than upgrading an old entry.
+
+All existing `FormatCacheStore` security and recovery rules apply unchanged:
+anchored no-follow authority, a persistent per-key interprocess lock held
+through validation/quarantine/construction/publication, authenticated bounded
+worker protocol, complete image and evidence validation, atomic no-clobber
+publication, and removal of only operation-owned temporary/quarantine names.
+Corruption is quarantined and regenerated while holding the key lock. Ordinary
+cleanup never deletes valid persistent entries; users and CI may evict the
+whole platform cache as a performance-only action when no provider process is
+using it. A cache hit is fully offline. A miss is also offline when the recipe
+contains its complete construction source and resource bytes; missing external
+input must fail before preparation, never trigger acquisition.
+
+Construction evidence and loaded-job observations are separate typed channels.
+`FormatFixture::construction_evidence` is identical on miss and hit and may be
+compared only as INITEX/dump evidence; construction terminal, log, effects, and
+status never enter loaded-job acceptance. Each loaded run owns a new `World`,
+`Universe`, clock episode, root source, resource host, observer, checkpoints,
+effects, and output assembly. Its job request explicitly supplies engine
+profile compatibility, job clock, interaction mode, TeX82 error-context
+widths, finite command/wall/RSS limits, backend/output policy, authored-root
+identity and bytes, ordered Input/TFM resources, terminal input where needed,
+and observers. The provider rejects profile mismatch or an unbounded guard.
+Geometry remains captured and reported but advisory; command-v1, terminal,
+log, effects, status, and normalized DVI remain governed by each fixture's
+existing acceptance contract.
+
+### Full-pipeline call-site inventory and target state
+
+| family                 | current full-pipeline helpers and callers                                                                                                                                                                                                                                                                                                                         | current preparation                                                                                                                                                | required target                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| command minifixtures   | `tools/tex-command-stream/src/semantic.rs`: `shared_raw_tex82_format`, `shared_raw_etex26_format`, `shared_production_pdftex14027_format` -> `execute_raw_tex82_loaded`, `execute_raw_etex26_loaded`, `execute_production_pdftex14027_loaded` -> `execute_loaded_format`; initialization-count control in `tools/tex-command-stream/tests/it/command_semantic.rs` | three process `OnceLock` values each create a private `TempDir`, then public recipe/ensure/load/run; one construction per process, no cross-process/worktree reuse | all three recipes call the universal persistent provider; remove the `OnceLock`, counters, temporary stores, and initialization-count API/test, replacing it with provider identity/hit/fresh-job controls                                                                                                                            |
+| TRIP                   | `crates/umber/tests/it/e2e_conformance.rs`: ignored `e2e_conformance_trip_canonical` -> `run_two_phase_fixture` via `trip_format_recipe`                                                                                                                                                                                                                          | public authenticated construction evidence and load/run, but a new `tempfile::tempdir` cache and redundant miss/hit calls per invocation                           | pass the complete TeX82 TRIP recipe and typed job request to the provider; preserve two-phase comparisons while removing the temporary cache and duplicate ensure                                                                                                                                                                     |
+| e-TRIP                 | same file: ignored `e2e_conformance_etrip` -> `run_two_phase_fixture` via `trip_format_recipe`                                                                                                                                                                                                                                                                    | same public path and invocation-local cache as TRIP, with distinct e-TeX recipe identity                                                                           | same provider migration after TRIP in the shared helper; preserve the typed `TripEngineProfile` and distinct identity; remove the temporary cache and duplicate ensure                                                                                                                                                                |
+| legacy Story/Gentle    | same file: `e2e_conformance_story` and `e2e_conformance_gentle` -> `run_plain_fixture_case` -> `run_file_in_process` -> `run_file_in_process_captured`                                                                                                                                                                                                            | staged `plain.tex` is executed in a private captured INITEX-era runner; no persisted or loaded Plain format                                                        | construct one complete Plain recipe through the provider, run both documents as job roots with typed resources, then remove these full-pipeline callers and the private format/bootstrap arguments they alone require; retain a helper only if non-full-pipeline tests still prove a separate contract                                |
+| canonical Story/Gentle | same file: `e2e_conformance_story_canonical` and `e2e_conformance_gentle_canonical` -> `run_plain_fixture_case_canonical` -> `run_file_in_process_canonical`; the latter is also used by seven committed canonical DVI regressions                                                                                                                                | staged `plain.tex` is loaded as job input by `CanonicalEngineSession::tex82_initex`; each call starts fresh INITEX and no format is persisted                      | one shared Plain recipe and universal provider job path for all nine callers; classify `plain.tex` and `hyphen.tex` plus Plain TFMs in the construction closure and document source plus remaining TFMs as job resources; remove `StagedDirResourceHost`, direct `tex82_initex`, and source-bootstrap comments when no caller remains |
+
+The Gentle profiling binary is a performance/session tool rather than one of
+these parity test families; this migration must not silently broaden into its
+incremental-session architecture. Format-construction unit tests remain direct
+tests of `ensure_format`, worker protocol, and cache storage because they test
+the preparation operation itself rather than a full loaded pipeline.
+
+### Ordered implementation decomposition
+
+Implementation proceeds linearly so no two changes own the same helper:
+
+1. Add the provider and behavioral/security controls, including persistent
+   root resolution, cold miss/warm hit across independent provider instances,
+   concurrent exactly-once construction, corrupt-entry recovery, offline
+   closure, profile mismatch, finite guards, and two fresh-job state checks.
+2. Migrate command minifixtures and remove their process-local cache/counters.
+3. Migrate the shared TRIP/e-TRIP helper and remove its invocation-local cache
+   and duplicate preparation.
+4. Add the complete Plain recipe/resource split and migrate every legacy and
+   canonical Story/Gentle and committed-DVI caller without running canonical
+   parity as part of the migration.
+5. Audit and remove dead bootstrap/adaptor paths, strengthen forbidden-path and
+   complete-call-site controls, then run the guarded routine suite and format/
+   clippy gate. Canonical parity diagnosis begins only after the parent epic
+   closes.
 
 ## Identity
 
