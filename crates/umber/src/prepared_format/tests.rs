@@ -275,7 +275,7 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
         .expect("prepare with font closure");
     let mut recorder = Recorder::default();
     let mut request = job(
-        b"\\input shared \\font\\tenrm=cmr10 \\tenrm X\\shipout\\hbox{X}\\end\n",
+        b"\\catcode`\\{=1 \\catcode`\\}=2 \\input shared \\font\\tenrm=cmr10 \\shipout\\hbox{\\tenrm X}\\end\n",
         &mut recorder,
     );
     request.resources.push(LoadedFormatResource::Input {
@@ -312,13 +312,7 @@ fn loaded_job_does_not_reopen_wrong_typed_recipe_resource() {
     let fixture = provider.prepare(&recipe).expect("prepare typed closure");
     let mut recorder = Recorder::default();
     let run = provider
-        .run(
-            &fixture,
-            job(
-                b"\\font\\tenrm=cmr10 \\tenrm X\\shipout\\hbox{X}\\end\n",
-                &mut recorder,
-            ),
-        )
+        .run(&fixture, job(b"\\font\\tenrm=cmr10 \\end\n", &mut recorder))
         .expect("missing font remains a bounded TeX job outcome");
 
     assert!(run.universe.world().input_records().is_empty());
