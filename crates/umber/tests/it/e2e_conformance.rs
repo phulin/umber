@@ -176,30 +176,37 @@ fn append_transcript_suffix(
 }
 
 #[test]
-fn transcript_capture_preserves_committed_prefix_before_pending_suffix() {
-    let effects = vec![
-        EffectRecord::StreamWrite {
-            sink: PrintSink::TerminalAndLog,
-            text: "shared-tail".into(),
-        },
-        EffectRecord::StreamWrite {
-            sink: PrintSink::Terminal,
-            text: "-terminal".into(),
-        },
-        EffectRecord::StreamWrite {
-            sink: PrintSink::Log,
-            text: "-log".into(),
-        },
-    ];
+fn transcript_capture_preserves_multiple_committed_prefixes_exactly_once() {
+    let mut stores = Universe::with_world(World::memory());
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "shared-prefix:");
+    stores
+        .commit_effects(stores.world().effect_pos())
+        .expect("commit shared prefix");
+    stores
+        .world_mut()
+        .write_text(PrintSink::Terminal, "terminal-prefix:");
+    stores.world_mut().write_text(PrintSink::Log, "log-prefix:");
+    stores
+        .commit_effects(stores.world().effect_pos())
+        .expect("commit per-channel prefixes");
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "shared-tail");
+    stores
+        .world_mut()
+        .write_text(PrintSink::Terminal, "-terminal");
+    stores.world_mut().write_text(PrintSink::Log, "-log");
 
-    let (terminal, log) = append_transcript_suffix(
-        b"committed-terminal:".to_vec(),
-        b"committed-log:".to_vec(),
-        &effects,
+    let effects = stores.world().effect_records().to_vec();
+    let (terminal, log) = transcript_channels(&stores, &effects);
+
+    assert_eq!(
+        terminal,
+        b"shared-prefix:terminal-prefix:shared-tail-terminal"
     );
-
-    assert_eq!(terminal, b"committed-terminal:shared-tail-terminal");
-    assert_eq!(log, b"committed-log:shared-tail-log");
+    assert_eq!(log, b"shared-prefix:log-prefix:shared-tail-log");
 }
 
 #[test]

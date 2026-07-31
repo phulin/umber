@@ -922,7 +922,9 @@ pub struct RunResult {
     pub dvi_pages: Vec<DviPagePlan>,
     /// Exact canonical bytes from this execution's successful shipout commits.
     pub committed_artifacts: Vec<CommittedArtifact>,
-    /// Effects committed by this successful execution, in World receipt order.
+    /// Live effect suffix still pending in the World after this successful
+    /// execution, in receipt order. Earlier commit boundaries may already have
+    /// drained a prefix into the World's backing outputs.
     pub effects: Vec<EffectRecord>,
     pub dumped_format: bool,
     pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
