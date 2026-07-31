@@ -86,7 +86,7 @@ use hmode::*;
 pub(crate) use hmode::{
     append_canonical_character_with_fuel, append_canonical_control_space_with_fuel,
     append_canonical_space_with_fuel, append_given_char, append_italic_correction_with_fuel,
-    commit_current_list, control_space_glue_spec, flush_pending_hchars,
+    append_whatsit, commit_current_list, control_space_glue_spec, flush_pending_hchars,
     flush_pending_hchars_without_right_boundary, norm_min, try_append_character,
     try_append_tfm_character_span,
 };

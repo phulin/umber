@@ -603,6 +603,62 @@ fn canonical_chardef_character_typesets_exactly_like_char() {
     );
 }
 
+/// TeX82 reaches §1356's `new_whatsit` from `main_control`'s `big_switch`,
+/// which §1034's `main_loop` has already left: the characters scanned before
+/// the extension are `tail` when the whatsit links itself on, and the ones
+/// after it open a fresh ligature run. Umber batches a word instead of
+/// appending it character by character, so a whatsit appended without first
+/// flushing that batch jumps ahead of the whole word -- which is how
+/// `umber2-alfh.22` put a `\special`'s `xxx1` before the glyphs of the box
+/// that contained it.
+#[test]
+fn canonical_whatsit_splits_the_ligature_run_it_interrupts() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox0=\hbox{\f fi}\setbox1=\hbox{\f f\special{mark}i}",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let children = |register: u16| {
+        let stored = universe
+            .box_reg(register)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("setbox stores an hbox");
+        let Node::HList(stored) = stored else {
+            panic!("setbox contains an hbox");
+        };
+        universe
+            .nodes(stored.children)
+            .iter()
+            .map(|node| node.to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        matches!(
+            children(0).as_slice(),
+            [Node::Lig { ch: '\u{c}', orig, .. }] if orig.as_ref() == ['f', 'i']
+        ),
+        "uninterrupted f+i ligate: {:?}",
+        children(0)
+    );
+    assert!(
+        matches!(
+            children(1).as_slice(),
+            [
+                Node::Char { ch: 'f', .. },
+                Node::Whatsit(Whatsit::Special { payload, .. }),
+                Node::Char { ch: 'i', .. },
+            ] if payload.as_slice() == b"mark"
+        ),
+        "the whatsit sits between them and ends the run: {:?}",
+        children(1)
+    );
+}
+
 /// Collects the delivery boundaries observed for each ordinary letter of the
 /// box body, in stream order, as `('A', [Raw, Expanded])` pairs.
 ///

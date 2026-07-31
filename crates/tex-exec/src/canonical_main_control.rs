@@ -8086,6 +8086,7 @@ fn apply_pdf_navigation_request(
     request: PdfNavigationRequest,
     stores: &mut Universe,
     modes: &mut ModeNest,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     match request {
         PdfNavigationRequest::Annotation(request) => {
@@ -8119,11 +8120,14 @@ fn apply_pdf_navigation_request(
                             .create_pdf_annotation(data)
                             .map_err(|_| ExecError::PdfObjectCapacity)?,
                     };
-                    modes
-                        .current_list_mutation()
-                        .push(Node::Whatsit(Whatsit::PdfAnnotation {
+                    crate::assignments::append_whatsit(
+                        modes,
+                        stores,
+                        fuel,
+                        Whatsit::PdfAnnotation {
                             object: record.object(),
-                        }));
+                        },
+                    )?;
                 }
             }
         }
@@ -8150,11 +8154,14 @@ fn apply_pdf_navigation_request(
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, action)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfLinkStart {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfLinkStart {
                     object: record.object(),
-                }));
+                },
+            )?;
         }
         PdfNavigationRequest::EndLink => {
             if matches!(
@@ -8172,11 +8179,14 @@ fn apply_pdf_navigation_request(
             if open.nesting_depth != stores.execution_group_depth() {
                 stores.world_mut().write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
             }
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfLinkEnd {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfLinkEnd {
                     object: open.record.object(),
-                }));
+                },
+            )?;
         }
         PdfNavigationRequest::Outline(PdfOutlineRequest {
             attributes,
@@ -8213,15 +8223,16 @@ fn apply_pdf_navigation_request(
                 crate::assignments::warn_pdf_destination_duplicate(stores, &identity);
                 return Ok(ReplayStep::Continue);
             }
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfDestination(Box::new(
-                    tex_state::node::PdfDestinationNode {
-                        identifier,
-                        structure,
-                        kind,
-                    },
-                ))));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfDestination(Box::new(tex_state::node::PdfDestinationNode {
+                    identifier,
+                    structure,
+                    kind,
+                })),
+            )?;
         }
         PdfNavigationRequest::Thread(tex_command::PdfThreadRequest {
             dimensions,
@@ -8237,25 +8248,24 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode(primitive));
             }
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfThread(Box::new(
-                    tex_state::node::PdfThreadNode {
-                        identifier,
-                        dimensions,
-                        attributes: attributes
-                            .map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
-                        running,
-                    },
-                ))));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfThread(Box::new(tex_state::node::PdfThreadNode {
+                    identifier,
+                    dimensions,
+                    attributes: attributes
+                        .map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
+                    running,
+                })),
+            )?;
         }
         PdfNavigationRequest::EndThread => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfEndThread));
+            crate::assignments::append_whatsit(modes, stores, fuel, Whatsit::PdfEndThread)?;
         }
     }
     Ok(ReplayStep::Continue)
@@ -8499,6 +8509,7 @@ fn apply_pdf_form_request(
     request: PdfFormRequest,
     stores: &mut Universe,
     modes: &mut ModeNest,
+    fuel: &mut tex_command::CommandFuel,
     immediate: bool,
 ) -> Result<ReplayStep, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -8514,14 +8525,17 @@ fn apply_pdf_form_request(
                 .ok()
                 .and_then(|object| stores.pdf_form(object))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfRefXForm {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfRefXForm {
                     object: form.object(),
                     width: form.width(),
                     height: form.height(),
                     depth: form.depth(),
-                }));
+                },
+            )?;
         }
         PdfFormRequest::Create {
             attr,
@@ -11438,14 +11452,17 @@ fn apply_scanned_step(
                 .and_then(|id| stores.pdf_external_image_record(id))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             let dimensions = image.dimensions();
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfRefXImage {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::PdfRefXImage {
                     object: image.id().raw(),
                     width: dimensions.width,
                     height: dimensions.height,
                     depth: dimensions.depth,
-                }));
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfSetRandomSeed { seed } => {
@@ -11469,10 +11486,12 @@ fn apply_scanned_step(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfAccessibility(control)));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::PdfAccessibility(control),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfRunningLink(enabled) => {
@@ -11483,10 +11502,12 @@ fn apply_scanned_step(
                     "pdfrunninglinkoff"
                 }));
             }
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfRunningLink(enabled)));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::PdfRunningLink(enabled),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfSpaceFont(tokens) => {
@@ -11499,7 +11520,9 @@ fn apply_scanned_step(
         ScannedStep::PdfGraphics(request) => {
             apply_pdf_graphics_request(request, stores, modes, command.state)
         }
-        ScannedStep::PdfNavigation(request) => apply_pdf_navigation_request(request, stores, modes),
+        ScannedStep::PdfNavigation(request) => {
+            apply_pdf_navigation_request(request, stores, modes, command.fuel)
+        }
         ScannedStep::PdfObject(request) => apply_pdf_object_request(request, stores, false),
         ScannedStep::PdfReferenceObject(request) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -11509,12 +11532,17 @@ fn apply_scanned_step(
                 .ok()
                 .filter(|object| stores.pdf_raw_object(*object).is_some())
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::PdfReferenceObject { object }));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::PdfReferenceObject { object },
+            )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::PdfForm(request) => apply_pdf_form_request(request, stores, modes, false),
+        ScannedStep::PdfForm(request) => {
+            apply_pdf_form_request(request, stores, modes, command.fuel, false)
+        }
         ScannedStep::PdfDocumentFragment(request) => {
             let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -11577,29 +11605,38 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredOpenOut { stream, file_name } => {
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::OpenOut {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::OpenOut {
                     slot: StreamSlot::new(stream),
                     path: file_name,
-                }));
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredCloseOut { stream } => {
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::CloseOut {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::CloseOut {
                     slot: stream.stream_slot(),
-                }));
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredWrite { stream, tokens } => {
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::DeferredWrite {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
                     tokens: tokens.token_list(),
-                }));
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredSpecial { tokens } => {
@@ -11607,12 +11644,15 @@ fn apply_scanned_step(
             for &token in stores.tokens(tokens.token_list()) {
                 tex_expand::append_token_string_text(stores, token, &mut text);
             }
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::Special {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::Special {
                     class: "dvi".to_owned(),
                     payload: tex_byte_text(&text),
-                }));
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SetLanguage { language } => {
@@ -11632,18 +11672,20 @@ fn apply_scanned_step(
             // first, before `clang` moves, so it hyphenates under the
             // language that was current while it was being built.
             let clang = u8::try_from(language).unwrap_or(0);
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            modes
-                .current_list_mutation()
-                .push(Node::Whatsit(Whatsit::Language {
+            let left_hyphen_min =
+                crate::assignments::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+            let right_hyphen_min =
+                crate::assignments::norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::Language {
                     language: clang,
-                    left_hyphen_min: crate::assignments::norm_min(
-                        stores.int_param(IntParam::LEFT_HYPHEN_MIN),
-                    ),
-                    right_hyphen_min: crate::assignments::norm_min(
-                        stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
-                    ),
-                }));
+                    left_hyphen_min,
+                    right_hyphen_min,
+                },
+            )?;
             modes.current_list_mutation().set_hyphen_language(clang);
             Ok(ReplayStep::Continue)
         }
@@ -11976,7 +12018,7 @@ fn apply_scanned_step(
                     apply_pdf_object_request(request, stores, true)?;
                 }
                 ImmediateExtension::PdfForm(request) => {
-                    apply_pdf_form_request(request, stores, modes, true)?;
+                    apply_pdf_form_request(request, stores, modes, command.fuel, true)?;
                 }
                 ImmediateExtension::PdfImage(_) => {
                     unreachable!("immediate image requests are normalized before resolution")

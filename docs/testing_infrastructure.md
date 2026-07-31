@@ -309,7 +309,7 @@ XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
 long-document trace registry.
 
-The corpus holds 202 fixtures across 8 domains, with one strict xfail in
+The corpus holds 203 fixtures across 8 domains, with one strict xfail in
 `main-control`. The other seven domains carry none. Bounded in-memory terminal
 lines and named inputs keep the pausing, read, and input-open evidence
 hermetic.
@@ -487,30 +487,30 @@ The `dvi` entry was added late (`umber2-alfh.22`). Until then this corpus
 compared the preamble comment raw while the rest of the repository held it
 uncomparable, which pinned 66 cases as `xfail` for differing only in a
 banner. Masking it left exactly one real DVI divergence in the corpus
-(`umber2-86sl`), which had been invisible because the channel fingerprint
-records only the _first_ divergence and the banner always came first.
+(`umber2-86sl`, a `\special` written ahead of its box's glyphs), which had
+been invisible because the channel fingerprint records only the _first_
+divergence and the banner always came first. It is fixed; the point stands
+that only normalizing the banner made it visible at all.
 
 Final tally, measured at this commit: of 609 non-`effects` channel
-dispositions across 203 cases, 456 are `file`, 6 are `xfail`, 11 are
+dispositions across 203 cases, 457 are `file`, 5 are `xfail`, 11 are
 `xfail-diagnostics`, and 136 are `empty` (the 203 `effects` dispositions are
 all `empty`; that channel has no reference-engine-comparable form at all --
 it is Umber's own structured rendering of stream opens, closes, writes, and
 shell escapes, not a byte-for-byte reproduction of anything a real TeX writes
 -- so every case's capture is required to be empty rather than ever
-adjudicated). The 17 divergent channels resolve to 5 bugs:
+adjudicated). The 16 divergent channels resolve to 4 bugs:
 
 - `umber2-alfh.13` (Umber raises no error at all where pdfTeX does): 6
 - `umber2-alfh.25` (a file's `)` is closed early): 4
 - `umber2-alfh.26` (Umber raises a _different_ error than pdfTeX): 4
 - `umber2-alfh.11` (the `*` prompt / terminal-read residual): 2
-- `umber2-alfh.22` (a `\special` is written ahead of the box's glyphs): 1
 
 Read those counts as channels, not as defects. `terminal` and `log` are not
 independent evidence: TeX writes most of a job's transcript to both at once
 (§54's `term_and_log`), so one divergence normally pins two channels, and the
-17 above are 9 distinct case-level divergences. The `dvi` channel
-_is_ independent, and after the preamble normalization above it contributes
-exactly one.
+16 above are 8 distinct case-level divergences. Every `dvi` channel now
+matches, which is what the entry above was added to make measurable.
 
 Regenerate the contract with:
 

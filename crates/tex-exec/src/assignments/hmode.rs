@@ -211,6 +211,31 @@ pub(crate) fn flush_pending_hchars_without_right_boundary(
     flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, true, fuel)
 }
 
+/// Appends a whatsit node where tex.web §1356's `new_whatsit` would put it.
+///
+/// In tex.web an extension is reached through `main_control`'s `big_switch`,
+/// which is where §1034's main loop exits once a non-character interrupts the
+/// current word, so the characters built so far are already `tail` when
+/// `new_whatsit` links itself on. Umber builds that word in one batch instead,
+/// held in the list's pending run and appended only when something flushes
+/// it -- so an unflushed whatsit is pushed *ahead* of every character of the
+/// word it interrupts, and the shipped `.dvi` carries the `xxx1` before the
+/// glyphs rather than between them (`umber2-alfh.22`).
+///
+/// Flushing here is also what keeps §1034's ligature and kerning boundaries
+/// right: a whatsit ends the word, so the characters on either side of it
+/// belong to two runs and must not ligature across it.
+pub(crate) fn append_whatsit(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+    whatsit: tex_state::node::Whatsit,
+) -> Result<(), ExecError> {
+    flush_pending_hchars(nest, stores, fuel)?;
+    nest.current_list_mutation().push(Node::Whatsit(whatsit));
+    Ok(())
+}
+
 /// Closes the current list's mutable construction phase.
 ///
 /// `ModeNest::pop` rejects a level that still owns a pending character run,
@@ -800,16 +825,23 @@ fn fix_hyphen_language_with_fuel(
         return Ok(());
     }
     // tex.web's fix_language flushes the current ligature word before
-    // recording the new language and its current hyphen minima.
+    // recording the new language and its current hyphen minima. It does its
+    // own flush rather than leaving it to `append_whatsit` because the caller
+    // names the mode, so this run hyphenates even when the nest has already
+    // moved on; `append_whatsit`'s flush then finds nothing pending.
     flush_pending_hchar_run_with_fuel(nest, stores, true, false, fuel)?;
     let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
     let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
-    nest.current_list_mutation()
-        .push(Node::Whatsit(tex_state::node::Whatsit::Language {
+    append_whatsit(
+        nest,
+        stores,
+        fuel,
+        tex_state::node::Whatsit::Language {
             language,
             left_hyphen_min,
             right_hyphen_min,
-        }));
+        },
+    )?;
     nest.current_list_mutation().set_hyphen_language(language);
     Ok(())
 }

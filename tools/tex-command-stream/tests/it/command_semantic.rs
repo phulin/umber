@@ -607,7 +607,7 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
                 )
             })
             .count(),
-        26
+        27
     );
     assert_eq!(
         page_output_selected
@@ -635,7 +635,10 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         })
         .copied()
         .collect();
-    assert_eq!(dvi_xfails, ["page-output/special-in-shipped-hbox"]);
+    assert!(
+        dvi_xfails.is_empty(),
+        "unexpected dvi xfails: {dvi_xfails:?}"
+    );
     assert!(
         page_output_selected
             .iter()
