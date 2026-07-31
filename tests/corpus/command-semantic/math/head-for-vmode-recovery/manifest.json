@@ -6,6 +6,7 @@
     {
       "id": "head-for-vmode-recovery",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "head-for-vmode-recovery.tex",
       "provenance": {
         "authority": "tex.web",
@@ -36,7 +37,7 @@
         "count:2=1"
       ],
       "channels": {
-        "events": 522,
+        "events": 523,
         "status": "clean",
         "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
         "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },

@@ -6,6 +6,7 @@
     {
       "id": "fields-and-atoms",
       "property_id": "tex82.math.fields-and-atoms",
+      "profile": "raw-tex82-loaded",
       "source": "fields-and-atoms.tex",
       "provenance": {
         "authority": "tex.web",

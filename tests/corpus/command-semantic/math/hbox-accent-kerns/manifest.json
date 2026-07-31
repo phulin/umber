@@ -6,6 +6,7 @@
     {
       "id": "hbox-accent-kerns",
       "property_id": "tex82.lists.discretionary-and-accent",
+      "profile": "raw-tex82-loaded",
       "source": "hbox-accent-kerns.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

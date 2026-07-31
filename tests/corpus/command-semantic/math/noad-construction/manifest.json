@@ -6,6 +6,7 @@
     {
       "id": "noad-construction",
       "property_id": "tex82.math.noad-construction",
+      "profile": "raw-tex82-loaded",
       "source": "noad-construction.tex",
       "provenance": {
         "authority": "tex.web",
@@ -52,7 +53,7 @@
         "command:math_comp:17",
         "command:math_comp:17",
         "command:limit_switch:2",
-        "artifact:30205a4ba8003b22bc49d84eef5894a1a2ff3f0302de63c27405a2fe606b6374"
+        "artifact:e874f14a3a1c32267fc5c0c754c9a8d842faac8beb7c3b19ada4580585eacf4c"
       ],
       "channels": {
         "events": 76,

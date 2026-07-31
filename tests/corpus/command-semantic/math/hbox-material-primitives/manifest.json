@@ -6,6 +6,7 @@
     {
       "id": "hbox-material-primitives",
       "property_id": "tex82.lists.discretionary-and-accent",
+      "profile": "raw-tex82-loaded",
       "source": "hbox-material-primitives.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

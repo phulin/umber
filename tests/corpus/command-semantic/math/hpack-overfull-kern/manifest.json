@@ -6,6 +6,7 @@
     {
       "id": "hpack-overfull-kern",
       "property_id": "tex82.boxes.hpack",
+      "profile": "raw-tex82-loaded",
       "source": "hpack-overfull-kern.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -29,7 +30,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:0b986dc3052131d5e99a6b0e18160ce0a09157102331b69e3aaeae951b420b30"
+        "artifact:328f7adbf229e4fd33611dcc6eeec9c78984fdd50b6c6cfb9a3a1c7c3d081864"
       ],
       "channels": {
         "events": 226,

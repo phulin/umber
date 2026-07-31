@@ -6,6 +6,7 @@
     {
       "id": "mlist-second-pass",
       "property_id": "tex82.math.mlist-second-pass",
+      "profile": "raw-tex82-loaded",
       "source": "mlist-second-pass.tex",
       "provenance": {
         "authority": "tex.web",
@@ -32,7 +33,7 @@
         "command:math_comp:20",
         "command:math_comp:23",
         "command:math_comp:21",
-        "artifact:8c647c2dd82d05ac838d294cb1305344348a8ae33d9e01b45c07e133fbefce22"
+        "artifact:3d25df1c742e00ed6a117ecfa0abe89b58f6ca0c8e2a71e1c2e2fde36f9eda2c"
       ],
       "channels": {
         "events": 86,

@@ -6,6 +6,7 @@
     {
       "id": "paragraph-boundary-full-word",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "paragraph-boundary-full-word.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:930cc7f7ff9a8f757a63ee28bfe2caa105bdd76add4f2fe3c80055970185da11"
+        "artifact:3db19daa498082afdd0bea31056545e38017309005b0b42860cb7f9f41160a32"
       ],
       "channels": {
         "events": 260,

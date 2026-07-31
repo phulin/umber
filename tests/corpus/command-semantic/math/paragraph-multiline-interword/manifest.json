@@ -6,6 +6,7 @@
     {
       "id": "paragraph-multiline-interword",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "paragraph-multiline-interword.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:80ac7bf1f26f075f0cac991b15d72e2810d535187e0e9b86ab459c4c26e76c5e"
+        "artifact:e21d0841159fb854ae9874b4c1cf298b028018f8453a3f844c610d6bdc1175d9"
       ],
       "channels": {
         "events": 654,

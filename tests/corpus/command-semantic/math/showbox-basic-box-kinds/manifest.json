@@ -6,6 +6,7 @@
     {
       "id": "showbox-basic-box-kinds",
       "property_id": "tex82.boxes.hpack",
+      "profile": "raw-tex82-loaded",
       "source": "showbox-basic-box-kinds.tex",
       "provenance": {
         "authority": "tex.web",

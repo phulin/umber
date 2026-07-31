@@ -6,6 +6,7 @@
     {
       "id": "hbox-text-kern-word",
       "property_id": "tex82.lists.text-material",
+      "profile": "raw-tex82-loaded",
       "source": "hbox-text-kern-word.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

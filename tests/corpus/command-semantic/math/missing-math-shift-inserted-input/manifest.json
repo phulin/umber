@@ -6,6 +6,7 @@
     {
       "id": "missing-math-shift-inserted-input",
       "property_id": "tex82.math.entry-and-display-setup",
+      "profile": "raw-tex82-loaded",
       "source": "missing-math-shift-inserted-input.tex",
       "provenance": {
         "authority": "tex.web",

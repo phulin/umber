@@ -6,6 +6,7 @@
     {
       "id": "exit-and-display",
       "property_id": "tex82.math.exit-and-display",
+      "profile": "raw-tex82-loaded",
       "source": "exit-and-display.tex",
       "provenance": {
         "authority": "tex.web",
@@ -42,7 +43,7 @@
         "mode:math",
         "mode:horizontal",
         "mode:vertical",
-        "artifact:669713fc4e8d6e34c29c140103a713cd4466aedcf2e5ff942605bae9094d5f11"
+        "artifact:46ef5f0af28dbcf9d60d3734d887f36efde086eefa6de7fa5170efb4c7b47325"
       ],
       "channels": {
         "events": 88,

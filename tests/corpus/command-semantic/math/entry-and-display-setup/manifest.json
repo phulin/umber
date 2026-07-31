@@ -6,6 +6,7 @@
     {
       "id": "entry-and-display-setup",
       "property_id": "tex82.math.entry-and-display-setup",
+      "profile": "raw-tex82-loaded",
       "source": "entry-and-display-setup.tex",
       "provenance": {
         "authority": "tex.web",
@@ -43,7 +44,7 @@
         "mode:math",
         "mode:horizontal",
         "mode:vertical",
-        "artifact:0db55a33f85d6ed07b7405b467af8c13eb796ab38b9056220f93cff7510b3678"
+        "artifact:53b0d496da932ea9c3401b31a4046e1ae19e8c8c893565c5b5206fa1bbf16528"
       ],
       "channels": {
         "events": 88,

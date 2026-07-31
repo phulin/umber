@@ -6,6 +6,7 @@
     {
       "id": "vbox-prevdepth-nointerlineskip",
       "property_id": "tex82.boxes.vpack-and-vlist-append",
+      "profile": "raw-tex82-loaded",
       "source": "vbox-prevdepth-nointerlineskip.tex",
       "provenance": {
         "authority": "tex.web",

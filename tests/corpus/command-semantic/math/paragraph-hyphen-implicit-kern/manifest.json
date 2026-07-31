@@ -6,6 +6,7 @@
     {
       "id": "paragraph-hyphen-implicit-kern",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "paragraph-hyphen-implicit-kern.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:2984f8db9900f1aed845b007764cfc51b2fa9a23b5d9eb097f2fde16928a6108"
+        "artifact:b8e2a253c6ef5b4d233cf7c6e1f603fd251c4c46705509cc02c7acba9a291d1a"
       ],
       "channels": {
         "events": 689,

@@ -6,6 +6,7 @@
     {
       "id": "choice-groups",
       "property_id": "tex82.math.choice-groups",
+      "profile": "raw-tex82-loaded",
       "source": "choice-groups.tex",
       "provenance": {
         "authority": "tex.web",

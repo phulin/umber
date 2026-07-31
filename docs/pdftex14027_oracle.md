@@ -191,9 +191,10 @@ dump or load is a hard failure; there is no INITEX fallback. The priming
 transcript and log are construction evidence only and are never copied into a
 case channel.
 
-The allowlist contains exactly 108 loaded jobs: the original 35 scanner,
-input-expansion, and conditional cases, 55 main-control cases, and all 18
-alignment cases. The main-control cohort is every `main-control/*` fixture except
+The allowlist contains exactly 142 loaded jobs: the original 35 scanner,
+input-expansion, and conditional cases, 55 main-control cases, all 18
+alignment cases, and all 34 math cases. The main-control cohort is every
+`main-control/*` fixture except
 `hyphenation-data`, `hyphenation-errors`, and
 `final-cleanup-end-or-dump`. Its job-local contract is one declared input,
 three TFM resources, six terminal-interaction cases, and 51 empty plus four
@@ -207,6 +208,18 @@ the exact `fatal:confusion(256 spans)` job, and ten empty plus eight file DVI
 channels. Genuine loaded framing changes only its 18 terminal and 18
 normalized-log banners; event counts, projections, statuses, mode
 transitions, DVI, effects, and resources remain unchanged.
+
+The math cohort contributes 17 job-local TFM resources, one job with three
+terminal lines, 34 clean jobs, and 12 empty plus 22 file DVI channels. Genuine
+loaded execution changes its 34 terminal and 34 normalized-log banners, 21
+prepared-page artifact hashes, and the `head-for-vmode-recovery` event count
+from 522 to 523. The artifact hashes cover detached page effects as well as
+page geometry and nodes: across all 22 shipped pages, only the TeX §§61/536
+terminal and log banner writes differ; job geometry, fonts, counts, complete
+node trees, math events, remaining page effects, and normalized DVI bytes are
+identical. All other event counts, projection entries, statuses, mode
+transitions, fixture effects, resources, terminal lines, and interaction
+declarations remain unchanged.
 
 Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
 with its `source`, any `inputs` files (written as the manifest's exact

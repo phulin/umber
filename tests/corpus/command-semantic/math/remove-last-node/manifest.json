@@ -6,6 +6,7 @@
     {
       "id": "remove-last-node",
       "property_id": "tex82.lists.structured-material",
+      "profile": "raw-tex82-loaded",
       "source": "remove-last-node.tex",
       "provenance": {
         "authority": "tex.web",

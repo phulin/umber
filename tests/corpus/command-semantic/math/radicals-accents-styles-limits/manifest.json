@@ -6,6 +6,7 @@
     {
       "id": "radicals-accents-styles-limits",
       "property_id": "tex82.math.radicals-accents-styles-limits",
+      "profile": "raw-tex82-loaded",
       "source": "radicals-accents-styles-limits.tex",
       "provenance": {
         "authority": "tex.web",
@@ -41,7 +42,7 @@
         "command:math_style:4",
         "command:math_comp:17",
         "command:limit_switch:1",
-        "artifact:d2e4d33a9ec52d1b3046b701b84ada3c21c0db44a81ef4058d67ba0779d3852c"
+        "artifact:3d3afacd67d43762c248f370f7893d92666792f4d3cfbc59f6df9f69026ac7c2"
       ],
       "channels": {
         "events": 110,

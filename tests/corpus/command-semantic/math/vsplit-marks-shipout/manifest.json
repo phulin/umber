@@ -6,6 +6,7 @@
     {
       "id": "vsplit-marks-shipout",
       "property_id": "tex82.boxes.vsplit-kernel",
+      "profile": "raw-tex82-loaded",
       "source": "vsplit-marks-shipout.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -45,7 +46,7 @@
         "box:11/0/0:hlist",
         "box:11/0/0/0:char",
         "box:11/0/1:mark",
-        "artifact:be9470ec610cb01c77e5fc4812bb3880a38dbad690ad2a2f1eb287b16be9bc1d"
+        "artifact:5f3521afc937b8771a38fb289718cb617f2cfefc40dc3ff417c6f4a77bb056f6"
       ],
       "channels": {
         "events": 784,

@@ -129,9 +129,9 @@ revalidates the closed case after execution so no ambient output can appear.
 for loaded minifixture oracle profiles. Regeneration requires both the profile
 and its allowlist, rejects unknown or duplicate selectors, builds one genuine
 format through `-ini`/`\dump`, and captures only the subsequent `-fmt` jobs.
-The `raw-tex82-loaded` allowlist contains exactly 108 jobs: the reviewed
+The `raw-tex82-loaded` allowlist contains exactly 142 jobs: the reviewed
 35-case scanner/input/conditional cohort, 55 ordinary main-control cases, and
-all 18 alignment cases.
+all 18 alignment and 34 math cases.
 The latter excludes `hyphenation-data`, `hyphenation-errors`, and
 `final-cleanup-end-or-dump`.
 

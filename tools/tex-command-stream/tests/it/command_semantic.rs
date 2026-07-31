@@ -189,6 +189,15 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         })
         .collect();
     assert_eq!(alignments.len(), 18);
+    let math: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (name.starts_with("math/")
+                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
+                .then_some(name.as_str())
+        })
+        .collect();
+    assert_eq!(math.len(), 34);
     let allowlist = std::fs::read_to_string(
         repository_root().join("tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases"),
     )
@@ -203,9 +212,10 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         .copied()
         .chain(main_control.iter().copied())
         .chain(alignments.iter().copied())
+        .chain(math.iter().copied())
         .collect();
     assert_eq!(allowlisted, expected_allowlist);
-    assert_eq!(allowlisted.len(), 108);
+    assert_eq!(allowlisted.len(), 142);
     for (name, profile) in EXCLUDED {
         assert_eq!(by_name[*name].profile, *profile, "{name}");
         assert_eq!(
@@ -356,6 +366,58 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
             })
             .count(),
         17
+    );
+
+    let math_selected: Vec<_> = math.iter().map(|name| by_name[*name]).collect();
+    assert_eq!(
+        math_selected
+            .iter()
+            .map(|case| case.inputs.len())
+            .sum::<usize>(),
+        0
+    );
+    assert_eq!(
+        math_selected
+            .iter()
+            .map(|case| case.font_inputs.len())
+            .sum::<usize>(),
+        17
+    );
+    assert_eq!(
+        math_selected
+            .iter()
+            .filter(|case| !case.terminal_lines.is_empty())
+            .count(),
+        1
+    );
+    assert_eq!(
+        math_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::File
+                )
+            })
+            .count(),
+        22
+    );
+    assert_eq!(
+        math_selected
+            .iter()
+            .filter(|case| {
+                matches!(
+                    case.channels.as_ref().expect("validated channels").dvi,
+                    StreamDisposition::Empty
+                )
+            })
+            .count(),
+        12
+    );
+    assert!(
+        math_selected
+            .iter()
+            .all(|case| { case.channels.as_ref().expect("validated channels").status == "clean" })
     );
 }
 

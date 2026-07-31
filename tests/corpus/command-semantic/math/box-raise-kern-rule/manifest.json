@@ -6,6 +6,7 @@
     {
       "id": "box-raise-kern-rule",
       "property_id": "tex82.boxes.requests-and-lifecycle",
+      "profile": "raw-tex82-loaded",
       "source": "box-raise-kern-rule.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -38,7 +39,7 @@
         "box:0/0/2:hlist",
         "box:0/0/2/0:char",
         "box:0/0/3:rule",
-        "artifact:b37bc88429d9648b82091265d774f6bdfdfdab3a79b16e14251ab6a6f47bb872"
+        "artifact:570f8900bbd17a1b4f5458449ff1c21a34a79ceb05b37eadda0740ad571ae326"
       ],
       "channels": {
         "events": 435,

@@ -6,6 +6,7 @@
     {
       "id": "rule-resets-space-factor",
       "property_id": "tex82.lists.direct-material-and-groups",
+      "profile": "raw-tex82-loaded",
       "source": "rule-resets-space-factor.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -46,7 +47,7 @@
         "box:0/0/12:glue",
         "box:0/0/13:char",
         "box:0/0/14:glue",
-        "artifact:508f87a97c96027478d8264d51a42e878c1f4812092cdecb21f57dd2e5c7a87c"
+        "artifact:3420256626b7f294377eddb87743890987e604366d4d519d2e77468c6be4b546"
       ],
       "channels": {
         "events": 494,

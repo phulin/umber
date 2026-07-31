@@ -6,6 +6,7 @@
     {
       "id": "fractions-and-left-right",
       "property_id": "tex82.math.fractions-and-left-right",
+      "profile": "raw-tex82-loaded",
       "source": "fractions-and-left-right.tex",
       "provenance": {
         "authority": "tex.web",
@@ -45,7 +46,7 @@
         "command:above:1",
         "command:mkern:99",
         "command:left_right:31",
-        "artifact:5c7fb290f0caa29530fb51a9885329f5d1c1564014694ad2e13879af5a32c0a5"
+        "artifact:6f443d7e896c9810a748a486c1c4580bcb7f7e0eaf8c4a062468d201be285259"
       ],
       "channels": {
         "events": 142,

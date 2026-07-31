@@ -6,6 +6,7 @@
     {
       "id": "everypar-hook-paragraph-entry",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "everypar-hook-paragraph-entry.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"

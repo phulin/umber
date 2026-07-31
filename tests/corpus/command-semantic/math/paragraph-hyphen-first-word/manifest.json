@@ -6,6 +6,7 @@
     {
       "id": "paragraph-hyphen-first-word",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "paragraph-hyphen-first-word.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:8511e8fab3d33100ebebebce5533e671572b22fd433c6a14550dc16f1b85b231"
+        "artifact:37354fc8ab77030169766679963a522304da48ca1d3c3f74745ad9cd15b27701"
       ],
       "channels": {
         "events": 671,

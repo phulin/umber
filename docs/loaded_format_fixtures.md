@@ -176,13 +176,16 @@ Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
 
 The blessed raw-TeX82 loaded oracle profile additionally owns an exact
-108-case allowlist. It preserves the independently reviewed original 35-case
+142-case allowlist. It preserves the independently reviewed original 35-case
 cohort and 55 ordinary main-control jobs, excluding the three separately owned
-hyphenation/error/final-cleanup fixtures, and adds all 18 alignment jobs. One
+hyphenation/error/final-cleanup fixtures, and adds all 18 alignment and 34 math
+jobs. One
 cached raw format identity serves all selected jobs; inputs, TFMs, terminal
 lines, and interaction mode remain job-local after restore. The alignment
 cohort pins two job-local TFMs, 17 clean statuses plus exact
 `fatal:confusion(256 spans)`, and ten empty plus eight file DVI channels.
+The math cohort pins 17 job-local TFMs, one terminal-interaction job, 34 clean
+statuses, and 12 empty plus 22 file DVI channels.
 Worker-boundary regressions additionally replace stale and wrong sibling
 candidates before selection, replace a pathname after its inode is anchored,
 exercise the current-image worker entry, and submit a decoder-valid image with

@@ -6,6 +6,7 @@
     {
       "id": "paragraph-hyphen-word-length-limit",
       "property_id": "tex82.paragraphs.boundaries",
+      "profile": "raw-tex82-loaded",
       "source": "paragraph-hyphen-word-length-limit.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -27,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:cb32c164aa1b58fac41ebda962a5b1610d55e232e5f6da8f7e517652c8ad6ea3"
+        "artifact:faa984e5e5ad9ab4384b65f1063e64392bed9db1c5dc20b5109f43c4b1f66788"
       ],
       "channels": {
         "events": 1048,

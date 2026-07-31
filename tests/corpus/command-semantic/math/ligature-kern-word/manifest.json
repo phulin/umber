@@ -6,6 +6,7 @@
     {
       "id": "ligature-kern-word",
       "property_id": "tex82.lists.text-material",
+      "profile": "raw-tex82-loaded",
       "source": "ligature-kern-word.tex",
       "font_inputs": {
         "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -37,7 +38,7 @@
         "box:0/0/1:ligature",
         "box:0/0/2:char",
         "box:0/0/3:char",
-        "artifact:ae1acc0ad25b906d47a3808142a3563a38afb3142be5d815e0cffa870a14263a"
+        "artifact:020c0c60fcda7204e9874590d56f2ae9f4beb5b41b4e46581b58e210e469f5d8"
       ],
       "channels": {
         "events": 145,

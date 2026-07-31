@@ -6,6 +6,7 @@
     {
       "id": "clean-box-delimiters-mu",
       "property_id": "tex82.math.clean-box-delimiters-mu",
+      "profile": "raw-tex82-loaded",
       "source": "clean-box-delimiters-mu.tex",
       "provenance": {
         "authority": "tex.web",
@@ -47,7 +48,7 @@
         "command:mkern:99",
         "command:left_right:31",
         "command:left_right:31",
-        "artifact:c5de8bac2324639dab65156597cd9aface003759182c78130b29678b28a90624"
+        "artifact:00fc643c99cf090344cfcee401bcb1ce0ecf673c038f79e664bb5380ed643065"
       ],
       "channels": {
         "events": 106,

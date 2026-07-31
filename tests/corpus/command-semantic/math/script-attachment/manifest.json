@@ -6,6 +6,7 @@
     {
       "id": "script-attachment",
       "property_id": "tex82.math.script-attachment",
+      "profile": "raw-tex82-loaded",
       "source": "script-attachment.tex",
       "provenance": {
         "authority": "tex.web",
@@ -29,7 +30,7 @@
         "command:mkern:99",
         "command:mkern:99",
         "command:mkern:99",
-        "artifact:d6a495ed2c861e80cffeee830b07fbae46186ea9a5b378cc366ccf03e2dde168"
+        "artifact:7255cbdd669a9a4ae9c3bb82a59e2db2b038a1ed8102c03c2e0f4eec972713fd"
       ],
       "channels": {
         "events": 216,
