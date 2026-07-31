@@ -1522,9 +1522,9 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn dvi_font_number(&self, id: FontId) -> u32 {
+    pub fn observe_dvi_font_emission(&self, id: FontId) -> u32 {
         let id = self.resolve_stored_font(id);
-        self.fonts.dvi_number(id)
+        self.fonts.observe_dvi_emission(id)
     }
 
     #[must_use]

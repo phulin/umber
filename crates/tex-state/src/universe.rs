@@ -4931,8 +4931,8 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn dvi_font_number(&self, id: FontId) -> u32 {
-        self.stores.dvi_font_number(id)
+    pub fn observe_dvi_font_emission(&self, id: FontId) -> u32 {
+        self.stores.observe_dvi_font_emission(id)
     }
 
     #[must_use]
