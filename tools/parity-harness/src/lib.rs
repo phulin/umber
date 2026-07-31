@@ -83,7 +83,7 @@ impl ManifestBoundSource {
 /// staged parity job directory and by diagnostic tools (for example the
 /// `umber` crate's `first_failure_locator` example) that need to seed a
 /// plain-TeX corpus run without duplicating this list.
-pub const CORPUS_TFMS: &[&str] = &[
+pub const PLAIN_PRELOAD_FONTS: &[&str] = &[
     "cmbsy10", "cmbx10", "cmbx5", "cmbx6", "cmbx7", "cmbx8", "cmbx9", "cmcsc10", "cmdunh10",
     "cmex10", "cmmi10", "cmmi5", "cmmi6", "cmmi7", "cmmi8", "cmmi9", "cmmib10", "cmr10", "cmr5",
     "cmr6", "cmr7", "cmr8", "cmr9", "cmsl10", "cmsl8", "cmsl9", "cmsltt10", "cmss10", "cmssbx10",
@@ -793,7 +793,7 @@ fn copy_source(source_path: &Path, dest: &Path) -> Result<()> {
 }
 
 fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) -> Result<()> {
-    for name in CORPUS_TFMS {
+    for name in PLAIN_PRELOAD_FONTS {
         let target = dest.join(format!("{name}.tfm"));
         let source = locate_tfm(repo_root, name, allow_system_lookup)?
             .ok_or_else(|| anyhow!("could not locate required plain TeX font metric {name}.tfm"))?;
@@ -808,7 +808,7 @@ fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) ->
     Ok(())
 }
 
-/// Resolves one `CORPUS_TFMS` entry to an on-disk TFM path: a committed
+/// Resolves one `PLAIN_PRELOAD_FONTS` entry to an on-disk TFM path: a committed
 /// fixture, the gitignored corpus cache, then (when permitted) `kpsewhich`.
 pub fn locate_tfm(
     repo_root: &Path,

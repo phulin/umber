@@ -187,6 +187,7 @@ fn trip_observer_profile_selection_includes_fixture_and_phase_identity() {
     }
 }
 
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 struct NoCheckpoints;
 
 impl CheckpointSink for NoCheckpoints {
@@ -203,6 +204,7 @@ impl CheckpointSink for NoCheckpoints {
 /// inputs (source document, format source, hyphenation data, TFMs) the same
 /// way `parity_harness::staged_source_dir` assembled them.
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 fn staged_world(path: &Path) -> Result<(World, PathBuf), String> {
     let path = path
         .canonicalize()
@@ -233,21 +235,6 @@ fn staged_world(path: &Path) -> Result<(World, PathBuf), String> {
         }
     }
     Ok((world, path))
-}
-
-#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
-fn run_file_in_process(
-    path: &Path,
-    format: Option<&[u8]>,
-    engine: EngineMode,
-) -> Result<InProcessRun, String> {
-    let mut failure = None;
-    let source_name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    run_file_in_process_captured(path, &source_name, format, engine, &mut failure)
 }
 
 fn startup_input_name(canonical_source_name: &str) -> String {
@@ -553,6 +540,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 fn run_file_in_process_captured(
     path: &Path,
     canonical_source_name: &str,
@@ -681,10 +669,430 @@ fn run_file_in_process_captured(
     })
 }
 
+const PLAIN_CLOCK: JobClock = JobClock {
+    time: 13 * 60 + 36,
+    second: 0,
+    day: 9,
+    month: 7,
+    year: 2026,
+};
+
+fn plain_guards() -> FormatGenerationGuards {
+    FormatGenerationGuards {
+        command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+        wall_time: Duration::from_secs(1_800),
+        resident_bytes: 6 * 1024 * 1024 * 1024,
+    }
+}
+
+#[allow(clippy::disallowed_methods)] // Reads only repository-pinned construction inputs.
+fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
+    let read = |relative: &str| {
+        fs::read(repo_root.join(relative))
+            .map(Arc::<[u8]>::from)
+            .map_err(|error| format!("read pinned Plain construction resource {relative}: {error}"))
+    };
+    let mut resources = vec![
+        FormatResource::Input {
+            logical_name: "plain.tex".into(),
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: read("third_party/corpus/plain.tex")?,
+        },
+        FormatResource::Input {
+            logical_name: "hyphen.tex".into(),
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: read("third_party/hyphen/hyphen.tex")?,
+        },
+    ];
+    for name in parity_harness::PLAIN_PRELOAD_FONTS {
+        resources.push(FormatResource::Tfm {
+            logical_name: format!("{name}.tfm"),
+            bytes: read(&format!("third_party/fonts/{name}.tfm"))?,
+        });
+    }
+    Ok(FormatRecipe {
+        engine: EngineMode::Tex82,
+        format_name: "repository-plain-tex82".into(),
+        construction_source_name: "repository-plain-tex82.ini".into(),
+        construction_source: Arc::from(&b"\\input plain.tex\n\\dump\n"[..]),
+        resources,
+        distribution_identity: Arc::from(&b"repository-pinned-plain-tex82-v1"[..]),
+        clock: PLAIN_CLOCK,
+        construction_interaction: tex_state::InteractionMode::Nonstop,
+        construction_error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
+            .expect("canonical Plain context widths"),
+        guards: plain_guards(),
+    })
+}
+
+struct PlainJobInput {
+    source_name: String,
+    source: Arc<[u8]>,
+    resources: Vec<LoadedFormatResource>,
+}
+
+#[allow(clippy::disallowed_methods)] // Acquires one isolated staged job into typed values.
+fn plain_job_input(path: &Path) -> Result<PlainJobInput, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("resolve {}: {error}", path.display()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("input has no parent: {}", path.display()))?;
+    let source_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| format!("input name is not UTF-8: {}", path.display()))?
+        .to_owned();
+    let source = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let source = source
+        .strip_prefix(b"\\input plain.tex\n")
+        .unwrap_or(&source)
+        .to_vec();
+    let mut entries = fs::read_dir(parent)
+        .map_err(|error| format!("read staged directory {}: {error}", parent.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read staged directory entry: {error}"))?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let mut resources = Vec::new();
+    for entry in entries {
+        if !entry
+            .file_type()
+            .map_err(|error| format!("inspect {}: {error}", entry.path().display()))?
+            .is_file()
+            || entry.path() == path
+        {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "plain.tex" || name == "hyphen.tex" {
+            continue;
+        }
+        let bytes = Arc::from(
+            fs::read(entry.path())
+                .map_err(|error| format!("read {}: {error}", entry.path().display()))?,
+        );
+        if let Some(font) = name.strip_suffix(".tfm") {
+            if !parity_harness::PLAIN_PRELOAD_FONTS.contains(&font) {
+                resources.push(LoadedFormatResource::Tfm {
+                    logical_name: name,
+                    bytes,
+                });
+            }
+        } else {
+            resources.push(LoadedFormatResource::Input {
+                logical_name: name.clone(),
+                resolved_name: format!("./{name}"),
+                source_kind: RegisteredSourceKind::Generated,
+                bytes,
+            });
+        }
+    }
+    Ok(PlainJobInput {
+        source_name,
+        source: Arc::from(source),
+        resources,
+    })
+}
+
+fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
+    let repo_root = test_support::repository_root();
+    let recipe = plain_format_recipe(&repo_root)?;
+    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
+        .map_err(|error| format!("Plain persistent format provider failed: {error}"))?;
+    let prepared = provider
+        .prepare(&recipe)
+        .map_err(|error| format!("Plain format preparation failed: {error}"))?;
+    let input = plain_job_input(path)?;
+    let source_name = input.source_name.clone();
+    let source = Arc::clone(&input.source);
+    let mut observers = TripObservers::default();
+    let loaded = provider
+        .run(
+            &prepared,
+            PreparedFormatJob {
+                engine: EngineMode::Tex82,
+                backend: OutputCapability::Dvi,
+                clock: PLAIN_CLOCK,
+                interaction: tex_state::InteractionMode::Nonstop,
+                error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
+                    .expect("canonical Plain context widths"),
+                guards: plain_guards(),
+                source_name: source_name.clone(),
+                source_kind: RegisteredSourceKind::Generated,
+                source: Arc::clone(&source),
+                resources: input.resources,
+                terminal_input: Vec::new(),
+                observer: &mut observers,
+            },
+        )
+        .map_err(|error| format!("Plain loaded job failed: {error}"))?;
+    let dvi = (!loaded.result.dvi_pages.is_empty())
+        .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let (terminal, log) = transcript_channels(&loaded.result.effects);
+    Ok(InProcessRun {
+        dvi,
+        provenance: loaded.universe.provenance_stats(),
+        macro_provenance: loaded.universe.macro_invocation_provenance_stats(),
+        terminal,
+        log,
+        capture: PhaseCapture::Live(LiveCapture {
+            root: LiveSource {
+                name: source_name,
+                source: loaded.root_source,
+                bytes: source,
+            },
+            observations: observers.into_captured(),
+            outcome: LiveSessionOutcome::Completed,
+        }),
+    })
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Verifies repository-pinned fixture bytes.
+fn plain_recipe_has_exact_pinned_ordered_closure_and_stable_identity() {
+    let repo_root = test_support::repository_root();
+    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
+    let first = plain_format_recipe(&repo_root).expect("complete Plain recipe");
+    let second = plain_format_recipe(&repo_root).expect("repeat complete Plain recipe");
+    assert_eq!(first.engine, EngineMode::Tex82);
+    assert_eq!(first.format_name, "repository-plain-tex82");
+    assert_eq!(first.construction_source_name, "repository-plain-tex82.ini");
+    assert_eq!(
+        first.construction_source.as_ref(),
+        b"\\input plain.tex\n\\dump\n"
+    );
+    assert_eq!(first.clock, PLAIN_CLOCK);
+    assert_eq!(
+        first.construction_interaction,
+        tex_state::InteractionMode::Nonstop
+    );
+    assert_eq!(first.construction_error_context_widths.error_line(), 64);
+    assert_eq!(
+        first.construction_error_context_widths.half_error_line(),
+        32
+    );
+    assert_eq!(first.guards, plain_guards());
+    assert_eq!(
+        first.resources.len(),
+        2 + parity_harness::PLAIN_PRELOAD_FONTS.len()
+    );
+    assert!(matches!(
+        &first.resources[0],
+        FormatResource::Input { logical_name, bytes, .. }
+            if logical_name == "plain.tex"
+                && bytes.as_ref() == fs::read(repo_root.join("third_party/corpus/plain.tex"))
+                    .expect("pinned plain.tex")
+    ));
+    assert!(matches!(
+        &first.resources[1],
+        FormatResource::Input { logical_name, bytes, .. }
+            if logical_name == "hyphen.tex"
+                && bytes.as_ref() == fs::read(repo_root.join("third_party/hyphen/hyphen.tex"))
+                    .expect("pinned hyphen.tex")
+    ));
+    for (resource, name) in first.resources[2..]
+        .iter()
+        .zip(parity_harness::PLAIN_PRELOAD_FONTS)
+    {
+        assert!(matches!(
+            resource,
+            FormatResource::Tfm { logical_name, bytes }
+                if logical_name == &format!("{name}.tfm")
+                    && bytes.as_ref() == fs::read(repo_root.join(format!("third_party/fonts/{name}.tfm")))
+                        .expect("pinned Plain preload TFM")
+        ));
+    }
+    assert_eq!(
+        first.identity().expect("Plain identity").key(),
+        second.identity().expect("stable Plain identity").key()
+    );
+    let helper = include_str!("e2e_conformance.rs")
+        .split_once("fn plain_format_recipe(")
+        .expect("Plain recipe helper")
+        .1
+        .split_once("\nstruct PlainJobInput")
+        .expect("bounded Plain recipe helper")
+        .0;
+    for forbidden in ["locate_tfm", "kpsewhich", "Command::new", "http", "network"] {
+        assert!(
+            !helper.contains(forbidden),
+            "Plain recipe must not discover {forbidden}"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Builds one isolated host-side staged job.
+fn plain_job_split_types_non_preload_resources() {
+    let temp = tempfile::tempdir().expect("temporary staged job");
+    fs::write(
+        temp.path().join("texput.tex"),
+        b"\\input plain.tex\n\\input support.tex\n",
+    )
+    .expect("root");
+    fs::write(temp.path().join("plain.tex"), b"format-only").expect("plain");
+    fs::write(temp.path().join("hyphen.tex"), b"format-only").expect("hyphen");
+    fs::write(temp.path().join("cmr10.tfm"), b"preloaded").expect("preloaded tfm");
+    fs::write(temp.path().join("extra.tfm"), b"job tfm").expect("job tfm");
+    fs::write(temp.path().join("support.tex"), b"job input").expect("job input");
+    let input = plain_job_input(&temp.path().join("texput.tex")).expect("typed Plain job");
+    assert_eq!(input.source.as_ref(), b"\\input support.tex\n");
+    assert_eq!(
+        input.resources,
+        vec![
+            LoadedFormatResource::Tfm {
+                logical_name: "extra.tfm".into(),
+                bytes: Arc::from(&b"job tfm"[..]),
+            },
+            LoadedFormatResource::Input {
+                logical_name: "support.tex".into(),
+                resolved_name: "./support.tex".into(),
+                source_kind: RegisteredSourceKind::Generated,
+                bytes: Arc::from(&b"job input"[..]),
+            },
+        ]
+    );
+}
+
+#[test]
+fn all_plain_routes_share_persistent_identity_and_fresh_jobs() {
+    let source = include_str!("e2e_conformance.rs");
+    for route in [
+        "e2e_conformance_story",
+        "e2e_conformance_gentle",
+        "e2e_conformance_story_canonical",
+        "canonical_ligature_group_boundaries_match_reference_dvi",
+        "canonical_rule_space_factor_reset_matches_reference_dvi",
+        "canonical_alignment_leading_tabskip_matches_reference_dvi",
+        "canonical_rule_follows_pending_characters_in_reference_dvi",
+        "canonical_relax_breaks_ligatures_in_reference_dvi",
+        "canonical_display_equation_number_preserves_formula_dvi",
+        "canonical_math_group_singleton_ord_matches_reference_dvi",
+        "e2e_conformance_gentle_canonical",
+    ] {
+        let body = source
+            .split_once(&format!("fn {route}()"))
+            .unwrap_or_else(|| panic!("route {route} exists"))
+            .1
+            .split_once("\n}")
+            .expect("bounded route body")
+            .0;
+        assert!(
+            body.contains("run_plain_fixture_case")
+                || body.contains("run_file_in_process_canonical"),
+            "route {route} must reach the shared Plain provider"
+        );
+    }
+    let shared = source
+        .split_once("fn run_file_with_plain_format(")
+        .expect("shared Plain runner")
+        .1
+        .split_once("\n#[test]\nfn plain_recipe")
+        .expect("bounded shared Plain runner")
+        .0;
+    for required in [
+        "plain_format_recipe(&repo_root)",
+        "PreparedFormatProvider::from_environment(",
+        ".prepare(&recipe)",
+        "PreparedFormatJob {",
+        ".run(",
+    ] {
+        assert!(
+            shared.contains(required),
+            "shared Plain runner requires {required}"
+        );
+    }
+    for forbidden in [
+        "staged_world(",
+        "StagedDirResourceHost",
+        "tex82_initex",
+        "run_file_in_process_captured",
+        "Universe::from_format",
+        "dump_format",
+        "FormatCacheStore::new",
+    ] {
+        assert!(
+            !shared.contains(forbidden),
+            "shared Plain runner forbids {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
+    let repo_root = test_support::repository_root();
+    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
+    let recipe = plain_format_recipe(&repo_root).expect("complete Plain recipe");
+    let cache = tempfile::tempdir().expect("isolated persistent Plain cache");
+    let launcher = super::umber_format_worker_launcher();
+    let first_provider =
+        PreparedFormatProvider::with_store(FormatCacheStore::new(cache.path()), launcher.clone());
+    let first = first_provider
+        .prepare(&recipe)
+        .expect("cold Plain preparation");
+    let second_provider =
+        PreparedFormatProvider::with_store(FormatCacheStore::new(cache.path()), launcher);
+    let second = second_provider
+        .prepare(&recipe)
+        .expect("independent warm Plain preparation");
+    assert_eq!(
+        recipe.identity().expect("Plain identity").key(),
+        plain_format_recipe(&repo_root)
+            .expect("same Plain route recipe")
+            .identity()
+            .expect("same Plain identity")
+            .key()
+    );
+    assert_eq!(first.image(), second.image());
+    assert_eq!(
+        first.construction_evidence(),
+        second.construction_evidence()
+    );
+    assert_eq!(
+        fs::read_dir(cache.path().join("formats-v2"))
+            .expect("Plain provider namespace")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .count(),
+        1,
+        "all Plain routes must publish exactly one construction identity"
+    );
+    for (source, expected) in [
+        (b"\\count0=41\\end\n".as_slice(), 41),
+        (b"\\end\n".as_slice(), 1),
+    ] {
+        let mut observer = TripObservers::default();
+        let run = second_provider
+            .run(
+                &second,
+                PreparedFormatJob {
+                    engine: EngineMode::Tex82,
+                    backend: OutputCapability::Dvi,
+                    clock: PLAIN_CLOCK,
+                    interaction: tex_state::InteractionMode::Nonstop,
+                    error_context_widths: recipe.construction_error_context_widths,
+                    guards: plain_guards(),
+                    source_name: "plain-provider-isolation.tex".into(),
+                    source_kind: RegisteredSourceKind::Generated,
+                    source: Arc::from(source),
+                    resources: Vec::new(),
+                    terminal_input: Vec::new(),
+                    observer: &mut observer,
+                },
+            )
+            .expect("fresh Plain loaded job");
+        assert_eq!(run.universe.count(0), expected);
+        assert!(!observer.into_captured().is_empty());
+    }
+}
+
 fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
     let fixture_name = gate.name;
     run_named_fixture_document(&gate.repo_root, document, &gate.oracle, |path| {
-        let run = run_file_in_process(path, None, EngineMode::Tex82)?;
+        let run = run_file_with_plain_format(path)?;
         let macro_stats = run.macro_provenance;
         let invocations = macro_stats.invocations();
         if invocations == 0 {
@@ -721,6 +1129,7 @@ fn e2e_conformance_gentle() {
 /// requests, `.tfm` for font requests) when a canonical resource need names a
 /// file without one, mirroring the legacy `InProcessInputResolver`/
 /// `InProcessFontResolver`'s own default-extension behavior above.
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 fn with_default_extension(name: &str, extension: &str) -> PathBuf {
     let mut path = PathBuf::from(name);
     if path.extension().is_none() {
@@ -733,6 +1142,7 @@ fn with_default_extension(name: &str, extension: &str) -> PathBuf {
 /// against the same staged fixture directory the legacy runner reads,
 /// keeping the two engines' host-side fixture wiring identical so a DVI
 /// difference between them reflects only engine behavior.
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 struct StagedDirResourceHost {
     base_dir: PathBuf,
 }
@@ -782,6 +1192,7 @@ impl CanonicalResourceHost for StagedDirResourceHost {
 /// does: an execution error gets its provenance-resolved TeX source context,
 /// while every other `CanonicalSessionError` variant already carries enough
 /// context through its own `Display` impl.
+#[allow(dead_code)] // Retained for the vbm9.6 dead-path audit and removal.
 fn canonical_error_message(
     session: &CanonicalEngineSession<'_>,
     error: &CanonicalSessionError,
@@ -794,54 +1205,12 @@ fn canonical_error_message(
     }
 }
 
-/// Drives the same staged fixture job through `CanonicalEngineSession`
-/// (the canonical `tex-command` architecture, not the legacy
-/// `EngineSession`/`ExecutionContext` path above) and returns its assembled
-/// DVI bytes. This is the production migration path's equivalent of
-/// `run_file_in_process`, sharing the same staged directory contract so the
-/// canonical Story and Gentle regression gates below are real byte-exact
-/// checks on the `umber2-johp` canonical/reference DVI milestones.
-#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+/// Runs one staged document as a fresh job loaded from the shared persistent
+/// repository-pinned Plain format and returns its assembled DVI bytes.
 fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
-    let (world, path) = staged_world(path)?;
-    let base_dir = path
-        .parent()
-        .ok_or_else(|| format!("input has no parent: {}", path.display()))?
-        .to_owned();
-    let job_name = path
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("texput")
-        .to_owned();
-    let job_bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-
-    let mut stores = Universe::with_world(world);
-    // These staged gates bootstrap plain.tex from source, so this phase is
-    // INITEX rather than a cold job loaded from an already-built format.
-    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
-    assert_eq!(
-        session.fuel_limit(),
-        tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
-        "canonical e2e sessions must use the finite command-fuel default"
-    );
-    assert_ne!(
-        session.fuel_limit(),
-        u64::MAX,
-        "canonical e2e sessions must never run with unbounded command fuel"
-    );
-    session
-        .register_authored_root(&job_name, Arc::from(job_bytes))
-        .map_err(|error| format!("register canonical root {job_name}: {error}"))?;
-
-    let mut host = StagedDirResourceHost { base_dir };
-    let mut checkpoints: Vec<EngineCheckpoint> = Vec::new();
-    let run = session
-        .run(&mut host, &mut checkpoints)
-        .map_err(|error| canonical_error_message(&session, &error))?;
-    if run.dvi_pages.is_empty() {
-        return Err("canonical Umber run did not produce DVI".to_owned());
-    }
-    dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())
+    run_file_with_plain_format(path)?
+        .dvi
+        .ok_or_else(|| "canonical Umber run did not produce DVI".to_owned())
 }
 
 fn run_plain_fixture_case_canonical(document: &str, gate: &GateAssets) {

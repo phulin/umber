@@ -214,7 +214,7 @@ fn seed_memory_file(world: &mut World, name: &str, path: &Path) {
 }
 
 fn seed_corpus_tfms(world: &mut World, root: &Path) {
-    for name in parity_harness::CORPUS_TFMS {
+    for name in parity_harness::PLAIN_PRELOAD_FONTS {
         match parity_harness::locate_tfm(root, name, true) {
             Ok(Some(path)) => seed_memory_file(world, &format!("{name}.tfm"), &path),
             Ok(None) => eprintln!(
