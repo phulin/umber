@@ -53,7 +53,7 @@ fn extra_right_brace_keeps_semisimple_group_and_exact_bop_counts() {
     // diagnoses and discards it without `unsave`. The later `\endgroup`
     // therefore releases both §280 `\aftergroup` tokens, which compose the
     // `\count0=24` assignment captured by §617's exact BOP register snapshot.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -316,7 +316,7 @@ fn register_boundary_probe_font(control: &mut CanonicalMainControl, universe: &m
 
 #[test]
 fn canonical_character_definitions_scan_scope_and_recovery() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -391,7 +391,7 @@ fn restricted_mathchar_context_uses_driver_selected_pseudoprint_widths() {
 
 #[test]
 fn canonical_character_definition_recovers_a_non_control_sequence_target() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\mathchardef A\/\end");
     run_to_end(&mut control, &mut universe);
@@ -423,7 +423,7 @@ fn out_of_range_character_definitions_observe_the_recovered_value() {
             "integer:0",
         ),
     ] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CommandReplayControl::tex82_initex(&mut universe);
         register_source(&mut control, source);
         let mut observations = ObservationRecorder::default();
@@ -498,7 +498,7 @@ fn restricted_math_operand_diagnostics_cover_every_primitive_variant() {
             2,
         ),
     ] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         register_source(&mut control, source);
         run_to_end(&mut control, &mut universe);
@@ -515,7 +515,7 @@ fn restricted_math_operand_diagnostics_cover_every_primitive_variant() {
 
 #[test]
 fn restricted_math_family_diagnostics_recover_locally_and_globally_to_family_zero() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -825,7 +825,7 @@ fn canonical_alignment_endv_closes_unfinished_math_before_finishing_cell() {
     // TeX82 §§1046-1047: an alignment v-template that reaches `endv` in
     // math mode inserts `$`, closes math, and only then redelivers `endv` to
     // §1131 in the cell's horizontal mode.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\halign{#\cr$x\cr}\end");
 
@@ -845,7 +845,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
     // Suspension inside the unfinished math cell must preserve the paired
     // alignment-entry and math save levels. Repeated retries may not consume
     // either level before §§1046-1047 synthesize the closing `$`.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\halign{#\cr$\input child\cr}\end");
 
@@ -1211,7 +1211,7 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
 
 #[test]
 fn canonical_pdf_graphics_objects_and_forms_cross_only_typed_requests() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(IntParam::PDF_OUTPUT, 1);
     for (name, primitive) in [
         (
@@ -1740,7 +1740,7 @@ fn canonical_init_math_probe_leaves_the_following_conditional_unexpanded() {
 /// inline formula, leaving the mode nest exactly where it started.
 #[test]
 fn canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control
         .modes
@@ -1776,7 +1776,7 @@ fn canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode() {
 #[test]
 fn canonical_math_shift_replays_identically_with_and_without_an_observer() {
     let source = br"$a+b$";
-    let mut plain_universe = Universe::new_with_plain_catcodes();
+    let mut plain_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
     plain
         .modes
@@ -1785,7 +1785,7 @@ fn canonical_math_shift_replays_identically_with_and_without_an_observer() {
     register_source(&mut plain, source);
     run_to_end(&mut plain, &mut plain_universe);
 
-    let mut observed_universe = Universe::new_with_plain_catcodes();
+    let mut observed_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut observed = CanonicalMainControl::tex82_initex(&mut observed_universe);
     observed
         .modes
@@ -2102,7 +2102,7 @@ fn canonical_openin_read_and_closein_use_registered_immutable_input() {
 
 #[test]
 fn canonical_filename_scan_endinput_is_inherited_by_the_new_source_first_line() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.capabilities_mut().register_input(
         "child.tex",
@@ -2245,7 +2245,7 @@ fn canonical_terminal_read_prompts_once_and_collects_until_balanced() {
 
 #[test]
 fn canonical_read_closes_partial_text_at_an_outer_token() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.capabilities_mut().register_input(
         "child.tex",
@@ -2327,7 +2327,7 @@ fn canonical_begingroup_uses_semisimple_local_and_global_restoration() {
 
 #[test]
 fn canonical_definition_recovery_keeps_target_and_parameter_tokens_command_owned() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\def A{}\def\f#2{#2}\count7=9\end");
 
@@ -2368,7 +2368,7 @@ fn canonical_macro_prefix_mismatch_renders_every_control_sequence_kind_and_recov
     ];
 
     for (source, message) in cases {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         register_source(&mut control, source);
         let mut observations = ObservationRecorder::default();
@@ -2420,7 +2420,7 @@ fn canonical_macro_prefix_mismatch_renders_every_control_sequence_kind_and_recov
 
 #[test]
 fn macro_prefix_mismatch_diagnostic_is_atomic_across_input_resource_retry() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -2488,7 +2488,7 @@ fn macro_prefix_mismatch_diagnostic_is_atomic_across_input_resource_retry() {
 
 #[test]
 fn canonical_grouping_reports_and_recovers_extra_closers() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"}\endgroup\begingroup}\count7=9\end");
 
@@ -3876,7 +3876,7 @@ fn production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule
     // non-math modes, or vice versa"; §1047's `insert_dollar_sign` closes
     // math mode with an inserted `$` and replays `\hrule` in the resulting
     // mode instead of reaching the generic unimplemented-typesetting error.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, b"a$\\hrule\\par");
 
@@ -3938,7 +3938,7 @@ fn production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule
 
 #[test]
 fn show_reads_its_target_raw_without_starting_macro_matching() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\def\shown#1{#1}\show\shown\end");
     let mut observations = ObservationRecorder::default();
@@ -4144,7 +4144,7 @@ fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
 
 #[test]
 fn replay_openout_keeps_four_bit_recovery_before_stream_zero_effect() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\immediate\openout-1=recovered");
     assert_eq!(
@@ -4177,7 +4177,7 @@ fn replay_closeout_stream_selector_committed_microfixture() {
     );
     let expected =
         test_support::read_fixture("tex_exec_io", "closeout_stream_selectors", "effects");
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, source);
     run_to_end(&mut control, &mut universe);
@@ -4224,7 +4224,7 @@ fn replay_appends_an_unexpanded_deferred_write_whatsit() {
 
 #[test]
 fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\tabskip = 2pt\halign&\end");
     let mut observations = ObservationRecorder::default();
@@ -4462,7 +4462,7 @@ fn noalign_uses_command_owned_brace_scan_without_a_generic_backup() {
 
 #[test]
 fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\halign{ U#\cr{\end");
 
@@ -4720,7 +4720,7 @@ fn canonical_alignment_cell_modes_are_observer_independent_and_finite() {
         source: &[u8],
         observed: bool,
     ) -> (CommandReplayControl, Universe, ObservationRecorder) {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CommandReplayControl::tex82_initex(&mut universe);
         register_source(&mut control, source);
         let mut observations = ObservationRecorder::default();
@@ -4800,7 +4800,7 @@ fn canonical_alignment_cell_modes_are_observer_independent_and_finite() {
 
 #[test]
 fn empty_ordinary_u_template_pushes_and_retires_before_the_cell_opener_replays() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     // The empty list before `#` is an ordinary u-template, not `\omit`.
     // `init_col` backs up any ordinary first-cell command, not just `{`.
@@ -5253,7 +5253,7 @@ fn let_observes_the_protected_marker_in_the_copied_macro_meaning() {
 
 #[test]
 fn canonical_toksdef_projects_its_committed_named_register_meaning() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\toksdef\tokens=256\end");
     let mut observations = ObservationRecorder::default();
@@ -5281,7 +5281,7 @@ fn canonical_toksdef_projects_its_committed_named_register_meaning() {
 
 #[test]
 fn canonical_initex_replay_copies_direct_token_register_rhs() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -5736,7 +5736,7 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
     // TeX82 §46 (`its_all_over`) starts \output only after the §1095
     // redelivery's exhausted \end backup has retired and a new final-stop
     // backup is in place.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\output={O}x\end");
     let mut observations = ObservationRecorder::default();
@@ -5934,7 +5934,7 @@ fn box_closer_retires_its_backup_only_when_user_output_is_entered() {
 }
 
 fn assert_default_output_defers_box_closer_backup(source: &[u8]) {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, source);
 
@@ -6170,7 +6170,7 @@ fn dead_output_cycles_force_a_shipout_from_fire_up() {
     // itself instead of entering `\output` again. Reaching that escape needs
     // real page material, because §1054 would otherwise have ended the job
     // before any output routine ran.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -6189,7 +6189,7 @@ fn dead_output_cycles_force_a_shipout_from_fire_up() {
 
 #[test]
 fn off_save_reports_before_replaying_its_inserted_closer() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"{\endgroup}");
     let mut observations = ObservationRecorder::default();
@@ -6284,7 +6284,7 @@ fn canonical_vskip_in_restricted_horizontal_runs_off_save() {
     // mode. Instead `off_save` (§1064) must first close the hbox's own
     // group, which is a `HBox`-kind `Universe` group here, so it takes
     // §1065's "othercases" branch and inserts an ordinary `}`.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\vskip1pt}");
     run_to_end(&mut control, &mut universe);
@@ -6325,7 +6325,7 @@ fn canonical_vskip_in_restricted_horizontal_closes_a_semisimple_group_first() {
     // so `off_save` must close it with the frozen, redefinition-proof
     // `\endgroup` rather than the hbox's own `}` -- and exercises
     // `CommandProcessor::frozen_primitive_token` in the process.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\begingroup\vskip1pt}");
     run_to_end(&mut control, &mut universe);
@@ -6362,7 +6362,7 @@ fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register()
     // before §1079's `make_box` is allowed to scan the register number. The
     // two-digit operand is a deliberate atomicity check: if the first
     // delivery consumes it, the replay cannot select box 12.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -6370,13 +6370,13 @@ fn canonical_unvbox_in_restricted_horizontal_recovers_before_scanning_register()
     );
     run_to_end(&mut control, &mut universe);
 
-    // These tests register a root source directly, so no §331 `**` line was
-    // ever scanned and the base terminal buffer is empty: §360's `limit=start`
-    // holds on its very first pass, which is why `(Please type a command or
-    // say `\\end')` precedes the one `*` this seeds no terminal line to answer.
+    // §360 prompts only `if interaction>nonstop_mode`; this harness runs
+    // `\nonstopmode` (see `crate::test_harness`), so the job takes §360's
+    // other branch, `fatal_error("*** (job aborted, no legal \\end found)")`,
+    // without printing a `*` it has nothing to read at.
     assert_eq!(
         terminal_text(&universe),
-        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...box12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvbox\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...box12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvbox\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n! Emergency stop.\n<*> \n    \n*** (job aborted, no legal \\end found)\n\n",
         "off_save should be the only recovery; the replay must retain operand 12"
     );
     let box_zero = universe
@@ -6406,7 +6406,7 @@ fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_b
     // Negative control for the destructive `\unvbox` case above: the same
     // §§1091/1095 recovery applies to `\unvcopy`, while §1079 leaves the
     // selected register intact after the vertical-mode retry.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -6414,13 +6414,13 @@ fn canonical_unvcopy_in_restricted_horizontal_retries_without_consuming_source_b
     );
     run_to_end(&mut control, &mut universe);
 
-    // These tests register a root source directly, so no §331 `**` line was
-    // ever scanned and the base terminal buffer is empty: §360's `limit=start`
-    // holds on its very first pass, which is why `(Please type a command or
-    // say `\\end')` precedes the one `*` this seeds no terminal line to answer.
+    // §360 prompts only `if interaction>nonstop_mode`; this harness runs
+    // `\nonstopmode` (see `crate::test_harness`), so the job takes §360's
+    // other branch, `fatal_error("*** (job aborted, no legal \\end found)")`,
+    // without printing a `*` it has nothing to read at.
     assert_eq!(
         terminal_text(&universe),
-        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...ox12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvcopy\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n(Please type a command or say `\\end')\n*\n! Emergency stop.\n<*> \n    \nEnd of file on the terminal!\n\n"
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 ...ox12=\\vbox{\\kern1pt}\\setbox0=\\hbox{\\unvcopy\n                                                  12\nI've inserted something that you may have forgotten.\n(See the <inserted text> above.)\nWith luck, this will get me unwedged. But if you\nreally didn't forget anything, try typing `2' now; then\nmy insertion and my current dilemma will both disappear.\n\n! Emergency stop.\n<*> \n    \n*** (job aborted, no legal \\end found)\n\n"
     );
     assert!(
         universe.box_reg(12).is_some(),
@@ -6462,14 +6462,14 @@ fn canonical_halign_in_restricted_horizontal_recovers_before_alignment_start() {
     // `off_save` must close the hbox before `init_align` opens any alignment
     // state; the same backed-up `\halign` then starts normally in vertical
     // mode and consumes its untouched preamble.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\halign{#\cr\cr}\end");
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(
         terminal_text(&universe),
-        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 \\setbox0=\\hbox{\\halign\n                          {#\\cr\\cr}\\end\n[0]",
+        "! Missing } inserted.\n<inserted text> \n                }\n...\nl.1 \\setbox0=\\hbox{\\halign\n                          {#\\cr\\cr}\\end\n[0]\n(see the transcript file for additional information)",
         "alignment recovery should neither start inside the hbox nor damage its preamble"
     );
     assert_eq!(
@@ -6763,7 +6763,7 @@ fn canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens() {
 
 #[test]
 fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\futurelet\next\first x\end");
     let mut observations = ObservationRecorder::default();
@@ -6840,7 +6840,7 @@ fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment(
 #[test]
 fn canonical_undefined_diagnostic_commits_once_with_or_without_observation() {
     let run = |observed: bool| {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CommandReplayControl::tex82_initex(&mut universe);
         register_source(&mut control, br"\undefined x\end");
         let mut observations = ObservationRecorder::default();
@@ -6886,7 +6886,7 @@ fn canonical_number_scan_reports_expansion_error_before_missing_number() {
     // the undefined operand and reports it, then reaches \relax and reports
     // the vacuous numeric constant. The reports retain that detection order
     // even though the command core defers World-facing §370 output.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -7489,7 +7489,7 @@ fn replay_command_snapshot_restores_typed_scanner_input_deterministically() {
 
 #[test]
 fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut universe);
     let mut control = CommandReplayControl::default();
     register_source(&mut control, br"a$ $\par\message{ok}\halign&\end");
@@ -7595,7 +7595,7 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
 
 #[test]
 fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut universe);
     let mut control = CommandReplayControl::default();
     register_source(&mut control, br"\halign&\end");
@@ -8353,7 +8353,7 @@ fn canonical_box_construction_scans_specs_hooks_and_scopes_targets() {
 
 #[test]
 fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\hbox{}}");
     loop {
@@ -8378,7 +8378,7 @@ fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
         matches!(universe.nodes(outer.children).first(), Some(node) if matches!(node.to_owned(), Node::HList(_)))
     );
 
-    let mut provenance = Universe::new_with_plain_catcodes();
+    let mut provenance = crate::test_harness::universe_with_plain_catcodes();
     let mut provenance_control = CanonicalMainControl::tex82_initex(&mut provenance);
     register_source(
         &mut provenance_control,
@@ -8407,7 +8407,7 @@ fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
         .expect("everyhbox relax is delivered");
     assert_ne!(hook_origin, tex_state::token::OriginId::UNKNOWN);
 
-    let mut recovered = Universe::new_with_plain_catcodes();
+    let mut recovered = crate::test_harness::universe_with_plain_catcodes();
     let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovered);
     register_source(&mut recovery_control, br"\setbox1=\hbox to 1pt\relax}");
     run_to_end(&mut recovery_control, &mut recovered);
@@ -8500,7 +8500,7 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
     // TeX82 §1099: `scan_eight_bit_int`'s own 0..=255 clamp ("Bad register
     // code") and the additional `\insert255` rejection ("box 255 is
     // special") both recover as class 0 rather than aborting the run.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -8550,11 +8550,15 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
 
 #[test]
 fn insert255_uses_canonical_error_reporting_in_every_interaction_mode() {
+    // `\\errorstopmode` is covered by
+    // `insert255_in_error_stop_mode_ends_the_job_at_section_83s_prompt`
+    // instead: §82 enters §83's dialog there, so the report is not followed
+    // by §90's help, the recovery never resumes, and none of the assertions
+    // below describe that run.
     let cases = [
         ("\\batchmode", false),
         ("\\nonstopmode", true),
         ("\\scrollmode", true),
-        ("\\errorstopmode", true),
     ];
     for (mode, writes_terminal) in cases {
         let source = format!("{mode}\\setbox0=\\vbox{{\\insert255{{}}}}\\count0=7\\end");
@@ -8599,6 +8603,43 @@ fn insert255_uses_canonical_error_reporting_in_every_interaction_mode() {
     }
 }
 
+/// tex.web §82's `if interaction=error_stop_mode then <Get user's advice and
+/// return>`: the report is printed, §90's help is *not* (that arm returns
+/// before reaching it), and §83 prompts. A terminal with nothing left is
+/// §71's `fatal_error`, so the job ends at the prompt and §1099's zero
+/// recovery never resumes.
+///
+/// Umber used to skip the dialog whenever the terminal could not answer,
+/// which turned this run into the scrolled one above (`umber2-er8c`).
+#[test]
+fn insert255_in_error_stop_mode_ends_the_job_at_section_83s_prompt() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\errorstopmode\setbox0=\vbox{\insert255{}}\count0=7\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let terminal = terminal_only_text(&universe);
+    assert!(terminal.contains("You can't \\insert255."), "{terminal}");
+    assert!(terminal.contains("? "), "§83 prompts: {terminal}");
+    assert!(terminal.contains("! Emergency stop."), "{terminal}");
+    assert!(
+        !transcript_text(&universe).contains("I'm changing to \\insert0; box 255 is special."),
+        "§83's arm returns before §90's help"
+    );
+    assert_eq!(
+        universe.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+    assert_eq!(
+        universe.count(0),
+        0,
+        "§81's jump_out abandons the rest of the job"
+    );
+}
+
 #[test]
 fn the_hundredth_insert255_error_terminates_before_opening_its_group() {
     let mut source = String::from("\\setbox0=\\vbox{");
@@ -8607,7 +8648,7 @@ fn the_hundredth_insert255_error_terminates_before_opening_its_group() {
     }
     source.push_str("}\\count0=7\\end");
 
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, source.as_bytes());
     run_to_end(&mut control, &mut universe);
@@ -8639,7 +8680,7 @@ fn openout_and_insert_share_the_restricted_integer_hundred_error_limit() {
     }
     source.push_str("}\\count0=7\\end");
 
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, source.as_bytes());
     run_to_end(&mut control, &mut universe);
@@ -8962,7 +9003,7 @@ fn canonical_box_shift_illegal_mode_reports_and_never_scans_a_dimension() {
     // operand -- and `\hbox{}` after them is a plain, unshifted box. A real
     // font is selected first so those characters actually reach the list
     // instead of being dropped as "Missing character" under `\nullfont`.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
     register_source(
@@ -9055,7 +9096,7 @@ fn canonical_box_shift_missing_box_operand_recovers_and_replays_the_command() {
     // TeX82 §1084's `scan_box` "A <box> was supposed to be here" recovery:
     // a non-`make_box` command is backed up and replayed normally, rather
     // than being consumed as (or silently dropping) the shift's operand.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\raise2pt\kern1pt}");
     run_to_end(&mut control, &mut universe);
@@ -9084,7 +9125,7 @@ fn canonical_box_shift_missing_box_operand_recovers_and_replays_the_command() {
 
 #[test]
 fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -9107,7 +9148,7 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
 
     // TeX82 §1213 reports an irrelevant `\long`/`\outer` prefix and still
     // performs the assignment; §1214 leaves `a` unadjusted on purpose.
-    let mut invalid_universe = Universe::new_with_plain_catcodes();
+    let mut invalid_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut invalid = CanonicalMainControl::tex82_initex(&mut invalid_universe);
     register_source(&mut invalid, br"\long\count0=1\end");
     run_to_end(&mut invalid, &mut invalid_universe);
@@ -9183,7 +9224,7 @@ fn code_table_selector_uses_tex82_character_code_recovery() {
 #[test]
 fn restricted_integer_error_is_profile_and_observation_invariant() {
     let format = {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         register_source(&mut control, br"\end");
         run_to_end(&mut control, &mut universe);
@@ -9196,7 +9237,7 @@ fn restricted_integer_error_is_profile_and_observation_invariant() {
             let mut universe = if loaded {
                 Universe::from_format(tex_state::World::memory(), &format).expect("load format")
             } else {
-                Universe::new_with_plain_catcodes()
+                crate::test_harness::universe_with_plain_catcodes()
             };
             let mut control = if loaded {
                 tex_expand::register_expandable_primitives(&mut universe);
@@ -9250,7 +9291,7 @@ fn restricted_integer_error_is_profile_and_observation_invariant() {
 
 #[test]
 fn restricted_integer_error_commits_once_after_input_resource_retry() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\lccode256=\input child\end");
     let mut observations = ObservationRecorder::default();
@@ -9304,7 +9345,7 @@ fn the_hundredth_restricted_integer_error_terminates_canonical_replay() {
     }
     source.push_str("\\count0=7\\end");
 
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, source.as_bytes());
     run_to_end(&mut control, &mut universe);
@@ -9349,7 +9390,7 @@ fn canonical_prefixed_command_skips_relax_and_preserves_group_scope() {
 
 #[test]
 fn canonical_illegal_prefix_reports_and_replays_the_command_once() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -9426,7 +9467,7 @@ fn canonical_vsplit_scans_operands_before_replaying_destructive_repack() {
 
 #[test]
 fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -9449,7 +9490,7 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
 fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
     // TeX82 §§262/1297: each font identifier reaches `token_show`, so each
     // named control word keeps `print_cs`'s delimiter before the period.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let nullfont = universe.intern("nullfont");
     universe.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
@@ -9753,7 +9794,7 @@ fn canonical_spacefactor_out_of_range_values_are_diagnosed_and_leave_state_uncha
     // else space_factor:=cur_val` -- an out-of-range value is diagnosed and
     // the space factor is left untouched, not clamped.
     for value in [-1, 0, 32_768] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         control
             .modes
@@ -9781,7 +9822,7 @@ fn canonical_spacefactor_illegal_modes_report_before_scanning_and_preserve_next_
         Mode::Math,
         Mode::DisplayMath,
     ] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         if mode != Mode::Vertical {
             control.modes.push(mode).expect("test mode push");
@@ -9928,16 +9969,21 @@ fn canonical_prevgraf_is_ungrouped_and_prefixes_do_not_change_its_scope() {
 fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
     // TeX82 §1244: `if cur_val<0 then int_error(cur_val)` -- a negative value
     // is diagnosed and the paragraph count is left untouched.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.set_enclosing_vertical_prev_graf(7);
     register_source(&mut control, br"\prevgraf=-1 \end");
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
+    // §1335's closing note: `if history<>spotless then if
+    // (history=warning_issued)or(interaction<error_stop_mode) then if
+    // selector=term_and_log then print_nl(...)`. This harness runs
+    // `\nonstopmode` (see `crate::test_harness`), so the second disjunct
+    // holds and the note is printed.
     assert_eq!(
         terminal_text(&universe),
-        "! Bad \\prevgraf (-1).\nl.1 \\prevgraf=-1 \n                 \\end\nI allow only nonnegative values here.\n\n"
+        "! Bad \\prevgraf (-1).\nl.1 \\prevgraf=-1 \n                 \\end\nI allow only nonnegative values here.\n\n(see the transcript file for additional information)"
     );
 }
 
@@ -9946,7 +9992,7 @@ fn canonical_prevgraf_scanner_preserves_the_following_token_after_negative_value
     // TeX82 §1244 calls the ordinary `scan_int`; its error branch changes no
     // input-stack state after scanning. The command immediately following a
     // rejected integer must therefore still execute.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.set_enclosing_vertical_prev_graf(7);
     register_source(&mut control, br"\prevgraf=-1\count0=23 ");
@@ -9964,7 +10010,7 @@ fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_g
     // shows the most recently placed page item really was glue. This is a
     // regression test for a real bug: the outer-vertical empty-list branch
     // used to ignore that memo entirely and always succeed for `\unskip`.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let glue_spec = universe.intern_glue(GlueSpec::ZERO);
     universe.update_page_last_from_node(&Node::Glue {
         spec: glue_spec,
@@ -9982,7 +10028,7 @@ fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_g
         "§1105's error resumes at the following token"
     );
 
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.update_page_last_from_node(&Node::Penalty(0));
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\unskip\end");
@@ -10015,7 +10061,7 @@ fn canonical_delete_last_outer_vertical_diagnostics_recover_for_all_three_comman
             "Try `I\\vskip-\\lastskip' instead.",
         ),
     ] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         if command == "\\unskip" {
             let spec = universe.intern_glue(GlueSpec::ZERO);
             universe.update_page_last_from_node(&Node::Glue {
@@ -10082,7 +10128,7 @@ fn canonical_delete_last_is_mode_complete_and_preserves_mismatched_tails() {
     // TeX82 §1105's `any_mode(remove_item)` applies unchanged in restricted
     // hmode, internal vmode, inline math, and display math. Matching tails
     // disappear; empty and mismatched tails are silent no-ops.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -10156,7 +10202,7 @@ fn canonical_delete_last_rejects_prefix_then_executes_without_consuming_followin
     // TeX82 §§1211-1212 diagnose a prefix on this non-prefixed command,
     // discard the prefix, and execute `remove_item` normally. §1105 scans no
     // operand, so the immediately following assignment remains untouched.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -10185,7 +10231,7 @@ fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise()
     // `\lastkern` reads the tail when it really is a kern node, while
     // `\lastpenalty`/`\lastskip` see a type mismatch and fall back to their
     // own level's zero, exactly like an empty list would.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control
         .modes
@@ -10232,7 +10278,7 @@ fn canonical_last_item_outer_vertical_falls_back_to_page_memo_when_contribution_
     // TeX82 §996/§424: once `build_page` has swept the whole contribution
     // list onto the page, `\lastskip` reads the page builder's own
     // `last_glue` memo instead of the (now empty) contribution list.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let glue_spec = universe.intern_glue(GlueSpec {
         width: Scaled::from_raw(65536 * 5),
         ..GlueSpec::ZERO
@@ -10450,7 +10496,7 @@ fn canonical_italic_correction_in_vertical_mode_reports_illegal_case() {
 
 #[test]
 fn canonical_italic_correction_is_illegal_in_internal_vertical_mode_too() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\vbox{\/X}\end");
     run_to_end(&mut control, &mut universe);
@@ -10519,7 +10565,7 @@ fn canonical_italic_correction_respects_right_noboundary_before_metric_lookup() 
 
 #[test]
 fn prefix_before_italic_correction_recovers_without_losing_following_input() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
     register_source(
@@ -10878,7 +10924,7 @@ fn canonical_noboundary_character_forms_and_expansion_preserve_the_following_com
 fn prefix_before_noboundary_recovers_then_preserves_its_lookahead() {
     // §§1211-1212 reject the prefix, back up \noboundary, and later execute
     // it normally. The following C is neither lost nor delivered twice.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_boundary_probe_font(&mut control, &mut universe);
     register_source(
@@ -10992,7 +11038,7 @@ fn canonical_par_in_math_closes_math_before_replaying_paragraph_end() {
     // The inserted `$` must close math before the same `\par` is replayed;
     // otherwise following box recovery runs in math mode and can preserve an
     // obsolete register value instead of installing the new hbox.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11137,12 +11183,24 @@ fn canonical_interaction_mode_primitives_set_the_live_mode() {
         tex_state::InteractionMode::Scroll
     );
 
-    register_source(&mut control, br"\errorstopmode");
-    run_to_end(&mut control, &mut universe);
+    // `\errorstopmode` is checked before the source runs dry rather than
+    // after: §360's `*` prompt then reads a terminal with nothing left, and
+    // §71 answers that with §93's `fatal_error`, whose `succumb` is defined
+    // as `if interaction=error_stop_mode then interaction:=scroll_mode`. The
+    // mode this assertion is about would be the one thing the job's own exit
+    // path overwrites.
+    register_source(&mut control, br"\errorstopmode\relax");
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("interaction mode assigns"),
+        MainControlStep::Continue
+    );
     assert_eq!(
         universe.interaction_mode(),
         tex_state::InteractionMode::ErrorStop
     );
+    run_to_end(&mut control, &mut universe);
 }
 
 #[test]
@@ -11192,7 +11250,7 @@ fn canonical_math_group_spanning_v_template_does_not_redeliver_its_row_terminato
     // the point where interception is recognized, so it fell through to
     // ordinary primitive dispatch and errored as
     // `ExecError::UnimplementedPrimitive` in Math mode.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11204,7 +11262,7 @@ fn canonical_math_group_spanning_v_template_does_not_redeliver_its_row_terminato
 
 #[test]
 fn canonical_display_alignment_discards_a_preceding_formula() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11227,7 +11285,7 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
     // TeX82 §§812 and 1206–1207 insert the missing `$$` before retrying
     // `\eqno`; the completed alignment remains vertical display material.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11254,7 +11312,7 @@ fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
 
 #[test]
 fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\noindent${A$\end");
     run_to_end(&mut control, &mut universe);
@@ -11267,7 +11325,7 @@ fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
 
 #[test]
 fn canonical_display_equation_number_missing_second_shift_restores_vertical_mode() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11288,7 +11346,7 @@ fn canonical_nested_malformed_display_equation_number_restores_group_ownership()
     // `\left` groups still open. TeX82 §§1191–1193 give each `\left` both a
     // math mode and `math_left_group` save level, so §1027 inserts two
     // `\right.` delimiters before §1194 may finish the equation number.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
@@ -11350,7 +11408,7 @@ fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
     // e-TeX 2.6 etex.ch [45.999] saves discarded vertical nodes, while
     // TeX82 §1335 releases the page builder's transient `last_glue` before
     // `store_fmt_file`; neither saved-discard list belongs to the format.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut universe);
     tex_expand::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
@@ -11411,7 +11469,7 @@ fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
 }
 
 fn run_canonical_etex_saved_discards(source: &[u8], page: Vec<Node>, split: Vec<Node>) -> Universe {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut universe);
     tex_expand::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
@@ -11504,7 +11562,7 @@ fn canonical_etex_empty_saved_discards_are_noops_in_internal_vertical_mode() {
 
 #[test]
 fn canonical_the_and_showthe_recover_invalid_trip_operand_as_zero() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\edef\fromthe{\the$}\showthe$\end");
     run_to_end(&mut control, &mut universe);
@@ -11625,7 +11683,7 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
         &br"\setbox1=\vbox{\hsize=100pt\noindent\hbox{}$$\hbox{}$$\par}"[..],
         &br"\setbox1=\vbox{\hsize=100pt\noindent\hbox{}$$\hbox{}$$ \par}"[..],
     ] {
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         register_source(&mut control, body);
         run_to_end(&mut control, &mut universe);

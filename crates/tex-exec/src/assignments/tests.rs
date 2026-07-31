@@ -287,7 +287,7 @@ fn unsave_restores_local_entries_retains_globals_then_replays_tokens() {
 
 #[test]
 fn brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -388,7 +388,7 @@ fn prefix_collection_skips_spaces_relax_and_macro_calls_without_losing_bits() {
 
 #[test]
 fn get_r_token_skips_spaces_and_recovers_non_control_sequence_targets() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\def   \valid{V}\def Q{B}\end");
 
@@ -510,7 +510,7 @@ fn let_and_futurelet_copy_meaning_and_preserve_lookahead_order() {
 
 #[test]
 fn shorthand_definitions_install_each_command_operand_and_bound_recovery() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -691,7 +691,7 @@ fn setbox_request_encodes_scope_and_rejects_disallowed_contexts() {
 
 #[test]
 fn auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -719,7 +719,7 @@ fn auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state() {
     assert!(output.contains("can't use `\\spacefactor'"), "{output}");
     assert!(output.contains("Bad \\prevgraf"), "{output}");
 
-    let mut horizontal_stores = Universe::new_with_plain_catcodes();
+    let mut horizontal_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut horizontal = CanonicalMainControl::tex82_initex(&mut horizontal_stores);
     register_source(
         &mut horizontal,
@@ -816,15 +816,23 @@ fn font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar() {
 fn interaction_assignment_updates_mode_and_selector_for_log_state() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    // Each mode is read after the assignment step and before the source runs
+    // dry: §360's `*` prompt reads a terminal with nothing left, and §71
+    // answers that with §93's `fatal_error`, whose `succumb` turns
+    // `error_stop_mode` into `scroll_mode` on the way out.
     for (source, expected) in [
-        (&br"\batchmode"[..], InteractionMode::Batch),
-        (&br"\nonstopmode"[..], InteractionMode::Nonstop),
-        (&br"\scrollmode"[..], InteractionMode::Scroll),
-        (&br"\errorstopmode"[..], InteractionMode::ErrorStop),
+        (&br"\batchmode\relax"[..], InteractionMode::Batch),
+        (&br"\nonstopmode\relax"[..], InteractionMode::Nonstop),
+        (&br"\scrollmode\relax"[..], InteractionMode::Scroll),
+        (&br"\errorstopmode\relax"[..], InteractionMode::ErrorStop),
     ] {
         register_source(&mut control, source);
-        run_to_end(&mut control, &mut stores);
+        assert_eq!(
+            control.step(&mut stores).expect("interaction mode assigns"),
+            MainControlStep::Continue
+        );
         assert_eq!(stores.interaction_mode(), expected);
+        run_to_end(&mut control, &mut stores);
     }
     register_source(&mut control, br"{\batchmode}");
     run_to_end(&mut control, &mut stores);
@@ -861,7 +869,7 @@ fn hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery(
 
 #[test]
 fn font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_cmr10_font(&mut control, &mut stores);
     register_source(

@@ -306,7 +306,7 @@ fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsert
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
-        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class);
+        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class)?;
     }
     Ok(insertion)
 }
@@ -334,7 +334,7 @@ fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecE
                     "Proceed, and I'll discard its present contents.",
                 ],
                 context,
-            );
+            )?;
             stores.clear_box_reg(class);
             Ok(Scaled::from_raw(0))
         }
@@ -386,7 +386,7 @@ fn split_page_insertion(
         node,
         &mut content_nodes,
         &split.infinite_shrink_glue,
-    );
+    )?;
     insertion.set_height(add(insertion.height(), split.best_height_plus_depth)?);
     let scaled_best = scaled_insertion_size(split.best_height_plus_depth, count)?;
     let goal = sub(stores.page_dimension(PageDimension::Goal), scaled_best)?;
@@ -479,7 +479,7 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecE
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
             let spec = stores.glue(*spec);
-            let spec = finite_page_shrink(stores, spec);
+            let spec = finite_page_shrink(stores, spec)?;
             let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
                 spec: finite_id,
@@ -503,12 +503,12 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecE
     Ok(replacement.unwrap_or_else(|| node.clone()))
 }
 
-fn finite_page_shrink(stores: &mut Universe, mut spec: GlueSpec) -> GlueSpec {
+fn finite_page_shrink(stores: &mut Universe, mut spec: GlueSpec) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
-        diagnostics::report_page_infinite_shrinkage(stores);
+        diagnostics::report_page_infinite_shrinkage(stores)?;
         spec.shrink_order = Order::Normal;
     }
-    spec
+    Ok(spec)
 }
 
 fn normalize_insert_content_shrink(
@@ -516,9 +516,9 @@ fn normalize_insert_content_shrink(
     insert_node: &Node,
     content_nodes: &mut [Node],
     indices: &[usize],
-) -> Option<Node> {
+) -> Result<Option<Node>, ExecError> {
     if indices.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut changed = false;
@@ -530,7 +530,7 @@ fn normalize_insert_content_shrink(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores);
+        diagnostics::report_split_infinite_shrinkage(stores)?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
@@ -541,7 +541,7 @@ fn normalize_insert_content_shrink(
     }
 
     if !changed {
-        return None;
+        return Ok(None);
     }
     let Node::Ins {
         class,
@@ -552,16 +552,16 @@ fn normalize_insert_content_shrink(
         ..
     } = insert_node
     else {
-        return None;
+        return Ok(None);
     };
-    Some(Node::Ins {
+    Ok(Some(Node::Ins {
         class: *class,
         size: *size,
         split_top_skip: *split_top_skip,
         split_max_depth: *split_max_depth,
         floating_penalty: *floating_penalty,
         content: stores.freeze_node_list(content_nodes),
-    })
+    }))
 }
 
 fn add_glue_stretch(stores: &mut Universe, spec: GlueSpec) -> Result<(), ExecError> {

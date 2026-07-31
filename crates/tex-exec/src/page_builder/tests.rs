@@ -197,7 +197,7 @@ fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
 
 #[test]
 fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     assert_eq!(
         insertion_box_size(&mut stores, 4).expect("white-box operation succeeds"),
         s(0)
@@ -376,7 +376,7 @@ fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
 
 #[test]
 fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     params(&mut stores, 10_000, 10, 0);
     stores.append_page_contribution(rule(1, 0));
     let bad = glue(&mut stores, 2, 0, Order::Normal, 5, Order::Fil);
@@ -519,7 +519,7 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
 
 #[test]
 fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     params(&mut stores, 1_000, 0, 0);
     stores.freeze_page_specs(PageContents::InsertsOnly);
     ins_class(&mut stores, 7, 1_000, 5, 0, 0);

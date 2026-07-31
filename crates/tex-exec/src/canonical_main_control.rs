@@ -2006,7 +2006,7 @@ impl CanonicalMainControl {
                 " inserted",
                 &OFF_SAVE_HELP,
                 context,
-            );
+            )?;
             self.apply_canonical_math_delimiter(
                 MathDelimiterBoundary {
                     kind: MathDelimiterBoundaryKind::Right,
@@ -2119,7 +2119,7 @@ impl CanonicalMainControl {
                     self.modes.current_list_mutation(),
                     stores,
                     script.kind,
-                );
+                )?;
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 fill_canonical_script_target(self.modes.current_list_mutation(), target, field);
@@ -2133,7 +2133,7 @@ impl CanonicalMainControl {
                     let mut report = stores.print_err("Limit controls must follow a math operator");
                     report.help(&["I'm ignoring this misplaced \\limits or \\nolimits command."]);
                     report.context(context);
-                    report.error();
+                    report.error().jump_out()?;
                 }
             }
             CanonicalMathRequest::Fraction(fraction) => {
@@ -2229,7 +2229,7 @@ impl CanonicalMainControl {
                             "only if nothing but the alignment itself is between $$'s.",
                         ],
                         context,
-                    );
+                    )?;
                     self.finish_canonical_display_alignment(
                         stores,
                         crate::align::FinishedAlignment {
@@ -2251,7 +2251,7 @@ impl CanonicalMainControl {
                         token,
                         Mode::Horizontal,
                         Some(context),
-                    );
+                    )?;
                     return Ok(ReplayStep::Continue);
                 }
                 if self.modes.current_mode() != Mode::DisplayMath {
@@ -2271,7 +2271,7 @@ impl CanonicalMainControl {
                         token,
                         mode,
                         Some(context),
-                    );
+                    )?;
                 } else {
                     let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
                     stores.enter_group_with_kind_at_line(
@@ -2325,7 +2325,7 @@ impl CanonicalMainControl {
             Mode::Math => {
                 if self.modes.current_list().display_eq_no().is_some() {
                     if !paired {
-                        report_unpaired_display_end(&self.command, stores);
+                        report_unpaired_display_end(&self.command, stores)?;
                     }
                     self.finish_canonical_equation_number(stores)?;
                 } else {
@@ -2334,7 +2334,7 @@ impl CanonicalMainControl {
             }
             Mode::DisplayMath => {
                 if !paired {
-                    report_unpaired_display_end(&self.command, stores);
+                    report_unpaired_display_end(&self.command, stores)?;
                 }
                 self.finish_canonical_display_math(stores, None)?;
             }
@@ -2400,7 +2400,7 @@ impl CanonicalMainControl {
     fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
         let math_font_context = self.command.output_open_context(&stores.command_context());
-        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
         let _ =
@@ -2434,7 +2434,7 @@ impl CanonicalMainControl {
             .take_display_eq_no()
             .expect("equation number mode state");
         let math_font_context = self.command.output_open_context(&stores.command_context());
-        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
             eq.display = stores.freeze_node_list(&[]);
         }
@@ -2509,7 +2509,7 @@ impl CanonicalMainControl {
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
         let math_font_context = self.command.output_open_context(&stores.command_context());
-        if crate::math::reject_invalid_math_fonts(stores, math_font_context) {
+        if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
         let mut level =
@@ -2634,7 +2634,7 @@ impl CanonicalMainControl {
                         "",
                         &["I'm ignoring a \\middle that had no matching \\left."],
                         context,
-                    );
+                    )?;
                 }
             }
             MathDelimiterBoundaryKind::Right => {
@@ -2649,7 +2649,7 @@ impl CanonicalMainControl {
                         "",
                         &["I'm ignoring a \\right that had no matching \\left."],
                         context,
-                    );
+                    )?;
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
@@ -3452,7 +3452,7 @@ pub(crate) fn reserve_canonical_script_target(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     kind: MathScriptKind,
-) -> CanonicalScriptTarget {
+) -> Result<CanonicalScriptTarget, ExecError> {
     // `t<>empty`: the tail was eligible but already carries this script.
     let tail_index = list.nodes().len().checked_sub(1);
     let (eligible, occupied) = match tail_index.and_then(|index| list.nodes().get(index)) {
@@ -3493,10 +3493,10 @@ pub(crate) fn reserve_canonical_script_target(
         };
         let mut report = stores.print_err(message);
         report.help(&[help]);
-        report.error();
+        report.error().jump_out()?;
     }
 
-    CanonicalScriptTarget { node_index, kind }
+    Ok(CanonicalScriptTarget { node_index, kind })
 }
 
 pub(crate) fn fill_canonical_script_target(
@@ -3655,11 +3655,12 @@ fn report_escaped_error(
     suffix: &str,
     help: &[&str],
     context: String,
-) {
+) -> Result<(), ExecError> {
     let mut report = stores.print_err(prefix);
     report.print_esc(escaped).print(suffix);
     report.help(help).context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// TeX82 §1084's `scan_box` recovery for a command that is not a box.
@@ -3667,7 +3668,7 @@ fn report_escaped_error(
 /// §1084 reports through `back_error`, and every caller here has already had
 /// the rejected command backed up during scanning, so only the report is
 /// left.
-fn report_missing_box(command: &CommandState, stores: &mut Universe) {
+fn report_missing_box(command: &CommandState, stores: &mut Universe) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
         stores,
@@ -3678,11 +3679,15 @@ fn report_missing_box(command: &CommandState, stores: &mut Universe) {
             "your output. But keep trying; you can fix this later.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
-fn report_missing_vsplit_to(command: &CommandState, stores: &mut Universe) {
+fn report_missing_vsplit_to(
+    command: &CommandState,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
         stores,
@@ -3692,7 +3697,8 @@ fn report_missing_vsplit_to(command: &CommandState, stores: &mut Universe) {
             "will look for the <dimen> next.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// TeX82 §1197's `<Check that another `$` follows>`.
@@ -3700,7 +3706,10 @@ fn report_missing_vsplit_to(command: &CommandState, stores: &mut Universe) {
 /// §1197 reaches this through `back_error`, and the scanner's probe
 /// (`scan_display_end_math_shift`) has already put the offending token back,
 /// so only the report itself is left to issue.
-fn report_unpaired_display_end(command: &CommandState, stores: &mut Universe) {
+fn report_unpaired_display_end(
+    command: &CommandState,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
         stores,
@@ -3710,7 +3719,8 @@ fn report_unpaired_display_end(command: &CommandState, stores: &mut Universe) {
             "So I shall assume that you typed `$$' both times.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
@@ -8397,7 +8407,7 @@ fn apply_pdf_graphics_request(
                         "Proceed, with fingers crossed.",
                     ],
                     context,
-                );
+                )?;
                 0
             } else if !stores.has_pdf_color_stack(id as u32) {
                 let context = command.output_open_context(&stores.command_context());
@@ -8410,7 +8420,7 @@ fn apply_pdf_graphics_request(
                         "Proceed, with fingers crossed.",
                     ],
                     context,
-                );
+                )?;
                 0
             } else {
                 id as u32
@@ -8426,7 +8436,7 @@ fn apply_pdf_graphics_request(
                         "I'll ignore the color stack command.",
                     ],
                     context,
-                );
+                )?;
                 return Ok(ReplayStep::Continue);
             };
             let action = match action {
@@ -9642,7 +9652,7 @@ fn shipout_replay_box(
                         "I can't handle that very well; good luck.",
                     ],
                     unbalanced_context.clone(),
-                );
+                )?;
             }
             let mut text = String::new();
             for &token in stores.tokens(expanded.tokens.token_list()) {
@@ -10514,7 +10524,7 @@ fn apply_scanned_step(
                     "",
                     &["Sorry, this optional e-TeX feature has been disabled."],
                     context,
-                );
+                )?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -10542,7 +10552,7 @@ fn apply_scanned_step(
                     "you left one out. Proceed, with fingers crossed.",
                 ],
                 context,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         // These are intercepted by `CanonicalMainControl::step_once`, where
@@ -10761,7 +10771,7 @@ fn apply_scanned_step(
                 2 => tex_state::InteractionMode::Scroll,
                 3 => tex_state::InteractionMode::ErrorStop,
                 value => {
-                    crate::diagnostics::report_bad_interaction_mode(stores, value);
+                    crate::diagnostics::report_bad_interaction_mode(stores, value)?;
                     return Ok(ReplayStep::Continue);
                 }
             };
@@ -10803,7 +10813,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalMacroParameter { token } => {
@@ -10813,7 +10823,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraEndCsName => {
@@ -10826,7 +10836,7 @@ fn apply_scanned_step(
                 "",
                 &["I'm ignoring this, since I wasn't doing a \\csname."],
                 context,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::NoBoundary { suppress_right } => {
@@ -10936,7 +10946,7 @@ fn apply_scanned_step(
                 // `\prevdepth' in ... mode" and otherwise leaves the value
                 // alone -- it does not raise an executor error.
                 let token = Token::Cs(stores.intern("prevdepth").symbol());
-                crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+                crate::diagnostics::report_illegal_case(stores, token, modes.current_mode())?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -10960,7 +10970,7 @@ fn apply_scanned_step(
                 report
                     .help(&["I allow only values in the range 1..32767 here."])
                     .context(context);
-                report.int_error(value);
+                report.int_error(value).jump_out()?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -10971,7 +10981,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PrevGraf { value } => {
@@ -10986,7 +10996,7 @@ fn apply_scanned_step(
                     .print_esc("prevgraf")
                     .help(&["I allow only nonnegative values here."])
                     .context(context);
-                report.int_error(value);
+                report.int_error(value).jump_out()?;
             } else {
                 modes.set_enclosing_vertical_prev_graf(value);
             }
@@ -11340,7 +11350,7 @@ fn apply_scanned_step(
             // normally. The replacement is the scanner's, the report this
             // seam's.
             if let Some(recovery) = &request.size_recovery {
-                report_font_size_recovery(stores, recovery);
+                report_font_size_recovery(stores, recovery)?;
             }
             let resource =
                 (*resource).expect("font resource is resolved after the processor borrow");
@@ -11585,7 +11595,7 @@ fn apply_scanned_step(
             // The scan already made §578's decision and captured §579's
             // context there, so this only writes or reports.
             match recovery_context {
-                Some(context) => report_font_parameter_recovery(stores, font, context),
+                Some(context) => report_font_parameter_recovery(stores, font, context)?,
                 None => {
                     let number = u32::try_from(number)
                         .expect("a writable parameter number is a positive u32");
@@ -11696,7 +11706,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Arithmetic {
@@ -11719,7 +11729,7 @@ fn apply_scanned_step(
                         "since the result is out of range.",
                     ]);
                     report.context(context);
-                    report.error();
+                    report.error().jump_out()?;
                 }
                 other => other?,
             }
@@ -11736,7 +11746,7 @@ fn apply_scanned_step(
             report.print(&target).print("' after ").print(&primitive);
             report.help(&["I'm forgetting what you said and not changing anything."]);
             report.context(context);
-            report.error();
+            report.error().jump_out()?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MacroDefinition {
@@ -11763,7 +11773,7 @@ fn apply_scanned_step(
                         "careful; see exercise 27.2 in The TeXbook.",
                     ],
                     context,
-                );
+                )?;
             }
             let meaning = MacroMeaning::new(
                 flags,
@@ -11850,14 +11860,14 @@ fn apply_scanned_step(
             if patterns && !command.initex {
                 let mut report = stores.print_err("Patterns can be loaded only by INITEX");
                 report.context(rejection_context);
-                report.error();
+                report.error().jump_out()?;
                 return Ok(ReplayStep::Continue);
             }
             if trie_built {
                 let mut report = stores.print_err("Too late for \\patterns");
                 report.help(&["All patterns must be given before typesetting begins."]);
                 report.context(rejection_context);
-                report.error();
+                report.error().jump_out()?;
                 return Ok(ReplayStep::Continue);
             }
             // Both halves of §§935/963's diagnostics were already reported by
@@ -11912,7 +11922,7 @@ fn apply_scanned_step(
             let text = message_text(stores, tokens.token_list());
             if error {
                 let context = command.state.output_open_context(&stores.command_context());
-                issue_error_message(stores, &text, context);
+                issue_error_message(stores, &text, context)?;
             } else {
                 issue_terminal_message(stores, &text);
             }
@@ -11927,17 +11937,17 @@ fn apply_scanned_step(
             // envelope.
             let context = command.state.output_open_context(&stores.command_context());
             print_display_content(stores, &diagnostic.content);
-            crate::diagnostics::complete_show(stores, false, Some(context));
+            crate::diagnostics::complete_show(stores, false, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowBox { index } => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_showbox(stores, index, context);
+            crate::diagnostics::execute_showbox(stores, index, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowLists => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_showlists(stores, modes, context);
+            crate::diagnostics::execute_showlists(stores, modes, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowTokens { tokens } => {
@@ -11951,7 +11961,7 @@ fn apply_scanned_step(
             // An unconditional newline here left a blank line above the
             // display whenever the file's own `(` had just closed one.
             stores.printer().print_nl(&format!("> {text}"));
-            crate::diagnostics::complete_show(stores, false, Some(context));
+            crate::diagnostics::complete_show(stores, false, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowIfs { conditions } => {
@@ -11965,20 +11975,20 @@ fn apply_scanned_step(
             diagnostic.print_nl("").print_ln();
             diagnostic.print(&render_showifs(&conditions));
             diagnostic.end(true);
-            crate::diagnostics::complete_show(stores, true, Some(context));
+            crate::diagnostics::complete_show(stores, true, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups {
             diagnostic: Some(diagnostic),
         } => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context);
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups { diagnostic: None } => {
             let diagnostic = detached_showgroups(stores, modes, active_alignment, boxes);
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context);
+            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
@@ -12037,7 +12047,7 @@ fn apply_scanned_step(
         }
         ScannedStep::VSplit(split) => {
             if split.missing_to {
-                report_missing_vsplit_to(command.state, stores);
+                report_missing_vsplit_to(command.state, stores)?;
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             let context = boxes.take_box_context(false);
@@ -12144,7 +12154,7 @@ fn apply_scanned_step(
             // A leader payload is scanned by §1084's `scan_box` like any
             // other box context, so a non-box command there gets §1084's own
             // report, not a leader-specific one.
-            report_missing_box(command.state, stores);
+            report_missing_box(command.state, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LeadersNotFollowedByGlue => {
@@ -12161,7 +12171,7 @@ fn apply_scanned_step(
                     "<hskip or vskip>, so I'm ignoring these leaders.",
                 ],
                 context,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginShipout => {
@@ -12235,9 +12245,7 @@ fn apply_scanned_step(
                 if let Some(context) = construction.reserved_class_context {
                     report.context(context);
                 }
-                if report.error() == tex_state::print::ErrorOutcome::FatalErrorLimit {
-                    return Err(ExecError::Fatal(FatalError::TooManyErrors));
-                }
+                report.error().jump_out()?;
                 class = 0;
             }
             let class = class as u16;
@@ -12267,7 +12275,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalEqNo { token } => {
@@ -12277,31 +12285,26 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalLastItem { token, context } => {
-            let outcome = crate::diagnostics::report_illegal_case_with_context(
+            crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
-            match outcome {
-                tex_state::print::ErrorOutcome::Continue => Ok(ReplayStep::Continue),
-                tex_state::print::ErrorOutcome::FatalErrorLimit => {
-                    Err(ExecError::Fatal(FatalError::TooManyErrors))
-                }
-            }
+            )?;
+            Ok(ReplayStep::Continue)
         }
         ScannedStep::UndefinedControlSequence => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::report_undefined_control_sequence(stores, Some(context));
+            crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MisplacedAlignmentDelimiter { token } => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context));
+            crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Mark { class, tokens } => {
@@ -12360,7 +12363,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
@@ -12425,7 +12428,7 @@ fn apply_scanned_step(
                 token,
                 modes.current_mode(),
                 Some(context),
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {
@@ -12463,7 +12466,7 @@ fn apply_scanned_step(
                     "Such booboos are generally harmless, so keep going.",
                 ],
                 context,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ExtraRightBrace {
@@ -12482,7 +12485,7 @@ fn apply_scanned_step(
                 "deleted material, e.g., by typing `I$}'.",
             ]);
             report.context(context);
-            report.error();
+            report.error().jump_out()?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSave(closer) => {
@@ -12496,7 +12499,7 @@ fn apply_scanned_step(
                 .print(" inserted")
                 .help(&OFF_SAVE_HELP)
                 .context(context);
-            report.error();
+            report.error().jump_out()?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OffSaveBottomDrop { token } => {
@@ -12510,7 +12513,7 @@ fn apply_scanned_step(
                 &format!("Extra {name}"),
                 &["Things are pretty mixed up, but I think the worst is over."],
                 context,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
@@ -12725,7 +12728,7 @@ fn apply_scanned_step(
                         "So I've deleted the formulas that preceded this alignment.",
                     ]);
                     report.context(context);
-                    report.error();
+                    report.error().jump_out()?;
                     let mut list = modes.current_list_mutation();
                     list.take_nodes();
                     list.take_incomplete_fraction();
@@ -13609,7 +13612,7 @@ fn apply_box_shift(
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_shift_payload` for ordinary replay.
-            report_missing_box(command, stores);
+            report_missing_box(command, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -13632,7 +13635,7 @@ fn apply_box_shift(
         }
         ScannedBoxShiftPayload::VSplit(split) => {
             if split.missing_to {
-                report_missing_vsplit_to(command, stores);
+                report_missing_vsplit_to(command, stores)?;
             }
             let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
@@ -13830,7 +13833,7 @@ fn apply_scanned_rule(
                         "you should use \\leaders or \\hrulefill (see The TeXbook).",
                     ],
                     context,
-                );
+                )?;
                 return Ok(ReplayStep::Continue);
             }
             mode => {
@@ -14313,7 +14316,7 @@ fn report_pending_diagnostics(
         match diagnostic {
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
-            ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context)),
+            ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?,
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch(symbol),
             ) => {
@@ -14329,7 +14332,7 @@ fn report_pending_diagnostics(
                     "made up of letters only. The macro here has not been",
                     "followed by the required stuff, so I'm ignoring it.",
                 ]);
-                report.error();
+                report.error().jump_out()?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {
                 message,
@@ -14339,7 +14342,7 @@ fn report_pending_diagnostics(
             }) => {
                 let mut report = stores.print_err(&message);
                 report.help(help).context(context);
-                report.error();
+                report.error().jump_out()?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {
                 context,
@@ -14352,7 +14355,7 @@ fn report_pending_diagnostics(
                         "look up `weird error' in the index to The TeXbook.)",
                     ])
                     .context(context);
-                report.error();
+                report.error().jump_out()?;
             }
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
@@ -14364,7 +14367,7 @@ fn report_pending_diagnostics(
                     &["I'll pretend you didn't say \\long or \\outer or \\global."]
                 });
                 report.context(context);
-                report.error();
+                report.error().jump_out()?;
             }
             PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
@@ -14380,7 +14383,7 @@ fn report_pending_diagnostics(
                     &["I'll pretend you didn't say \\long or \\outer here."]
                 });
                 report.context(context);
-                report.error();
+                report.error().jump_out()?;
             }
         }
     }
@@ -14388,7 +14391,10 @@ fn report_pending_diagnostics(
 }
 
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
-fn report_font_size_recovery(stores: &mut Universe, recovery: &tex_command::FontSizeRecovery) {
+fn report_font_size_recovery(
+    stores: &mut Universe,
+    recovery: &tex_command::FontSizeRecovery,
+) -> Result<(), ExecError> {
     match recovery {
         tex_command::FontSizeRecovery::ImproperAtSize { size, context } => {
             let mut report = stores.print_err("Improper `at' size (");
@@ -14399,16 +14405,17 @@ fn report_font_size_recovery(stores: &mut Universe, recovery: &tex_command::Font
                     "less than 2048pt, so I've changed what you said to 10pt.",
                 ])
                 .context(context.clone());
-            report.error();
+            report.error().jump_out()?;
         }
         tex_command::FontSizeRecovery::IllegalMagnification { value, context } => {
             let mut report = stores.print_err("Illegal magnification has been changed to 1000");
             report
                 .help(&["The magnification ratio must be between 1 and 32768."])
                 .context(context.clone());
-            report.int_error(*value);
+            report.int_error(*value).jump_out()?;
         }
     }
+    Ok(())
 }
 
 /// TeX82 §1279's `token_show(def_ref)` into `new_string`.
@@ -14482,7 +14489,11 @@ fn issue_terminal_message(stores: &mut Universe, text: &str) {
 }
 
 /// TeX82 §1283's `<Print string s as an error message>`.
-fn issue_error_message(stores: &mut Universe, text: &str, context: String) {
+fn issue_error_message(
+    stores: &mut Universe,
+    text: &str,
+    context: String,
+) -> Result<(), ExecError> {
     let err_help = stores.tok_param(TokParam::ERR_HELP);
     let rendered = (!stores.tokens(err_help).is_empty()).then(|| message_text(stores, err_help));
     let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
@@ -14509,7 +14520,8 @@ fn issue_error_message(stores: &mut Universe, text: &str, context: String) {
         }
     }
     report.context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// Reports TeX82 §579's `<Issue an error message if cur_val=fmem_ptr>`.
@@ -14522,7 +14534,7 @@ fn report_font_parameter_recovery(
     stores: &mut Universe,
     font: tex_state::ids::FontId,
     context: String,
-) {
+) -> Result<(), ExecError> {
     let name = stores.font_name(font).to_owned();
     let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
     let mut report = stores.print_err("Font ");
@@ -14536,7 +14548,8 @@ fn report_font_parameter_recovery(
         "use \\fontdimen immediately after the \\font is loaded.",
     ]);
     report.context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.

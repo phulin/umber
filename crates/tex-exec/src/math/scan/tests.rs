@@ -5,7 +5,7 @@ use tex_state::provenance::SyntheticOriginKind;
 
 #[test]
 fn invalid_delimiter_pushback_preserves_traced_origin() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     crate::install_unexpandable_primitives(&mut stores);
     let origin = stores.synthetic_origin(SyntheticOriginKind::Test);
     let invalid = TracedTokenWord::pack(Token::Param(1), origin);
@@ -30,7 +30,7 @@ fn invalid_delimiter_pushback_preserves_traced_origin() {
 
 #[test]
 fn delimiter_command_scans_all_twenty_seven_bits() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r#"\delimiter"7FFFFFF "#));
@@ -52,7 +52,7 @@ fn math_nest() -> ModeNest {
 }
 
 fn math_stores() -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     stores
@@ -192,7 +192,8 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
         UnexpandablePrimitive::NoLimits,
         UnexpandablePrimitive::DisplayLimits,
     ] {
-        apply_limit_switch(&mut nest, &limit_input, &mut stores, primitive);
+        apply_limit_switch(&mut nest, &limit_input, &mut stores, primitive)
+            .expect("limit switch reports no fatal error");
         let Some(Node::MathNoad(noad)) = nest.current_list().nodes().last() else {
             panic!("operator remains last");
         };
@@ -211,7 +212,8 @@ fn tex82_radical_accent_style_and_limits_request_matrix() {
         &limit_input,
         &mut stores,
         UnexpandablePrimitive::Limits,
-    );
+    )
+    .expect("limit switch reports no fatal error");
     assert_eq!(nest.current_list().nodes().len(), before + 1);
     assert!(pending_terminal_text(&stores).contains("Limit controls must follow"));
 }

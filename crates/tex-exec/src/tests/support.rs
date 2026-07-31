@@ -60,6 +60,8 @@ pub(super) fn stores_with_fonts() -> Universe {
     const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    // See `crate::test_harness`: these run non-interactive jobs.
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()

@@ -103,7 +103,7 @@ impl CommandProcessor<'_> {
                             } else {
                                 let normalized = char::from_u32(self.state.lccode(ch));
                                 if normalized.is_none_or(|normalized| normalized == '\0') {
-                                    self.report_pattern_nonletter();
+                                    self.report_pattern_nonletter()?;
                                 }
                                 normalized.unwrap_or('\0')
                             };
@@ -123,7 +123,7 @@ impl CommandProcessor<'_> {
                         }
                     }
                     if kind == HyphenationDataKind::Exceptions {
-                        match self.exception_word_character(pattern_language, ch) {
+                        match self.exception_word_character(pattern_language, ch)? {
                             Some(normalized) => Some(normalized),
                             // §935 ignores the character it just read.
                             None => continue,
@@ -134,7 +134,7 @@ impl CommandProcessor<'_> {
                 }
                 // §935's `char_given`, which §961 does not accept.
                 Meaning::CharGiven(ch) if kind == HyphenationDataKind::Exceptions => {
-                    match self.exception_word_character(pattern_language, ch) {
+                    match self.exception_word_character(pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,
                     }
@@ -145,7 +145,7 @@ impl CommandProcessor<'_> {
                     if kind == HyphenationDataKind::Exceptions =>
                 {
                     let ch = self.scan_character_number()?;
-                    match self.exception_word_character(pattern_language, ch) {
+                    match self.exception_word_character(pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,
                     }
@@ -165,7 +165,7 @@ impl CommandProcessor<'_> {
                             pattern_language,
                             &mut pending_pattern_paths,
                             &pattern,
-                        );
+                        )?;
                         patterns.push(pattern);
                     }
                     pattern_digit_sensed = false;
@@ -187,7 +187,7 @@ impl CommandProcessor<'_> {
                             pattern_language,
                             &mut pending_pattern_paths,
                             &pattern,
-                        );
+                        )?;
                         patterns.push(pattern);
                     }
                     return Ok(ScannedHyphenationData { words, patterns });
@@ -196,7 +196,7 @@ impl CommandProcessor<'_> {
                 // consumed. In particular, this does not end or reset the
                 // partially collected word.
                 _ => {
-                    self.report_hyphenation_scan_error(kind);
+                    self.report_hyphenation_scan_error(kind)?;
                     continue;
                 }
             };
@@ -217,9 +217,13 @@ impl CommandProcessor<'_> {
     /// whose `lc_code` is zero is diagnosed and ignored; everything else
     /// enters the word lowercased. pdfTeX's `\savinghyphcodes` table takes
     /// precedence over `\lccode` when the current language saved one.
-    fn exception_word_character(&mut self, language: u8, ch: char) -> Option<char> {
+    fn exception_word_character(
+        &mut self,
+        language: u8,
+        ch: char,
+    ) -> Result<Option<char>, CommandError> {
         if ch == '-' {
-            return Some('-');
+            return Ok(Some('-'));
         }
         let normalized = match self.state.saved_hyphenation_code(language, ch) {
             Some(saved) => saved,
@@ -233,17 +237,18 @@ impl CommandProcessor<'_> {
                 "Proceed; I'll ignore the character I just read.",
             ]);
             report.context(context);
-            report.error();
+            report.error().jump_out()?;
         }
-        normalized
+        Ok(normalized)
     }
 
-    fn report_pattern_nonletter(&mut self) {
+    fn report_pattern_nonletter(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Nonletter");
         report.help(&["(See Appendix H.)"]);
         report.context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     fn report_duplicate_pattern_if_needed(
@@ -251,7 +256,7 @@ impl CommandProcessor<'_> {
         language: u8,
         pending: &mut BTreeMap<Vec<char>, bool>,
         pattern: &PatternSpec,
-    ) {
+    ) -> Result<(), CommandError> {
         // §963 tests the current terminal `trie_o`, then replaces it with
         // §965's newly computed `v` even after diagnosing a duplicate. Keep
         // the pending view in that same order: its value is the current
@@ -267,11 +272,15 @@ impl CommandProcessor<'_> {
             let mut report = self.state.print_err("Duplicate pattern");
             report.help(&["(See Appendix H.)"]);
             report.context(context);
-            report.error();
+            report.error().jump_out()?;
         }
+        Ok(())
     }
 
-    fn report_hyphenation_scan_error(&mut self, kind: HyphenationDataKind) {
+    fn report_hyphenation_scan_error(
+        &mut self,
+        kind: HyphenationDataKind,
+    ) -> Result<(), CommandError> {
         // §936 and §961 both reach §82 while the offending command is still
         // current and the source cursor is immediately after it, so both get a
         // context. `CommandState`, not `Universe`, owns that live input stack.
@@ -292,6 +301,7 @@ impl CommandProcessor<'_> {
         let mut report = self.state.print_err(message);
         report.help(help);
         report.context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 }

@@ -50,7 +50,7 @@ pub(crate) fn select_pending_page_output(
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
-        report_output_loop(stores, dead_cycles);
+        report_output_loop(stores, dead_cycles)?;
         prepend_output_heldover(stores, Vec::new());
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
@@ -70,7 +70,7 @@ pub(crate) fn resume_page_builder_after_output(
 ) -> Result<(), ExecError> {
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores);
+        report_box255_not_emptied(stores)?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes);
@@ -128,7 +128,7 @@ fn fire_up_page(
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
     if dead_cycles >= max_dead_cycles {
-        report_output_loop(stores, dead_cycles);
+        report_output_loop(stores, dead_cycles)?;
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
         let _artifact = shipout_node(node, input, stores, execution)?;
@@ -152,7 +152,7 @@ fn fire_up_page(
 fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), ExecError> {
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_void(stores);
+        report_box255_not_void(stores)?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -535,7 +535,7 @@ fn run_output_routine_inner(
     leave_group(input, stores, GroupKind::Output)?;
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores);
+        report_box255_not_emptied(stores)?;
     }
     prepend_output_heldover(stores, output_level.list().nodes().to_vec());
     Ok(())
@@ -546,7 +546,7 @@ fn run_output_routine_inner(
 /// Page output is driven by the page builder, not by a scanner, so none of
 /// these three reports has a live `InputStack`: §82's display comes from the
 /// last input summary the job published.
-fn report_output_loop(stores: &mut Universe, dead_cycles: i32) {
+fn report_output_loop(stores: &mut Universe, dead_cycles: i32) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Output loop---");
     report
@@ -558,11 +558,12 @@ fn report_output_loop(stores: &mut Universe, dead_cycles: i32) {
             "increase \\maxdeadcycles if you want me to be more patient!",
         ])
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
-fn report_box255_not_void(stores: &mut Universe) {
+fn report_box255_not_void(stores: &mut Universe) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("");
     report
@@ -573,11 +574,12 @@ fn report_box255_not_void(stores: &mut Universe) {
             "Proceed, and I'll discard its present contents.",
         ])
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
-fn report_box255_not_emptied(stores: &mut Universe) {
+fn report_box255_not_emptied(stores: &mut Universe) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Output routine didn't use all of ");
     report
@@ -589,7 +591,8 @@ fn report_box255_not_emptied(stores: &mut Universe) {
             "Proceed; I'll discard its present contents.",
         ])
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 fn pop_finished_output_frame(

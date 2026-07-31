@@ -1204,7 +1204,7 @@ fn assign_prevgraf(
             stores,
             &format!("Bad \\prevgraf ({lines})"),
             &["I allow only nonnegative values here."],
-        );
+        )?;
         return Ok(());
     }
     nest.set_enclosing_vertical_prev_graf(lines);

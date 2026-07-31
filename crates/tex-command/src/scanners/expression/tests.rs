@@ -94,7 +94,7 @@ fn diagnostic_text(universe: &Universe) -> String {
 
 #[test]
 fn numexpr_honors_precedence_parentheses_relax_and_following_token() {
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let numexpr = primitive(&mut universe, "numexpr", P::NumExpr);
     let relax = relax(&mut universe);
     let mut command = CommandState::new(CommandProfile::ETEX26);
@@ -147,7 +147,7 @@ fn numexpr_honors_precedence_parentheses_relax_and_following_token() {
 
 #[test]
 fn expression_operators_require_other_character_tokens() {
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let numexpr = primitive(&mut universe, "numexpr", P::NumExpr);
     let mut command = CommandState::new(CommandProfile::ETEX26);
     push(
@@ -187,7 +187,7 @@ fn expression_operators_require_other_character_tokens() {
 #[test]
 fn dimexpr_uses_etex_rounding_for_division_and_combined_scaling() {
     for (source, expected) in [("5sp/2", 3), ("-5sp/2", -3), ("1pt*10/3", 218_453)] {
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let dimexpr = primitive(&mut universe, "dimexpr", P::DimExpr);
         let mut command = CommandState::new(CommandProfile::ETEX26);
         let mut tokens = vec![dimexpr];
@@ -236,7 +236,7 @@ fn glueexpr_and_muexpr_scale_every_component_and_keep_orders() {
             },
         ),
     ] {
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let expression = primitive(&mut universe, "glue-expression", primitive_kind);
         let mut command = CommandState::new(CommandProfile::ETEX26);
         let mut tokens = vec![expression];
@@ -263,7 +263,7 @@ fn glueexpr_normalizes_zero_orders_only_at_etex_mutation_points() {
         ("0pt plus 0fil", Order::Fil),
         ("0pt plus 0fil+0pt", Order::Normal),
     ] {
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let glueexpr = primitive(&mut universe, "glueexpr", P::GlueExpr);
         let mut command = CommandState::new(CommandProfile::ETEX26);
         let mut tokens = vec![glueexpr];
@@ -313,7 +313,7 @@ fn glue_conversions_preserve_components_orders_and_destination_level() {
             },
         ),
     ] {
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let conversion = primitive(&mut universe, "glue-conversion", primitive_kind);
         let mut command = CommandState::new(CommandProfile::ETEX26);
         let mut tokens = vec![conversion];
@@ -336,7 +336,7 @@ fn glue_conversions_preserve_components_orders_and_destination_level() {
 
 #[test]
 fn overflow_zeros_the_whole_expression_once_and_consumes_relax() {
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let numexpr = primitive(&mut universe, "numexpr", P::NumExpr);
     let relax = relax(&mut universe);
     let mut command = CommandState::new(CommandProfile::ETEX26);
@@ -376,7 +376,7 @@ fn overflow_zeros_the_whole_expression_once_and_consumes_relax() {
 
 #[test]
 fn missing_parenthesis_is_inserted_without_consuming_the_terminator() {
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let numexpr = primitive(&mut universe, "numexpr", P::NumExpr);
     let mut command = CommandState::new(CommandProfile::ETEX26);
     let mut tokens = vec![numexpr];
@@ -414,7 +414,7 @@ fn missing_parenthesis_is_inserted_without_consuming_the_terminator() {
 
 #[test]
 fn expression_observations_and_checkpoint_retry_are_deterministic() {
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let numexpr = primitive(&mut universe, "numexpr", P::NumExpr);
     let mut command = CommandState::new(CommandProfile::ETEX26);
     let mut tokens = vec![numexpr];

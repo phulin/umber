@@ -42,7 +42,7 @@ fn run_to_end(control: &mut CommandReplayControl, stores: &mut Universe) {
 }
 
 fn run_source(source: &[u8]) -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
     register_source(&mut control, source);
     run_to_end(&mut control, &mut stores);

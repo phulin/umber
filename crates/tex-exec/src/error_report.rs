@@ -22,7 +22,6 @@
 
 use tex_expand::{back_error_input, insert_input};
 use tex_lex::InputStack;
-use tex_state::print::ErrorOutcome;
 use tex_state::token::TracedTokenWord;
 use tex_state::{ExpansionContext, Universe};
 
@@ -37,11 +36,11 @@ pub(crate) fn report_error(
     message: &str,
     help: &[&str],
     context: String,
-) -> ErrorOutcome {
+) -> Result<(), crate::ExecError> {
     let mut report = stores.print_err(message);
     report.help(help);
     report.context(context);
-    report.error()
+    Ok(report.error().jump_out()?)
 }
 
 /// [`report_error`] with §82's context read from the live input stack.
@@ -50,7 +49,7 @@ pub(crate) fn report_input_error(
     stores: &mut Universe,
     message: &str,
     help: &[&str],
-) -> ErrorOutcome {
+) -> Result<(), crate::ExecError> {
     let context = show_context(stores, &input.summary());
     report_error(stores, message, help, context)
 }
@@ -66,7 +65,7 @@ pub(crate) fn back_error(
     token: TracedTokenWord,
     message: &str,
     help: &[&str],
-) -> ErrorOutcome {
+) -> Result<(), crate::ExecError> {
     back_tokens(input, stores, std::iter::once(token));
     report_input_error(input, stores, message, help)
 }
@@ -92,7 +91,7 @@ pub(crate) fn ins_error<I>(
     tokens: I,
     message: &str,
     help: &[&str],
-) -> ErrorOutcome
+) -> Result<(), crate::ExecError>
 where
     I: IntoIterator<Item = TracedTokenWord>,
 {

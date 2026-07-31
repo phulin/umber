@@ -387,7 +387,7 @@ pub(super) fn execute_hmode_material(
                         "empty, in math formulas. I had to delete your third part.",
                     ])
                     .context(report_context);
-                report.error();
+                report.error().jump_out()?;
                 replace = stores.freeze_node_list(&[]);
             }
             nest.current_list_mutation().push(Node::Disc {
@@ -429,7 +429,7 @@ pub(super) fn execute_hmode_material(
                 report
                     .help(&["I allow only values in the range 1..32767 here."])
                     .context(report_context);
-                report.int_error(value);
+                report.int_error(value).jump_out()?;
             } else {
                 nest.current_list_mutation().set_space_factor(value);
             }
@@ -494,7 +494,7 @@ fn execute_insert(
             .print_int(255)
             .help(&["I'm changing to \\insert0; box 255 is special."])
             .context(report_context);
-        report.error();
+        report.error().jump_out()?;
         value = 0;
     }
     let opener =

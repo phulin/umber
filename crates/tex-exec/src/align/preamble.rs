@@ -57,7 +57,7 @@ pub(crate) fn scan_preamble(
                 "so that I will find a matching right brace soon.",
                 "(If you're confused by all this, try typing `I}' now.)",
             ],
-        );
+        )?;
     }
     // TeX.web `init_align` enters an align_group before scanning the
     // preamble. A second align_group is then installed for the first entry.
@@ -149,7 +149,7 @@ fn scan_u_template(
             Some(PreambleToken::Token(token)) => token,
             Some(PreambleToken::RecoveryCr) => {
                 scanner.lookahead = Some(PreambleToken::RecoveryCr);
-                scanner.report_missing_parameter();
+                scanner.report_missing_parameter()?;
                 return Ok(scanner.stores.finish_token_list(&mut builder));
             }
             None => unreachable!("preamble EOF is converted to recovery tokens"),
@@ -178,7 +178,7 @@ fn scan_u_template(
             && (is_alignment_tab_token(scanner.stores, token) || is_cr_token(scanner.stores, token))
         {
             scanner.lookahead = Some(PreambleToken::Token(token));
-            scanner.report_missing_parameter();
+            scanner.report_missing_parameter()?;
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
         builder.push(token);
@@ -215,7 +215,7 @@ fn scan_v_template(
                     "\\halign or \\valign is being set up. In this case you had",
                     "more than one, so I'm ignoring all but the first.",
                 ],
-            );
+            )?;
             continue;
         }
         if scanner.at_template_level() && is_alignment_tab_token(scanner.stores, token) {
@@ -313,14 +313,14 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             // expansion. Template macros must observe the state of each cell
             // when they are replayed; only \span requests an expansion here.
             let Some(read) = self.next_raw()? else {
-                return Ok(Some(self.recover_preamble_eof()));
+                return Ok(Some(self.recover_preamble_eof()?));
             };
             let PreambleToken::Token(mut token) = read else {
                 return Ok(Some(read));
             };
             while is_span_token(self.stores, token) {
                 let Some(expanded) = self.next_expanded()? else {
-                    return Ok(Some(self.recover_preamble_eof()));
+                    return Ok(Some(self.recover_preamble_eof()?));
                 };
                 let PreambleToken::Token(expanded) = expanded else {
                     return Ok(Some(expanded));
@@ -342,7 +342,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
         else {
             return Ok(None);
         };
-        Ok(Some(self.recover_outer_or_token(traced)))
+        Ok(Some(self.recover_outer_or_token(traced)?))
     }
 
     fn next_expanded(&mut self) -> Result<Option<PreambleToken>, ExecError> {
@@ -354,13 +354,16 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
         else {
             return Ok(None);
         };
-        Ok(Some(self.recover_outer_or_token(traced)))
+        Ok(Some(self.recover_outer_or_token(traced)?))
     }
 
-    fn recover_outer_or_token(&mut self, traced: TracedTokenWord) -> PreambleToken {
+    fn recover_outer_or_token(
+        &mut self,
+        traced: TracedTokenWord,
+    ) -> Result<PreambleToken, ExecError> {
         let token = tex_expand::semantic_token(traced);
         if !is_outer_macro(self.stores, token) {
-            return PreambleToken::Token(token);
+            return Ok(PreambleToken::Token(token));
         }
 
         // TeX.web §336 backs up the forbidden outer token, substitutes a
@@ -383,14 +386,14 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             [TracedTokenWord::pack(right_brace, right_origin), traced],
         );
         self.lookahead = Some(PreambleToken::RecoveryCr);
-        self.report_runaway_preamble(false);
-        PreambleToken::Token(Token::Char {
+        self.report_runaway_preamble(false)?;
+        Ok(PreambleToken::Token(Token::Char {
             ch: ' ',
             cat: Catcode::Space,
-        })
+        }))
     }
 
-    fn recover_preamble_eof(&mut self) -> PreambleToken {
+    fn recover_preamble_eof(&mut self) -> Result<PreambleToken, ExecError> {
         let right_brace = Token::Char {
             ch: '}',
             cat: Catcode::EndGroup,
@@ -405,8 +408,8 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
             self.stores,
             [TracedTokenWord::pack(right_brace, origin)],
         );
-        self.report_runaway_preamble(true);
-        PreambleToken::RecoveryCr
+        self.report_runaway_preamble(true)?;
+        Ok(PreambleToken::RecoveryCr)
     }
 
     /// TeX82 §338's `<Tell the user what has run away and try to recover>`
@@ -416,7 +419,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
     /// `cur_cs` survived: an exhausted file has none, an `\outer` macro is
     /// the control sequence itself. The recovery tokens are already on the
     /// input stack, so §82's display names them as the report's own levels.
-    fn report_runaway_preamble(&mut self, ended: bool) {
+    fn report_runaway_preamble(&mut self, ended: bool) -> Result<(), ExecError> {
         let opening = if ended {
             "File ended"
         } else {
@@ -435,7 +438,8 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
                 "I'll try to recover; but if the error is serious,",
                 "you'd better type `E' or `X' now and fix your file.",
             ],
-        );
+        )?;
+        Ok(())
     }
 
     /// TeX82 §783's u-template scan reaching a tab or `\cr` with no `#`.
@@ -443,7 +447,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
     /// §783 uses `back_error`, and the caller has already parked the
     /// offending token in [`Self::lookahead`] for the v-template scan to
     /// re-read, which is this scanner's form of §325's `back_input`.
-    fn report_missing_parameter(&mut self) {
+    fn report_missing_parameter(&mut self) -> Result<(), ExecError> {
         crate::error_report::report_input_error(
             self.input,
             self.stores,
@@ -453,7 +457,8 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
                 "\\halign or \\valign is being set up. In this case you had",
                 "none, so I've put one in; maybe that will work.",
             ],
-        );
+        )?;
+        Ok(())
     }
 
     fn try_scan_tabskip_assignment(&mut self, token: Token) -> Result<bool, ExecError> {

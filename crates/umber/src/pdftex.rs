@@ -489,6 +489,19 @@ mod tests {
         FileModificationDate, JobClock, PdfDocumentFragmentKind, ShellEscapePolicy, World,
     };
 
+    /// The engine state these oracle comparisons run against.
+    ///
+    /// The pinned pdfTeX references are captured with
+    /// `-interaction=nonstopmode`, and tex.web §75 would otherwise start the
+    /// job in `error_stop_mode`: §82 enters §83's dialog on that alone, and
+    /// §71 answers a memory terminal that has nothing in it with
+    /// `fatal_error`, ending the run at its first recoverable diagnostic.
+    fn pdftex_oracle_stores() -> Universe {
+        let mut stores = Universe::default();
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        stores
+    }
+
     #[test]
     fn source_derived_inventory_is_the_exact_pinned_158_name_set() {
         let document = include_str!("../../../docs/pdftex_primitives.md");
@@ -2276,7 +2289,7 @@ mod tests {
         }
 
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-        let mut stores = Universe::default();
+        let mut stores = pdftex_oracle_stores();
         stores
             .world_mut()
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
@@ -2322,7 +2335,7 @@ mod tests {
         }
 
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-        let mut stores = Universe::default();
+        let mut stores = pdftex_oracle_stores();
         stores
             .world_mut()
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
@@ -2358,7 +2371,7 @@ mod tests {
     fn pdf_font_codes_size_and_ligature_suppression_match_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_font_codes", "ref");
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-        let mut stores = Universe::default();
+        let mut stores = pdftex_oracle_stores();
         stores
             .world_mut()
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
@@ -2409,7 +2422,7 @@ mod tests {
             );
         }
 
-        let mut stores = Universe::default();
+        let mut stores = pdftex_oracle_stores();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
             include_str!("../../../tests/corpus/tex_exec/pdf_output_policy/pdf_output_policy.tex"),
@@ -2875,7 +2888,7 @@ mod tests {
         }
 
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-        let mut stores = Universe::default();
+        let mut stores = pdftex_oracle_stores();
         stores
             .world_mut()
             .set_memory_file("cmr10.tfm", CMR10.to_vec())

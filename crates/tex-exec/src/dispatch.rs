@@ -100,7 +100,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             ..
         }
     ) {
-        crate::math::insert_dollar_sign(traced, input, stores);
+        crate::math::insert_dollar_sign(traced, input, stores)?;
         if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
             assignments::ensure_horizontal_for_character(
                 nest,
@@ -187,7 +187,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             // Undefined tokens can reach main control without passing through
             // expansion (for example after \noexpand or scanner recovery).
             // TeX diagnoses and consumes them rather than aborting the run.
-            crate::executor::report_undefined_control_sequence(input, stores);
+            crate::executor::report_undefined_control_sequence(input, stores)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::CharGiven(ch) => {
@@ -219,7 +219,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
                 stores,
                 "Extra \\endcsname",
                 &["I'm ignoring this, since I wasn't doing a \\csname."],
-            );
+            )?;
             Ok(DispatchAction::Continue)
         }
         Meaning::ExpandablePrimitive(primitive) => {
@@ -242,7 +242,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             // TeX.web's mode-dependent main-control table routes a bare
             // internal quantity (TRIP uses `\badness`) to `report_illegal_case`
             // and then continues; it is not a fatal assignment error.
-            crate::diagnostics::report_illegal_case(stores, token, mode);
+            crate::diagnostics::report_illegal_case(stores, token, mode)?;
             Ok(DispatchAction::Continue)
         }
         meaning @ (Meaning::CountRegister(_)
@@ -260,7 +260,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::MathCharGiven(_) => {
-            crate::math::insert_dollar_sign(traced, input, stores);
+            crate::math::insert_dollar_sign(traced, input, stores)?;
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
                 assignments::ensure_horizontal_for_character(
                     nest,
@@ -314,12 +314,12 @@ fn dispatch_character_token(
                                 "You've closed more groups than you opened.",
                                 "Such booboos are generally harmless, so keep going.",
                             ],
-                        );
+                        )?;
                     }
                     // §1069's `extra_right_brace`, whose message names the
                     // closer the open group was actually waiting for.
                     ExecError::ExtraRightBraceOrForgottenDollar { .. } => {
-                        report_extra_right_brace(input, stores, "$");
+                        report_extra_right_brace(input, stores, "$")?;
                     }
                     error => return Err(error),
                 }
@@ -361,7 +361,7 @@ fn dispatch_character_token(
             // `report_illegal_case`. In particular, a stray `#` in outer
             // vertical mode is consumed without starting a paragraph (and
             // therefore without invoking the page builder).
-            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode())?;
             Ok(DispatchAction::Continue)
         }
         Token::Char { ch, .. } => {
@@ -393,7 +393,11 @@ fn dispatch_character_token(
 /// `expected` is what §1069's `case cur_group of` prints after the message
 /// stem: `\endgroup`, `$`, or `\right`. Only the math-shift case reaches
 /// here; the semi-simple one still leaves main control as a typed error.
-fn report_extra_right_brace(input: &InputStack, stores: &mut Universe, expected: &str) {
+fn report_extra_right_brace(
+    input: &InputStack,
+    stores: &mut Universe,
+    expected: &str,
+) -> Result<(), ExecError> {
     crate::error_report::report_input_error(
         input,
         stores,
@@ -405,7 +409,8 @@ fn report_extra_right_brace(input: &InputStack, stores: &mut Universe, expected:
             "the way to recover is to insert both the forgotten and the",
             "deleted material, e.g., by typing `I$}'.",
         ],
-    );
+    )?;
+    Ok(())
 }
 
 fn start_paragraph_before_replaying_character(

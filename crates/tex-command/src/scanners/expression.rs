@@ -199,7 +199,7 @@ impl CommandProcessor<'_> {
         self.expression_depth -= 1;
         let (mut value, overflow) = result?;
         if overflow {
-            self.expression_arithmetic_error();
+            self.expression_arithmetic_error()?;
             value = kind.zero();
         }
         self.observe_expression(kind, value);
@@ -330,7 +330,7 @@ impl CommandProcessor<'_> {
         if parenthesized {
             if !is_other_character(&command, ')') {
                 self.back_input(command)?;
-                self.missing_expression_parenthesis_error();
+                self.missing_expression_parenthesis_error()?;
             }
         } else if !matches!(command.meaning(), Meaning::Relax) {
             self.back_input(command)?;
@@ -338,7 +338,7 @@ impl CommandProcessor<'_> {
         Ok(ExpressionOperator::None)
     }
 
-    fn missing_expression_parenthesis_error(&mut self) {
+    fn missing_expression_parenthesis_error(&mut self) -> Result<(), CommandError> {
         // e-TeX \[26.1576] reaches `back_error`, so the caller has already
         // restored the rejected token for §314 to name.
         let context = self.command.output_open_context(&self.state);
@@ -346,10 +346,11 @@ impl CommandProcessor<'_> {
         report
             .help(&["I was expecting to see `+', `-', `*', `/', or `)'. Didn't."])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
-    fn expression_arithmetic_error(&mut self) {
+    fn expression_arithmetic_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Arithmetic overflow");
         report
@@ -358,7 +359,8 @@ impl CommandProcessor<'_> {
                 "since the result is out of range.",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     fn observe_expression(&mut self, kind: ExpressionKind, value: ExpressionValue) {

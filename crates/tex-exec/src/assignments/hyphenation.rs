@@ -20,7 +20,7 @@ pub(super) fn execute_patterns(
         .map(|word| parse_pattern_word(stores, word).0)
         .collect();
     let diagnostics = apply_patterns(stores, patterns);
-    report_apply_diagnostics(stores, diagnostics);
+    report_apply_diagnostics(stores, diagnostics)?;
     Ok(())
 }
 
@@ -31,7 +31,7 @@ pub(super) fn execute_hyphenation(
 ) -> Result<(), ExecError> {
     let words = scan_hyphenation_words(input, stores, execution, "\\hyphenation")?;
     let diagnostics = apply_hyphenation_exceptions(stores, words);
-    report_apply_diagnostics(stores, diagnostics);
+    report_apply_diagnostics(stores, diagnostics)?;
     Ok(())
 }
 
@@ -49,7 +49,7 @@ pub(crate) enum HyphenationApplyDiagnostic {
 pub(crate) fn report_apply_diagnostics(
     stores: &mut Universe,
     diagnostics: Vec<HyphenationApplyDiagnostic>,
-) {
+) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         let (message, help): (&str, &[&str]) = match diagnostic {
             HyphenationApplyDiagnostic::NotALetter => (
@@ -65,8 +65,9 @@ pub(crate) fn report_apply_diagnostics(
         };
         let mut report = stores.print_err(message);
         report.help(help);
-        report.error();
+        report.error().jump_out()?;
     }
+    Ok(())
 }
 
 pub(crate) fn apply_patterns(

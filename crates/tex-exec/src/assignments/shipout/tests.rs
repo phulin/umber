@@ -35,7 +35,7 @@ fn ship_out_rejects_each_huge_page_dimension_boundary() {
     ];
 
     for (width, height, depth, h_offset, v_offset) in cases {
-        let mut stores = Universe::new();
+        let mut stores = crate::test_harness::universe();
         stores.set_dimen_param(DimenParam::H_OFFSET, h_offset);
         stores.set_dimen_param(DimenParam::V_OFFSET, v_offset);
         stores.set_page_integer(PageInteger::DeadCycles, 3);
@@ -71,7 +71,7 @@ fn ship_out_rejects_each_huge_page_dimension_boundary() {
         }));
     }
 
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     stores.set_page_integer(PageInteger::DeadCycles, 3);
     let node = empty_box(&mut stores, max, max, zero);
     let receipt = crate::canonical_main_control::test_shipout_replay_box(node, &mut stores)

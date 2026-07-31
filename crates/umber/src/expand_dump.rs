@@ -12,6 +12,12 @@ use umber::{EngineSession, FileSessionResolvers};
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
     let mut stores = Universe::with_world(World::real());
+    // `expand-dump` is an analysis command, not a typesetting session: it has
+    // no interactive contract with the terminal. tex.web §75 would start it in
+    // `error_stop_mode`, where §82 enters §83's dialog on any recoverable
+    // error and §71 answers a non-tty stdin with `fatal_error`, so the dump
+    // would abort instead of reporting and continuing.
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let content = stores.world_mut().read_file(path)?;
     install_dump_primitives(&mut stores);
 

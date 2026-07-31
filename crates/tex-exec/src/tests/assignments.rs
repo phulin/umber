@@ -40,7 +40,7 @@ fn arithmetic_character_target_is_consumed_before_recovery() {
 
 #[test]
 fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let source = "\\def\\a{#x}".repeat(100);
     let mut input = InputStack::new(MemoryInput::new(source));
@@ -193,7 +193,7 @@ fn chardef_and_mathchardef_are_internal_integers() {
 
 #[test]
 fn restricted_character_definitions_report_and_substitute_zero() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\chardef\\A=256 \\mathchardef\\M=32768 \\count0=\\A \\count1=\\M",
@@ -239,7 +239,7 @@ fn the_renders_chardef_and_mathchardef_as_internal_integers() {
 
 #[test]
 fn the_non_internal_target_reports_and_substitutes_zero() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_count(0, 7);
@@ -285,7 +285,7 @@ fn parshape_is_an_internal_integer_equal_to_its_line_count() {
 
 #[test]
 fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\count0=7 \\count1=9"));
 
@@ -318,7 +318,7 @@ fn setbox_skips_relax_before_the_box_command() {
 
 #[test]
 fn extra_endgroup_is_recoverable() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup \\count0=7"));
 
@@ -332,7 +332,7 @@ fn extra_endgroup_is_recoverable() {
 
 #[test]
 fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\mathchardef A=7 \\count0=9"));
 
@@ -348,7 +348,7 @@ fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() 
 
 #[test]
 fn macro_definition_substitutes_inaccessible_target_and_replays_body_start() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\outer\\def{}"));
 
@@ -435,7 +435,7 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 
 #[test]
 fn token_register_assignment_uses_tex_scan_left_brace_recovery() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(concat!(
@@ -495,7 +495,7 @@ fn noexpand_in_edef_preserves_a_token_register_assignment() {
 
 #[test]
 fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\outer\\def\\a{}\\toks0={x\\a\\count0=7"));
@@ -650,7 +650,7 @@ fn ordinary_glue_parameters_recover_mu_units_as_pt() {
 
 #[test]
 fn arithmetic_overflow_reports_tex_error_text() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\count0=2147483647 \\advance\\count0 by 1",

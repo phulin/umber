@@ -256,7 +256,7 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
     let source = include_str!(
         "../../../../tests/corpus/tex_exec/hskip_penalty_recovery/hskip_penalty_recovery.tex"
     );
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     let checkpoint = stores.snapshot();
@@ -286,7 +286,7 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
 
 #[test]
 fn vertical_mode_hskip_runs_everypar_before_scanning_glue() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let source = r"\everypar{\def\skipamount{2.5in}}\hskip\skipamount\dimen0=\lastskip\par\end";
@@ -342,7 +342,7 @@ fn reference_fixture(stem: &str) -> String {
 }
 
 fn run_umber_exec(input: &str) -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(input));
     Executor::new()
@@ -352,7 +352,7 @@ fn run_umber_exec(input: &str) -> Universe {
 }
 
 fn run_umber_exec_with_box_expandables(input: &str) -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     for (name, primitive) in [
         ("the", ExpandablePrimitive::The),

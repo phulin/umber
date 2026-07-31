@@ -167,7 +167,7 @@ fn fire_up_preserves_an_empty_class_zero_bot_mark_as_current_marks() {
 
 #[test]
 fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     let old = boxed(&mut stores, false);
     let old = stores.freeze_node_list(&[old]);
     stores.set_box_reg(255, old);
@@ -272,7 +272,7 @@ fn output_default_path_prepends_heldovers_ships_and_voids_box255() {
 
 #[test]
 fn output_deadcycle_limit_reports_and_uses_default_path() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     let output = nonempty_tokens(&mut stores);
     stores.set_tok_param(TokParam::OUTPUT, output);
     stores.set_int_param(IntParam::MAX_DEAD_CYCLES, 0);
@@ -328,7 +328,7 @@ fn output_resume_orders_output_material_heldovers_and_contributions() {
 
 #[test]
 fn output_resume_recovers_unbalanced_tokens_and_nonvoid_box255() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     let box255 = boxed(&mut stores, true);
     let box255 = stores.freeze_node_list(&[box255]);
     stores.set_box_reg(255, box255);

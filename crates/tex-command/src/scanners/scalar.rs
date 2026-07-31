@@ -506,7 +506,7 @@ impl CommandProcessor<'_> {
                     } => {
                         let (value, vacuous) = self.scan_radix_tail(None, 8)?;
                         if vacuous {
-                            self.missing_number_error();
+                            self.missing_number_error()?;
                             return Ok((self.inserted_zero_integer(provenance), 8));
                         }
                         (value, 8, ScalarRecovery::None)
@@ -517,7 +517,7 @@ impl CommandProcessor<'_> {
                     } => {
                         let (value, vacuous) = self.scan_radix_tail(None, 16)?;
                         if vacuous {
-                            self.missing_number_error();
+                            self.missing_number_error()?;
                             return Ok((self.inserted_zero_integer(provenance), 16));
                         }
                         (value, 16, ScalarRecovery::None)
@@ -538,7 +538,7 @@ impl CommandProcessor<'_> {
                         // §444's `vacuous` case. `radix:=10` is assigned before
                         // the accumulation loop, so it survives §446's recovery.
                         self.back_input(first)?;
-                        self.missing_number_error();
+                        self.missing_number_error()?;
                         return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
                     }
                 },
@@ -649,7 +649,7 @@ impl CommandProcessor<'_> {
         };
         let (value, order, attach_sign, recovery) = match first {
             Some(first) => match self.scan_something_internal(&first, level, false)? {
-                InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu) {
+                InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
                     InternalDimension::Complete(value) => {
                         (value, Order::Normal, true, ScalarRecovery::None)
                     }
@@ -801,23 +801,27 @@ impl CommandProcessor<'_> {
     /// §413 has already run §429's cascade for the level §449 asked for, so
     /// this only sorts the surviving levels into "the whole dimension" and
     /// "the numeric prefix of a units scan".
-    fn fetch_internal_dimension(&mut self, value: InternalValue, mu: bool) -> InternalDimension {
+    fn fetch_internal_dimension(
+        &mut self,
+        value: InternalValue,
+        mu: bool,
+    ) -> Result<InternalDimension, CommandError> {
         if !mu {
             // `scan_something_internal(dimen_val,false)`: §429 has lowered glue
             // and mu glue to a width, so only `dimen_val` and `int_val`
             // survive, and §449 takes a dimension as the complete answer.
-            return match value {
+            return Ok(match value {
                 InternalValue::Dimension(value) => InternalDimension::Complete(value),
                 InternalValue::Integer(value) => InternalDimension::Prefix(value),
                 _ => {
                     unreachable!("TeX82 §429 lowers a dimen_val request to a dimension or integer")
                 }
-            };
+            });
         }
         // `scan_something_internal(mu_val,false)`: `mu_val` is the highest
         // numeric level, so §429's loop never runs and the level reached is
         // exactly the quantity's own.
-        match value {
+        Ok(match value {
             // §451 replaces the specification by its width while leaving
             // `cur_val_level` at `mu_val`, so `goto attach_sign` takes it as
             // the whole mu dimension. This is what `\mkern\thinmuskip` reads.
@@ -826,20 +830,20 @@ impl CommandProcessor<'_> {
             // `glue_val`, which is neither `mu_val` nor `int_val`: TeX reports
             // `mu_error` and continues with the width as the units prefix.
             InternalValue::Glue(glue) => {
-                self.mu_error();
+                self.mu_error()?;
                 InternalDimension::Prefix(glue.width.raw())
             }
             // `dimen_val` is below `glue_val`, so §451 does not apply; the
             // level test still reports `mu_error` and keeps the value.
             InternalValue::Dimension(value) => {
-                self.mu_error();
+                self.mu_error()?;
                 InternalDimension::Prefix(value.raw())
             }
             InternalValue::Integer(value) => InternalDimension::Prefix(value),
             InternalValue::Font(_) | InternalValue::Tokens { .. } => {
                 unreachable!("TeX82 §416 reports a mu_val request for a font or token list")
             }
-        }
+        })
     }
 
     /// TeX82 §448's shared tail: normalize the integer part's sign, then scan
@@ -941,7 +945,7 @@ impl CommandProcessor<'_> {
                     internal @ (InternalValue::Glue(_) | InternalValue::MuGlue(_)),
                 ) => {
                     if internal.level() != level {
-                        self.mu_error();
+                        self.mu_error()?;
                     }
                     let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
                         unreachable!("outer pattern restricts the value to a glue specification")
@@ -957,7 +961,7 @@ impl CommandProcessor<'_> {
                 // `mu_error` first and keeps the dimension.
                 InternalScan::Value(InternalValue::Dimension(width)) => {
                     if mu {
-                        self.mu_error();
+                        self.mu_error()?;
                     }
                     (
                         GlueSpec {
@@ -1107,7 +1111,7 @@ impl CommandProcessor<'_> {
                 report
                     .help(&["I'm forgetting what you said and using zero instead."])
                     .context(context);
-                report.error();
+                report.error().jump_out()?;
                 InternalValue::Integer(0)
             }
         };
@@ -1224,7 +1228,7 @@ impl CommandProcessor<'_> {
         };
         if value > i32::from(u8::MAX) && !self.command.profile().capabilities().supports_unicode() {
             self.back_input(command)?;
-            self.improper_alphabetic_constant_error();
+            self.improper_alphabetic_constant_error()?;
             return Ok((0, ScalarRecovery::InsertedZero));
         }
         self.scan_optional_space()?;
@@ -1346,7 +1350,7 @@ impl CommandProcessor<'_> {
             }
         };
         if arith_error {
-            self.dimension_too_large_error();
+            self.dimension_too_large_error()?;
         }
         Ok(ScannedUnits {
             value: if arith_error {
@@ -1413,7 +1417,7 @@ impl CommandProcessor<'_> {
         // as mu, and leaves the offending text for the caller to re-read.
         if mu {
             if !self.scan_keyword("mu")?.value {
-                self.illegal_unit_mu_error();
+                self.illegal_unit_mu_error()?;
             }
             return Ok((DimensionUnit::Mu, None));
         }
@@ -1422,7 +1426,7 @@ impl CommandProcessor<'_> {
         let magnification = if self.scan_keyword("true")?.value {
             let (mag, diagnostic) = self.state.prepare_mag();
             if let Some(diagnostic) = diagnostic {
-                self.prepare_mag_error(diagnostic);
+                self.prepare_mag_error(diagnostic)?;
             }
             Some(mag)
         } else {
@@ -1460,7 +1464,7 @@ impl CommandProcessor<'_> {
         }
         // §459's "Complain about unknown unit": TeX assumes `pt` and
         // finishes the job that a hard scanner failure here would abandon.
-        self.illegal_unit_pt_error();
+        self.illegal_unit_pt_error()?;
         Ok((DimensionUnit::Physical(PhysicalUnit::Pt), magnification))
     }
 
@@ -1510,7 +1514,7 @@ impl CommandProcessor<'_> {
         match self.scan_something_internal(&command, level, false)? {
             InternalScan::Value(value) => {
                 if mu && !matches!(value, InternalValue::MuGlue(_)) {
-                    self.mu_error();
+                    self.mu_error()?;
                 }
                 let unit = match value {
                     InternalValue::Integer(value) => Scaled::from_raw(value),
@@ -1576,7 +1580,7 @@ impl CommandProcessor<'_> {
         // the first non-`l` token after the loop.
         while self.scan_keyword("l")?.value {
             if order == Order::Filll {
-                self.excess_infinite_order_error();
+                self.excess_infinite_order_error()?;
             } else {
                 order = raise_infinite_order(order);
             }
@@ -1618,38 +1622,39 @@ impl CommandProcessor<'_> {
         &mut self,
         mut value: InternalValue,
         level: InternalLevel,
-    ) -> Option<InternalValue> {
+    ) -> Result<Option<InternalValue>, CommandError> {
         while value.level() > level {
             value = match value {
                 InternalValue::MuGlue(glue) => {
-                    self.mu_error();
+                    self.mu_error()?;
                     InternalValue::Glue(glue)
                 }
                 InternalValue::Glue(glue) => InternalValue::Dimension(glue.width),
                 InternalValue::Dimension(dimension) => InternalValue::Integer(dimension.raw()),
-                InternalValue::Font(_) | InternalValue::Tokens { .. } => return None,
+                InternalValue::Font(_) | InternalValue::Tokens { .. } => return Ok(None),
                 InternalValue::Integer(_) => {
                     unreachable!("int_val is the lowest level, so it never exceeds a target level")
                 }
             };
         }
-        Some(value)
+        Ok(Some(value))
     }
 
     /// TeX82 §408's `mu_error`: "Incompatible glue units" -- mu and non-mu
     /// quantities were mixed, and TeX assumes `1mu=1pt` and continues.
     ///
-    fn mu_error(&mut self) {
+    fn mu_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Incompatible glue units");
         report
             .help(&["I'm going to assume that 1mu=1pt when they're mixed."])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// TeX82 §415's `back_error` before the scanner publishes zero.
-    fn missing_number_error(&mut self) {
+    fn missing_number_error(&mut self) -> Result<(), CommandError> {
         // TeX82 §82 completes every error with `show_context`, and §415
         // reaches it only after §325's `back_error` has installed the
         // offending token as a `backed_up` level. CommandState, rather than
@@ -1666,7 +1671,7 @@ impl CommandProcessor<'_> {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
-            return;
+            return Ok(());
         }
         let mut report = self.state.print_err("Missing number, treated as zero");
         report
@@ -1676,12 +1681,13 @@ impl CommandProcessor<'_> {
                 "look up `weird error' in the index to The TeXbook.)",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// TeX82 §456's unit recovery for math glue.
     /// TeX82 §442's out-of-range alphabetic-constant recovery.
-    fn improper_alphabetic_constant_error(&mut self) {
+    fn improper_alphabetic_constant_error(&mut self) -> Result<(), CommandError> {
         // §442 reaches `back_error`, so the caller has already restored the
         // offending token and §314 names it `<to be read again>`.
         let context = self.command.output_open_context(&self.state);
@@ -1692,10 +1698,11 @@ impl CommandProcessor<'_> {
                 "So I'm essentially inserting \\0 here.",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
-    fn illegal_unit_mu_error(&mut self) {
+    fn illegal_unit_mu_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
@@ -1708,11 +1715,12 @@ impl CommandProcessor<'_> {
                 "two letters. (See Chapter 27 of The TeXbook.)",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// TeX82 §454's recovery for each `l` beyond `filll`.
-    fn excess_infinite_order_error(&mut self) {
+    fn excess_infinite_order_error(&mut self) -> Result<(), CommandError> {
         // §407 has consumed the successful one-letter keyword before §454
         // calls §82's `error`, so capture the source cursor at that exact
         // point rather than reusing context from an earlier scanner report.
@@ -1723,12 +1731,13 @@ impl CommandProcessor<'_> {
         report
             .help(&["I dddon't go any higher than filll."])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// TeX82 §459's unit recovery for ordinary dimensions, extended only in
     /// the pdfTeX profile with pdfTeX 1.40.27's `nd`/`nc` help text.
-    fn illegal_unit_pt_error(&mut self) {
+    fn illegal_unit_pt_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
@@ -1748,11 +1757,12 @@ impl CommandProcessor<'_> {
                 "two letters. (See Chapter 27 of The TeXbook.)",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// TeX82 §460's clamped dimension recovery.
-    fn dimension_too_large_error(&mut self) {
+    fn dimension_too_large_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self.state.print_err("Dimension too large");
         report
@@ -1761,11 +1771,12 @@ impl CommandProcessor<'_> {
                 "Continue and I'll use the largest value I can.",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// Renders the recoverable `prepare_mag` outcome used by §457.
-    fn prepare_mag_error(&mut self, diagnostic: PrepareMagDiagnostic) {
+    fn prepare_mag_error(&mut self, diagnostic: PrepareMagDiagnostic) -> Result<(), CommandError> {
         // TeX82 §82 calls `show_context` from every `error`, including the
         // §288 `prepare_mag` diagnostics. Capture it before opening the
         // report so a §325 one-token backup remains visible as
@@ -1779,7 +1790,7 @@ impl CommandProcessor<'_> {
                 report
                     .help(&["The magnification ratio must be between 1 and 32768."])
                     .context(context);
-                report.int_error(attempted);
+                report.int_error(attempted).jump_out()?;
             }
             PrepareMagDiagnostic::IncompatibleMagnification {
                 attempted,
@@ -1800,9 +1811,10 @@ impl CommandProcessor<'_> {
                         "reverted to the magnification you used earlier on this run.",
                     ])
                     .context(context);
-                report.int_error(retained);
+                report.int_error(retained).jump_out()?;
             }
         }
+        Ok(())
     }
 
     /// Runs TeX82 §413's `scan_something_internal` end to end.
@@ -1838,7 +1850,7 @@ impl CommandProcessor<'_> {
         let Some(value) = self.fetch_internal_value(command)? else {
             return Ok(InternalScan::NotInternal);
         };
-        let Some(value) = self.coerce_internal_value(value, level) else {
+        let Some(value) = self.coerce_internal_value(value, level)? else {
             return self.missing_number_internal_result(command, level);
         };
         let value = if negative {
@@ -1859,9 +1871,9 @@ impl CommandProcessor<'_> {
         level: InternalLevel,
     ) -> Result<InternalScan, CommandError> {
         self.back_input(command.copy_for_backup())?;
-        self.missing_number_error();
+        self.missing_number_error()?;
         let value = self
-            .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)
+            .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)?
             .expect("TeX82 §429 always lowers §416's dimen_val zero");
         self.observe_internal_value(value);
         Ok(InternalScan::Value(value))

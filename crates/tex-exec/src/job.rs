@@ -455,7 +455,13 @@ pub(crate) fn prompt_for_more_input(stores: &mut Universe, startup_terminal_line
 }
 
 /// §93's `fatal_error`: `print_err("Emergency stop")` with the caller's one
-/// help line, reported through §82's `error` by `succumb`.
+/// help line, completed by `succumb`.
+///
+/// `succumb`, not §82's `error` directly: `succumb` drops `interaction` to
+/// `scroll_mode` before the nested `error` runs, which is what stops an
+/// errorstop job from being prompted at §83's `? ` on its way out -- here, of
+/// all places, since the reason this report exists is that the terminal has
+/// nothing left to answer with.
 fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, interactive: bool) {
     let context = terminal_exhausted_context(stores, startup_terminal_line, interactive);
     let mut report = stores.print_err("Emergency stop");
@@ -465,7 +471,7 @@ fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, int
     } else {
         "*** (job aborted, no legal \\end found)"
     }]);
-    report.error();
+    report.succumb();
 }
 
 /// tex.web §1333's `close_files_and_terminate`, minus §1378's write-stream

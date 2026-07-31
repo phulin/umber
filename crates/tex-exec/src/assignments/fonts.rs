@@ -46,7 +46,7 @@ pub(super) fn execute_font_definition(
                 &font_name,
                 size_spec,
                 opentype_name.is_some(),
-            );
+            )?;
             let meaning = Meaning::Font(tex_state::font::NULL_FONT);
             if apply_globaldefs(prefixes.global, stores) {
                 stores.set_meaning_global(target, meaning);
@@ -314,7 +314,7 @@ pub(super) fn scan_math_family(
                 "I changed this one to zero.",
             ])
             .context(context);
-        report.int_error(family);
+        report.int_error(family).jump_out()?;
         return Ok(0);
     }
     Ok(family as u8)
@@ -331,7 +331,7 @@ pub(super) fn scan_font_selector(
         })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        report_missing_font_identifier(input, stores, traced);
+        report_missing_font_identifier(input, stores, traced)?;
         return Ok(tex_state::font::NULL_FONT);
     };
     match stores.meaning(symbol) {
@@ -346,7 +346,7 @@ pub(super) fn scan_font_selector(
             Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
         }
         _ => {
-            report_missing_font_identifier(input, stores, traced);
+            report_missing_font_identifier(input, stores, traced)?;
             Ok(tex_state::font::NULL_FONT)
         }
     }
@@ -360,7 +360,7 @@ fn report_missing_font_identifier(
     input: &mut InputStack,
     stores: &mut Universe,
     traced: TracedTokenWord,
-) {
+) -> Result<(), ExecError> {
     crate::error_report::back_error(
         input,
         stores,
@@ -370,7 +370,8 @@ fn report_missing_font_identifier(
             "I was looking for a control sequence whose",
             "current meaning has been defined by \\font.",
         ],
-    );
+    )?;
+    Ok(())
 }
 
 /// TeX.web §561's `<Report that the font won't be loaded>`, opened by §560's
@@ -386,7 +387,7 @@ fn report_font_not_loadable(
     font_name: &str,
     size_spec: FontSizeSpec,
     opentype: bool,
-) {
+) -> Result<(), ExecError> {
     let (reason, detail) = if opentype {
         (
             " not loadable: OpenType resource not found",
@@ -420,7 +421,8 @@ fn report_font_not_loadable(
             "e.g., type `I\\font<same font id>=<substitute font name>'.",
         ])
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 fn math_font_size_for_primitive(primitive: UnexpandablePrimitive) -> MathFontSize {
@@ -455,7 +457,7 @@ fn scan_font_size_spec(
                     "less than 2048pt, so I've changed what you said to 10pt.",
                 ])
                 .context(context);
-            report.error();
+            report.error().jump_out()?;
             Scaled::from_raw(10 * Scaled::UNITY)
         };
         return Ok(FontSizeSpec::At(size));
@@ -472,7 +474,7 @@ fn scan_font_size_spec(
             report
                 .help(&["The magnification ratio must be between 1 and 32768."])
                 .context(context);
-            report.int_error(requested);
+            report.int_error(requested).jump_out()?;
             1000
         };
         return Ok(FontSizeSpec::Scale(scale));

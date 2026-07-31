@@ -148,7 +148,7 @@ pub(crate) fn shipout_node_with_input_summary(
                 "more than 18 feet wide, so I suspect something went wrong.",
             ],
             context,
-        );
+        )?;
         return Ok(None);
     }
     if stores.pure_memo_enabled() && !stores.shipout_memo_enabled() {
@@ -358,7 +358,7 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
                 "I changed this to 1.",
             ],
             major,
-        );
+        )?;
         stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
     }
     let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
@@ -371,7 +371,7 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
                 "I changed this to 4.",
             ],
             minor,
-        );
+        )?;
         stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
     }
 
@@ -397,13 +397,19 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
 ///
 /// The version is fixed at the first page, long after the command that set it
 /// was scanned, so §82's context is whatever input the job last published.
-fn report_invalid_pdf_version(stores: &mut Universe, message: &str, help: &[&str], value: i32) {
+fn report_invalid_pdf_version(
+    stores: &mut Universe,
+    message: &str,
+    help: &[&str],
+    value: i32,
+) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err(message);
     // pdftex.web breaks the line before the value; `print_nl` on an open line
     // is that `print_ln`.
     report.print_nl("").help(help).context(context);
-    report.int_error(value);
+    report.int_error(value).jump_out()?;
+    Ok(())
 }
 
 fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {

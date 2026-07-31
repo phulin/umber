@@ -84,7 +84,7 @@ fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
         ],
     );
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -121,7 +121,7 @@ fn eof_recovery_restores_defining_status_before_macro_replacement_completes() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
@@ -172,7 +172,7 @@ fn install_expandable(
 fn direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
     let macro_symbol = universe.intern("storedmacro").symbol();
     let register = universe.intern("stored").symbol();
@@ -244,7 +244,7 @@ fn unexpanded_expands_scan_general_text_opener_before_copying_raw_body() {
     // switching to raw balanced-text collection.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let unexpanded =
         install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
     let expandafter = install_expandable(
@@ -303,7 +303,7 @@ fn unexpanded_observes_the_completed_raw_balanced_text_before_its_direct_splice(
     // enclosing expanded `scan_toks` collector.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let unexpanded =
         install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
     let raw = universe.intern("raw").symbol();
@@ -414,7 +414,7 @@ fn unexpanded_general_text_recovers_runaway_input_and_restores_outer_scanner_sta
     });
     command.begin_scanner_status(outer.clone());
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let scanned = {
@@ -507,7 +507,7 @@ fn general_text_failure_restores_the_complete_outer_scanner_state() {
     });
     command.begin_scanner_status(outer.clone());
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut fuel = crate::CommandFuelLedger::new(1).expect("finite test fuel");
     let result = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
@@ -526,7 +526,7 @@ fn general_text_failure_restores_the_complete_outer_scanner_state() {
 fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
     let count = universe.intern("count").symbol();
     universe.set_meaning(
@@ -620,7 +620,7 @@ fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
 fn completed_direct_splice_scan_rolls_back_to_the_exact_input_state() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
     let register = universe.intern("stored").symbol();
     universe.set_meaning(register, Meaning::ToksRegister(3));
@@ -684,7 +684,7 @@ fn completed_direct_splice_scan_rolls_back_to_the_exact_input_state() {
 fn empty_direct_splice_is_unobserved_across_rollback_and_retry() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
     let register = universe.intern("empty").symbol();
     universe.set_meaning(register, Meaning::ToksRegister(3));
@@ -753,7 +753,7 @@ fn empty_direct_splice_is_unobserved_across_rollback_and_retry() {
 fn macro_definition_converts_parameters_and_preserves_doubled_hashes() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     push(
         &mut command,
         vec![
@@ -824,7 +824,7 @@ fn macro_definition_converts_parameters_and_preserves_doubled_hashes() {
 fn parameterless_macro_definition_still_collapses_doubled_hashes() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     push(
         &mut command,
         vec![
@@ -875,7 +875,7 @@ fn parameterless_macro_definition_still_collapses_doubled_hashes() {
 fn general_text_keeps_both_parameter_characters() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     push(
         &mut command,
         vec![
@@ -924,7 +924,7 @@ fn general_text_keeps_both_parameter_characters() {
 fn macro_definition_hash_brace_reuses_the_left_brace_after_the_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     push(
         &mut command,
         vec![
@@ -1008,7 +1008,7 @@ fn macro_definition_hash_brace_reuses_the_left_brace_after_the_body() {
 fn expanded_collection_expands_a_macro_one_step_at_a_time() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_symbol = universe.intern("m").symbol();
     let empty = universe.intern_token_list(&[]);
     let replacement = universe.intern_token_list(&[Token::Char {
@@ -1081,7 +1081,7 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
         let mut command = CommandState::default();
         push(&mut command, tokens);
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         let scanned = processor
@@ -1163,7 +1163,7 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
         let mut command = CommandState::default();
         push(&mut command, tokens);
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         let scanned = processor
@@ -1199,7 +1199,7 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
         ],
     );
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
     let scanned = processor
@@ -1231,7 +1231,7 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
 
 #[test]
 fn scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_symbol = universe.intern("m").symbol();
     let empty = universe.intern_token_list(&[]);
     let replacement = universe.intern_token_list(&[Token::Char {
@@ -1485,7 +1485,7 @@ fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
             ],
         );
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         CommandProcessor::new(
@@ -1515,7 +1515,7 @@ fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
 
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let outer = universe.intern("outer-matrix").symbol();
     let empty = universe.intern_token_list(&[]);
@@ -1613,7 +1613,7 @@ fn expanded_scan_toks_resumes_after_outer_token_aborts_macro_argument() {
     // such loop and must not surface the internal matcher abort.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     universe.install_primitive_meaning(
         "par",
@@ -1675,7 +1675,7 @@ fn expanded_scan_toks_outer_abort_reinstates_saved_collector_status() {
     // owns the saved absorbing episode that must govern backed input.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
     let collector = ScannerStatus::Absorbing(AbsorbingContext {
@@ -1700,7 +1700,7 @@ fn expanded_collection_observes_protected_macro_suppression_before_delivery() {
     // instrumentation records the retained spelling at that transition.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let protected = universe.intern("protected-macro").symbol();
     let empty = universe.intern_token_list(&[]);
     universe.set_macro_meaning(
@@ -1771,7 +1771,7 @@ fn expanded_collection_observes_protected_macro_suppression_before_delivery() {
 
 #[test]
 fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_symbol = universe.intern("observed-macro").symbol();
     let empty = universe.intern_token_list(&[]);
     let replacement = universe.intern_token_list(&[Token::Char {
@@ -1965,7 +1965,7 @@ fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
 fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let relax = universe.intern("relax").symbol();
     universe.set_meaning(relax, Meaning::Relax);
     push(
@@ -2044,7 +2044,7 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
     // to the enclosing `\scantokens` pseudo-file.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
     let empty = TracedTokenList::synthetic(universe.intern_token_list(&[]));
     let scantokens = command
@@ -2118,7 +2118,7 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
     // §483 tokenizes into the `\par` an active `\endlinechar` produces.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let slot = read_stream(&mut universe, b"{one\ntwo}\n");
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -2163,7 +2163,7 @@ fn read_and_readline_retire_with_the_open_stream_name() {
     // remains covered separately below.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
     let slot = read_stream(&mut universe, b"ordinary\nverbatim\n");
     let mut capabilities = CommandHostCapabilities::default();
@@ -2384,7 +2384,7 @@ fn read_toks_disables_alignment_delimiters_and_restores_scanner_state() {
     // are both returned to what the caller had.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let slot = read_stream(&mut universe, b"a&b\n");
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);

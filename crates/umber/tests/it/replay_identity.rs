@@ -222,6 +222,11 @@ fn stale_epoch_global_compaction_regression_replays_cleanly() {
 
 fn assert_replay_identity(source: &str) {
     let mut stores = Universe::new();
+    // These generated programs raise recoverable errors on purpose. tex.web
+    // §75 starts a job in `error_stop_mode`, where §82 enters §83's dialog
+    // and §71 answers a memory terminal holding nothing with `fatal_error`;
+    // the subject here is replay identity, so the job runs `\nonstopmode`.
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     umber::prepare_run_stores(&mut stores);
     let before = stores.testing_state_hash();
     let checkpoint = stores.snapshot();

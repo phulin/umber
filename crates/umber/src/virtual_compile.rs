@@ -367,7 +367,17 @@ impl EngineMode {
     }
 
     /// Installs the primitive and state layers selected for a fresh run.
+    ///
+    /// This is the non-interactive host: an editor or browser session has no
+    /// terminal at all. tex.web §75 starts a job in `error_stop_mode`, and
+    /// §82 enters §83's dialog on that alone; §71 answers a terminal at end
+    /// of file with `fatal_error`, so leaving the default in place would end
+    /// a virtual compile at its first recoverable error. Selecting
+    /// `\nonstopmode` is what a host with no terminal passes on the command
+    /// line, and is the same thing this crate's `-interaction=nonstopmode`
+    /// reference captures run under.
     pub fn prepare_fresh(self, stores: &mut Universe) {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         match self {
             Self::Tex82 => prepare_run_stores(stores),
             Self::ETex => prepare_etex_run_stores(stores),
@@ -382,6 +392,8 @@ impl EngineMode {
     /// Unlike [`Self::prepare_fresh`], this preserves TeX82's initial
     /// category-code table while the format source is tokenized.
     pub fn prepare_initex(self, stores: &mut Universe) {
+        // Same non-interactive host as [`Self::prepare_fresh`].
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         crate::prepare_initex_stores(stores);
         match self {
             Self::Tex82 => {}

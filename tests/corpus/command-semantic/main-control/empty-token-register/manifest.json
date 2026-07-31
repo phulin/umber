@@ -24,11 +24,12 @@
         ]
       },
       "expected": [
+        "execution:error:emergency-stop(End of file on the terminal!)",
         "count:0=0"
       ],
       "channels": {
-        "events": 40,
-        "status": "clean",
+        "events": 38,
+        "status": "fatal:emergency-stop(End of file on the terminal!)",
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",

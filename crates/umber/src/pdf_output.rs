@@ -6297,10 +6297,22 @@ mod tests {
     }
 
     fn run(source: &str) -> (Universe, RunResult) {
-        let mut stores = Universe::default();
+        let mut stores = pdftex_recovery_stores();
         prepare_pdftex_run_stores(&mut stores);
         let result = run_in(&mut stores, source);
         (stores, result)
+    }
+
+    /// [`Universe::default`] in `\nonstopmode`, for a fixture whose subject
+    /// is a pdfTeX recovery rather than §83's dialog.
+    ///
+    /// tex.web §75 starts a job in `error_stop_mode`, where §82 enters §83's
+    /// dialog and §71 answers this memory terminal -- which holds nothing --
+    /// with `fatal_error`.
+    fn pdftex_recovery_stores() -> Universe {
+        let mut stores = Universe::default();
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        stores
     }
 
     fn pt(value: i32) -> Scaled {
@@ -6309,6 +6321,12 @@ mod tests {
 
     fn run_with_clock(source: &str, clock: JobClock) -> (Universe, RunResult) {
         let mut stores = Universe::with_world(World::memory_with_clock(clock));
+        // These fixtures exercise pdfTeX's recoveries against a memory
+        // terminal with nothing in it. tex.web §75 would start the job in
+        // `error_stop_mode`, where §82 enters §83's dialog and §71 answers
+        // the exhausted terminal with `fatal_error`; a non-interactive host
+        // passes `-interaction=nonstopmode` instead.
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         prepare_pdftex_run_stores(&mut stores);
         let result = run_in(&mut stores, source);
         (stores, result)
@@ -6415,7 +6433,7 @@ mod tests {
 
     #[test]
     fn accessibility_whatsits_survive_shipout_and_artifact_round_trip() {
-        let mut stores = Universe::default();
+        let mut stores = pdftex_recovery_stores();
         prepare_pdftex_run_stores(&mut stores);
         stores
             .world_mut()
@@ -6828,7 +6846,7 @@ mod tests {
             "\\pdfgentounicode=-1",
             "\\pdfgentounicode=1\\pdfnobuiltintounicode\\f",
         ] {
-            let mut stores = Universe::default();
+            let mut stores = pdftex_recovery_stores();
             prepare_pdftex_run_stores(&mut stores);
             stores
                 .world_mut()

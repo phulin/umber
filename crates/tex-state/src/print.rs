@@ -23,10 +23,14 @@
 //! - **`show_context` is caller-supplied.** tex.web §82 shows the live input
 //!   stack after every error. The command core captures that display while it
 //!   owns the stack and supplies it through [`ErrorReport::context`].
-//! - **`jump_out` is reported to the caller.** §82's 100-error abort is
-//!   returned as [`ErrorOutcome::FatalErrorLimit`], so the command driver can
-//!   perform its existing non-local terminal transition. §84's `X` option and
-//!   §71's terminal EOF still cannot leave the process from this state layer.
+//! - **`jump_out` is reported to the caller.** tex.web §81's `jump_out` is a
+//!   non-local `goto` out of whatever was in progress. Umber cannot perform
+//!   one from this layer, so every site that reaches it returns a
+//!   [`JumpOut`] through [`ErrorOutcome`] and the caller propagates it as a
+//!   fatal error. All three of §82's 100-error abort, §84's `X`, and §71's
+//!   terminal EOF inside §83's dialog are modelled; the reports each one
+//!   prints on the way out are printed here, exactly where tex.web prints
+//!   them.
 //! - **`deletions_allowed` is effectively false** and §87's `I` insertion is
 //!   unavailable, because §84's digit and `I` options both drive the input
 //!   stack. Both fall to §84's `othercases do_nothing`, which is exactly
@@ -338,11 +342,54 @@ pub struct DeferredErrorReport {
     context: Option<String>,
 }
 
-/// The control-flow consequence of completing tex.web §82's `error`.
+/// tex.web §81's `jump_out`: the non-local exit that abandons whatever was in
+/// progress and runs `close_files_and_terminate` without `final_cleanup`.
+///
+/// The variants are the three sites that reach it through the error channel.
+/// Each names what tex.web has *already printed* by the time it jumps, so a
+/// caller propagating one must not print a second report for it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JumpOut {
+    /// §82's `error_count=100`, after its
+    /// `(That makes 100 errors; please try again.)` notice.
+    TooManyErrors,
+    /// §93's `fatal_error(s)`, reached from §71's `term_input` when §83's
+    /// dialog prompts a terminal that has no line left. `help` is §93's `s`,
+    /// the single help line its `Emergency stop` report carries.
+    EmergencyStop { help: &'static str },
+    /// §84's `X`, which prints nothing at all on its way out. `interaction`
+    /// is already `scroll_mode` when this is returned.
+    Quit,
+}
+
+/// The control-flow consequence of completing tex.web §82's `error`.
+///
+/// `#[must_use]` because the whole point of the value is the branch it
+/// forces: §82's `exit` and its `jump_out` are not interchangeable, and a
+/// dropped verdict silently turns the second into the first. That is what
+/// left 55 of Umber's 58 error sites unable to end a job (`umber2-er8c`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "§82's `jump_out` branch must be propagated, not dropped"]
 pub enum ErrorOutcome {
     Continue,
-    FatalErrorLimit,
+    JumpOut(JumpOut),
+}
+
+impl ErrorOutcome {
+    /// Splits §82's `exit` from its `jump_out` so a caller can write
+    /// `report.error().jump_out()?` and let `?` carry the fatal verdict into
+    /// its own error type.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JumpOut`] when tex.web would leave through §81's
+    /// non-local `goto` rather than fall out of `error`.
+    pub const fn jump_out(self) -> Result<(), JumpOut> {
+        match self {
+            Self::Continue => Ok(()),
+            Self::JumpOut(jump) => Err(jump),
+        }
+    }
 }
 
 impl<'a> ErrorReport<'a> {
@@ -460,18 +507,25 @@ impl<'a> ErrorReport<'a> {
             .error_channel_mut()
             .record_error_history();
         self.printer.print_char('.');
-        if let Some(context) = self.context.take() {
-            self.printer.print(&context);
+        // §82 prints `show_context` once here, and §93's `succumb` prints it
+        // again from the nested `error` of an `Emergency stop` raised inside
+        // the dialog below, so the rendering outlives this display.
+        let context = self.context.take();
+        if let Some(context) = &context {
+            self.printer.print(context);
         }
-        // A terminal that cannot answer takes the scrolled tail rather than
-        // §83's dialog: §75's `error_stop_mode` presumes an interactive
-        // terminal, and §71's response to one at end of file is `fatal_error`,
-        // which this layer cannot perform.
-        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop
-            && self.printer.universe.world().terminal_line_available()
-        {
-            self.users_advice();
-            return ErrorOutcome::Continue;
+        // §82: `if interaction=error_stop_mode then <Get user's advice and
+        // return>`. There is no second conjunct. Umber used to require a
+        // terminal line to be available too, which made an errorstop job with
+        // an exhausted terminal fall through to the scrolled tail -- counting
+        // an error tex.web does not count, printing help tex.web does not
+        // print, and continuing past the point tex.web ends the job
+        // (`umber2-er8c`).
+        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop {
+            return match self.users_advice(context.as_deref()) {
+                Some(jump) => ErrorOutcome::JumpOut(jump),
+                None => ErrorOutcome::Continue,
+            };
         }
         let error_count = self
             .printer
@@ -487,7 +541,7 @@ impl<'a> ErrorReport<'a> {
                 .world_mut()
                 .error_channel_mut()
                 .record_fatal_history();
-            return ErrorOutcome::FatalErrorLimit;
+            return ErrorOutcome::JumpOut(JumpOut::TooManyErrors);
         }
         self.help_on_transcript();
         ErrorOutcome::Continue
@@ -517,16 +571,18 @@ impl<'a> ErrorReport<'a> {
 
     /// tex.web §83's `<Get user's advice and return>` over the subset of
     /// §84's options that need no input stack.
-    fn users_advice(&mut self) {
+    ///
+    /// `context` is §82's already-rendered `show_context` display, kept so
+    /// that an `Emergency stop` raised here can show the same stack §82 just
+    /// showed, which is what tex.web's second `show_context` inside
+    /// `succumb`'s nested `error` produces.
+    ///
+    /// Returns §81's `jump_out` when the dialog ends the job rather than
+    /// returning to `error`'s caller.
+    fn users_advice(&mut self, context: Option<&str>) -> Option<JumpOut> {
         loop {
             if self.printer.universe.interaction_mode() != InteractionMode::ErrorStop {
-                return;
-            }
-            // §71's `term_input` ends the job with `fatal_error` at end of
-            // terminal input; a terminal that has stopped answering ends the
-            // dialog instead.
-            if !self.printer.state().world().terminal_line_available() {
-                return;
+                return None;
             }
             // §330's `clear_for_error_prompt`. Its `clear_terminal` flushes
             // pending terminal input, which Umber's line-oriented terminal
@@ -535,32 +591,103 @@ impl<'a> ErrorReport<'a> {
             // from the prompt.
             self.printer.print_ln();
             self.printer.print("? ");
+            // §71's `term_input`: `if not input_ln(term_in,true) then
+            // fatal_error("End of file on the terminal!")`.
             let Some(line) = self.terminal_input() else {
-                return;
+                return Some(self.fatal_error("End of file on the terminal!", context));
             };
-            let Some(code) = line.bytes().next().map(|byte| byte.to_ascii_uppercase()) else {
-                return;
-            };
+            let code = line.bytes().next().map(|byte| byte.to_ascii_uppercase())?;
             match code {
                 // §89's `<Print the help information and goto continue>`.
                 b'H' => self.show_help(),
                 // §86's `<Change the interaction level and return>`.
                 b'Q' | b'R' | b'S' => {
                     self.change_interaction(code);
-                    return;
+                    return None;
                 }
-                // §84's `X` ends the job through `jump_out`, which this layer
-                // cannot do; the interaction change it makes first is real.
+                // §84's `X`: `interaction:=scroll_mode; jump_out`. It prints
+                // nothing on the way out.
                 b'X' => {
                     self.printer
                         .universe
                         .set_interaction_mode(InteractionMode::Scroll);
-                    return;
+                    return Some(JumpOut::Quit);
                 }
                 // §84's `othercases do_nothing`, then §85's menu.
                 _ => self.show_menu(),
             }
         }
+    }
+
+    /// tex.web §93's `fatal_error(s)`, raised from inside §83's dialog:
+    ///
+    ///   normalize_selector; print_err("Emergency stop"); help1(s); succumb;
+    fn fatal_error(&mut self, help: &'static str, context: Option<&str>) -> JumpOut {
+        // §72's `normalize_selector`. `log_opened` is constantly true here
+        // (see this module's header), so this only re-derives the selector
+        // from the interaction mode still in force.
+        let selector = Selector::for_interaction(self.printer.universe.interaction_mode());
+        self.printer.set_selector(selector);
+        self.printer.print_nl("! ").print("Emergency stop");
+        self.help = vec![help.to_owned()];
+        self.err_help = None;
+        self.succumb_with_context(context);
+        JumpOut::EmergencyStop { help }
+    }
+
+    /// tex.web §93's `succumb`, completing a report that `fatal_error`,
+    /// `overflow`, or `confusion` has already composed:
+    ///
+    ///   if interaction=error_stop_mode then interaction:=scroll_mode;
+    ///   if log_opened then error; history:=fatal_error_stop; jump_out
+    ///
+    /// The nested `error` is what puts a second `show_context` display and
+    /// the transcript-only help line in the transcript. Dropping to scroll
+    /// mode *first* is what keeps that nested `error` from re-entering §83's
+    /// dialog and prompting a user the job is in the middle of abandoning.
+    ///
+    /// There is no return value because there is no branch: `succumb` always
+    /// reaches §81's `jump_out`. The caller already knows which terminal
+    /// state it is raising and names it in its own error type.
+    pub fn succumb(mut self) {
+        let context = self.context.take();
+        self.succumb_with_context(context.as_deref());
+    }
+
+    fn succumb_with_context(&mut self, context: Option<&str>) {
+        // §93: `if interaction=error_stop_mode then interaction:=scroll_mode`.
+        // Only from errorstop -- a batch or nonstop job keeps the mode it was
+        // given, which is what §1335's own note then branches on.
+        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop {
+            self.printer
+                .universe
+                .set_interaction_mode(InteractionMode::Scroll);
+        }
+        self.printer
+            .universe
+            .world_mut()
+            .error_channel_mut()
+            .record_error_history();
+        self.printer.print_char('.');
+        if let Some(context) = context {
+            self.printer.print(context);
+        }
+        // §93 reaches `error` in scroll mode, so §82 takes its scrolled tail:
+        // `incr(error_count)` and §90's transcript-only help. Whether that
+        // increment happens to be the hundredth does not matter: both
+        // branches end the job here, and §93's own history wins below.
+        let _ = self
+            .printer
+            .universe
+            .world_mut()
+            .error_channel_mut()
+            .record_scrolled_error();
+        self.help_on_transcript();
+        self.printer
+            .universe
+            .world_mut()
+            .error_channel_mut()
+            .record_fatal_history();
     }
 
     /// tex.web §71's `term_input`, including its echo to the transcript.

@@ -126,7 +126,7 @@ fn afterassignment_slot_is_single_token_and_overwrites_previous() {
 
 #[test]
 fn group_mismatch_errors_use_tex_primary_text() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("}"));
 
@@ -135,7 +135,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect("extra right brace is reported and ignored");
     assert!(support::terminal_effect_text(&stores).contains("Too many }'s"));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
     let mut input = InputStack::new(MemoryInput::new("}"));
@@ -156,7 +156,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
     assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
     Executor::new()
@@ -164,7 +164,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect("extra endgroup is reported and ignored");
     assert!(support::terminal_effect_text(&stores).contains("Extra \\endgroup"));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));

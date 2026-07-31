@@ -322,7 +322,7 @@ impl CommandProcessor<'_> {
                     let context = self.command.output_open_context(&self.state);
                     let mut report = self.state.resume_error_report(deferred);
                     report.context(context);
-                    report.error();
+                    report.error().jump_out()?;
                     // §403 assigns `cur_cmd=left_brace` and increments
                     // `align_state` exactly as raw delivery of that synthetic
                     // brace would have done. The token itself is not pushed:
@@ -389,7 +389,9 @@ impl CommandProcessor<'_> {
                 // TeX82 §476 has already consumed both the parameter
                 // character and its follower when `t=#9`; it diagnoses and
                 // returns to `continue` without backing either token up.
-                self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::TooManyParameters);
+                self.report_macro_parameter_diagnostic(
+                    MacroParameterDiagnostic::TooManyParameters,
+                )?;
                 malformed_parameter = true;
                 continue;
             }
@@ -401,7 +403,7 @@ impl CommandProcessor<'_> {
             // `report_macro_parameter_diagnostic` below; this records only
             // the recovery identity.
             self.back_error(follower, NONCONSECUTIVE_PARAMETER_DIAGNOSTIC)?;
-            self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber);
+            self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
                 output.push(TracedTokenWord::pack(
@@ -543,7 +545,7 @@ impl CommandProcessor<'_> {
                 self.back_error(delivered, ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC)?;
                 self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },
-                );
+                )?;
                 output.push(hash);
                 continue;
             }
@@ -584,7 +586,10 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn report_macro_parameter_diagnostic(&mut self, diagnostic: MacroParameterDiagnostic) {
+    fn report_macro_parameter_diagnostic(
+        &mut self,
+        diagnostic: MacroParameterDiagnostic,
+    ) -> Result<(), CommandError> {
         observe!(
             self,
             CommandObservation::Diagnostic(DiagnosticRecord {
@@ -615,7 +620,7 @@ impl CommandProcessor<'_> {
                         "Type `1' to delete what you did use.",
                     ])
                     .context(context);
-                report.error();
+                report.error().jump_out()?;
             }
             MacroParameterDiagnostic::TooManyParameters => {
                 let mut report = self.state.print_err("You already have nine parameters");
@@ -625,7 +630,7 @@ impl CommandProcessor<'_> {
                         "as well as the token that followed it.",
                     ])
                     .context(context);
-                report.error();
+                report.error().jump_out()?;
             }
             MacroParameterDiagnostic::IllegalReplacementNumber { target } => {
                 let rendered_target = target.map(|target| {
@@ -651,9 +656,10 @@ impl CommandProcessor<'_> {
                         "are all screwed up? I'm going to assume that you meant ##.",
                     ])
                     .context(context);
-                report.error();
+                report.error().jump_out()?;
             }
         }
+        Ok(())
     }
 
     /// Splices a token-list result of `\the` into the builder directly.

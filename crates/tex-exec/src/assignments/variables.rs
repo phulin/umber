@@ -196,7 +196,7 @@ pub(super) fn execute_char_def(
                 255,
                 "Bad character code",
                 "A character number must be between 0 and 255.",
-            );
+            )?;
             let ch = char::from_u32(value as u32).expect("0..=255 is Unicode scalar");
             Meaning::CharGiven(ch)
         }
@@ -208,7 +208,7 @@ pub(super) fn execute_char_def(
                 32_767,
                 "Bad mathchar",
                 "A mathchar number must be between 0 and 32767.",
-            );
+            )?;
             Meaning::MathCharGiven(value as u16)
         }
         _ => unreachable!("caller restricts primitive"),
@@ -234,17 +234,17 @@ fn recover_restricted_code(
     maximum: i32,
     message: &str,
     help: &str,
-) -> i32 {
+) -> Result<i32, ExecError> {
     if (0..=maximum).contains(&value) {
-        return value;
+        return Ok(value);
     }
     crate::error_report::report_input_error(
         input,
         stores,
         &format!("{message} ({value})"),
         &[help, "I changed this one to zero."],
-    );
-    0
+    )?;
+    Ok(0)
 }
 
 pub(super) fn execute_arithmetic(
@@ -375,7 +375,7 @@ fn set_font_dimen_recovering(
                     "To increase the number of font parameters, you must",
                     "use \\fontdimen immediately after the \\font is loaded.",
                 ],
-            );
+            )?;
             Ok(())
         }
         Err(tex_state::FontParameterError::NumberOutOfRange { number, maximum }) => {

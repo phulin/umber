@@ -29,7 +29,7 @@ fn terminal_text(stores: &Universe) -> String {
 
 #[test]
 fn display_alignment_finish_assignments_delimiters_and_spacing() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\count0=7 $$x"));
     let mut execution = crate::ExecutionContext::new("texput");
@@ -249,7 +249,7 @@ fn tex82_math_entry_display_probe_and_eqno_mode_matrix() {
 
 #[test]
 fn canonical_math_exit_display_eqno_boundary_matrix() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut nest = horizontal_nest(Mode::Horizontal);
     let mut opening = InputStack::new(MemoryInput::new(""));
     let mut execution = crate::ExecutionContext::new("texput");
@@ -274,7 +274,7 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
     );
     assert_eq!(nest.current_list().space_factor(), 1000);
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut display = horizontal_nest(Mode::Horizontal);
     let mut opening = InputStack::new(MemoryInput::new("$"));
     let mut execution = crate::ExecutionContext::new("texput");
@@ -301,7 +301,7 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
         Some(Token::Char { ch: 'x', .. })
     ));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut display = horizontal_nest(Mode::Horizontal);
     let mut opening = InputStack::new(MemoryInput::new("$"));
     let mut execution = crate::ExecutionContext::new("texput");
@@ -328,7 +328,7 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
         Some(Token::Char { ch: 'z', .. })
     ));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut display = horizontal_nest(Mode::Horizontal);
     let mut opening = InputStack::new(MemoryInput::new("$"));
     let mut execution = crate::ExecutionContext::new("texput");
@@ -348,7 +348,7 @@ fn canonical_math_exit_display_eqno_boundary_matrix() {
         Some(Token::Char { ch: 'r', .. })
     ));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut inline = horizontal_nest(Mode::Horizontal);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut execution = crate::ExecutionContext::new("texput");

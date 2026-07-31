@@ -9,7 +9,7 @@ fn sp(raw: i32) -> Scaled {
 
 #[test]
 fn tex82_vsplit_marks_remainder_and_trivial_case_matrix() {
-    let mut stores = Universe::new();
+    let mut stores = crate::test_harness::universe();
     assert!(
         split_vbox_register(&mut stores, 0, sp(10))
             .expect("void split")

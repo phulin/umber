@@ -814,6 +814,15 @@ impl ExecError {
     }
 }
 
+impl From<tex_state::print::JumpOut> for ExecError {
+    /// Lets an executor site write `report.error().jump_out()?` and have `?`
+    /// carry tex.web §81's non-local exit up to the driver, which is the one
+    /// frame that corresponds to `end_of_TEX`.
+    fn from(jump: tex_state::print::JumpOut) -> Self {
+        Self::Fatal(jump.into())
+    }
+}
+
 impl From<ExpandError> for ExecError {
     fn from(value: ExpandError) -> Self {
         match value {

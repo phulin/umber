@@ -190,7 +190,7 @@ fn pass_text_uses_get_next_and_skips_nested_conditionals() {
     let condition = command.conditions.push(ConditionalKind::IfFalse, 1);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let nested_if = install(&mut universe, "nestedif", ExpandablePrimitive::IfTrue);
     let nested_fi = install(&mut universe, "nestedfi", ExpandablePrimitive::Fi);
     let outer_fi = install(&mut universe, "outerfi", ExpandablePrimitive::Fi);
@@ -234,7 +234,7 @@ fn pass_text_only_accepts_or_when_the_frame_limit_allows_it() {
     let condition = command.conditions.push(ConditionalKind::IfCase, 1);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Or));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     push(&mut command, vec![or]);
     let mut capabilities = CommandHostCapabilities::default();
@@ -316,7 +316,7 @@ fn boxed_with_dimensions(
 fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -342,7 +342,7 @@ fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
 fn ifx_reads_unexpanded_operands_through_get_token() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -371,7 +371,7 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
 fn true_ifx_fi_observes_branch_before_popping_its_frame() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -429,7 +429,7 @@ fn true_ifx_fi_observes_branch_before_popping_its_frame() {
 fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -484,7 +484,7 @@ fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
 fn character_and_category_tests_normalize_non_character_operands() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
     let relax = universe.intern("relax").symbol();
@@ -521,7 +521,7 @@ fn character_and_category_tests_normalize_non_character_operands() {
 fn skipped_text_recovers_extra_delimiters_deterministically() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
@@ -554,7 +554,7 @@ fn skipped_text_recovers_extra_delimiters_deterministically() {
 fn extra_delimiter_is_observed_at_its_raw_delivery() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     push(&mut command, vec![or]);
     let mut capabilities = CommandHostCapabilities::default();
@@ -590,7 +590,7 @@ fn extra_delimiter_is_observed_at_its_raw_delivery() {
 fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -616,7 +616,7 @@ fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
 fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -659,7 +659,7 @@ fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
 fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_num = install(&mut universe, "ifnum", ExpandablePrimitive::IfNum);
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -703,7 +703,7 @@ fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
 fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -759,7 +759,7 @@ fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
 fn ifdim_uses_typed_units_and_internal_dimensions() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -796,7 +796,7 @@ fn ifdim_scans_box_dimensions_as_internal_dimensions() {
 
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -847,7 +847,7 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
 
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -896,7 +896,7 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
 fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_hmode = install(&mut universe, "ifhmode", ExpandablePrimitive::IfHMode);
     let if_inner = install(&mut universe, "ifinner", ExpandablePrimitive::IfInner);
     let if_void = install(&mut universe, "ifvoid", ExpandablePrimitive::IfVoid);
@@ -955,7 +955,7 @@ fn mode_and_box_predicates_use_host_and_aggregate_queries() {
 fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -1018,7 +1018,7 @@ fn active_macro(universe: &mut Universe, ch: char) -> Token {
 fn noexpand_before_an_active_character_compares_as_that_character() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
     let no_expand = install(&mut universe, "noexpand", ExpandablePrimitive::NoExpand);
@@ -1098,7 +1098,7 @@ fn noexpand_before_an_active_character_compares_as_that_character() {
 fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_eof = install(&mut universe, "ifeof", ExpandablePrimitive::IfEof);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -1154,7 +1154,7 @@ fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
 fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
@@ -1248,7 +1248,7 @@ fn tex82_predicate_aliases_preserve_classification() {
 
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let first = install(&mut universe, "truth-alias-a", ExpandablePrimitive::IfTrue);
     let second = install(&mut universe, "truth-alias-b", ExpandablePrimitive::IfTrue);
     universe
@@ -1356,7 +1356,7 @@ fn pass_text_does_not_expand_or_execute_skipped_tokens() {
     let condition = command.conditions.push(ConditionalKind::IfFalse, 11);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let nested_if = install(&mut universe, "skip-nested-if", ExpandablePrimitive::IfTrue);
     let nested_fi = install(&mut universe, "skip-nested-fi", ExpandablePrimitive::Fi);
     let outer_fi = install(&mut universe, "skip-outer-fi", ExpandablePrimitive::Fi);
@@ -1409,7 +1409,7 @@ fn pass_text_does_not_expand_or_execute_skipped_tokens() {
 fn ifcase_zero_negative_else_and_fi_boundaries() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let ifcase = install(
         &mut universe,
         "case-matrix-ifcase",
@@ -1481,7 +1481,7 @@ fn conditional_delimiter_legality_matrix() {
     let frame = command.conditions.push(ConditionalKind::IfTrue, 7);
     assert!(command.conditions.change_if_limit(frame, IfLimit::Else));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "legality-or", ExpandablePrimitive::Or);
     let otherwise = install(&mut universe, "legality-else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "legality-fi", ExpandablePrimitive::Fi);
@@ -1510,7 +1510,7 @@ fn conditional_delimiter_legality_matrix() {
 fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let hbox = boxed(&mut universe, false);
     let vbox = boxed(&mut universe, true);
     universe.set_box_reg(1, hbox);
@@ -1704,7 +1704,7 @@ fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
 fn ifnum_ifdim_relation_and_missing_equals_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     for (index, expression) in ["1<2", "2=2", "3>2"].into_iter().enumerate() {
         append_boolean_case(
@@ -1762,7 +1762,7 @@ fn ifnum_ifdim_relation_and_missing_equals_matrix() {
 fn ifodd_signed_parity_and_scanner_recovery_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     for (index, value) in ["0", "2", "-2", "1", "-1"].into_iter().enumerate() {
         append_boolean_case(
@@ -1833,7 +1833,7 @@ fn box_with_content(
 fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let hbox_empty = box_with_content(&mut universe, false, false);
     let hbox_nonempty = box_with_content(&mut universe, false, true);
     let vbox_empty = box_with_content(&mut universe, true, false);
@@ -1902,7 +1902,7 @@ fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
 fn if_ifcat_and_ifx_complete_operand_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let if_true = install(&mut universe, "operand-iftrue", ExpandablePrimitive::IfTrue);
     let if_false = install(
         &mut universe,
@@ -2018,7 +2018,7 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
 fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let undefined_symbol = universe.intern("ifdefined-undefined").symbol();
     let macro_operand = macro_token(
         &mut universe,
@@ -2065,7 +2065,7 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
     // already-normal scan has no synthetic normal-to-normal records.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     append_boolean_case(
         &mut universe,
@@ -2094,7 +2094,7 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
 fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let outer = macro_token(
         &mut universe,
         "ifdefined-outer",
@@ -2154,7 +2154,7 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
 fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let endcsname = install(
         &mut universe,
         "ifcsname-end",
@@ -2217,7 +2217,7 @@ fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
 fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let relax = universe.intern("ifcsname-recovery-relax").symbol();
     universe.set_meaning(relax, Meaning::Relax);
     let endcsname = install(
@@ -2281,7 +2281,7 @@ fn etex_iffontchar_tests_metric_existence_and_unless_inverts_the_same_frame() {
 
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let iffontchar = install(&mut universe, "iffontchar", ExpandablePrimitive::IfFontChar);
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);

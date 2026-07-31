@@ -262,7 +262,7 @@ pub(super) fn scan_token_list_assignment(
                 "so that I will find a matching right brace soon.",
                 "(If you're confused by all this, try typing `I}' now.)",
             ],
-        );
+        )?;
         input.account_inserted_alignment_left_brace();
     }
     scan_balanced_text_after_open_group(input, stores)
@@ -325,7 +325,7 @@ fn scan_balanced_text_after_open_group(
                     "I'll try to recover; but if the error is serious,",
                     "you'd better type `E' or `X' now and fix your file.",
                 ],
-            );
+            )?;
             continue;
         }
         match token {

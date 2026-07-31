@@ -18,21 +18,25 @@ use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
 
 /// TeX82 §510's `<Terminate the current conditional and skip to \fi>` for an
 /// `\or`/`\else`/`\fi` that matches no live `\if`.
-pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) {
+pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) -> Result<(), ExecError> {
     let context = show_context(stores, stores.input_summary());
     crate::error_report::report_error(
         stores,
         &format!("Extra \\{name}"),
         &["I'm ignoring this; it doesn't match any \\if."],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// e-TeX's `\interactionmode` case of TeX82 §1243's `alter_integer`.
 ///
 /// The parenthesized value is §91's `int_error`, which prints it as part of
 /// the message line rather than as a second report.
-pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
+pub(crate) fn report_bad_interaction_mode(
+    stores: &mut Universe,
+    value: i32,
+) -> Result<(), ExecError> {
     let context = show_context(stores, stores.input_summary());
     crate::error_report::report_error(
         stores,
@@ -42,14 +46,20 @@ pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
             "3=errorstop. Proceed, and I'll ignore this case.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// [`report_illegal_case_with_context`] for a caller whose input stack is the
 /// gullet's rather than the canonical command core's.
-pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
+pub(crate) fn report_illegal_case(
+    stores: &mut Universe,
+    token: Token,
+    mode: Mode,
+) -> Result<(), ExecError> {
     let context = show_context(stores, stores.input_summary());
-    report_illegal_case_with_context(stores, token, mode, Some(context));
+    report_illegal_case_with_context(stores, token, mode, Some(context))?;
+    Ok(())
 }
 
 /// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
@@ -58,7 +68,7 @@ pub(crate) fn report_illegal_case_with_context(
     token: Token,
     mode: Mode,
     context: Option<String>,
-) -> tex_state::print::ErrorOutcome {
+) -> Result<(), ExecError> {
     let command = tex_command::command_token_text(&mut stores.command_context(), token);
     let mode = mode_name(mode);
     // TeX82 §§82 and 1111: `report_illegal_case` installs help and then
@@ -75,7 +85,7 @@ pub(crate) fn report_illegal_case_with_context(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error()
+    Ok(report.error().jump_out()?)
 }
 
 const fn mode_name(mode: Mode) -> &'static str {
@@ -99,7 +109,10 @@ use crate::{Mode, ModeNest};
 /// A caller that cannot supply that display passes `None` rather than an
 /// empty string, so the report omits the context instead of printing a blank
 /// one.
-pub(crate) fn report_undefined_control_sequence(stores: &mut Universe, context: Option<String>) {
+pub(crate) fn report_undefined_control_sequence(
+    stores: &mut Universe,
+    context: Option<String>,
+) -> Result<(), ExecError> {
     let mut report = stores.print_err("Undefined control sequence");
     report.help(&[
         "The control sequence at the end of the top line",
@@ -111,7 +124,8 @@ pub(crate) fn report_undefined_control_sequence(stores: &mut Universe, context: 
     if let Some(context) = context {
         report.context(context);
     }
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 /// [`report_undefined_control_sequence`] for a caller holding a live gullet
@@ -119,9 +133,10 @@ pub(crate) fn report_undefined_control_sequence(stores: &mut Universe, context: 
 pub(crate) fn report_undefined_control_sequence_in_input(
     input: &InputStack,
     stores: &mut Universe,
-) {
+) -> Result<(), ExecError> {
     let context = show_context(stores, &input.summary());
-    report_undefined_control_sequence(stores, Some(context));
+    report_undefined_control_sequence(stores, Some(context))?;
+    Ok(())
 }
 
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
@@ -129,7 +144,7 @@ pub(crate) fn report_misplaced_alignment_delimiter(
     stores: &mut Universe,
     token: Token,
     context: Option<String>,
-) {
+) -> Result<(), ExecError> {
     let delimiter = tex_command::command_token_text(&mut stores.command_context(), token);
     let tab_mark = matches!(
         token,
@@ -161,7 +176,8 @@ pub(crate) fn report_misplaced_alignment_delimiter(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
@@ -214,7 +230,7 @@ pub(crate) fn execute_showthe(
                 stores,
                 &format!("You can't use `{rendered}' after \\the"),
                 &["I'm forgetting what you said and using zero instead."],
-            );
+            )?;
             "0".to_owned()
         }
         Err(error) => return Err(error.into()),
@@ -329,7 +345,7 @@ pub(crate) fn execute_canonical_showgroups(
     stores: &mut Universe,
     diagnostic: &ShowGroupsDiagnostic,
     context: String,
-) {
+) -> Result<(), ExecError> {
     {
         let mut output = stores.begin_diagnostic();
         output.print_nl("").print_ln();
@@ -350,7 +366,8 @@ pub(crate) fn execute_canonical_showgroups(
         output.print_nl("### bottom level");
         output.end(true);
     }
-    complete_show(stores, true, Some(context));
+    complete_show(stores, true, Some(context))?;
+    Ok(())
 }
 
 pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
@@ -418,7 +435,11 @@ fn if_type_text(if_type: u8) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showbox(stores: &mut Universe, index: u16, context: String) {
+pub(crate) fn execute_showbox(
+    stores: &mut Universe,
+    index: u16,
+    context: String,
+) -> Result<(), ExecError> {
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
@@ -434,7 +455,8 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16, context: String
     // `print_nl(""); print_ln`.
     diagnostic.print_nl(&text);
     diagnostic.end(true);
-    complete_show(stores, true, Some(context));
+    complete_show(stores, true, Some(context))?;
+    Ok(())
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -443,7 +465,11 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16, context: String
 /// Every `\show` family member ends here. `long` selects §1298, which only
 /// the two `begin_diagnostic` forms (`\showbox`, `\showlists`) fall through
 /// to; `\show` and `\showthe` `goto common_ending` and skip it.
-pub(crate) fn complete_show(stores: &mut Universe, long: bool, context: Option<String>) {
+pub(crate) fn complete_show(
+    stores: &mut Universe,
+    long: bool,
+    context: Option<String>,
+) -> Result<(), ExecError> {
     let tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
     let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
     if !interactive {
@@ -491,7 +517,8 @@ pub(crate) fn complete_show(stores: &mut Universe, long: bool, context: Option<S
             "lists on your terminal as well as in the transcript file.",
         ]);
     }
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 pub(crate) fn execute_message(
@@ -524,7 +551,11 @@ pub(crate) fn execute_message(
     Ok(())
 }
 
-pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest, context: String) {
+pub(crate) fn execute_showlists(
+    stores: &mut Universe,
+    nest: &ModeNest,
+    context: String,
+) -> Result<(), ExecError> {
     let mut text = String::new();
     let summary = nest.summary();
     for (index, level) in summary.levels().iter().enumerate().rev() {
@@ -604,7 +635,8 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest, context:
     diagnostic.print_nl("").print_ln();
     diagnostic.print(&text);
     diagnostic.end(true);
-    complete_show(stores, true, Some(context));
+    complete_show(stores, true, Some(context))?;
+    Ok(())
 }
 
 fn push_page_totals(stores: &Universe, text: &mut String) {
@@ -672,7 +704,7 @@ pub(crate) fn report_dimension_diagnostics(
 
 /// TeX82 §1004's `<Update the current page measurements with respect to the
 /// glue or kern specified by node p>`.
-pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) {
+pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
     // The page builder runs between commands, so §82's display comes from the
     // published summary rather than a live stack the caller could hand over.
     let context = show_context(stores, stores.input_summary());
@@ -686,18 +718,19 @@ pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) {
             "since the offensive shrinkability has been made finite.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// TeX82 §976's `<Update the current height and depth measurements with
 /// respect to a glue or kern node p>`.
-pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
+pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
         write_diagnostic(
             stores,
             "\nignored error: Infinite glue shrinkage found in box being split\n",
         );
-        return;
+        return Ok(());
     }
     let context = show_context(stores, stores.input_summary());
     crate::error_report::report_error(
@@ -710,11 +743,15 @@ pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
             "since the offensive shrinkability has been made finite.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 /// TeX82 §1009's `<Subtract the natural width of the insertion ...>`.
-pub(crate) fn report_insertion_skip_infinite_shrinkage(stores: &mut Universe, class: u16) {
+pub(crate) fn report_insertion_skip_infinite_shrinkage(
+    stores: &mut Universe,
+    class: u16,
+) -> Result<(), ExecError> {
     let context = show_context(stores, stores.input_summary());
     crate::error_report::report_error(
         stores,
@@ -725,7 +762,8 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage(stores: &mut Universe, cl
             "since the offensive shrinkability has been made finite.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 pub(crate) fn execute_change_case(

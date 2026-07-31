@@ -1034,6 +1034,58 @@ mod tests {
         }
     }
 
+    /// tex.web §82 ends *every* recoverable error with the same 100-error
+    /// branch, not just the handful of sites that happen to inspect it.
+    ///
+    /// `\insert255`, exercised by the test below, was one of only three call
+    /// sites in the engine that read `error`'s verdict; the other 55 dropped
+    /// it, so a document raising a hundred of any other error ran straight
+    /// past the point tex.web stops (`umber2-er8c`). §370's undefined control
+    /// sequence is one of those 55 and reaches the limit through
+    /// `diagnostics::report_undefined_control_sequence`, which now propagates
+    /// §81's `jump_out` like the rest.
+    #[test]
+    fn the_hundredth_undefined_control_sequence_ends_the_job() {
+        // Five past the limit: §82 stops at the hundredth, so reaching the
+        // end of this source at all would mean the branch never fired.
+        let mut source = String::new();
+        for index in 0..105 {
+            source.push_str(&format!("\\undefined{index}"));
+        }
+        source.push_str("\\end");
+        let (mut stores, _) = prepared_session(b"");
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .set_fuel_limit(100_000)
+            .expect("bounded fatal microfixture fuel");
+        session
+            .register_authored_root("undefined.tex", Arc::from(source.into_bytes()))
+            .expect("root registers");
+
+        session
+            .run_with_observer(
+                &mut WorldHost,
+                &mut Vec::new(),
+                &mut ObservationRecorder::default(),
+            )
+            .expect("TeX fatal stop reaches engine termination");
+
+        assert_eq!(
+            session.control.fatal_error(),
+            Some(tex_command::FatalError::TooManyErrors)
+        );
+        assert_eq!(
+            session.stores().world().error_channel().error_count(),
+            100,
+            "§82 stops at its hundredth error, not later"
+        );
+        assert_eq!(
+            session.stores().world().error_channel().history(),
+            tex_state::print::ErrorHistory::FatalErrorStop
+        );
+    }
+
     #[test]
     fn fatal_completion_terminates_once_after_diagnostic_with_fatal_history() {
         let mut source = String::from("\\setbox0=\\vbox{");

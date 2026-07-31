@@ -23,7 +23,7 @@ pub(super) fn execute_noalign(
                 context: "\\noalign group",
             })?;
         if !super::support::is_begin_group(stores, opener) {
-            report_missing_left_brace(opener, input, stores);
+            report_missing_left_brace(opener, input, stores)?;
         }
         stores.enter_group_with_kind(tex_state::GroupKind::NoAlign);
         // TeX scans \noalign in the alignment's own outer list. In
@@ -79,7 +79,11 @@ fn scan_noalign_group(
 /// §403 reports with `back_error` and then merely *pretends* the offending
 /// token was a `{`; it never inserts one. Backing the token up is therefore
 /// the whole recovery, and §314 shows it as its own `<to be read again>` line.
-fn report_missing_left_brace(opener: Token, input: &mut InputStack, stores: &mut Universe) {
+fn report_missing_left_brace(
+    opener: Token,
+    input: &mut InputStack,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let opener = TracedTokenWord::pack(opener, OriginId::UNKNOWN);
     crate::error_report::back_error(
         input,
@@ -92,5 +96,6 @@ fn report_missing_left_brace(opener: Token, input: &mut InputStack, stores: &mut
             "so that I will find a matching right brace soon.",
             "(If you're confused by all this, try typing `I}' now.)",
         ],
-    );
+    )?;
+    Ok(())
 }

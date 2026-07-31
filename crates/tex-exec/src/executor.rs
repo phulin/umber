@@ -32,17 +32,17 @@ fn report_recoverable_expansion_diagnostics(
     input: &InputStack,
     execution: &mut crate::ExecutionContext<'_>,
     stores: &mut Universe,
-) {
+) -> Result<(), ExecError> {
     for diagnostic in execution.take_recoverable_diagnostics() {
         match diagnostic {
             tex_expand::RecoverableExpansionDiagnostic::UndefinedControlSequence { .. } => {
-                report_undefined_control_sequence(input, stores);
+                report_undefined_control_sequence(input, stores)?;
             }
             tex_expand::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
                 macro_name,
                 ..
             } => {
-                report_macro_does_not_match(input, stores, &macro_name);
+                report_macro_does_not_match(input, stores, &macro_name)?;
             }
             tex_expand::RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
                 macro_name,
@@ -57,7 +57,7 @@ fn report_recoverable_expansion_diagnostics(
                     stores,
                     &format!("File ended while scanning use of {macro_name}"),
                     RUNAWAY_RECOVERY_HELP,
-                );
+                )?;
             }
             tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
                 // §428's `Complain that \the can't do this; give zero result`.
@@ -67,7 +67,7 @@ fn report_recoverable_expansion_diagnostics(
                     stores,
                     &format!("You can't use `{token}' after \\the"),
                     &["I'm forgetting what you said and using zero instead."],
-                );
+                )?;
             }
             tex_expand::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { .. } => {
                 // §403's `scan_toks`. tex.web reports this with `back_error`;
@@ -83,10 +83,11 @@ fn report_recoverable_expansion_diagnostics(
                         "so that I will find a matching right brace soon.",
                         "(If you're confused by all this, try typing `I}' now.)",
                     ],
-                );
+                )?;
             }
         }
     }
+    Ok(())
 }
 
 /// §338's and §396's shared advice for a list that ran past its closing brace.
@@ -102,12 +103,20 @@ const RUNAWAY_RECOVERY_HELP: &[&str] = &[
 /// The message deliberately does not name the control sequence: §82's context
 /// display ends with it, which is what the help text means by "the control
 /// sequence at the end of the top line".
-pub(crate) fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
-    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores);
+pub(crate) fn report_undefined_control_sequence(
+    input: &InputStack,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores)?;
+    Ok(())
 }
 
 /// tex.web §398's `Report an improper use of the macro and abort`.
-fn report_macro_does_not_match(input: &InputStack, stores: &mut Universe, macro_name: &str) {
+fn report_macro_does_not_match(
+    input: &InputStack,
+    stores: &mut Universe,
+    macro_name: &str,
+) -> Result<(), ExecError> {
     report_input_error(
         input,
         stores,
@@ -118,7 +127,8 @@ fn report_macro_does_not_match(input: &InputStack, stores: &mut Universe, macro_
             "made up of letters only. The macro here has not been",
             "followed by the required stuff, so I'm ignoring it.",
         ],
-    );
+    )?;
+    Ok(())
 }
 
 /// tex.web §396's `Report a runaway argument and abort`.
@@ -130,7 +140,7 @@ fn report_paragraph_ended_before_complete(
     stores: &mut Universe,
     macro_name: &str,
     terminator: TracedTokenWord,
-) {
+) -> Result<(), ExecError> {
     report_runaway(stores, "argument", &[]);
     back_error(
         input,
@@ -142,7 +152,8 @@ fn report_paragraph_ended_before_complete(
             "control sequence to too much text. How can we recover?",
             "My plan is to forget the whole thing and hope for the best.",
         ],
-    );
+    )?;
+    Ok(())
 }
 
 /// tex.web §338's `Tell the user what has run away`, reached from §336's
@@ -157,7 +168,7 @@ fn report_forbidden_outer_token(
     stores: &mut Universe,
     macro_name: &str,
     outer: TracedTokenWord,
-) {
+) -> Result<(), ExecError> {
     report_runaway(stores, "argument", &[]);
     back_error(
         input,
@@ -165,7 +176,8 @@ fn report_forbidden_outer_token(
         outer,
         &format!("Forbidden control sequence found while scanning use of {macro_name}"),
         RUNAWAY_RECOVERY_HELP,
-    );
+    )?;
+    Ok(())
 }
 
 /// tex.web §306's `runaway`.
@@ -2031,7 +2043,7 @@ where
         stores.set_current_input_line(input.current_source_frame().map_or(0, |frame| {
             i32::try_from(frame.line_number()).unwrap_or(i32::MAX)
         }));
-        report_recoverable_expansion_diagnostics(input, execution, stores);
+        report_recoverable_expansion_diagnostics(input, execution, stores)?;
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
         }
@@ -2197,7 +2209,7 @@ where
                 Ok(token) => token,
                 Err(tex_expand::ExpandError::Captured { error, site }) => match *error {
                     tex_expand::ExpandError::UndefinedControlSequence { .. } => {
-                        report_undefined_control_sequence(input, stores);
+                        report_undefined_control_sequence(input, stores)?;
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
@@ -2205,7 +2217,7 @@ where
                             macro_name, ..
                         },
                     ) => {
-                        report_macro_does_not_match(input, stores, &macro_name);
+                        report_macro_does_not_match(input, stores, &macro_name)?;
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
@@ -2214,7 +2226,12 @@ where
                             context,
                         },
                     ) => {
-                        report_paragraph_ended_before_complete(input, stores, &macro_name, context);
+                        report_paragraph_ended_before_complete(
+                            input,
+                            stores,
+                            &macro_name,
+                            context,
+                        )?;
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
@@ -2223,11 +2240,11 @@ where
                             context,
                         },
                     ) => {
-                        report_forbidden_outer_token(input, stores, &macro_name, context);
+                        report_forbidden_outer_token(input, stores, &macro_name, context)?;
                         continue;
                     }
                     tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
-                        crate::diagnostics::report_extra_conditional(stores, name);
+                        crate::diagnostics::report_extra_conditional(stores, name)?;
                         continue;
                     }
                     error => {
@@ -2245,11 +2262,11 @@ where
                     // report an error and otherwise behave like a consumed
                     // relax token. Scanner-owned expansion errors still
                     // propagate from their scanner call sites.
-                    report_undefined_control_sequence(input, stores);
+                    report_undefined_control_sequence(input, stores)?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
-                    crate::diagnostics::report_extra_conditional(stores, name);
+                    crate::diagnostics::report_extra_conditional(stores, name)?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::Lex(tex_lex::LexError::InvalidCharacter {
@@ -2267,13 +2284,13 @@ where
                             "A funny symbol that I can't read has just been input.",
                             "Continue, and I'll forget that it ever happened.",
                         ],
-                    );
+                    )?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
                     tex_expand::args::MacroCallError::DoesNotMatchDefinition { macro_name, .. },
                 )) => {
-                    report_macro_does_not_match(input, stores, &macro_name);
+                    report_macro_does_not_match(input, stores, &macro_name)?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
@@ -2282,7 +2299,7 @@ where
                         context,
                     },
                 )) => {
-                    report_paragraph_ended_before_complete(input, stores, &macro_name, context);
+                    report_paragraph_ended_before_complete(input, stores, &macro_name, context)?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
@@ -2291,7 +2308,7 @@ where
                         context,
                     },
                 )) => {
-                    report_forbidden_outer_token(input, stores, &macro_name, context);
+                    report_forbidden_outer_token(input, stores, &macro_name, context)?;
                     continue;
                 }
                 Err(err) => {
@@ -2323,7 +2340,7 @@ where
                 Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
                     ..
                 })) => {
-                    report_undefined_control_sequence(input, stores);
+                    report_undefined_control_sequence(input, stores)?;
                     continue;
                 }
                 Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
@@ -2332,7 +2349,7 @@ where
                         tex_expand::ExpandError::UndefinedControlSequence { .. }
                     ) =>
                 {
-                    report_undefined_control_sequence(input, stores);
+                    report_undefined_control_sequence(input, stores)?;
                     continue;
                 }
                 Err(ExecError::UnsupportedAssignmentTarget) => {
@@ -2353,7 +2370,7 @@ where
                         tex_state::meaning::ExpandablePrimitive::Or => "or",
                         _ => unreachable!("error variant is restricted to conditional controls"),
                     };
-                    crate::diagnostics::report_extra_conditional(stores, name);
+                    crate::diagnostics::report_extra_conditional(stores, name)?;
                     continue;
                 }
                 Err(

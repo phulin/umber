@@ -82,7 +82,7 @@ fn insert_inaccessible_control_sequence(
     input: &mut InputStack,
     stores: &mut Universe,
     traced: TracedTokenWord,
-) {
+) -> Result<(), ExecError> {
     let inaccessible = Token::Cs(stores.intern("inaccessible").symbol());
     let origin = stores.inserted_origin(
         InsertedOriginKind::ErrorRecovery,
@@ -96,7 +96,8 @@ fn insert_inaccessible_control_sequence(
         [TracedTokenWord::pack(inaccessible, origin)],
         "Missing control sequence inserted",
         &MISSING_CONTROL_SEQUENCE_HELP,
-    );
+    )?;
+    Ok(())
 }
 
 pub(super) fn scan_definition_target(
@@ -118,7 +119,7 @@ pub(super) fn scan_definition_target(
             // scan reads, so it, not a directly returned symbol, is the
             // target -- and the token that provoked the error stays queued
             // behind it exactly as TeX leaves it.
-            insert_inaccessible_control_sequence(input, stores, traced);
+            insert_inaccessible_control_sequence(input, stores, traced)?;
             scan_definition_target(input, stores, context)
         }
     }
@@ -151,7 +152,7 @@ pub(super) fn scan_traced_definition_target(
             // `get_r_token` recovery used by macro definitions: restarting
             // the scan is what gives the target the inserted token's own
             // origin rather than a synthesized copy of it.
-            insert_inaccessible_control_sequence(input, stores, traced);
+            insert_inaccessible_control_sequence(input, stores, traced)?;
             return scan_traced_definition_target(input, stores, context);
         }
     };

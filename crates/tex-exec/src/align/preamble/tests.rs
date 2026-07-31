@@ -16,7 +16,7 @@ fn context_token() -> TracedTokenWord {
 }
 
 fn scan(primitive: UnexpandablePrimitive, source: &str) -> (Universe, AlignState) {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();

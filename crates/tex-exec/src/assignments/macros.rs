@@ -87,7 +87,7 @@ pub(super) fn execute_def(
                         "spelling (e.g., `I\\hbox'). Otherwise just continue,",
                         "and I'll forget about whatever was undefined.",
                     ],
-                );
+                )?;
             }
             // TeX.web §479 names `warning_index`, which for a macro
             // definition is the control sequence being defined.
@@ -102,7 +102,7 @@ pub(super) fn execute_def(
                         "Or maybe a } was forgotten somewhere earlier, and things",
                         "are all screwed up? I'm going to assume that you meant ##.",
                     ],
-                );
+                )?;
             }
         }
     }

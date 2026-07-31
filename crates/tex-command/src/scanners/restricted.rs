@@ -130,12 +130,8 @@ impl CommandProcessor<'_> {
             report
                 .help(&[class.help(), "I changed this one to zero."])
                 .context(context);
-            // §82's hundredth error is `history:=fatal_error_stop; jump_out`,
-            // which never returns to the interrupted scan.
-            if let tex_state::print::ErrorOutcome::FatalErrorLimit = report.int_error(scanned.value)
-            {
-                return Err(CommandError::Fatal(crate::FatalError::TooManyErrors));
-            }
+            // §81's `jump_out` never returns to the interrupted scan.
+            report.int_error(scanned.value).jump_out()?;
         }
         Ok(RestrictedInteger {
             value: if accepted { scanned.value } else { 0 },

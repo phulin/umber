@@ -36,7 +36,7 @@ pub(super) fn scan_vsplit_node(
                 "I'm working on `\\vsplit<box number> to <dimen>';",
                 "will look for the <dimen> next.",
             ],
-        );
+        )?;
     }
     let height = scan_scaled(input, stores, execution, context)?;
     split_vbox_register(stores, index, height)
@@ -77,7 +77,7 @@ pub(crate) fn split_vbox_register(
                 "I can't split such a box, so I'll leave it alone.",
             ])
             .context(context);
-        report.error();
+        report.error().jump_out()?;
         return Ok(None);
     };
 
@@ -85,7 +85,7 @@ pub(crate) fn split_vbox_register(
     let mut split_nodes = stores.nodes(source_box.children).to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
-    normalize_split_infinite_shrink(stores, &mut split_nodes, &split.infinite_shrink_glue);
+    normalize_split_infinite_shrink(stores, &mut split_nodes, &split.infinite_shrink_glue)?;
     let remainder = match split.break_index {
         Some(index) => split_nodes.split_off(index),
         None => Vec::new(),
@@ -102,7 +102,11 @@ pub(crate) fn split_vbox_register(
     )))
 }
 
-fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], indices: &[usize]) {
+fn normalize_split_infinite_shrink(
+    stores: &mut Universe,
+    nodes: &mut [Node],
+    indices: &[usize],
+) -> Result<(), ExecError> {
     for &index in indices {
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
             continue;
@@ -111,7 +115,7 @@ fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], in
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores);
+        diagnostics::report_split_infinite_shrinkage(stores)?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
@@ -119,6 +123,7 @@ fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], in
             leader: *leader,
         };
     }
+    Ok(())
 }
 
 fn replace_split_source(

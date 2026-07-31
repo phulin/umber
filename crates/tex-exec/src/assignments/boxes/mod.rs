@@ -192,7 +192,7 @@ pub(super) fn execute_box_list_command(
                                 tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
                             );
                         }
-                        report_incompatible_unbox(stores);
+                        report_incompatible_unbox(stores)?;
                         return Ok(());
                     }
                     TakeUnboxResult::Children(children) => {
@@ -210,7 +210,7 @@ pub(super) fn execute_box_list_command(
                     return Ok(());
                 };
                 if !unbox_kind_matches(primitive, &node) {
-                    report_incompatible_unbox(stores);
+                    report_incompatible_unbox(stores)?;
                     return Ok(());
                 }
                 let children = match node {
@@ -322,7 +322,7 @@ pub(crate) fn execute_scanned_unbox(
         match stores.take_unbox_children_same_level(index, expected) {
             TakeUnboxResult::Void => None,
             TakeUnboxResult::Incompatible => {
-                report_incompatible_unbox(stores);
+                report_incompatible_unbox(stores)?;
                 return Ok(());
             }
             TakeUnboxResult::Children(children) => Some(UnboxSource::PinnedSurvivor(children)),
@@ -332,7 +332,7 @@ pub(crate) fn execute_scanned_unbox(
             return Ok(());
         };
         if !unbox_kind_matches(primitive, &node) {
-            report_incompatible_unbox(stores);
+            report_incompatible_unbox(stores)?;
             return Ok(());
         }
         let children = match node {
@@ -462,7 +462,7 @@ pub(super) fn execute_leaders(
                     "I found the <box or rule>, but there's no suitable",
                     "<hskip or vskip>, so I'm ignoring these leaders.",
                 ],
-            );
+            )?;
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -505,7 +505,7 @@ pub(super) fn execute_hrule(
                     "you should use \\leaders or \\hrulefill (see The TeXbook).",
                 ])
                 .context(report_context);
-            report.error();
+            report.error().jump_out()?;
             return Ok(());
         }
         mode => {
@@ -542,7 +542,7 @@ pub(crate) fn execute_delete_last(
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
     if is_outer_vertical(nest) {
-        execute_delete_last_outer_vertical(primitive, stores);
+        execute_delete_last_outer_vertical(primitive, stores)?;
         return Ok(());
     }
     let matches_target = matches!(
@@ -557,7 +557,10 @@ pub(crate) fn execute_delete_last(
     Ok(())
 }
 
-fn execute_delete_last_outer_vertical(primitive: UnexpandablePrimitive, stores: &mut Universe) {
+fn execute_delete_last_outer_vertical(
+    primitive: UnexpandablePrimitive,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let Some(tail) = stores.page_contribution_tail() else {
         // TeX82 §1105: `(mode=vmode)and(tail=head)` -- the contribution list
         // is empty because `build_page` has already swept every prior item
@@ -570,9 +573,9 @@ fn execute_delete_last_outer_vertical(primitive: UnexpandablePrimitive, stores: 
         // glue; otherwise it is `\unskip` "following non-glue" and silently
         // succeeds, matching the one case tex.web exempts from the apology.
         if primitive != UnexpandablePrimitive::UnSkip || stores.page_has_last_glue() {
-            report_cannot_delete_from_page(primitive, stores);
+            report_cannot_delete_from_page(primitive, stores)?;
         }
-        return;
+        return Ok(());
     };
     let matches_target = matches!(
         (primitive, tail),
@@ -583,6 +586,7 @@ fn execute_delete_last_outer_vertical(primitive: UnexpandablePrimitive, stores: 
     if matches_target {
         let _ = stores.pop_page_contribution_tail();
     }
+    Ok(())
 }
 
 /// TeX82 §1105's recoverable
@@ -591,7 +595,10 @@ fn execute_delete_last_outer_vertical(primitive: UnexpandablePrimitive, stores: 
 /// This must not escape as an `ExecError`: tex.web calls `error` and resumes
 /// main control with the following token. The final help line is selected by
 /// the requested node type.
-fn report_cannot_delete_from_page(primitive: UnexpandablePrimitive, stores: &mut Universe) {
+fn report_cannot_delete_from_page(
+    primitive: UnexpandablePrimitive,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     let command = match primitive {
         UnexpandablePrimitive::UnSkip => "unskip",
         UnexpandablePrimitive::UnKern => "unkern",
@@ -614,7 +621,8 @@ fn report_cannot_delete_from_page(primitive: UnexpandablePrimitive, stores: &mut
             last_help,
         ])
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 fn execute_vertical_skip(
@@ -823,7 +831,7 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 ///
 /// Unboxing also runs from canonical replay, which owns no live `InputStack`,
 /// so §82's display comes from the last published input summary.
-fn report_incompatible_unbox(stores: &mut Universe) {
+fn report_incompatible_unbox(stores: &mut Universe) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     crate::error_report::report_error(
         stores,
@@ -834,7 +842,8 @@ fn report_incompatible_unbox(stores: &mut Universe) {
             "And I can't open any boxes in math mode.",
         ],
         context,
-    );
+    )?;
+    Ok(())
 }
 
 fn apply_shift(

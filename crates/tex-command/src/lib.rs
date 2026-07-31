@@ -56,6 +56,8 @@ mod state;
 
 #[cfg(test)]
 mod fixture_replay;
+#[cfg(test)]
+mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;

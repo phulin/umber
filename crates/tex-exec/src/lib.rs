@@ -66,4 +66,6 @@ pub(crate) use dispatch::{
 };
 
 #[cfg(test)]
+mod test_harness;
+#[cfg(test)]
 mod tests;

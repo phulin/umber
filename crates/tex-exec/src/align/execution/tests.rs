@@ -87,7 +87,7 @@ fn init_span_sets_mode_aux_and_cur_span() {
 
 #[test]
 fn align_peek_selects_noalign_finish_crcr_or_row() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(GroupKind::Align);
     stores.enter_group_with_kind(GroupKind::Align);
@@ -130,7 +130,7 @@ fn align_peek_selects_noalign_finish_crcr_or_row() {
             })
     );
 
-    let mut closing_stores = Universe::new_with_plain_catcodes();
+    let mut closing_stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut closing_stores);
     closing_stores.enter_group_with_kind(GroupKind::Align);
     closing_stores.enter_group_with_kind(GroupKind::Align);
@@ -197,7 +197,7 @@ fn execute_test_row(
     source: &str,
     finish: bool,
 ) -> (Universe, ModeNest, usize, bool) {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(GroupKind::Align);
     let mut input = InputStack::new(MemoryInput::new(source));
@@ -294,7 +294,7 @@ fn fin_row_packages_modes_adjustments_every_cr_and_peek() {
         assert!(!stores.nodes(row.children).is_empty());
     }
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let every_cr = stores.intern_token_list(&[Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
@@ -316,7 +316,7 @@ fn fin_row_packages_modes_adjustments_every_cr_and_peek() {
 #[test]
 fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
     for enclosing in [Mode::InternalVertical, Mode::RestrictedHorizontal] {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let mut nest = ModeNest::new();
         nest.push(enclosing).expect("test mode push");
         nest.current_list_mutation()
@@ -342,7 +342,7 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
         }
     }
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut outer = ModeNest::new();
     append_finished_alignment(
         &mut outer,
@@ -409,7 +409,7 @@ fn exhausted_v_template_input(
 
 #[test]
 fn do_endv_validates_template_and_group_matrix() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let ordinary = TracedTokenWord::pack(
         Token::Char {
             ch: 'x',
@@ -441,7 +441,7 @@ fn do_endv_validates_template_and_group_matrix() {
         DoEndV::FinishCell
     );
 
-    let mut wrong_stores = Universe::new_with_plain_catcodes();
+    let mut wrong_stores = crate::test_harness::universe_with_plain_catcodes();
     let (mut wrong_input, wrong_endv) =
         exhausted_v_template_input(&mut wrong_stores, GroupKind::SemiSimple);
     assert_eq!(

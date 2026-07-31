@@ -58,7 +58,7 @@ fn text_tokens(text: &str) -> Vec<Token> {
 fn math_scalar_requests_are_completed_before_replay() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -119,7 +119,7 @@ fn math_scalar_requests_are_completed_before_replay() {
 fn character_definition_scanner_owns_target_optional_equals_and_integer() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("definedchar").symbol();
     push(
@@ -166,7 +166,7 @@ fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
     ] {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let target = universe.intern("definedbadchar").symbol();
         let mut tokens = vec![
@@ -201,7 +201,7 @@ fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
 fn register_definition_scanner_owns_target_scope_equals_and_bounded_index() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("definedregister").symbol();
     push(
@@ -248,7 +248,7 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
     // delivered, and the observed mutation precedes them.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("tenrm").symbol();
     let mut tokens = vec![Token::Cs(target)];
@@ -305,7 +305,7 @@ fn font_size_recovery_carries_the_backed_up_error_context() {
     // exact command-owned stack state.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("oversized").symbol();
     let mut tokens = vec![Token::Cs(target)];
@@ -330,7 +330,7 @@ fn show_context_labels_an_exhausted_backup_as_recently_read() {
     // consumed, while a nonempty backup remains `<to be read again>`.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let font = universe.intern("font").symbol();
     push(&mut command, [Token::Cs(font)]);
@@ -349,7 +349,7 @@ fn show_context_labels_an_exhausted_backup_as_recently_read() {
 fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -423,7 +423,7 @@ fn math_field_brace_opens_group_without_absorbing_its_body() {
 fn replay_completion_precedes_parent_delivery() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -487,7 +487,7 @@ fn replay_completion_precedes_parent_delivery() {
 fn math_choice_group_consumes_only_its_opening_brace() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -536,7 +536,7 @@ fn math_choice_group_consumes_only_its_opening_brace() {
 fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -580,7 +580,7 @@ fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
 fn math_field_scalar_case_resolves_without_replaying_its_command() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -644,7 +644,7 @@ fn math_field_operand_cases_reduce_to_one_math_code() {
     ] {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let symbol = universe.intern("p").symbol();
         universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -675,7 +675,7 @@ fn math_given_field_preserves_every_non_ord_code_without_input_events() {
         let code = (class << 12) | 0x13a;
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let symbol = universe.intern("field").symbol();
         universe.set_meaning(symbol, Meaning::MathCharGiven(code));
@@ -709,7 +709,7 @@ fn math_given_field_preserves_every_non_ord_code_without_input_events() {
 fn math_field_rejects_a_non_field_command_into_an_open_group() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let symbol = universe.intern("hbox").symbol();
     universe.set_meaning(
@@ -761,8 +761,8 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
     push(&mut observed, tokens);
     let mut plain_runtime = CommandRuntime::default();
     let mut observed_runtime = CommandRuntime::default();
-    let mut plain_universe = Universe::new_with_plain_catcodes();
-    let mut observed_universe = Universe::new_with_plain_catcodes();
+    let mut plain_universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut observed_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut plain_capabilities = CommandHostCapabilities::default();
     let mut observed_capabilities = CommandHostCapabilities::default();
     let plain_field = {
@@ -799,7 +799,7 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
 fn math_delimiter_and_mu_requests_recover_and_consume_units() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -884,7 +884,7 @@ fn generalized_fraction_delimiters_read_delimiter_codes_not_integers() {
     // consumed the fraction's own operands as digits.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     universe.set_delcode('(', 0x02_8300);
     universe.set_delcode(')', 0x02_9301);
@@ -919,7 +919,7 @@ fn a_non_radical_delimiter_consumes_delimiter_in_place_and_backs_up_nothing_else
     // redelivered.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let delimiter = universe.intern("delimiter").symbol();
     universe.set_meaning(
@@ -968,7 +968,7 @@ fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
     // rejected token returns to the input and the delimiter becomes null.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("  x"));
     let (boundary, next) = {
@@ -1020,7 +1020,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("defined").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let snapshot = command.snapshot();
@@ -1106,7 +1106,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
 fn expanded_macro_definition_splices_the_spacefactor_from_the_host() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("captured_space_factor").symbol();
     let the = universe.intern("the").symbol();
     let space_factor = universe.intern("spacefactor").symbol();
@@ -1204,7 +1204,7 @@ fn balanced_text_enters_absorbing_before_its_opening_brace() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
 
@@ -1242,7 +1242,7 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
 
@@ -1290,7 +1290,7 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
 fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_name = universe.intern("arg").symbol();
     let parameters = universe.intern_token_list(&[Token::Param(1)]);
     let replacement = universe.intern_token_list(&[Token::Param(1)]);
@@ -1361,7 +1361,7 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let spec = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .scan_rule_spec(UnexpandablePrimitive::VRule)
@@ -1409,7 +1409,7 @@ fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
         ],
     );
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let accent = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .scan_accent()
@@ -1445,7 +1445,7 @@ fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
 #[test]
 fn accent_base_lookahead_hands_a_prefixed_command_back_unreplayed() {
     let mut command = CommandState::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("advance").symbol();
     universe.set_meaning(
         target,
@@ -1492,7 +1492,7 @@ fn accent_base_lookahead_hands_a_prefixed_command_back_unreplayed() {
 #[test]
 fn accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment() {
     let mut command = CommandState::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("hbox").symbol();
     universe.set_meaning(
         target,
@@ -1534,7 +1534,7 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(1);
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let delimiter = if let Some(primitive) = primitive {
             let symbol = universe.intern(name).symbol();
@@ -1636,7 +1636,7 @@ fn alignment_preamble_opening_scans_the_scan_spec_clause() {
             .open_registered_source(source)
             .expect("source opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
             cr,
@@ -1667,7 +1667,7 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let hfil = universe.intern("hfil").symbol();
     let cr = universe.intern("cr").symbol();
     universe.set_meaning(
@@ -1752,7 +1752,7 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let initial = universe.intern_glue(tex_state::glue::GlueSpec {
         width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
         ..tex_state::glue::GlueSpec::ZERO
@@ -1887,7 +1887,7 @@ fn assert_missing_preamble_parameter(
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let cr = universe.intern("cr").symbol();
     universe.set_meaning(
         cr,
@@ -1974,7 +1974,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
     );
     let snapshot = command.snapshot();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
         "inc.tex",
@@ -2017,7 +2017,7 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
     push(&mut command, text_tokens("nested "));
     let before = command.snapshot();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
         "TeXinputs:nested.tex",
@@ -2066,7 +2066,7 @@ fn start_input_normalizes_empty_and_nonempty_first_lines() {
         let mut command = CommandState::default();
         push(&mut command, text_tokens("case "));
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new_with_plain_catcodes();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
         universe.set_int_param(IntParam::END_LINE_CHAR, 13);
         let par = universe.intern("par").symbol();
         universe.set_meaning(
@@ -2097,7 +2097,7 @@ fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("case "));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
@@ -2125,7 +2125,7 @@ fn start_input_nests_and_initializes_the_job_name_only_once() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("outer "));
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
         "outer.tex",
@@ -2167,7 +2167,7 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
     // before recognizing any keyword or scanning any operand.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfobj = universe.intern("pdfobj").symbol();
     universe.set_meaning(
@@ -2238,7 +2238,7 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
     // allocating a form or scanning attr/resources/the box register.
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfxform = universe.intern("pdfxform").symbol();
     universe.set_meaning(
@@ -2311,7 +2311,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
     // scan.
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfximage = universe.intern("pdfximage").symbol();
     universe.set_meaning(
@@ -2381,7 +2381,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
 fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -2425,7 +2425,7 @@ fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
 fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("direct{q}shipout page{Q}"));
     let (immediate, deferred) = {
@@ -2463,7 +2463,7 @@ fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
 fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("2 set{g}3"));
     let (set, missing) = {
@@ -2499,7 +2499,7 @@ fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
 fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -2543,7 +2543,7 @@ fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
 fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -2601,7 +2601,7 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_catcode('b', Catcode::Active);
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
@@ -2681,7 +2681,7 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
 fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("-1 0 15 16 999999 "));
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -2711,7 +2711,7 @@ fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
 fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("bad-register").symbol();
     push(
@@ -2805,7 +2805,11 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
         ] {
             let mut command = CommandState::default();
             let mut runtime = CommandRuntime::default();
-            let mut universe = Universe::new_with_plain_catcodes();
+            let mut universe = crate::test_harness::universe_with_plain_catcodes();
+            // §484 reads `\read`'s replacement from the terminal only when
+            // `interaction>nonstop_mode`, so this one case needs a mode above
+            // the harness default.
+            universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
             let mut capabilities = CommandHostCapabilities::default();
             universe.intern("readtarget");
             let suffix = match primitive {
@@ -2892,7 +2896,11 @@ fn read_stream_selector_is_unrestricted() {
         for source in ["-1", "15", "16", "1000000"] {
             let mut command = CommandState::default();
             let mut runtime = CommandRuntime::default();
-            let mut universe = Universe::new_with_plain_catcodes();
+            let mut universe = crate::test_harness::universe_with_plain_catcodes();
+            // §484 reads `\read`'s replacement from the terminal only when
+            // `interaction>nonstop_mode`, so this one case needs a mode above
+            // the harness default.
+            universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
             let mut capabilities = CommandHostCapabilities::default();
             universe.intern("readtarget");
             if primitive == P::ReadLine {
@@ -2937,7 +2945,7 @@ fn read_stream_selector_is_unrestricted() {
 fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_delcode('(', 0x0123_4567);
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

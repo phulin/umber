@@ -150,7 +150,7 @@ pub(super) fn scan_math_field(
                         traced,
                         "Missing { inserted",
                         &MISSING_LEFT_BRACE_HELP,
-                    );
+                    )?;
                     crate::error_report::insert_tokens(
                         input,
                         stores,
@@ -316,7 +316,7 @@ pub(super) fn finish_left_group(
             stores,
             "Extra \\right",
             &["I'm ignoring a \\right that had no matching \\left."],
-        );
+        )?;
         return Ok(());
     }
     close_left_group(nest, stores, delimiter, execution.command_fuel())?;
@@ -338,7 +338,7 @@ pub(super) fn append_middle_delimiter(
             stores,
             "Extra \\middle",
             &["I'm ignoring a \\middle that had no matching \\left."],
-        );
+        )?;
         return Ok(());
     }
     nest.current_list_mutation()
@@ -360,7 +360,7 @@ pub(super) fn close_missing_left_group(
     }
     // §1064's `off_save` for `math_left_group`: tex.web inserts `\right.` and
     // rereads the `$`; closing the group directly reaches the same state.
-    report_input_error(input, stores, "Missing \\right. inserted", &OFF_SAVE_HELP);
+    report_input_error(input, stores, "Missing \\right. inserted", &OFF_SAVE_HELP)?;
     close_left_group(nest, stores, 0, fuel)?;
     Ok(true)
 }
@@ -497,7 +497,7 @@ pub(super) fn start_fraction(
                 "know whether a construction like `x \\over y \\over z'",
                 "means `{x \\over y} \\over z' or `x \\over {y \\over z}'.",
             ],
-        );
+        )?;
         return Ok(());
     }
     let numerator_nodes = nest.current_list_mutation().take_nodes();
@@ -517,7 +517,7 @@ pub(super) fn apply_limit_switch(
     input: &InputStack,
     stores: &mut Universe,
     primitive: UnexpandablePrimitive,
-) {
+) -> Result<(), ExecError> {
     let limit_type = match primitive {
         UnexpandablePrimitive::Limits => LimitType::Limits,
         UnexpandablePrimitive::NoLimits => LimitType::NoLimits,
@@ -536,22 +536,27 @@ pub(super) fn apply_limit_switch(
             _ => false,
         }
     }) else {
-        report_misplaced_limit_switch(input, stores);
-        return;
+        report_misplaced_limit_switch(input, stores)?;
+        return Ok(());
     };
     if !is_operator {
-        report_misplaced_limit_switch(input, stores);
+        report_misplaced_limit_switch(input, stores)?;
     }
+    Ok(())
 }
 
 /// tex.web §1159's `math_limit_switch` diagnostic.
-fn report_misplaced_limit_switch(input: &InputStack, stores: &mut Universe) {
+fn report_misplaced_limit_switch(
+    input: &InputStack,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     report_input_error(
         input,
         stores,
         "Limit controls must follow a math operator",
         &["I'm ignoring this misplaced \\limits or \\nolimits command."],
-    );
+    )?;
+    Ok(())
 }
 
 pub(super) fn append_math_choice(
@@ -598,7 +603,7 @@ fn scan_required_math_group(
                 opener,
                 "Missing { inserted",
                 &MISSING_LEFT_BRACE_HELP,
-            );
+            )?;
         }
         None => {
             report_input_error(
@@ -606,7 +611,7 @@ fn scan_required_math_group(
                 stores,
                 "Missing { inserted",
                 &MISSING_LEFT_BRACE_HELP,
-            );
+            )?;
         }
     }
     scan_math_group_after_open(nest, input, stores, execution)
@@ -708,7 +713,7 @@ fn scan_delimiter_token(
                 stores,
                 "Missing delimiter (. inserted)",
                 &MISSING_DELIMITER_HELP,
-            );
+            )?;
             return Ok(0);
         };
         let token = tex_expand::semantic_token(traced);
@@ -754,7 +759,7 @@ fn scan_delimiter_token(
             traced,
             "Missing delimiter (. inserted)",
             &MISSING_DELIMITER_HELP,
-        );
+        )?;
         return Ok(0);
     }
 }

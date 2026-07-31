@@ -818,6 +818,14 @@ impl CanonicalStartup {
                 RunnerError::Replay("canonical startup replay bound overflowed".into())
             })?;
         let mut universe = Universe::new();
+        // `scripts/build-tex82-document-traces.sh` captures every one of these
+        // fixtures with `-interaction=nonstopmode`, so the replay has to run
+        // the same job. tex.web §75 starts in `error_stop_mode`, and §82
+        // enters §83's dialog on that alone -- against a memory terminal
+        // holding nothing but the `**` line, the first recoverable error in a
+        // fixture would then reach §71's `fatal_error` and end the replay
+        // where the oracle simply scrolled on.
+        universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         let command = control.command_mut();
         // Source IDs are part of the command state's durable input identity:

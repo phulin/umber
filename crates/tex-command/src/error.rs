@@ -65,6 +65,14 @@ pub enum CommandError {
     Fatal(crate::FatalError),
 }
 
+impl From<tex_state::print::JumpOut> for CommandError {
+    /// Lets a scanner write `report.error().jump_out()?` and have `?` carry
+    /// §81's non-local exit the rest of the way to the driver.
+    fn from(jump: tex_state::print::JumpOut) -> Self {
+        Self::Fatal(jump.into())
+    }
+}
+
 impl CommandError {
     /// Constructs [`CommandError::InputInvariant`], capturing the Rust
     /// call site that raised it so a canonical divergence names its true

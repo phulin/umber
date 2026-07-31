@@ -16,6 +16,12 @@ const CMEX10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.t
 
 fn template() -> Universe {
     let mut universe = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    // tex.web §75 starts a job in `error_stop_mode`, and §82 enters §83's
+    // dialog on that alone. These sessions run a memory terminal with nothing
+    // in it, which §71 answers with `fatal_error`; they are about incremental
+    // reuse, not the terminal, so they run the job a `\nonstopmode` document
+    // runs.
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     tex_exec::install_unexpandable_primitives(&mut universe);
     tex_expand::install_expandable_primitives(&mut universe);
     universe

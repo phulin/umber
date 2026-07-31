@@ -12,7 +12,7 @@ use tex_state::scaled::Scaled;
 #[test]
 fn null_math_fonts_are_insufficient_for_formula_conversion() {
     assert_eq!(
-        crate::math::testing_math_font_failure(&Universe::new_with_plain_catcodes()),
+        crate::math::testing_math_font_failure(&crate::test_harness::universe_with_plain_catcodes()),
         Some("symbol")
     );
 }
@@ -137,7 +137,7 @@ fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
 
 #[test]
 fn raw_font_character_dimensions_in_math_do_not_scan_operands() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
@@ -170,7 +170,7 @@ fn raw_font_character_dimensions_in_math_do_not_scan_operands() {
 
 #[test]
 fn vertical_skip_in_math_inserts_math_shift_and_retries() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\vfill"));
@@ -338,7 +338,7 @@ fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
 
 #[test]
 fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         r"\setbox0=\hbox{${a+b\over c+d}$}\setbox1=\hbox{$x$}",
@@ -366,7 +366,7 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
 
 #[test]
 fn semi_simple_groups_execute_assignments_and_aftergroup_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -388,7 +388,7 @@ fn semi_simple_groups_execute_assignments_and_aftergroup_in_math_mode() {
 
 #[test]
 fn token_register_macros_resume_expansion_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -404,7 +404,7 @@ fn token_register_macros_resume_expansion_in_math_mode() {
 
 #[test]
 fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\begingroup\aftergroup\input\endgroup"));
@@ -422,7 +422,7 @@ fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
 
 #[test]
 fn math_shift_groups_restore_locals_keep_globals_and_reset_fam_per_formula() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -445,7 +445,7 @@ fn math_shift_groups_restore_locals_keep_globals_and_reset_fam_per_formula() {
 
 #[test]
 fn math_shift_groups_restore_code_tables_and_replay_aftergroup_after_restore() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -465,7 +465,7 @@ fn math_shift_groups_restore_code_tables_and_replay_aftergroup_after_restore() {
 
 #[test]
 fn math_shift_aftergroup_replay_has_inserted_provenance() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\input$"));
@@ -483,7 +483,7 @@ fn math_shift_aftergroup_replay_has_inserted_provenance() {
 
 #[test]
 fn math_shift_group_replay_converges_after_snapshot_rollback() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::FAM, 6);
@@ -513,7 +513,7 @@ fn math_shift_group_replay_converges_after_snapshot_rollback() {
 
 #[test]
 fn inline_math_uses_local_layout_parameters_before_restoring_them() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut executor = Executor::new();
@@ -603,7 +603,7 @@ fn mathaccent_skips_relax_before_its_nucleus() {
 
 #[test]
 fn math_group_mismatch_reports_the_closing_token_origin() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
@@ -632,7 +632,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     ));
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
@@ -657,7 +657,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     assert!(matches!(&err, ExecError::EndGroupMismatch { .. }));
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     Executor::new()
@@ -665,7 +665,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
         .expect("an extra right brace in math is reported and ignored");
     assert!(support::terminal_effect_text(&stores).contains("Extra }, or forgotten $"));
 
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     Executor::new()
@@ -699,7 +699,7 @@ fn post_display_alignment_replay_preserves_following_source_origin() {
 
 #[test]
 fn equation_number_math_shift_group_restores_before_outer_display_group() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::FAM, 9);
@@ -721,7 +721,7 @@ fn equation_number_math_shift_group_restores_before_outer_display_group() {
 
 #[test]
 fn equation_number_uses_a_checkpointable_nested_math_level() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     let mut nest = ModeNest::new();
     nest.push(Mode::DisplayMath).expect("test mode push");
@@ -744,7 +744,7 @@ fn equation_number_uses_a_checkpointable_nested_math_level() {
 
 #[test]
 fn equation_number_aftergroup_runs_after_its_nested_math_group_closes() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut executor = Executor::new();
@@ -764,7 +764,7 @@ fn equation_number_aftergroup_runs_after_its_nested_math_group_closes() {
 
 #[test]
 fn equation_number_expands_the_outer_display_closer() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut executor = Executor::new();
@@ -784,7 +784,7 @@ fn equation_number_expands_the_outer_display_closer() {
 
 #[test]
 fn equation_number_outside_display_reports_illegal_case_without_starting_math() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\eqno x$\count0=7"));
 
@@ -800,7 +800,7 @@ fn equation_number_outside_display_reports_illegal_case_without_starting_math() 
 
 #[test]
 fn math_shift_inserts_endgroup_for_open_semisimple_group() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         r"\count0=1 $x\begingroup\count0=2$\count1=3",
@@ -817,7 +817,7 @@ fn math_shift_inserts_endgroup_for_open_semisimple_group() {
 
 #[test]
 fn math_shift_inserts_right_brace_for_open_simple_group() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\count0=1 $x{\count0=2$\count1=3"));
 
@@ -832,7 +832,7 @@ fn math_shift_inserts_right_brace_for_open_simple_group() {
 
 #[test]
 fn vadjust_is_accepted_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         r"$x\vadjust{\penalty7}\prevgraf=8 \insert255{\penalty9}y$",
@@ -845,7 +845,7 @@ fn vadjust_is_accepted_in_math_mode() {
 
 #[test]
 fn vcenter_accepts_a_spread_pack_specification() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\vcenter spread -2pt{}$"));
 
@@ -869,7 +869,7 @@ fn vcenter_accepts_a_begin_group_control_sequence_alias() {
 
 #[test]
 fn char_primitive_uses_the_characters_mathcode_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\char`+$"));
 
@@ -880,7 +880,7 @@ fn char_primitive_uses_the_characters_mathcode_in_math_mode() {
 
 #[test]
 fn explicit_kern_is_accepted_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$x\kern1pt y$"));
 
@@ -891,7 +891,7 @@ fn explicit_kern_is_accepted_in_math_mode() {
 
 #[test]
 fn italic_correction_in_math_appends_a_zero_kern() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$x\/$"));
 
@@ -902,7 +902,7 @@ fn italic_correction_in_math_appends_a_zero_kern() {
 
 #[test]
 fn math_discretionary_deletes_a_nonempty_replacement_part() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         r"$\discretionary{\kern1pt}{\kern2pt}{\kern3pt}$",
@@ -917,7 +917,7 @@ fn math_discretionary_deletes_a_nonempty_replacement_part() {
 
 #[test]
 fn vrule_is_accepted_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\vrule height 9pt$"));
 
@@ -928,7 +928,7 @@ fn vrule_is_accepted_in_math_mode() {
 
 #[test]
 fn spacefactor_in_math_reports_illegal_case_without_scanning_an_assignment() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\spacefactor1$"));
 
@@ -941,7 +941,7 @@ fn spacefactor_in_math_reports_illegal_case_without_scanning_an_assignment() {
 
 #[test]
 fn misplaced_alignment_commands_and_mark_recover_in_math_mode() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"$\span\omit\mark{a}\cr$"));
 
@@ -957,7 +957,7 @@ fn misplaced_alignment_commands_and_mark_recover_in_math_mode() {
 
 #[test]
 fn math_brace_groups_restore_local_box_assignments_and_keep_globals() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let baseline = stores.freeze_node_list(&[Node::Kern {
         amount: tex_state::scaled::Scaled::from_raw(17),
@@ -984,7 +984,7 @@ fn math_brace_groups_restore_local_box_assignments_and_keep_globals() {
 
 #[test]
 fn explicit_groups_in_math_restore_local_box_assignments_and_keep_globals() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let baseline = stores.freeze_node_list(&[Node::Kern {
         amount: tex_state::scaled::Scaled::from_raw(23),
@@ -1022,7 +1022,7 @@ fn penalty_builds_ordinary_list_material_in_inline_math() {
 
 #[test]
 fn penalty_builds_ordinary_list_material_in_display_math() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\noindent$$a\penalty456 b"));
@@ -1056,7 +1056,7 @@ fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
 
 #[test]
 fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let baseline = stores.freeze_node_list(&[Node::Kern {
         amount: tex_state::scaled::Scaled::from_raw(17),
@@ -1091,7 +1091,7 @@ fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
 #[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let run = |source: &str| {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         install_unexpandable_primitives(&mut stores);
         stores.set_mathcode('?', 0x8000);
         let active_question = stores.intern_active_character('?');
@@ -1183,7 +1183,7 @@ fn left_right_scans_nested_list_as_inner_noad() {
 fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
     // e-TeX manual section 3.5: `\middle` is valid only in a matching
     // `\left...\right` group and is sized with those delimiters.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -1212,7 +1212,7 @@ fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
 
 #[test]
 fn etex_display_records_and_resumes_the_interrupted_text_direction() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -1253,7 +1253,7 @@ fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     // tex.web §§1090, 1092, and 1138: `new_graf` enters ordinary horizontal
     // mode even from an internal vlist, so doubled `$` opens display math and
     // `\ifinner` is false.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     // The probes are registers rather than `\message`s: §1195's math-font
@@ -1372,7 +1372,7 @@ fn restricted_inline_math_finishing_suppresses_line_break_penalties() {
 
 #[test]
 fn converted_math_glue_preserves_explicit_and_named_provenance() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let explicit = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
     let content = stores.freeze_node_list(&[
         Node::MathNoad(MathNoad::new(
@@ -1529,7 +1529,7 @@ fn vcenter_replays_everyvbox_before_its_body() {
 
 #[test]
 fn every_math_and_every_display_tokens_are_inserted_on_entry() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
@@ -1557,7 +1557,7 @@ fn every_math_and_every_display_tokens_are_inserted_on_entry() {
 }
 
 fn run_math_source(source: &str) -> (Universe, Executor) {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::SHOW_BOX_BREADTH, 100);
@@ -1573,7 +1573,7 @@ fn run_math_source(source: &str) -> (Universe, Executor) {
 fn assert_replayed_math_error_is_source_backed(source: &str) {
     const PATH: &str = "math-origin.tex";
 
-    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let source = source.replace(r"\noexpand\input", r"\global\count7=1\relax\noexpand\input");
@@ -1926,7 +1926,7 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
         tex_command::MathScriptKind::Subscript,
     ] {
         for occupied in [false, true] {
-            let mut stores = Universe::new_with_plain_catcodes();
+            let mut stores = crate::test_harness::universe_with_plain_catcodes();
             let mut list = crate::ModeList::default();
             let mut first = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
             if occupied {
@@ -1942,7 +1942,8 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
                 crate::mode::ModeListMutation::for_test(&mut list),
                 &mut stores,
                 kind,
-            );
+            )
+            .expect("script reservation reports no fatal error");
             let reserved_index = usize::from(occupied);
             assert_eq!(target.node_index, reserved_index);
 
@@ -1973,7 +1974,7 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
             assert!(matches!(later_tail.subscript, MathField::Empty));
         }
 
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let mut list = crate::ModeList::default();
         list.push(Node::Glue {
             spec: stores.intern_glue(tex_state::glue::GlueSpec::ZERO),
@@ -1984,7 +1985,8 @@ fn canonical_script_reservation_matrix_ignores_later_tail_appends() {
             crate::mode::ModeListMutation::for_test(&mut list),
             &mut stores,
             kind,
-        );
+        )
+        .expect("script reservation reports no fatal error");
         assert_eq!(target.node_index, 1);
         assert_eq!(canonical_log_text(&stores), "");
     }

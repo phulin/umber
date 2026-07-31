@@ -981,7 +981,7 @@ impl CommandProcessor<'_> {
                     "definition will be completed without mixing me up too badly.",
                 ])
                 .context(context);
-            report.error();
+            report.error().jump_out()?;
             self.state.intern_control_sequence("inaccessible")
         };
         self.state
@@ -1911,7 +1911,7 @@ impl CommandProcessor<'_> {
                         "I'm going to look for the \\cs now.",
                     ]);
                     report.context(context);
-                    report.error();
+                    report.error().jump_out()?;
                 }
                 // §1215's `get_r_token`. A frozen or non-control-sequence
                 // target still needs §1215's "Missing control sequence

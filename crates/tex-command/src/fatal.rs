@@ -13,7 +13,11 @@
 //! rolled back, because §81 unwinds Pascal's procedure levels without undoing
 //! anything the job already committed.
 
-/// One of TeX82's three irrecoverable errors.
+/// One of the terminal states TeX82 reaches through §81's `jump_out`.
+///
+/// Three are the irrecoverable errors proper (§93's `fatal_error`, §94's
+/// `overflow`, §95's `confusion`); the other two are §82's 100-error stop and
+/// §84's `X`, which take the same exit without being diagnoses.
 ///
 /// The payloads are `&'static str` because every tex.web call site passes a
 /// string literal: `fatal_error`, `overflow`, and `confusion` are all declared
@@ -33,6 +37,25 @@ pub enum FatalError {
     /// TeX82 §95 `confusion(s)`: prints `This can't happen (s)`, where `s`
     /// "tells where" the consistency check was violated.
     Confusion { site: &'static str },
+    /// TeX82 §84's `X` option, chosen at §83's dialog:
+    /// `interaction:=scroll_mode; jump_out`. Alone among these it prints
+    /// nothing and leaves `history` where it was -- it is a requested exit,
+    /// not a diagnosis -- but it reaches `end_of_TEX` by the same `jump_out`
+    /// and so ends the session identically.
+    Quit,
+}
+
+impl From<tex_state::print::JumpOut> for FatalError {
+    /// The error channel reaches §81's `jump_out` from three places and
+    /// reports which through [`tex_state::print::JumpOut`]; each maps onto
+    /// the terminal state that already carries it.
+    fn from(jump: tex_state::print::JumpOut) -> Self {
+        match jump {
+            tex_state::print::JumpOut::TooManyErrors => Self::TooManyErrors,
+            tex_state::print::JumpOut::EmergencyStop { help } => Self::EmergencyStop { help },
+            tex_state::print::JumpOut::Quit => Self::Quit,
+        }
+    }
 }
 
 impl FatalError {
@@ -62,6 +85,7 @@ impl FatalError {
             Self::EmergencyStop { .. } => "emergency-stop",
             Self::CapacityExceeded { .. } => "capacity-exceeded",
             Self::Confusion { .. } => "confusion",
+            Self::Quit => "quit",
         }
     }
 
@@ -79,6 +103,7 @@ impl FatalError {
                 format!("capacity-exceeded({resource}={amount})")
             }
             Self::Confusion { site } => format!("confusion({site})"),
+            Self::Quit => "quit".into(),
         }
     }
 
@@ -89,7 +114,7 @@ impl FatalError {
             severity: FATAL_SEVERITY,
             diagnostic: self.diagnostic(),
             arguments: match self {
-                Self::TooManyErrors => Vec::new(),
+                Self::TooManyErrors | Self::Quit => Vec::new(),
                 _ => vec![crate::DiagnosticArgument::Name(self.argument())],
             },
         }
@@ -97,7 +122,9 @@ impl FatalError {
 
     fn argument(self) -> String {
         match self {
-            Self::TooManyErrors => unreachable!("too-many-errors has no diagnostic argument"),
+            Self::TooManyErrors | Self::Quit => {
+                unreachable!("{} has no diagnostic argument", self.diagnostic())
+            }
             Self::EmergencyStop { help } => help.into(),
             Self::CapacityExceeded { resource, amount } => format!("{resource}={amount}"),
             Self::Confusion { site } => site.into(),

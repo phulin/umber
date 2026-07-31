@@ -35,7 +35,7 @@ const UNDEFINED_CONTROL_SEQUENCE_HELP: &[&str] = &[
 
 /// TeX82 §792's `<If the preamble list has been traversed, check that the row
 /// has ended>`, for a row that ran past the last preamble column.
-fn report_extra_alignment_tab(input: &InputStack, stores: &mut Universe) {
+fn report_extra_alignment_tab(input: &InputStack, stores: &mut Universe) -> Result<(), ExecError> {
     report_input_error(
         input,
         stores,
@@ -45,7 +45,8 @@ fn report_extra_alignment_tab(input: &InputStack, stores: &mut Universe) {
             "in the preamble to the \\halign or \\valign now in progress.",
             "So I'll assume that you meant to type \\cr instead.",
         ],
-    );
+    )?;
+    Ok(())
 }
 
 pub(crate) fn execute_alignment(
@@ -456,7 +457,7 @@ fn execute_cell(
                     .column_for(next_column)
                     .is_none()
                 {
-                    report_extra_alignment_tab(input, stores);
+                    report_extra_alignment_tab(input, stores)?;
                     package_cell(
                         (align_level, kind),
                         span_count,
@@ -491,7 +492,7 @@ fn execute_cell(
                         .column_for(next_column)
                         .is_none();
                 if extra_alignment_tab {
-                    report_extra_alignment_tab(input, stores);
+                    report_extra_alignment_tab(input, stores)?;
                 }
                 package_cell(
                     (align_level, kind),
@@ -691,7 +692,7 @@ fn run_cell_body_until_terminator(
                     stores,
                     "Undefined control sequence",
                     UNDEFINED_CONTROL_SEQUENCE_HELP,
-                );
+                )?;
                 continue;
             }
             Err(tex_expand::ExpandError::Captured { error, .. })
@@ -705,7 +706,7 @@ fn run_cell_body_until_terminator(
                     stores,
                     "Undefined control sequence",
                     UNDEFINED_CONTROL_SEQUENCE_HELP,
-                );
+                )?;
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -740,7 +741,7 @@ fn run_cell_body_until_terminator(
                     "I expect to see \\noalign only after the \\cr of",
                     "an alignment. Proceed, and I'll ignore this case.",
                 ],
-            );
+            )?;
             continue;
         }
         if is_omit(stores, semantic) {
@@ -756,7 +757,7 @@ fn run_cell_body_until_terminator(
                     "I expect to see \\omit only after tab marks or the \\cr of",
                     "an alignment. Proceed, and I'll ignore this case.",
                 ],
-            );
+            )?;
             continue;
         }
         if is_alignment_par(stores, semantic) && input.alignment_cell_below_base_depth() {
@@ -764,7 +765,7 @@ fn run_cell_body_until_terminator(
             // alignment brace level is negative. Backing up \par behind
             // the inserted right brace lets ordinary group dispatch
             // reach §1103's align_group recovery in the same order.
-            recover_alignment_par_token(token, input, stores);
+            recover_alignment_par_token(token, input, stores)?;
             continue;
         }
         if is_end_group(stores, semantic)
@@ -791,7 +792,7 @@ fn run_cell_body_until_terminator(
                 stores,
                 "Missing \\cr inserted",
                 &["I'm guessing that you meant to end an alignment here."],
-            );
+            )?;
             continue;
         }
         if input.alignment_cell_below_base_depth()
@@ -827,7 +828,7 @@ fn run_cell_body_until_terminator(
                     "the current column of the current alignment.",
                     "Try to go on, since this might almost work.",
                 ],
-            );
+            )?;
             continue;
         }
         dispatch_and_drain(nest, token, input, stores, execution, &mut stats)?;
@@ -908,7 +909,7 @@ pub(super) fn dispatch_and_drain(
                 stores,
                 "Undefined control sequence",
                 UNDEFINED_CONTROL_SEQUENCE_HELP,
-            );
+            )?;
             return Ok(());
         }
         Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
@@ -922,7 +923,7 @@ pub(super) fn dispatch_and_drain(
                 stores,
                 "Undefined control sequence",
                 UNDEFINED_CONTROL_SEQUENCE_HELP,
-            );
+            )?;
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -963,7 +964,7 @@ fn recover_alignment_par_token(
     context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
-) {
+) -> Result<(), ExecError> {
     let closing = Token::Char {
         ch: '}',
         cat: tex_state::token::Catcode::EndGroup,
@@ -989,5 +990,6 @@ fn recover_alignment_par_token(
             "really didn't forget anything, try typing `2' now; then",
             "my insertion and my current dilemma will both disappear.",
         ],
-    );
+    )?;
+    Ok(())
 }

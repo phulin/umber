@@ -175,7 +175,7 @@ pub(crate) fn attach_script(
                 "I treat `x_1_2' essentially like `x_1{}_2'.",
             )
         };
-        crate::error_report::report_input_error(input, stores, message, &[help]);
+        crate::error_report::report_input_error(input, stores, message, &[help])?;
         push_scripted_empty_noad(nest, field, superscript);
     } else {
         *target = field;

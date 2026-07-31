@@ -1,4 +1,3 @@
-use tex_state::Universe;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -63,7 +62,7 @@ fn words(scanned: &ScannedHyphenationData) -> Vec<String> {
 fn hyphenation_data_scan_never_enters_absorbing() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     push(&mut command, "{ab cd}");
@@ -94,7 +93,7 @@ fn hyphenation_data_scan_never_enters_absorbing() {
 fn hyphenation_data_continues_after_section_403_inserted_left_brace() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, "ab}");
     let mut processor = CommandProcessor::new(
@@ -124,7 +123,7 @@ fn hyphenation_data_continues_after_section_403_inserted_left_brace() {
 fn nested_left_brace_opens_no_level_and_the_next_right_brace_ends_the_scan() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, "{a{b}c}");
     let mut processor = CommandProcessor::new(
@@ -162,7 +161,7 @@ fn char_given_is_a_hyphenation_word_character_but_not_a_pattern_one() {
     ] {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let given = universe.intern("givenx").symbol();
         universe.set_meaning(given, Meaning::CharGiven('x'));
         command.push_token_level(
@@ -202,7 +201,7 @@ fn othercases_print_errors_without_inventing_events_and_preserve_the_partial_wor
     ] {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = crate::test_harness::universe();
         let bad = universe.intern("bad").symbol();
         universe.set_meaning(bad, Meaning::Relax);
         command.push_token_level(

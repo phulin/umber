@@ -1,7 +1,9 @@
 //! Direct tests for tex.web §54's selector, §73's `print_err`, and §82's
 //! `error`.
 
-use super::{ErrorChannel, ErrorContextWidths, ErrorHistory, ErrorOutcome, Printer, Selector};
+use super::{
+    ErrorChannel, ErrorContextWidths, ErrorHistory, ErrorOutcome, JumpOut, Printer, Selector,
+};
 use crate::universe::{InteractionMode, Universe};
 use crate::world::PrintSink;
 
@@ -84,7 +86,7 @@ fn print_err_prefixes_the_message_and_error_terminates_it_with_a_period() {
     universe.set_interaction_mode(InteractionMode::Nonstop);
     let mut report = universe.print_err("Arithmetic overflow");
     report.help(&["first help line", "second help line"]);
-    report.error();
+    assert_eq!(report.error(), ErrorOutcome::Continue);
 
     let output = terminal_text(&universe);
     assert!(output.contains("! Arithmetic overflow."), "{output}");
@@ -97,9 +99,12 @@ fn print_err_prefixes_the_message_and_error_terminates_it_with_a_period() {
 fn int_error_appends_texweb_91_parenthesized_value() {
     let mut universe = Universe::new();
     universe.set_interaction_mode(InteractionMode::Nonstop);
-    universe
-        .print_err("Illegal magnification has been changed to 1000")
-        .int_error(0);
+    assert_eq!(
+        universe
+            .print_err("Illegal magnification has been changed to 1000")
+            .int_error(0),
+        ErrorOutcome::Continue
+    );
 
     assert!(
         terminal_text(&universe).contains("! Illegal magnification has been changed to 1000 (0)."),
@@ -116,7 +121,7 @@ fn err_help_replaces_the_builtin_help_lines() {
     report.print("bad");
     report.help(&["builtin help"]);
     report.use_err_help("user help".into());
-    report.error();
+    assert_eq!(report.error(), ErrorOutcome::Continue);
 
     let output = terminal_text(&universe);
     assert!(output.contains("! bad."), "{output}");
@@ -134,7 +139,10 @@ fn deferred_error_report_preserves_message_selector_and_help() {
         report.defer()
     };
     universe.printer().print("intervening recovery observation");
-    universe.resume_error_report(deferred).error();
+    assert_eq!(
+        universe.resume_error_report(deferred).error(),
+        ErrorOutcome::Continue
+    );
 
     let output = terminal_text(&universe);
     assert!(
@@ -151,7 +159,10 @@ fn error_stop_mode_prompts_and_honors_the_scroll_answer() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts a line");
-    universe.print_err("Something anomalous").error();
+    assert_eq!(
+        universe.print_err("Something anomalous").error(),
+        ErrorOutcome::Continue
+    );
 
     let output = terminal_text(&universe);
     assert!(output.contains("? "), "{output}");
@@ -159,16 +170,71 @@ fn error_stop_mode_prompts_and_honors_the_scroll_answer() {
     assert_eq!(universe.interaction_mode(), InteractionMode::Scroll);
 }
 
+/// tex.web §84's `X`: `interaction:=scroll_mode; jump_out`. Unlike §93's
+/// `succumb` it prints nothing and leaves `history` where it was -- it is a
+/// requested exit, not a diagnosis -- but it ends the job all the same, which
+/// Umber could not express before `umber2-er8c`.
 #[test]
-fn error_stop_mode_skips_the_dialog_when_the_terminal_cannot_answer() {
-    // tex.web §71 would `fatal_error` here; Umber cannot end the job, so it
-    // asks nothing rather than printing an unanswerable prompt.
+fn error_stop_mode_x_quits_without_printing_or_raising_history() {
     let mut universe = Universe::new();
-    universe.print_err("Something anomalous").error();
+    universe
+        .world_mut()
+        .push_memory_terminal_line("x")
+        .expect("memory terminal accepts a line");
+    let outcome = universe.print_err("Something anomalous").error();
+
+    assert_eq!(outcome, ErrorOutcome::JumpOut(JumpOut::Quit));
+    assert_eq!(universe.interaction_mode(), InteractionMode::Scroll);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        ErrorHistory::ErrorMessageIssued
+    );
+    let output = terminal_text(&universe);
+    assert!(!output.contains("Emergency stop"), "{output}");
+    assert!(!output.contains("OK, entering"), "{output}");
+}
+
+/// tex.web §82 enters §83's dialog on `interaction=error_stop_mode` alone.
+/// §71's `term_input` answers an exhausted terminal with
+/// `fatal_error("End of file on the terminal!")`, and §93's `succumb` drops
+/// to scroll mode, reports through a nested `error`, and jumps out.
+///
+/// Umber used to guard the dialog on a terminal line being available, which
+/// took the scrolled tail instead: it counted an error tex.web does not
+/// count, printed help tex.web does not print, and let the job continue
+/// (`umber2-er8c`).
+#[test]
+fn error_stop_mode_prompting_an_exhausted_terminal_reaches_texweb_93() {
+    let mut universe = Universe::new();
+    let outcome = universe.print_err("Something anomalous").error();
+
+    assert_eq!(
+        outcome,
+        ErrorOutcome::JumpOut(JumpOut::EmergencyStop {
+            help: "End of file on the terminal!"
+        })
+    );
     let output = terminal_text(&universe);
     assert!(output.contains("! Something anomalous."), "{output}");
-    assert!(!output.contains("? "), "{output}");
-    assert_eq!(universe.interaction_mode(), InteractionMode::ErrorStop);
+    assert!(output.contains("? "), "{output}");
+    assert!(output.contains("! Emergency stop."), "{output}");
+    // §93's `if interaction=error_stop_mode then interaction:=scroll_mode`,
+    // which is what keeps the nested `error` from prompting again.
+    assert_eq!(universe.interaction_mode(), InteractionMode::Scroll);
+    assert_eq!(
+        universe.world().error_channel().history(),
+        ErrorHistory::FatalErrorStop
+    );
+    // §90 keeps §93's one help line off the terminal in every non-batch
+    // mode. `terminal_text` above folds the log in, so this reads the
+    // terminal sink itself.
+    let terminal = sink_text(&universe, PrintSink::Terminal);
+    assert!(
+        !terminal.contains("End of file on the terminal!"),
+        "{terminal:?}"
+    );
+    let log = sink_text(&universe, PrintSink::Log);
+    assert!(log.contains("End of file on the terminal!"), "{log:?}");
 }
 
 #[test]
@@ -296,7 +362,7 @@ fn the_hundredth_scrolled_error_reaches_tex82_fatal_history_and_limit() {
         assert_eq!(
             outcome,
             if index == 100 {
-                ErrorOutcome::FatalErrorLimit
+                ErrorOutcome::JumpOut(JumpOut::TooManyErrors)
             } else {
                 ErrorOutcome::Continue
             }

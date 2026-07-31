@@ -567,7 +567,7 @@ fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
     // the recursive absorbing scope is not a TeX82 scan_toks episode. The
     // following \message is the negative control that still publishes the
     // ordinary §473 absorbing transition.
-    let mut initialized = Universe::new_with_plain_catcodes();
+    let mut initialized = crate::test_harness::universe_with_plain_catcodes();
     let fresh_control = canonical_etex_initex(&mut initialized);
     let format = initialized
         .dump_format()
@@ -894,7 +894,7 @@ fn etex_parshape_enquiry_loaded_format_checkpoint_retry_is_atomic() {
 fn empty_equation_number_checks_math_fonts_on_both_sides() {
     // TeX82 §1194 checks the equation-number mlist and then the saved display
     // mlist independently, even though neither one contains a math noad.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = canonical_etex_initex(&mut stores);
     control
         .set_fuel_limit(10_000)
@@ -1101,16 +1101,14 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     // The §1045 diagnostic is part of the parameter command's committed
     // operation. A later resource suspension rolls back only its own input
     // attempt and must neither erase nor duplicate the earlier report.
-    let mut stores = Universe::new_with_plain_catcodes();
+    // The mode is the harness's `\nonstopmode` rather than an explicit
+    // `\errorstopmode`: §1045's report is routed to the terminal either way,
+    // and errorstop would send §82 into §83's dialog, which this harness's
+    // terminal cannot answer and §71 ends the job over.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    register_source(&mut control, br"\errorstopmode#\input child\end");
+    register_source(&mut control, br"#\input child\end");
 
-    assert!(matches!(
-        control
-            .advance(&mut stores)
-            .expect("errorstopmode executes"),
-        CanonicalStepResult::Progress(ReplayStep::Continue)
-    ));
     assert!(matches!(
         control.advance(&mut stores).expect("parameter recovers"),
         CanonicalStepResult::Progress(ReplayStep::Continue)
@@ -1152,7 +1150,7 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
         Mode::DisplayMath,
     ] {
         let run = |observed: bool| {
-            let mut stores = Universe::new_with_plain_catcodes();
+            let mut stores = crate::test_harness::universe_with_plain_catcodes();
             let mut control = CanonicalMainControl::tex82_initex(&mut stores);
             control.set_fuel_limit(128).expect("bounded command fuel");
             if mode != Mode::Vertical {
@@ -1207,7 +1205,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         Mode::Horizontal,
         Mode::RestrictedHorizontal,
     ] {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let endv = stores.intern("forcedendv");
         stores.set_meaning(endv, Meaning::EndV);
         let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -1249,7 +1247,7 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
         (br"$".as_slice(), "math"),
         (br"$$".as_slice(), "display math"),
     ] {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let endv = stores.intern("forcedendv");
         stores.set_meaning(endv, Meaning::EndV);
         let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -1348,7 +1346,7 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
     // e-TeX 2.6 `etex.ch` [26.424]: `make_mark` scans an extended register
     // number before TeX82 §1101's expanded mark text and appends the node in
     // every mode. Invalid selectors recover to class zero before the text.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
@@ -1444,20 +1442,23 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         shift: None,
     });
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+        .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::MathShift, 7);
     modes.push(Mode::Math).expect("test mode push");
     stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
     modes.push(Mode::Math).expect("test mode push");
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+        .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
     let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new());
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+        .expect("\\showgroups reports no fatal error");
 
     let output = terminal_text(&stores);
     for expected in [
@@ -1998,7 +1999,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
     // e-TeX's `scan_register_num` recovers an invalid selector to zero before
     // §1548 allocates the form and diagnoses the resulting void box; §1549
     // scans an integer and then diagnoses a missing form object.
-    let mut invalid_register_stores = Universe::new_with_plain_catcodes();
+    let mut invalid_register_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut invalid_register = pdftex_form_control(&mut invalid_register_stores);
     register_source(&mut invalid_register, br"\pdfxform 40000");
     let state_before = invalid_register_stores.testing_state_hash();
@@ -2018,7 +2019,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
     ));
     assert!(invalid_register_stores.pdf_forms().next().is_none());
 
-    let mut void_stores = Universe::new_with_plain_catcodes();
+    let mut void_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut void = pdftex_form_control(&mut void_stores);
     register_source(&mut void, br"\pdfxform 12");
     assert!(matches!(
@@ -2031,7 +2032,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
         Err(ExecError::PdfXFormVoidBox)
     ));
 
-    let mut missing_stores = Universe::new_with_plain_catcodes();
+    let mut missing_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut missing = pdftex_form_control(&mut missing_stores);
     missing
         .modes
@@ -2466,7 +2467,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
 fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
     // pdftex.web §1565 calls `check_pdfoutput` before allocating the whatsit
     // or scanning `struct`, the identifier, the kind, or the rule dimensions.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -2489,7 +2490,7 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
     );
     assert_eq!(control.modes.current_list().nodes().len(), 1);
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi = pdftex_destination_control(&mut dvi_stores);
     register_source(
         &mut dvi,
@@ -2626,7 +2627,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
 
 #[test]
 fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -2647,7 +2648,7 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
     );
     assert_eq!(stores.pdf_outlines().len(), 1);
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi = pdftex_outline_control(&mut dvi_stores);
     register_source(&mut dvi, br"\pdfoutline user{/S /URI}{Title}");
     assert!(matches!(
@@ -2784,7 +2785,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
 
 #[test]
 fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -2810,7 +2811,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
         [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
     ));
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi = pdftex_snapping_control(&mut dvi_stores);
     register_source(&mut dvi, br"\pdfsnapy 7pt");
     assert!(matches!(
@@ -2958,7 +2959,7 @@ fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() 
 
 #[test]
 fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
-    let mut stores = Universe::default();
+    let mut stores = crate::test_harness::universe();
     let global = stores.intern("global");
     stores.set_meaning(
         global,
@@ -3014,7 +3015,7 @@ fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
 
 #[test]
 fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
-    let mut stores = Universe::default();
+    let mut stores = crate::test_harness::universe();
     stores.world_mut().set_pdf_time_micros(1_250_000);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -3098,7 +3099,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
 
 #[test]
 fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -3125,7 +3126,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
         ))]
     ));
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
     register_source(&mut dvi_control, br"\pdffakespace");
     assert!(matches!(
@@ -3238,7 +3239,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
 
 #[test]
 fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -3263,7 +3264,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
         [Node::Whatsit(Whatsit::PdfRunningLink(false))]
     ));
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
     register_source(&mut dvi_control, br"\pdfrunninglinkon");
     assert!(matches!(
@@ -3361,7 +3362,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
 
 #[test]
 fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let global = stores.intern("global");
     stores.set_meaning(
@@ -3383,7 +3384,7 @@ fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
     );
     assert_eq!(stores.pdf_space_font_name(1), Some(b"selected".as_slice()));
 
-    let mut dvi_stores = Universe::new_with_plain_catcodes();
+    let mut dvi_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
     register_source(&mut dvi_control, br"\pdfspacefont{unscanned}");
     assert!(matches!(
@@ -3494,7 +3495,7 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
     ];
 
     for case in cases {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut stores);
         register_source(&mut control, case.source);
         run_to_end(&mut control, &mut stores);
@@ -3943,7 +3944,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
 
 #[test]
 fn main_control_error_privilege_and_stop_paths_are_finite() {
-    let mut internal_stores = Universe::new_with_plain_catcodes();
+    let mut internal_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut internal = CanonicalMainControl::tex82_initex(&mut internal_stores);
     internal
         .modes
@@ -3955,7 +3956,7 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
     assert_eq!(internal.current_mode(), Mode::InternalVertical);
     assert!(terminal_text(&internal_stores).contains("can't use `\\end'"));
 
-    let mut page_stores = Universe::new_with_plain_catcodes();
+    let mut page_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut page = CanonicalMainControl::tex82_initex(&mut page_stores);
     register_source(&mut page, br"\hrule\end");
     let mut observations = ObservationRecorder::default();
@@ -4034,7 +4035,7 @@ fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
 /// `bottom_level` case is "Too many }'s".
 #[test]
 fn a_stray_right_brace_names_the_group_opener_it_replaced() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\hbox{$x}$}\begingroup}\end");
     run_to_end(&mut control, &mut stores);
@@ -4056,7 +4057,7 @@ fn extra_right_brace_in_an_argument_names_the_macro() {
     // `\\par` is inserted, and `ins_error` reports "Argument of \\a has an
     // extra }" -- `sprint_cs(warning_index)`, the macro whose argument was
     // being matched, not a placeholder.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\def\a#1{[#1]}\a}\end");
     run_to_end(&mut control, &mut stores);
@@ -4274,7 +4275,7 @@ fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
 
 #[test]
 fn errmessage_selects_user_or_once_only_builtin_help_and_clears_flag() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -4330,7 +4331,7 @@ fn case_shift_substitutes_character_codes_preserves_commands_and_replays() {
 
 #[test]
 fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -4503,7 +4504,7 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
 
 #[test]
 fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -4518,7 +4519,7 @@ fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
 
 #[test]
 fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -4538,7 +4539,7 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
     // e-TeX 2.6 etex.ch [49.1296] replaces TeX82's `scan_eight_bit_int`
     // with `scan_register_num`, whose restricted scan diagnoses -1, recovers
     // it to zero, and leaves the following token for the next command.
-    let mut initex_stores = Universe::new_with_plain_catcodes();
+    let mut initex_stores = crate::test_harness::universe_with_plain_catcodes();
     let _ = canonical_etex_initex(&mut initex_stores);
     let format = initex_stores
         .dump_format()
@@ -4598,7 +4599,7 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
 fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     // TeX82 §§262/1297: the font identifier becomes a token shown through
     // `print_cs`, whose control-word delimiter precedes the display period.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let nullfont = stores.intern("nullfont");
     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -4755,7 +4756,7 @@ fn setlanguage_appends_one_normalized_language_whatsit_per_request() {
 
 #[test]
 fn setlanguage_outside_horizontal_mode_reports_the_illegal_case_and_scans_nothing() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
     // `scan_int`, so the operand is never consumed: the following assignment
@@ -5025,7 +5026,7 @@ fn openin_supplies_the_default_tex_extension() {
 fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
     // TeX82 §578 resolves `n<=0` to the scratch `fmem_ptr`; §579 reports it
     // and §1253 still consumes `=<dimen>`, so the next command runs.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\fontdimen0\nullfont=1pt \count0=1\end");
     run_to_end(&mut control, &mut stores);
@@ -5046,7 +5047,7 @@ fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
 #[test]
 fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     // TeX82 §1236 returns before `word_define` when `arith_error` is set.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -5069,7 +5070,7 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
 fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
     // TeX82 §1236 consumes an invalid target, reports the error, and returns
     // through §1269's common path, which still replays `\afterassignment`.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -5095,7 +5096,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
     // TeX82 §§298 and 1236 print the rejected command class, scan no operand,
     // and return through §1269 once. Prefix scope is therefore immaterial,
     // including both \globaldefs overrides.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -5145,7 +5146,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
         "diagnostic order changed: {output:?}"
     );
 
-    let mut isolated_stores = Universe::new_with_plain_catcodes();
+    let mut isolated_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut isolated = CanonicalMainControl::tex82_initex(&mut isolated_stores);
     register_source(&mut isolated, br"\advance x");
     let mut isolated_observations = ObservationRecorder::default();
@@ -5166,7 +5167,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
 fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
     // The §1236 recovery and §1269 afterassignment replay are a committed
     // operation. A later missing-resource rollback cannot duplicate either.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -5238,7 +5239,7 @@ fn errmessage_prefers_errhelp_over_the_builtin_help() {
 #[test]
 fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     // TeX82 §1252 and §1335 are both `init`-guarded.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let _initex = CanonicalMainControl::tex82_initex(&mut stores);
     let mut control = CanonicalMainControl::new();
     register_source(&mut control, br"\patterns{a1b}\count0=1\dump");

@@ -155,7 +155,7 @@ fn recover_missing_box(
             "something like that. So you might find something missing in",
             "your output. But keep trying; you can fix this later.",
         ],
-    );
+    )?;
     Ok(None)
 }
 
@@ -171,7 +171,7 @@ pub(crate) fn take_last_box(
                 stores,
                 "math mode",
                 &["Sorry; this \\lastbox will be void."],
-            );
+            )?;
             Ok(None)
         }
         Mode::Vertical
@@ -184,7 +184,7 @@ pub(crate) fn take_last_box(
                     "Sorry...I usually can't take things from the current page.",
                     "This \\lastbox will therefore be void.",
                 ],
-            );
+            )?;
             Ok(None)
         }
         Mode::Vertical => Ok(stores.take_page_contribution_last_box()),
@@ -199,8 +199,12 @@ pub(crate) fn take_last_box(
 /// The offending name is deliberately absent from the message: §82's context
 /// display ends the top line with it, which is what the third help line means
 /// by "the control sequence at the end of the top line".
-fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) {
-    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores);
+fn report_undefined_control_sequence(
+    input: &InputStack,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores)?;
+    Ok(())
 }
 
 /// TeX.web §1080's two `\lastbox` refusals, opened by §72's `you_cant`
@@ -209,7 +213,11 @@ fn report_undefined_control_sequence(input: &InputStack, stores: &mut Universe) 
 /// `take_last_box` is also reached from canonical replay and from page
 /// building, neither of which holds a live `InputStack`, so §82's display
 /// comes from the last published input summary.
-fn report_cannot_take_last_box(stores: &mut Universe, mode: &str, help: &[&str]) {
+fn report_cannot_take_last_box(
+    stores: &mut Universe,
+    mode: &str,
+    help: &[&str],
+) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("You can't use `");
     report
@@ -218,7 +226,8 @@ fn report_cannot_take_last_box(stores: &mut Universe, mode: &str, help: &[&str])
         .print(mode)
         .help(help)
         .context(context);
-    report.error();
+    report.error().jump_out()?;
+    Ok(())
 }
 
 pub(super) fn scan_box_node(
@@ -251,7 +260,7 @@ pub(super) fn scan_box_node(
                 "so that I will find a matching right brace soon.",
                 "(If you're confused by all this, try typing `I}' now.)",
             ],
-        );
+        )?;
     }
     let group_kind = match kind {
         BoxKind::HBox => GroupKind::HBox,
@@ -399,11 +408,11 @@ pub(crate) fn scan_box_group(
                 ) {
                     Ok(token) => token,
                     Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
-                        report_undefined_control_sequence(input, stores);
+                        report_undefined_control_sequence(input, stores)?;
                         continue;
                     }
                     Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
-                        crate::diagnostics::report_extra_conditional(stores, name);
+                        crate::diagnostics::report_extra_conditional(stores, name)?;
                         continue;
                     }
                     Err(err) => return Err(err.into()),
@@ -437,7 +446,7 @@ pub(crate) fn scan_box_group(
                     Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
                         ..
                     })) => {
-                        report_undefined_control_sequence(input, stores);
+                        report_undefined_control_sequence(input, stores)?;
                         continue;
                     }
                     Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
@@ -446,7 +455,7 @@ pub(crate) fn scan_box_group(
                             tex_expand::ExpandError::UndefinedControlSequence { .. }
                         ) =>
                     {
-                        report_undefined_control_sequence(input, stores);
+                        report_undefined_control_sequence(input, stores)?;
                         continue;
                     }
                     // Recursive box scanning is still TeX's main-control loop. A
@@ -470,7 +479,7 @@ pub(crate) fn scan_box_group(
                                 unreachable!("error variant is restricted to conditional controls")
                             }
                         };
-                        crate::diagnostics::report_extra_conditional(stores, name);
+                        crate::diagnostics::report_extra_conditional(stores, name)?;
                         continue;
                     }
                     Err(

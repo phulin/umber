@@ -267,7 +267,7 @@ pub(in crate::assignments) fn execute_pdf_graphics(
                         "I'll use default color stack 0 here.",
                         "Proceed, with fingers crossed.",
                     ],
-                );
+                )?;
                 0
             } else if !stores.has_pdf_color_stack(scanned_id as u32) {
                 crate::error_report::report_input_error(
@@ -279,7 +279,7 @@ pub(in crate::assignments) fn execute_pdf_graphics(
                         "I'll use default color stack 0 here.",
                         "Proceed, with fingers crossed.",
                     ],
-                );
+                )?;
                 0
             } else {
                 scanned_id as u32
@@ -304,7 +304,7 @@ pub(in crate::assignments) fn execute_pdf_graphics(
                         "    set, push, pop, current",
                         "I'll ignore the color stack command.",
                     ],
-                );
+                )?;
                 return Ok(());
             };
             Node::Whatsit(Whatsit::PdfColorStack { id, action })
@@ -581,7 +581,7 @@ fn scan_stream_slot(
                 "Since I expected to read a number between 0 and 15,",
                 "I changed this one to zero.",
             ],
-        );
+        )?;
         0
     };
     Ok(StreamSlot::new(value as u8))

@@ -190,7 +190,7 @@ pub(crate) fn execute_unexpandable_with_context(
                 input,
                 stores,
                 TracedTokenWord::pack(token, origin),
-            );
+            )?;
             return Ok(DispatchAction::Continue);
         }
         Err(error) => return Err(error),
@@ -230,7 +230,7 @@ pub(crate) fn execute_unexpandable_with_context(
     {
         Ok(outcome) => outcome,
         Err(ExecError::PrefixWithNonDefinition { .. }) => {
-            report_prefix_with_non_prefixed_command(input, stores, command.traced);
+            report_prefix_with_non_prefixed_command(input, stores, command.traced)?;
             return Ok(DispatchAction::Continue);
         }
         Err(ExecError::ArithmeticOverflow)
@@ -254,7 +254,7 @@ pub(crate) fn execute_unexpandable_with_context(
                     "I can't carry out that multiplication or division,",
                     "since the result is out of range.",
                 ],
-            );
+            )?;
             return Ok(DispatchAction::Continue);
         }
         Err(error) => return Err(error),
@@ -1554,7 +1554,7 @@ pub(crate) fn off_save_alignment(
             stores,
             &format!("Extra {command}"),
             &["Things are pretty mixed up, but I think the worst is over."],
-        );
+        )?;
         return Ok(());
     }
 
@@ -1569,7 +1569,7 @@ pub(crate) fn off_save_alignment(
             stores,
             "Missing \\endgroup inserted",
             &OFF_SAVE_HELP,
-        );
+        )?;
         return Ok(());
     }
 
@@ -1611,7 +1611,7 @@ pub(crate) fn off_save_alignment(
             "Missing } inserted"
         },
         &OFF_SAVE_HELP,
-    );
+    )?;
     Ok(())
 }
 
@@ -1629,7 +1629,7 @@ fn report_prefix_with_non_prefixed_command(
     input: &mut InputStack,
     stores: &mut Universe,
     command: TracedTokenWord,
-) {
+) -> Result<(), ExecError> {
     let token = tex_expand::semantic_token(command);
     let name = tex_command::command_token_text(&mut stores.command_context(), token);
     crate::error_report::back_error(
@@ -1638,7 +1638,8 @@ fn report_prefix_with_non_prefixed_command(
         command,
         &format!("You can't use a prefix with `{name}'"),
         &["I'll pretend you didn't say \\long or \\outer or \\global."],
-    );
+    )?;
+    Ok(())
 }
 
 fn accumulate_prefixes(
@@ -1735,7 +1736,7 @@ fn execute_prefixed_command(
             stores,
             &format!("You can't use `\\long' or `\\outer' with `{name}'"),
             &["I'll pretend you didn't say \\long or \\outer here."],
-        );
+        )?;
         prefixes.flags = MeaningFlags::EMPTY;
     }
     match command.command {
@@ -1790,7 +1791,7 @@ fn execute_prefixed_command(
                             stores,
                             "Extra \\endgroup",
                             &["Things are pretty mixed up, but I think the worst is over."],
-                        );
+                        )?;
                     } else {
                         return Err(error);
                     }
@@ -2148,7 +2149,7 @@ fn execute_prefixed_command(
                             return Ok(CommandOutcome::continue_only());
                         }
                         crate::Mode::Math | crate::Mode::DisplayMath => {
-                            crate::math::insert_dollar_sign(command.traced, input, stores);
+                            crate::math::insert_dollar_sign(command.traced, input, stores)?;
                             return Ok(CommandOutcome::continue_only());
                         }
                         _ => {}
@@ -2200,7 +2201,7 @@ fn execute_prefixed_command(
                                 stores,
                                 command.token,
                                 nest.current_mode(),
-                            );
+                            )?;
                             return Ok(CommandOutcome::continue_only());
                         }
                         _ => {}
@@ -2418,7 +2419,7 @@ fn execute_prefixed_command(
                 reject_all_prefixes(prefixes)?;
                 let index = scan_register_index(input, stores, execution, command.traced)?;
                 let context = diagnostics::show_context(stores, &input.summary());
-                diagnostics::execute_showbox(stores, index, context);
+                diagnostics::execute_showbox(stores, index, context)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowThe => {
@@ -2454,7 +2455,7 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
                 let context = diagnostics::show_context(stores, &input.summary());
-                diagnostics::execute_showlists(stores, nest, context);
+                diagnostics::execute_showlists(stores, nest, context)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {
@@ -2482,7 +2483,7 @@ fn execute_prefixed_command(
                     2 => InteractionMode::Scroll,
                     3 => InteractionMode::ErrorStop,
                     value => {
-                        diagnostics::report_bad_interaction_mode(stores, value);
+                        diagnostics::report_bad_interaction_mode(stores, value)?;
                         return Ok(CommandOutcome::continue_only());
                     }
                 };
@@ -2510,7 +2511,7 @@ fn execute_prefixed_command(
                         stores,
                         &format!("Improper \\{name}"),
                         &["Sorry, this optional e-TeX feature has been disabled."],
-                    );
+                    )?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 if !matches!(
@@ -2521,7 +2522,7 @@ fn execute_prefixed_command(
                         stores,
                         command.token,
                         nest.current_mode(),
-                    );
+                    )?;
                     return Ok(CommandOutcome::continue_only());
                 }
                 flush_pending_hchars(nest, stores, execution.command_fuel())?;
@@ -2580,7 +2581,7 @@ fn execute_prefixed_command(
                 // These are the `non_math` cases in tex.web §1043 and
                 // §1147: insert `$`, then reconsider the original command in
                 // math mode instead of consuming it or aborting execution.
-                crate::math::insert_dollar_sign(command.traced, input, stores);
+                crate::math::insert_dollar_sign(command.traced, input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::EqNo
@@ -2603,7 +2604,11 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::GlueToMu
             | UnexpandablePrimitive::MuToGlue => {
                 reject_all_prefixes(prefixes)?;
-                crate::diagnostics::report_illegal_case(stores, command.token, nest.current_mode());
+                crate::diagnostics::report_illegal_case(
+                    stores,
+                    command.token,
+                    nest.current_mode(),
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::MathOrd
@@ -2617,7 +2622,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Underline
             | UnexpandablePrimitive::Overline => {
                 reject_all_prefixes(prefixes)?;
-                crate::math::insert_dollar_sign(command.traced, input, stores);
+                crate::math::insert_dollar_sign(command.traced, input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::NoAlign | UnexpandablePrimitive::Omit => {
@@ -2643,7 +2648,7 @@ fn execute_prefixed_command(
                         position,
                         "an alignment. Proceed, and I'll ignore this case.",
                     ],
-                );
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Cr
@@ -2669,7 +2674,7 @@ fn execute_prefixed_command(
                         "you're probably due for more error messages, and you",
                         "might try typing `S' now just to see what is salvageable.",
                     ],
-                );
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::PdfResetTimer => {

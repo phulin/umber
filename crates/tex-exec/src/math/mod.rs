@@ -43,7 +43,7 @@ pub(crate) fn insert_dollar_sign(
     traced: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
-) {
+) -> Result<(), ExecError> {
     let origin = traced.origin();
     let math_shift_token = Token::Char {
         ch: '$',
@@ -65,7 +65,8 @@ pub(crate) fn insert_dollar_sign(
             "I've inserted a begin-math/end-math symbol since I think",
             "you left one out. Proceed, with fingers crossed.",
         ],
-    );
+    )?;
+    Ok(())
 }
 pub(crate) use lower::{finish_inline_math_list_node, finish_math_list_node};
 pub(crate) use lower::{finish_math_lists, finish_math_lists_owned};
@@ -244,7 +245,7 @@ pub(crate) fn dispatch_math_token_with_context(
                     [TracedTokenWord::pack(right_brace, inserted)],
                     "Missing } inserted",
                     &OFF_SAVE_HELP,
-                );
+                )?;
                 Ok(DispatchAction::Continue)
             } else {
                 finish_math(nest, input, stores, execution, origin)
@@ -283,7 +284,7 @@ pub(crate) fn dispatch_math_token_with_context(
                             "the way to recover is to insert both the forgotten and the",
                             "deleted material, e.g., by typing `I$}'.",
                         ],
-                    );
+                    )?;
                 } else {
                     return Err(error);
                 }
@@ -338,7 +339,7 @@ fn finish_math(
             stores,
             "Missing \\endgroup inserted",
             &OFF_SAVE_HELP,
-        );
+        )?;
         leave_group_with_origin(input, stores, tex_state::GroupKind::SemiSimple, origin)?;
         execution.paragraph_group_exited(stores);
     }
@@ -364,7 +365,7 @@ fn finish_math(
     // `fin_mlist`, even when the current mlist is empty. An empty formula (or
     // an empty equation-number script) must not bypass the check merely
     // because conversion would not otherwise consult a math font.
-    if reject_invalid_math_fonts_in_input(input, stores) {
+    if reject_invalid_math_fonts_in_input(input, stores)? {
         content = stores.freeze_node_list(&[]);
     }
     let mut level =
@@ -430,10 +431,10 @@ fn check_second_math_shift(
                 }
             ) => {}
         Some(traced) => {
-            crate::error_report::back_error(input, stores, traced, MESSAGE, &HELP);
+            crate::error_report::back_error(input, stores, traced, MESSAGE, &HELP)?;
         }
         None => {
-            crate::error_report::report_input_error(input, stores, MESSAGE, &HELP);
+            crate::error_report::report_input_error(input, stores, MESSAGE, &HELP)?;
         }
     }
     Ok(())
@@ -452,7 +453,7 @@ fn finish_equation_number(
     // This is §1194's first, equation-number-side check. It precedes
     // `fin_mlist` and is unconditional, just like the display-side check
     // below.
-    let font_failure = reject_invalid_math_fonts_in_input(input, stores);
+    let font_failure = reject_invalid_math_fonts_in_input(input, stores)?;
     if font_failure {
         content = stores.freeze_node_list(&[]);
     }
@@ -471,7 +472,7 @@ fn finish_equation_number(
 
     // TeX82 §1194 repeats the check for the saved display mlist after boxing
     // the equation number.
-    if reject_invalid_math_fonts_in_input(input, stores) {
+    if reject_invalid_math_fonts_in_input(input, stores)? {
         eq_no.display = stores.freeze_node_list(&[]);
     }
     let mut display_level =
@@ -558,25 +559,28 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
 pub(crate) fn reject_invalid_math_fonts_in_input(
     input: &InputStack,
     stores: &mut Universe,
-) -> bool {
+) -> Result<bool, ExecError> {
     let Some(failure) = math_font_failure(stores) else {
-        return false;
+        return Ok(false);
     };
     let (message, help) = failure.report();
-    crate::error_report::report_input_error(input, stores, message, &help);
-    true
+    crate::error_report::report_input_error(input, stores, message, &help)?;
+    Ok(true)
 }
 
 /// [`reject_invalid_math_fonts_in_input`] for the canonical main control,
 /// which owns a `CommandState` rather than an `InputStack` and renders §82's
 /// display from it.
-pub(crate) fn reject_invalid_math_fonts(stores: &mut Universe, context: String) -> bool {
+pub(crate) fn reject_invalid_math_fonts(
+    stores: &mut Universe,
+    context: String,
+) -> Result<bool, ExecError> {
     let Some(failure) = math_font_failure(stores) else {
-        return false;
+        return Ok(false);
     };
     let (message, help) = failure.report();
-    crate::error_report::report_error(stores, message, &help, context);
-    true
+    crate::error_report::report_error(stores, message, &help, context)?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -634,7 +638,7 @@ fn dispatch_math_control(
                     stores,
                     "Extra \\endcsname",
                     &["I'm ignoring this, since I wasn't doing a \\csname."],
-                );
+                )?;
                 Ok(DispatchAction::Continue)
             }
             _ => Err(ExecError::UnexpectedExpandableDelivery {
@@ -675,11 +679,11 @@ fn dispatch_math_primitive(
     let origin = traced.origin();
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::End | UnexpandablePrimitive::Dump => {
-            insert_dollar_sign(traced, input, stores);
+            insert_dollar_sign(traced, input, stores)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::SpaceFactor => {
-            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Indent | UnexpandablePrimitive::NoIndent => {
@@ -699,7 +703,7 @@ fn dispatch_math_primitive(
             // These shifts are vertical-list commands. TeX's illegal-case
             // dispatch in math mode ignores the command without scanning its
             // dimension/box operands.
-            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::VSkip
@@ -709,7 +713,7 @@ fn dispatch_math_primitive(
         | UnexpandablePrimitive::VFilNeg => {
             // TeX.web §1044 classifies mmode+vskip as a missing-math-shift
             // case: close math first, then rescan the vertical command.
-            insert_dollar_sign(traced, input, stores);
+            insert_dollar_sign(traced, input, stores)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathChar => {
@@ -763,7 +767,7 @@ fn dispatch_math_primitive(
         UnexpandablePrimitive::Limits
         | UnexpandablePrimitive::NoLimits
         | UnexpandablePrimitive::DisplayLimits => {
-            apply_limit_switch(nest, input, stores, primitive);
+            apply_limit_switch(nest, input, stores, primitive)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Over
@@ -793,7 +797,7 @@ fn dispatch_math_primitive(
                         "I'm changing \\accent to \\mathaccent here; wish me luck.",
                         "(Accents are not the same in formulas as they are in text.)",
                     ],
-                );
+                )?;
             }
             let accent = math_char_from_code(
                 scan_math_char_code(input, stores, execution, traced)?,
@@ -923,7 +927,7 @@ fn dispatch_math_primitive(
                 // (negative) math mode TeX reports the illegal case and
                 // ignores it; this is reached after non-math recovery has
                 // inserted `$` and replayed the command.
-                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode())?;
             }
             Ok(DispatchAction::Continue)
         }
@@ -934,7 +938,7 @@ fn dispatch_math_primitive(
                 // TeX.web §1130 dispatches `mmode+halign` through
                 // `privileged`. Inline math is negative mmode, so §1051
                 // diagnoses the illegal case and ignores only `\halign`.
-                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode())?;
             }
             Ok(DispatchAction::Continue)
         }
@@ -985,7 +989,7 @@ fn finish_display_halign(
             stores,
             "Missing \\endgroup inserted",
             &OFF_SAVE_HELP,
-        );
+        )?;
         leave_group_with_origin(
             input,
             stores,
@@ -1005,7 +1009,7 @@ fn finish_display_halign(
                 "only if nothing but the alignment itself is between $$'s.",
                 "So I've deleted the formulas that preceded this alignment.",
             ],
-        );
+        )?;
         let _ = nest.current_list_mutation().take_nodes();
         let _ = nest.current_list_mutation().take_display_eq_no();
     }
@@ -1110,7 +1114,7 @@ fn finish_display_alignment_assignments(
                     "Sorry, \\setbox is not allowed after \\halign in a display,",
                     "or between \\accent and an accented character.",
                 ],
-            );
+            )?;
             if let Some(next) = get_x_token_with_context(
                 input,
                 &mut tex_state::ExpansionContext::new(stores),
@@ -1166,11 +1170,11 @@ fn consume_display_alignment_closer(
             traced.origin()
         }
         Some(traced) => {
-            crate::error_report::back_error(input, stores, traced, "Missing $$ inserted", &HELP);
+            crate::error_report::back_error(input, stores, traced, "Missing $$ inserted", &HELP)?;
             return Ok(fallback_origin);
         }
         None => {
-            crate::error_report::report_input_error(input, stores, "Missing $$ inserted", &HELP);
+            crate::error_report::report_input_error(input, stores, "Missing $$ inserted", &HELP)?;
             return Ok(fallback_origin);
         }
     };
