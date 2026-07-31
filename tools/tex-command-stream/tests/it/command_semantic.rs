@@ -589,7 +589,7 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
     let run = execute(br"\read-1 to\line\end", &case)
         .expect("the oracle's implicit empty terminal line satisfies the terminal read");
     let channels = CapturedChannels::capture(&run);
-    assert_eq!(channels.events, 25);
+    assert_eq!(channels.events, 26);
     assert_eq!(channels.status, "clean");
     assert_eq!(
         channels.stream(StreamChannel::Terminal),
@@ -619,6 +619,7 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
         [
             "input:push:terminal",
             "input:retire:terminal",
+            "input:stop:terminal",
             "input:retire:file",
             "input:stop:terminal",
         ]

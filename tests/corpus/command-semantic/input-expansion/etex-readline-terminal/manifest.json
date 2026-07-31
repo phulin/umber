@@ -13,6 +13,7 @@
         "manifest": "tests/etex26-oracle-manifest.txt",
         "sections": [
           328,
+          360,
           482,
           483
         ]
@@ -30,6 +31,7 @@
         "scanner-status:normal>defining",
         "input:push:terminal",
         "input:retire:terminal",
+        "input:stop:terminal",
         "scanner-status:defining>normal",
         "input:push:macro",
         "macro:activate:readvalue:0:",
@@ -40,7 +42,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 44,
+        "events": 45,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

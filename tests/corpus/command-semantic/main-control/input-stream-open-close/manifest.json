@@ -12,6 +12,7 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
+          360,
           1272,
           1273,
           1274,
@@ -28,7 +29,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 76,
+        "events": 77,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -12,6 +12,7 @@
         "authority": "tex.web",
         "manifest": "tests/tex82-oracle-manifest.txt",
         "sections": [
+          360,
           480,
           481,
           482,
@@ -34,6 +35,7 @@
         "scanner-status:normal>defining",
         "input:push:terminal",
         "input:retire:terminal",
+        "input:stop:terminal",
         "scanner-status:defining>normal",
         "input:push:macro",
         "macro:activate:readvalue:0:",
@@ -44,7 +46,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 46,
+        "events": 47,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },
