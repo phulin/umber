@@ -2205,6 +2205,27 @@ fn read_and_readline_retire_with_the_open_stream_name() {
         ],
         "`\\read` and `\\readline` share §483's open-stream source name"
     );
+    let stops = recorder
+        .0
+        .iter()
+        .filter_map(|event| match event {
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Stop
+                    && record.reason == crate::InputReason::Source =>
+            {
+                record.source_name
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stops,
+        [
+            crate::SourceNameClass::Terminal,
+            crate::SourceNameClass::Terminal,
+        ],
+        "§360's raw zero commands follow §483 retirement at the restored terminal boundary"
+    );
     assert!(fuel.burned() <= 64);
     assert!(!universe.command_context().read_stream_at_eof(slot));
 }
@@ -2277,6 +2298,19 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
                 )
             })
             .expect("§483 ends the terminal source level");
+        let stop = recorder
+            .0
+            .iter()
+            .rposition(|event| {
+                matches!(
+                    event,
+                    CommandObservation::Input(record)
+                        if record.transition == InputTransition::Stop
+                            && record.reason == crate::InputReason::Source
+                            && record.source_name == Some(crate::SourceNameClass::Terminal)
+                )
+            })
+            .expect("§360 returns a raw zero command after the terminal read line");
         let normal = recorder
             .0
             .iter()
@@ -2289,8 +2323,8 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
             })
             .expect("§482 restores normal status");
         assert!(
-            defining < push && push < retire && retire < normal,
-            "§§482-484 keep the terminal level inside defining status"
+            defining < push && push < retire && retire < stop && stop < normal,
+            "§§482-484 retire and stop the terminal level inside defining status"
         );
     }
 }
