@@ -1203,6 +1203,12 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
         first.construction_evidence(),
         second.construction_evidence()
     );
+    for image in [first.image(), second.image()] {
+        let loaded = Universe::from_format(World::memory(), image)
+            .expect("Plain image reconstructs without construction provenance");
+        assert_eq!(loaded.provenance_stats().origin_records(), 0);
+        assert_eq!(loaded.macro_invocation_provenance_stats().invocations(), 0);
+    }
     assert_eq!(
         fs::read_dir(cache.path().join("formats-v2"))
             .expect("Plain provider namespace")
@@ -1239,6 +1245,42 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
         assert_eq!(run.universe.count(0), expected);
         assert!(!observer.into_captured().is_empty());
     }
+
+    let mut repeated = Vec::new();
+    for (provider, fixture) in [(&first_provider, &first), (&second_provider, &second)] {
+        let mut observer = TripObservers::default();
+        let run = provider
+            .run(
+                fixture,
+                PreparedFormatJob {
+                    engine: EngineMode::Tex82,
+                    backend: OutputCapability::Dvi,
+                    clock: PLAIN_CLOCK,
+                    interaction: tex_state::InteractionMode::Nonstop,
+                    error_context_widths: recipe.construction_error_context_widths,
+                    guards: plain_guards(),
+                    source_name: "plain-provider-provenance-isolation.tex".into(),
+                    source_kind: RegisteredSourceKind::Generated,
+                    source: Arc::from(&b"\\def\\x{a}\\x\\end\n"[..]),
+                    resources: Vec::new(),
+                    terminal_input: Vec::new(),
+                    observer: &mut observer,
+                },
+            )
+            .expect("fresh repeated Plain loaded job");
+        repeated.push((
+            run.universe.provenance_stats(),
+            run.universe.macro_invocation_provenance_stats(),
+        ));
+    }
+    assert!(repeated[0].1.invocations() > 0);
+    assert_eq!(repeated[0].1, repeated[1].1);
+    assert!(
+        repeated[0].0.retained_layout_eq(repeated[1].0),
+        "cold-entry and cache-hit jobs must retain identical job-owned provenance: {:?} vs {:?}",
+        repeated[0].0,
+        repeated[1].0,
+    );
 }
 
 fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
@@ -1252,13 +1294,22 @@ fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
         }
         let macro_bytes = macro_stats.retained_bytes();
         let bytes_per_invocation = macro_stats.bytes_per_invocation();
+        let layout_budget = run.provenance.origin_record_layout_budget_bytes();
         eprintln!(
-            "{fixture_name} provenance: invocations={invocations} macro_retained_bytes={macro_bytes} bytes_per_invocation={bytes_per_invocation} total_retained_bytes={}",
-            run.provenance.retained_bytes(),
+            "{fixture_name} provenance: invocations={invocations} macro_retained_bytes={macro_bytes} observed_bytes_per_invocation={bytes_per_invocation} origin_record_retained_bytes={} origin_record_layout_budget_bytes={layout_budget} total_retained_bytes={} components={:?}",
+            run.provenance.origin_record_retained_bytes(),
+            run.provenance.retained_bytes(), run.provenance,
         );
-        if bytes_per_invocation > 64 {
+        if run.provenance.origin_record_slot_bytes() > 64 {
             return Err(format!(
-                "{document} macro provenance retained {bytes_per_invocation} bytes/invocation (budget: 64)"
+                "{document} archived provenance slot is {} bytes (admission charge: 64)",
+                run.provenance.origin_record_slot_bytes(),
+            ));
+        }
+        if run.provenance.origin_record_retained_bytes() > layout_budget {
+            return Err(format!(
+                "{document} origin-record containers retained {} bytes (derived layout budget: {layout_budget})",
+                run.provenance.origin_record_retained_bytes(),
             ));
         }
         run.dvi

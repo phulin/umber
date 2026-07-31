@@ -1,7 +1,8 @@
 use super::{
-    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, ORIGIN_KEY_LEASE_LEN, OriginKeyRuns,
-    OriginRecord, ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
-    SyntheticOrigin, SyntheticOriginKind, packed_origin_successor,
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, ORIGIN_KEY_LEASE_LEN,
+    ORIGIN_RECORD_ARCHIVE_CHUNK, OriginKeyRuns, OriginRecord, ProvenanceStore, SourceOrigin,
+    SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    packed_origin_successor,
 };
 use crate::Universe;
 use crate::ids::OriginListId;
@@ -303,8 +304,13 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
         stores.macro_invocation_origin(definition, invocation_origin, definition_origin, parent);
 
     let stats = stores.macro_invocation_provenance_stats();
+    let retention = stores.provenance_stats();
     assert_eq!(stats.invocations(), 2);
     assert!(stats.retained_bytes() > 0);
+    assert!(retention.origin_record_slot_bytes() <= 64);
+    assert!(
+        retention.origin_record_retained_bytes() <= retention.origin_record_layout_budget_bytes()
+    );
     assert_eq!(
         stores.origin(child),
         OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
@@ -317,6 +323,24 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
 
     stores.rollback(&snapshot);
     assert_eq!(stores.macro_invocation_provenance_stats().invocations(), 0);
+    assert!(!retention.retained_layout_eq(stores.provenance_stats()));
+}
+
+#[test]
+fn origin_record_layout_budget_covers_tail_and_chunk_growth() {
+    let mut store = ProvenanceStore::new();
+    for records in 1..=ORIGIN_RECORD_ARCHIVE_CHUNK + 1 {
+        store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+            SyntheticOriginKind::Test,
+        )));
+        if matches!(records, 1 | 3 | 4 | 5 | 1023 | 1024 | 1025) {
+            let stats = store.stats();
+            assert!(
+                stats.origin_record_retained_bytes() <= stats.origin_record_layout_budget_bytes(),
+                "record layout exceeded derived budget at {records}: {stats:?}"
+            );
+        }
+    }
 }
 
 #[test]

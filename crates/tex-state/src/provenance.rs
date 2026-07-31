@@ -202,6 +202,14 @@ pub(crate) struct ProvenanceStoreMark {
     list_identities: IdentityMark,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct OriginRecordStorageStats {
+    capacity: usize,
+    archive_metadata_retained_bytes: usize,
+    key_runs: usize,
+    key_run_capacity: usize,
+}
+
 /// Live provenance arena size counters.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProvenanceStats {
@@ -209,7 +217,9 @@ pub struct ProvenanceStats {
     origin_list_spans: usize,
     origin_list_entries: usize,
     origin_record_capacity: usize,
-    origin_record_metadata_retained_bytes: usize,
+    origin_record_archive_metadata_retained_bytes: usize,
+    origin_key_runs: usize,
+    origin_key_run_capacity: usize,
     origin_list_span_capacity: usize,
     origin_list_entry_capacity: usize,
     source_regions: usize,
@@ -243,7 +253,9 @@ impl ProvenanceStats {
             origin_list_spans,
             origin_list_entries,
             origin_record_capacity: 0,
-            origin_record_metadata_retained_bytes: 0,
+            origin_record_archive_metadata_retained_bytes: 0,
+            origin_key_runs: 0,
+            origin_key_run_capacity: 0,
             origin_list_span_capacity: 0,
             origin_list_entry_capacity: 0,
             source_regions: 0,
@@ -257,8 +269,7 @@ impl ProvenanceStats {
         origin_records: usize,
         origin_list_spans: usize,
         origin_list_entries: usize,
-        origin_record_capacity: usize,
-        origin_record_metadata_retained_bytes: usize,
+        origin_records_storage: OriginRecordStorageStats,
         origin_list_span_capacity: usize,
         origin_list_entry_capacity: usize,
     ) -> Self {
@@ -266,8 +277,11 @@ impl ProvenanceStats {
             origin_records,
             origin_list_spans,
             origin_list_entries,
-            origin_record_capacity,
-            origin_record_metadata_retained_bytes,
+            origin_record_capacity: origin_records_storage.capacity,
+            origin_record_archive_metadata_retained_bytes: origin_records_storage
+                .archive_metadata_retained_bytes,
+            origin_key_runs: origin_records_storage.key_runs,
+            origin_key_run_capacity: origin_records_storage.key_run_capacity,
             origin_list_span_capacity,
             origin_list_entry_capacity,
             source_regions: 0,
@@ -326,7 +340,8 @@ impl ProvenanceStats {
     #[must_use]
     pub const fn retained_bytes(self) -> usize {
         self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
-            + self.origin_record_metadata_retained_bytes
+            + self.origin_record_archive_metadata_retained_bytes
+            + self.origin_key_run_capacity * mem::size_of::<OriginKeyRun>()
             + self.origin_list_span_capacity * mem::size_of::<(u32, u32)>()
             + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
             + self.source_map_retained_bytes
@@ -337,7 +352,95 @@ impl ProvenanceStats {
     #[must_use]
     pub const fn origin_record_retained_bytes(self) -> usize {
         self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
-            + self.origin_record_metadata_retained_bytes
+            + self.origin_record_archive_metadata_retained_bytes
+            + self.origin_key_run_capacity * mem::size_of::<OriginKeyRun>()
+    }
+
+    /// Fixed width of one archived `(key, record)` slot. This is the layout
+    /// quantity governed by the 64-byte per-record production admission charge.
+    #[must_use]
+    pub const fn origin_record_slot_bytes(self) -> usize {
+        mem::size_of::<ArchivedOriginRecord>()
+    }
+
+    #[must_use]
+    pub const fn origin_record_archive_metadata_retained_bytes(self) -> usize {
+        self.origin_record_archive_metadata_retained_bytes
+    }
+
+    #[must_use]
+    pub const fn origin_key_runs(self) -> usize {
+        self.origin_key_runs
+    }
+
+    #[must_use]
+    pub const fn origin_key_run_capacity(self) -> usize {
+        self.origin_key_run_capacity
+    }
+
+    /// Maximum retained bytes implied by the archive's 1,024-slot chunks and
+    /// the geometric growth policy of its three `Vec` allocations.
+    ///
+    /// This is a container-layout bound, not an empirical workload ceiling.
+    /// It deliberately includes unused tail and index capacity.
+    #[must_use]
+    pub fn origin_record_layout_budget_bytes(self) -> usize {
+        let sealed_chunks = self.origin_records / ORIGIN_RECORD_ARCHIVE_CHUNK;
+        let tail_len = self.origin_records % ORIGIN_RECORD_ARCHIVE_CHUNK;
+        let tail_capacity = if tail_len == 0 {
+            0
+        } else {
+            tail_len
+                .checked_next_power_of_two()
+                .unwrap_or(usize::MAX)
+                .max(4)
+        };
+        let record_capacity = sealed_chunks
+            .saturating_mul(ORIGIN_RECORD_ARCHIVE_CHUNK)
+            .saturating_add(tail_capacity);
+        let sealed_capacity = if sealed_chunks == 0 {
+            0
+        } else {
+            sealed_chunks
+                .checked_next_power_of_two()
+                .unwrap_or(usize::MAX)
+                .max(4)
+        };
+        let run_capacity = if self.origin_key_runs == 0 {
+            0
+        } else {
+            self.origin_key_runs
+                .checked_next_power_of_two()
+                .unwrap_or(usize::MAX)
+                .max(4)
+        };
+        record_capacity
+            .saturating_mul(mem::size_of::<ArchivedOriginRecord>())
+            .saturating_add(
+                sealed_capacity.saturating_mul(mem::size_of::<Arc<[ArchivedOriginRecord]>>()),
+            )
+            .saturating_add(run_capacity.saturating_mul(mem::size_of::<OriginKeyRun>()))
+    }
+
+    /// Whether two observations have identical logical and retained storage.
+    /// Unlike `PartialEq`, this includes allocation capacity and source-map
+    /// retention and is intended for fresh-job/cache-isolation controls.
+    #[must_use]
+    pub const fn retained_layout_eq(self, other: Self) -> bool {
+        self.origin_records == other.origin_records
+            && self.origin_list_spans == other.origin_list_spans
+            && self.origin_list_entries == other.origin_list_entries
+            && self.origin_record_capacity == other.origin_record_capacity
+            && self.origin_record_archive_metadata_retained_bytes
+                == other.origin_record_archive_metadata_retained_bytes
+            && self.origin_key_runs == other.origin_key_runs
+            && self.origin_key_run_capacity == other.origin_key_run_capacity
+            && self.origin_list_span_capacity == other.origin_list_span_capacity
+            && self.origin_list_entry_capacity == other.origin_list_entry_capacity
+            && self.source_regions == other.source_regions
+            && self.generated_source_backings == other.generated_source_backings
+            && self.source_map_bytes == other.source_map_bytes
+            && self.source_map_retained_bytes == other.source_map_retained_bytes
     }
 
     #[must_use]
@@ -373,9 +476,15 @@ impl ProvenanceStats {
             origin_record_capacity: self
                 .origin_record_capacity
                 .saturating_sub(baseline.origin_record_capacity),
-            origin_record_metadata_retained_bytes: self
-                .origin_record_metadata_retained_bytes
-                .saturating_sub(baseline.origin_record_metadata_retained_bytes),
+            origin_record_archive_metadata_retained_bytes: self
+                .origin_record_archive_metadata_retained_bytes
+                .saturating_sub(baseline.origin_record_archive_metadata_retained_bytes),
+            origin_key_runs: self
+                .origin_key_runs
+                .saturating_sub(baseline.origin_key_runs),
+            origin_key_run_capacity: self
+                .origin_key_run_capacity
+                .saturating_sub(baseline.origin_key_run_capacity),
             origin_list_span_capacity: self
                 .origin_list_span_capacity
                 .saturating_sub(baseline.origin_list_span_capacity),
@@ -1233,9 +1342,12 @@ impl ProvenanceStore {
             self.records.len(),
             self.spans.len(),
             self.origins.len(),
-            self.records.capacity(),
-            self.records.retained_metadata_bytes()
-                + self.record_keys.runs.capacity() * mem::size_of::<OriginKeyRun>(),
+            OriginRecordStorageStats {
+                capacity: self.records.capacity(),
+                archive_metadata_retained_bytes: self.records.retained_metadata_bytes(),
+                key_runs: self.record_keys.runs.len(),
+                key_run_capacity: self.record_keys.runs.capacity(),
+            },
             self.spans.capacity(),
             self.origins.capacity(),
         )

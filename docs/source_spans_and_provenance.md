@@ -533,13 +533,41 @@ The tagged representation preserves and tests:
 - whether snapshot serialization or debug tooling exposes raw origin values.
 
 The explicit `state_budgets` performance tier enforces at most 64 retained
-bytes per macro invocation over a 2,048-call, 32,768-output-token run. Story
-and Gentle conformance runs report and enforce the same ceiling while retaining
-their byte-identical DVI checks. A representative run measured 60 bytes per
-invocation for Story (222 invocations) and 58 for Gentle (14,018 invocations).
-Retained-byte accounting includes archived packed keys, unused tail capacity,
-chunk pointers, and affine key-run capacity; origin-list and source-map storage
-remain separately visible in total provenance bytes.
+bytes per macro invocation over its specified 2,048-call,
+32,768-output-token long run. The value is an empirical regression threshold
+for that sample and is also the conservative production admission charge; it
+is not a per-document invariant. Story and Gentle report the observed ratio,
+but enforce the underlying layout invariants: an archived slot fits the
+64-byte admission charge, and retained archive, tail, chunk-pointer, and
+affine-run capacity fits the bound derived from the 1,024-slot chunk geometry
+and the containers' geometric growth. Origin-list and source-map storage remain
+separately visible in total provenance bytes.
+
+This distinction matters for short loaded-format jobs. The source-bootstrap
+and persistent-loaded Story A/B at migration base `8a5726a8` used the same
+engine, staged Story source, clock, runtime configuration, and finite guards:
+
+| component                        | source bootstrap | loaded Plain |
+| -------------------------------- | ---------------: | -----------: |
+| origin records                   |            9,261 |           54 |
+| archived record capacity         |            9,280 |           64 |
+| archive chunk-pointer bytes      |              256 |            0 |
+| affine key runs / capacity       |          50 / 64 |        1 / 4 |
+| macro invocations                |              222 |           23 |
+| attributed macro retained bytes  |           12,483 |        1,547 |
+| observed bytes per invocation    |               57 |           68 |
+| origin-list spans / entries      |      512 / 5,019 |        1 / 0 |
+| source-map live / retained bytes |  46,096 / 46,160 |  392 / 1,109 |
+
+The loaded run retains 87.6% fewer attributed macro bytes. Its apparent
+68-byte ratio is the expected `Vec` tail rounding from 54 live records to 64
+slots plus four key-run slots, proportionally attributed across 23 macro
+records; it is not construction leakage. Loaded formats reconstruct empty
+diagnostic arenas, and cold-entry versus cache-hit runs of the same fresh job
+must have identical complete retained layouts. These controls replace the
+stale practice of applying the long-run 64-byte ratio to every document while
+still detecting shared-cache leakage, repeated-job accumulation, slot growth,
+or excess container capacity.
 
 These arenas own diagnostic history, not semantic engine material. Repeated
 macro invocations may thus make provenance the dominant RSS owner while the
