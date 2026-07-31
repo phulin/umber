@@ -198,8 +198,8 @@ fn first_gating_divergence(
 struct TextComparison {
     expected: Vec<u8>,
     actual: Vec<u8>,
-    expected_memory_usage: Vec<Vec<u8>>,
-    actual_memory_usage: Vec<Vec<u8>>,
+    expected_memory_usage: Vec<[u32; 5]>,
+    actual_memory_usage: Vec<[u32; 5]>,
 }
 
 impl TextComparison {
@@ -244,12 +244,12 @@ impl TextComparisons {
     }
 }
 
-fn split_memory_usage_records(bytes: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
+fn split_memory_usage_records(bytes: &[u8]) -> (Vec<u8>, Vec<[u32; 5]>) {
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut records = Vec::new();
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-        if is_memory_usage_record(line) {
-            records.push(line.to_vec());
+        if let Some(record) = parse_memory_usage_record(line) {
+            records.push(record);
         } else {
             normalized.extend_from_slice(line);
         }
@@ -257,30 +257,34 @@ fn split_memory_usage_records(bytes: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
     (normalized, records)
 }
 
-fn is_memory_usage_record(line: &[u8]) -> bool {
+fn parse_memory_usage_record(line: &[u8]) -> Option<[u32; 5]> {
     const PREFIX: &[u8] = b"Memory usage before: ";
     const AFTER: &[u8] = b"; after: ";
     const UNTOUCHED: &[u8] = b"; still untouched: ";
-    let Some(mut rest) = line.strip_prefix(PREFIX) else {
-        return false;
-    };
-    for separator in [b'&', b';', b'&', b';', b'\n'] {
-        let Some(index) = rest.iter().position(|byte| *byte == separator) else {
-            return false;
-        };
-        if index == 0 || !rest[..index].iter().all(u8::is_ascii_digit) {
-            return false;
-        }
-        rest = &rest[index..];
-        rest = match separator {
-            b'&' => &rest[1..],
-            b';' if rest.starts_with(AFTER) => &rest[AFTER.len()..],
-            b';' if rest.starts_with(UNTOUCHED) => &rest[UNTOUCHED.len()..],
-            b'\n' if rest == b"\n" => &[],
-            _ => return false,
-        };
-    }
+    let mut rest = line.strip_prefix(PREFIX)?;
+    let before_var = parse_memory_usage_value(&mut rest, b"&")?;
+    let before_dyn = parse_memory_usage_value(&mut rest, AFTER)?;
+    let after_var = parse_memory_usage_value(&mut rest, b"&")?;
+    let after_dyn = parse_memory_usage_value(&mut rest, UNTOUCHED)?;
+    let untouched = parse_memory_usage_value(&mut rest, b"\n")?;
     rest.is_empty()
+        .then_some([before_var, before_dyn, after_var, after_dyn, untouched])
+}
+
+fn parse_memory_usage_value(rest: &mut &[u8], separator: &[u8]) -> Option<u32> {
+    let index = rest
+        .windows(separator.len())
+        .position(|window| window == separator)?;
+    let digits = &rest[..index];
+    if digits.is_empty() || digits.len() > 10 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    // TeX82's `print_int` takes a signed 32-bit `integer`. Parsing the value,
+    // rather than accepting an arbitrary digit run, therefore supplies both
+    // the canonical numeric bound and a fixed record-length bound.
+    let value = std::str::from_utf8(digits).ok()?.parse::<i32>().ok()?;
+    *rest = &rest[index + separator.len()..];
+    Some(value as u32)
 }
 
 fn optional_byte_divergence(
@@ -1228,6 +1232,57 @@ mod tests {
             assert!(verdict.gating_mismatch, "changed text must remain gating");
             let report = fs::read_to_string(verdict.expect("gating report")).expect("report");
             assert!(report.contains("earliest.channel: transcript"), "{report}");
+        }
+    }
+
+    #[test]
+    fn shipout_memory_record_parser_is_complete_ascii_and_bounded() {
+        assert_eq!(
+            parse_memory_usage_record(
+                b"Memory usage before: 159&313; after: 158&309; still untouched: 19649\n"
+            ),
+            Some([159, 313, 158, 309, 19_649])
+        );
+
+        for malformed in [
+            b"Memory usage before: -1&313; after: 158&309; still untouched: 19649\n".as_slice(),
+            b"Memory usage before: +1&313; after: 158&309; still untouched: 19649\n".as_slice(),
+            b"Memory usage before: 2147483648&313; after: 158&309; still untouched: 19649\n"
+                .as_slice(),
+            b"Memory usage before: 00000000001&313; after: 158&309; still untouched: 19649\n"
+                .as_slice(),
+            b"Memory usage before: 159 &313; after: 158&309; still untouched: 19649\n".as_slice(),
+            b"Memory usage before: 159&313;  after: 158&309; still untouched: 19649\n".as_slice(),
+            b"Memory usage before: 159&313; after: 158&309; still untouched: 19649 \n".as_slice(),
+            b"Memory usage before: 159&313; after: 158&309; still untouched: 19649\r\n".as_slice(),
+            b"Memory usage before: 159&313; after: 158&309; still untouched: 19649".as_slice(),
+            b"prefix Memory usage before: 159&313; after: 158&309; still untouched: 19649\n"
+                .as_slice(),
+            b"Memory usage before: 159&313; after: 158&309; still untouched: 19649\ntrailing"
+                .as_slice(),
+        ] {
+            assert_eq!(parse_memory_usage_record(malformed), None, "{malformed:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_memory_like_lines_remain_in_place_and_gating() {
+        let canonical =
+            b"before\nMemory usage before: 1&2; after: 3&4; still untouched: 5\nafter\n";
+        let (without_record, records) = split_memory_usage_records(canonical);
+        assert_eq!(without_record, b"before\nafter\n");
+        assert_eq!(records, vec![[1, 2, 3, 4, 5]]);
+
+        for malformed in [
+            b"before\nMemory usage before: 2147483648&2; after: 3&4; still untouched: 5\nafter\n"
+                .as_slice(),
+            b"before\nMemory usage before: 1&2; after: 3&4; still untouched: 5\r\nafter\n"
+                .as_slice(),
+            b"before Memory usage before: 1&2; after: 3&4; still untouched: 5\nafter\n".as_slice(),
+        ] {
+            let (preserved, records) = split_memory_usage_records(malformed);
+            assert_eq!(preserved, malformed);
+            assert!(records.is_empty());
         }
     }
 
