@@ -1313,7 +1313,7 @@ pub(crate) fn meaning_text(
 ) -> String {
     match command.meaning() {
         Meaning::Undefined => "undefined".to_owned(),
-        Meaning::Relax => "\\relax".to_owned(),
+        Meaning::Relax => print_esc_text(state, "relax"),
         Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
         Meaning::CharGiven(ch) => format!("the character {ch}"),
         Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
@@ -1401,13 +1401,13 @@ pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintC
         Meaning::Macro { flags, .. } => {
             let mut text = String::new();
             if flags.contains(MeaningFlags::PROTECTED) {
-                text.push_str("\\protected");
+                text.push_str(&print_esc_text(state, "protected"));
             }
             if flags.contains(MeaningFlags::LONG) {
-                text.push_str("\\long");
+                text.push_str(&print_esc_text(state, "long"));
             }
             if flags.contains(MeaningFlags::OUTER) {
-                text.push_str("\\outer");
+                text.push_str(&print_esc_text(state, "outer"));
             }
             if !text.is_empty() {
                 text.push(' ');
@@ -1416,13 +1416,15 @@ pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintC
             text
         }
         Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
-        Meaning::CharGiven(ch) => format!("\\char\"{:X}", ch as u32),
-        Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
-        Meaning::CountRegister(index) => format!("\\count{index}"),
-        Meaning::DimenRegister(index) => format!("\\dimen{index}"),
-        Meaning::SkipRegister(index) => format!("\\skip{index}"),
-        Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
-        Meaning::ToksRegister(index) => format!("\\toks{index}"),
+        Meaning::CharGiven(ch) => format!("{}\"{:X}", print_esc_text(state, "char"), ch as u32),
+        Meaning::MathCharGiven(value) => {
+            format!("{}\"{value:X}", print_esc_text(state, "mathchar"))
+        }
+        Meaning::CountRegister(index) => format!("{}{index}", print_esc_text(state, "count")),
+        Meaning::DimenRegister(index) => format!("{}{index}", print_esc_text(state, "dimen")),
+        Meaning::SkipRegister(index) => format!("{}{index}", print_esc_text(state, "skip")),
+        Meaning::MuskipRegister(index) => format!("{}{index}", print_esc_text(state, "muskip")),
+        Meaning::ToksRegister(index) => format!("{}{index}", print_esc_text(state, "toks")),
         meaning @ (Meaning::IntParam(_)
         | Meaning::InternalInteger(_)
         | Meaning::DimenParam(_)
@@ -1458,7 +1460,10 @@ fn print_command_control_sequence_text(
     let name = state
         .primitive_name(meaning)
         .or_else(|| command.control_sequence.map(|symbol| state.resolve(symbol)));
-    name.map_or_else(|| "undefined".to_owned(), |name| format!("\\{name}"))
+    name.map_or_else(
+        || "undefined".to_owned(),
+        |name| print_esc_text(state, name),
+    )
 }
 
 fn meaning_control_sequence_text(

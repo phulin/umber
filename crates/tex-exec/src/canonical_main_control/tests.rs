@@ -34,6 +34,42 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn tracingcommands_reports_each_reswitch_command_with_live_selector_and_mode() {
+    // TeX82 §§299/1030: `show_cur_cmd_chr` runs at `reswitch`, including
+    // each command fetched by §1211's prefix loop. The first trace is log-only
+    // because `\tracingonline` has not executed yet; the prefix and its target
+    // then use the newly live terminal-and-log selector.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=1\\tracingonline=1\\global\\escapechar=64\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    assert!(!terminal.contains("tracingonline"));
+    assert!(log.contains("{vertical mode: \\tracingonline}"));
+    assert!(terminal.contains("{\\global}\n{\\escapechar}"));
+    assert!(log.contains("{\\global}\n{\\escapechar}"));
+    assert!(terminal.contains("{@end}"), "{terminal:?}");
+}
+
+#[test]
+fn disabled_tracingcommands_emits_no_command_diagnostic() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\tracingonline=1\\escapechar=64\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert!(!pending_sink_text(&stores, true).contains("vertical mode:"));
+    assert!(!pending_sink_text(&stores, false).contains("vertical mode:"));
+}
+
+#[test]
 fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
     // TeX82 §1090 keys this transition by the `valign` command code, and
     // e-TeX 2.6 [53a.3826--3883] assigns that code to all four directions.

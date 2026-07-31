@@ -144,6 +144,9 @@ impl IntParam {
     /// TeX's missing-character diagnostic level.
     pub const TRACING_LOST_CHARS: Self = Self::new(36);
 
+    /// TeX's main-control command diagnostic level (tex.web §1030).
+    pub const TRACING_COMMANDS: Self = Self::new(37);
+
     /// TeX's `\uchyph` uppercase-start hyphenation gate.
     pub const UC_HYPH: Self = Self::new(39);
 

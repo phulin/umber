@@ -421,7 +421,7 @@ const INT_PARAMS: &[(&str, u16)] = &[
     ("tracingpages", IntParam::TRACING_PAGES.raw()),
     ("tracingoutput", IntParam::TRACING_OUTPUT.raw()),
     ("tracinglostchars", 36),
-    ("tracingcommands", 37),
+    ("tracingcommands", IntParam::TRACING_COMMANDS.raw()),
     ("tracingrestores", 38),
     ("uchyph", 39),
     ("escapechar", IntParam::ESCAPE_CHAR.raw()),

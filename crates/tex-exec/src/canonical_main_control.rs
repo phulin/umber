@@ -86,6 +86,12 @@ pub struct CanonicalMainControl {
     /// command per `step_once`, so the label it would have jumped to has to
     /// be carried across steps explicitly.
     main_loop_active: bool,
+    /// The last mode printed by TeX82 §1030's `show_cur_cmd_chr`.
+    ///
+    /// Zero is not a TeX mode, so `None` is WEB's initial `shown_mode=0`.
+    /// This is diagnostic runtime state: it survives ordinary command steps
+    /// but participates in an atomic step rollback.
+    shown_mode: Option<Mode>,
     /// False until TeX82 §1030's `main_control` prologue has run.
     ///
     /// `main_control` is entered once per job and opens with
@@ -332,6 +338,7 @@ struct CanonicalStepSnapshot {
     boxes: ReplayBoxes,
     active_discretionaries: Vec<ActiveDiscretionary>,
     main_loop_active: bool,
+    shown_mode: Option<Mode>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
@@ -354,6 +361,7 @@ impl CanonicalStepSnapshot {
             boxes: control.boxes.clone(),
             active_discretionaries: control.active_discretionaries.clone(),
             main_loop_active: control.main_loop_active,
+            shown_mode: control.shown_mode,
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
@@ -385,6 +393,7 @@ impl CanonicalStepSnapshot {
         control.boxes = self.boxes;
         control.active_discretionaries = self.active_discretionaries;
         control.main_loop_active = self.main_loop_active;
+        control.shown_mode = self.shown_mode;
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
@@ -1234,7 +1243,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics)?;
+        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -1508,7 +1517,7 @@ impl CanonicalMainControl {
                         .map(PendingDiagnostic::Command),
                 );
             }
-            report_pending_diagnostics(stores, diagnostics)?;
+            report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
         }
@@ -1691,7 +1700,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics)?;
+        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -2974,7 +2983,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics)?;
+        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -5030,6 +5039,7 @@ fn dispatch_main_control_command(
     // This loop is that label.
     let mut suppress_left_boundary = false;
     loop {
+        queue_command_trace(processor, mode, &command, diagnostics);
         let mut global = false;
         let mut flags = MeaningFlags::EMPTY;
         loop {
@@ -5050,6 +5060,7 @@ fn dispatch_main_control_command(
                 .next_non_blank_non_relax_x_token()
                 .map_err(command_error)?
                 .ok_or(ExecError::MissingPrefixedCommand)?;
+            queue_command_trace(processor, mode, &command, diagnostics);
             // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
             // erroneous prefixes and return>`: §209's partition, not a
             // hand-listed set of assignment families.
@@ -5167,6 +5178,23 @@ fn dispatch_main_control_command(
             }
         }
         return Ok(scanned);
+    }
+}
+
+/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` at
+/// `reswitch`. Prefix scanning fetches commands inside one Umber step, so the
+/// trace is queued at each fetch rather than once per public step.
+fn queue_command_trace(
+    processor: &CommandProcessor<'_>,
+    mode: Mode,
+    command: &tex_command::CurrentCommand,
+    diagnostics: &mut Vec<PendingDiagnostic>,
+) {
+    if processor.int_param(IntParam::TRACING_COMMANDS) > 0 {
+        diagnostics.push(PendingDiagnostic::CommandTrace(
+            mode,
+            tex_command::PrintCommand::from_current(command),
+        ));
     }
 }
 
@@ -9715,7 +9743,9 @@ fn shipout_replay_box(
     // expansion itself runs inside Umber's artifact transaction, so render
     // the command-owned reports only after that transaction has committed:
     // otherwise its transcript effects are consumed as staging scratch.
-    report_pending_diagnostics(stores, write_diagnostics)?;
+    // `write_diagnostics` contains scanner recoveries, never §1030 command
+    // traces; writes execute outside main control's `shown_mode` owner.
+    report_pending_diagnostics(stores, write_diagnostics, &mut None)?;
     print_ship_out_marker_close(stores, tracing_output);
     // The closing bracket prints after `shipout_node_with_input_summary`'s
     // own transaction has committed, so without this call it would sit as a
@@ -14312,6 +14342,8 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// §362's `)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
+    /// TeX82 §§299/1030's `show_cur_cmd_chr` at `reswitch`.
+    CommandTrace(Mode, tex_command::PrintCommand),
     /// A command-owned diagnostic whose semantic transition completed before
     /// the World-facing executor could render it.
     Command(tex_command::CommandSemanticDiagnostic),
@@ -14348,9 +14380,21 @@ fn printed_command(stores: &Universe, meaning: Meaning) -> String {
 fn report_pending_diagnostics(
     stores: &mut Universe,
     diagnostics: Vec<PendingDiagnostic>,
+    shown_mode: &mut Option<Mode>,
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         match diagnostic {
+            PendingDiagnostic::CommandTrace(mode, command) => {
+                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
+                let mut output = stores.begin_diagnostic();
+                output.print_nl("{");
+                if *shown_mode != Some(mode) {
+                    output.print(mode_text_for_command_trace(mode)).print(": ");
+                    *shown_mode = Some(mode);
+                }
+                output.print(&command).print_char('}');
+                output.end(false);
+            }
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
             ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?,
@@ -14425,6 +14469,17 @@ fn report_pending_diagnostics(
         }
     }
     Ok(())
+}
+
+fn mode_text_for_command_trace(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Vertical => "vertical mode",
+        Mode::InternalVertical => "internal vertical mode",
+        Mode::Horizontal => "horizontal mode",
+        Mode::RestrictedHorizontal => "restricted horizontal mode",
+        Mode::Math => "math mode",
+        Mode::DisplayMath => "display math mode",
+    }
 }
 
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
