@@ -176,6 +176,14 @@ pub struct LoadedFormatFixture {
 }
 
 impl LoadedFormatFixture {
+    /// Selects the job-local TeX interaction mode after format loading.
+    ///
+    /// Interaction is runtime control state and is deliberately excluded from
+    /// the frozen format image.
+    pub fn set_interaction_mode(&mut self, mode: tex_state::InteractionMode) {
+        self.universe.set_interaction_mode(mode);
+    }
+
     pub fn run(
         mut self,
         source_name: &str,

@@ -1303,9 +1303,12 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
     let mut recorder = Recorder::default();
-    let loaded = fixture
+    let mut loaded_fixture = fixture
         .load(world)
-        .and_then(|loaded| loaded.run(&case.source, Arc::<[u8]>::from(source), &mut recorder))
+        .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
+    loaded_fixture.set_interaction_mode(case.interaction_mode.engine_mode());
+    let loaded = loaded_fixture
+        .run(&case.source, Arc::<[u8]>::from(source), &mut recorder)
         .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
     let counts = std::array::from_fn(|slot| {
         loaded
