@@ -95,6 +95,30 @@ pub use tex_fonts::{
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutcome};
 pub use umber_vfs::FileContentId;
+
+/// Registers the one exact Cargo-test entry used when an authenticated format
+/// worker re-executes the already-trusted current test image.
+#[cfg(target_os = "linux")]
+#[macro_export]
+macro_rules! register_format_worker_test_bootstrap {
+    () => {
+        #[test]
+        fn umber_format_worker_bootstrap() {
+            $crate::run_format_worker_test_bootstrap();
+        }
+    };
+}
+
+/// Internal implementation for [`register_format_worker_test_bootstrap!`].
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn run_format_worker_test_bootstrap() {
+    format_worker::run_test_bootstrap();
+}
+
+#[cfg(all(test, target_os = "linux"))]
+register_format_worker_test_bootstrap!();
+
 pub use virtual_compile::{
     AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,
     CompileDiagnostic, CompileError, CompileSourceLocation, CompileTelemetry,

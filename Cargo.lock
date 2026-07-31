@@ -1417,6 +1417,7 @@ dependencies = [
  "umber-fetch",
  "umber-interrupt",
  "umber-vfs",
+ "zeroize",
 ]
 
 [[package]]

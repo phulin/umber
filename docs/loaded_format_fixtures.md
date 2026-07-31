@@ -42,13 +42,25 @@ contains the expected cache identity; the worker reconstructs the recipe and
 recomputes that identity before creating a memory `World`, installing the
 selected fresh primitive profile, and driving the retained
 `CanonicalEngineSession`. The ordered typed-resource closure and finite
-command-fuel limit remain inside that worker. Production opens the running
-Umber executable (or Cargo's sibling Umber binary for a test executable) once
-and executes that stable descriptor through `/proc/self/fd`; no environment
-variable or caller path can substitute worker code, and path replacement after
-the open cannot change the executed image. The parent creates a fresh random
-authentication key for that child episode and supplies it through a private
-inherited one-shot pipe, independently of the serialized request. The worker
+command-fuel limit remain inside that worker. Production opens `/proc/self/exe`
+and executes that stable descriptor through `/proc/self/fd`; each Cargo test
+image that constructs formats registers the repository's exact, single-test
+worker bootstrap. The image re-executes itself with that exact filter, so the
+bootstrap consumes worker mode once before any ordinary test can run or test
+concurrency can begin. Format construction itself never intercepts process
+startup. The current process image is the trust anchor: no sibling
+path, public version, feature string, build ID, or hash supplied by selected
+code participates in authentication. Consequently a stale, wrong, or
+attacker-replaced sibling is never selected, while replacement of the proc
+pathname after opening cannot change the executed inode. The parent creates a
+fresh random authentication key for that child episode and prefixes it to the
+private stdin stream. A fixed prefix and fixed-width length frame the
+independently serialized request; the worker rejects truncated, oversized, or
+host-unrepresentable lengths before reserving payload storage. The response
+uses the same bounded framing inside the independently bounded stdout stream.
+Parent and child keep every key copy and HMAC pad in explicitly zeroizing
+storage; their owned stdin/stdout handles close on every return, including
+spawn, protocol, authentication, and construction failures. The worker
 authenticates the complete result envelope with HMAC-SHA-256, binding the
 protocol, recipe identity, image digest, and success or diagnostic payload to
 the trusted child.
@@ -155,6 +167,8 @@ dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
-The worker-boundary regression additionally submits a decoder-valid image with
-a forged authenticator and proves that the recipe key remains absent from the
-cache.
+Worker-boundary regressions additionally replace stale and wrong sibling
+candidates before selection, replace a pathname after its inode is anchored,
+exercise the current-image worker entry, and submit a decoder-valid image with
+a forged authenticator. Every attestation or authentication failure is checked
+before publication and leaves the recipe key absent from the cache.

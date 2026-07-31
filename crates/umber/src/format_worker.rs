@@ -2,16 +2,15 @@
 
 use std::io::ErrorKind;
 use std::io::{Read, Write};
-use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use bincode::Options;
 #[cfg(target_os = "linux")]
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 #[cfg(target_os = "linux")]
 use rustix::fd::OwnedFd;
-#[cfg(target_os = "linux")]
-use rustix::pipe::pipe;
 #[cfg(target_os = "linux")]
 use rustix::process::{Pid, PidfdFlags, pidfd_open};
 use serde::{Deserialize, Serialize};
@@ -22,6 +21,8 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use tex_command::RegisteredSourceKind;
 use tex_state::{JobClock, Universe, World};
+#[cfg(target_os = "linux")]
+use zeroize::Zeroizing;
 
 use crate::EngineMode;
 use crate::format_fixture::{
@@ -31,9 +32,15 @@ use crate::format_fixture::{
 
 const PROTOCOL: u32 = 1;
 const AUTH_KEY_BYTES: usize = 32;
-const AUTH_FD_ENV: &str = "UMBER_INTERNAL_FORMAT_WORKER_AUTH_FD";
+const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V1\0";
+const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V1\0";
+const TEST_WORKER_ENV: &str = "UMBER_INTERNAL_CURRENT_IMAGE_TEST_WORKER";
 const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v1\0";
+const FRAME_LENGTH_BYTES: usize = size_of::<u64>();
+const MAX_WORKER_REQUEST_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 16 * 1024 * 1024;
 const MAX_WORKER_STDOUT_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 64 * 1024;
+const MAX_WORKER_RESPONSE_BYTES: usize =
+    MAX_WORKER_STDOUT_BYTES - RESPONSE_PREFIX.len() - FRAME_LENGTH_BYTES;
 const MAX_WORKER_STDERR_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -79,25 +86,24 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
         let request = Request::from_recipe(recipe, identity)?;
         let request_bytes = bincode::serialize(&request)
             .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
+        if request_bytes.len() > MAX_WORKER_REQUEST_BYTES {
+            return Err(FormatFixtureError::WorkerProtocol(
+                "format-worker request exceeds protocol limit".into(),
+            ));
+        }
         let executable = worker_executable()?;
         let executable_path = format!("/proc/self/fd/{}", executable.as_raw_fd());
-        let mut auth_key = [0_u8; AUTH_KEY_BYTES];
-        getrandom::fill(&mut auth_key)
+        let mut auth_key = Zeroizing::new([0_u8; AUTH_KEY_BYTES]);
+        getrandom::fill(&mut *auth_key)
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-        let (auth_reader, auth_writer) =
-            pipe().map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-        File::from(auth_writer)
-            .write_all(&auth_key)
-            .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-        let mut child = Command::new(executable_path)
-            .arg("__format-worker")
-            .env(AUTH_FD_ENV, auth_reader.as_raw_fd().to_string())
+        let mut command = Command::new(executable_path);
+        configure_worker_command(&mut command);
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-        drop(auth_reader);
         let Some(mut stdin) = child.stdin.take() else {
             terminate(&mut child);
             return Err(FormatFixtureError::WorkerProtocol(
@@ -116,9 +122,11 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
                 "missing worker stderr".into(),
             ));
         };
+        let writer_key = Zeroizing::new(*auth_key);
         let writer = std::thread::spawn(move || {
             stdin
-                .write_all(&request_bytes)
+                .write_all(&*writer_key)
+                .and_then(|()| write_frame(&mut stdin, REQUEST_PREFIX, &request_bytes))
                 .map_err(|error| error.to_string())
         });
         let collected = supervise_and_collect(
@@ -152,8 +160,14 @@ pub(crate) fn construct(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureE
                 ));
             }
         }
-        let response: Response = bincode::deserialize(&collected.stdout)
-            .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_string()))?;
+        let response_bytes = find_frame(
+            &collected.stdout,
+            RESPONSE_PREFIX,
+            MAX_WORKER_RESPONSE_BYTES,
+        )
+        .map_err(|error| FormatFixtureError::WorkerProtocol(error.to_owned()))?;
+        let response: Response = deserialize_bounded(response_bytes, MAX_WORKER_RESPONSE_BYTES)
+            .map_err(FormatFixtureError::WorkerProtocol)?;
         validate_response(response, identity, &auth_key)
     }
 }
@@ -382,7 +396,7 @@ fn read_bounded(
 fn supervise_and_collect(
     child: &mut Child,
     guards: FormatGenerationGuards,
-    stdout: ChildStdout,
+    stdout: impl Read + Send + 'static,
     stderr: ChildStderr,
     stdout_limit: usize,
     stderr_limit: usize,
@@ -516,23 +530,128 @@ fn resident_set_from_statm_result(
     reason = "the native supervisor opens the trusted executable once to remove pathname substitution and TOCTOU"
 )]
 fn worker_executable() -> Result<File, FormatFixtureError> {
-    let current = std::env::current_exe()
-        .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
-    let path = if current
-        .parent()
-        .and_then(|path| path.file_name())
-        .and_then(|name| name.to_str())
-        == Some("deps")
-    {
-        current
-            .parent()
-            .and_then(|path| path.parent())
-            .expect("deps has parent")
-            .join("umber")
-    } else {
-        current
-    };
+    open_trusted_current_image("/proc/self/exe")
+}
+
+#[cfg(target_os = "linux")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "native format-worker attestation opens the kernel-owned current-image link"
+)]
+fn open_trusted_current_image(path: &str) -> Result<File, FormatFixtureError> {
     File::open(path).map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "native attestation distinguishes Cargo test harness images from the production CLI"
+)]
+fn configure_worker_command(command: &mut Command) {
+    let running_test_image = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.ends_with("deps")))
+        .unwrap_or(false);
+    command.env(TEST_WORKER_ENV, "1");
+    if running_test_image {
+        command.args([
+            "umber_format_worker_bootstrap",
+            "--exact",
+            "--test-threads=1",
+        ]);
+    } else {
+        command.arg("__format-worker");
+    }
+}
+
+pub(crate) fn run_test_bootstrap() {
+    if std::env::var_os(TEST_WORKER_ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return;
+    }
+    let status = match run_format_worker() {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("umber format worker: {error}");
+            70
+        }
+    };
+    std::process::exit(status);
+}
+
+fn write_frame(output: &mut impl Write, prefix: &[u8], payload: &[u8]) -> std::io::Result<()> {
+    let length = u64::try_from(payload.len())
+        .map_err(|_| std::io::Error::other("format-worker frame length overflow"))?;
+    output.write_all(prefix)?;
+    output.write_all(&length.to_le_bytes())?;
+    output.write_all(payload)
+}
+
+fn read_frame(input: &mut impl Read, prefix: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    let mut observed_prefix = vec![0_u8; prefix.len()];
+    input
+        .read_exact(&mut observed_prefix)
+        .map_err(|_| "truncated format-worker frame prefix")?;
+    if observed_prefix != prefix {
+        return Err("invalid format-worker frame prefix".into());
+    }
+    let mut encoded_length = [0_u8; FRAME_LENGTH_BYTES];
+    input
+        .read_exact(&mut encoded_length)
+        .map_err(|_| "truncated format-worker frame length")?;
+    let length = usize::try_from(u64::from_le_bytes(encoded_length))
+        .map_err(|_| "format-worker frame length does not fit this host")?;
+    if length > limit {
+        return Err("format-worker frame exceeds protocol limit".into());
+    }
+    let mut payload = Vec::new();
+    payload
+        .try_reserve_exact(length)
+        .map_err(|_| "format-worker frame allocation failed")?;
+    payload.resize(length, 0);
+    input
+        .read_exact(&mut payload)
+        .map_err(|_| "truncated format-worker frame payload")?;
+    Ok(payload)
+}
+
+fn find_frame<'a>(input: &'a [u8], prefix: &[u8], limit: usize) -> Result<&'a [u8], &'static str> {
+    let prefix_start = input
+        .windows(prefix.len())
+        .position(|window| window == prefix)
+        .ok_or("missing format-worker response frame")?;
+    let length_start = prefix_start
+        .checked_add(prefix.len())
+        .ok_or("format-worker response frame overflow")?;
+    let length_end = length_start
+        .checked_add(FRAME_LENGTH_BYTES)
+        .ok_or("format-worker response frame overflow")?;
+    let encoded_length: [u8; FRAME_LENGTH_BYTES] = input
+        .get(length_start..length_end)
+        .ok_or("truncated format-worker response length")?
+        .try_into()
+        .expect("fixed-width slice");
+    let length = usize::try_from(u64::from_le_bytes(encoded_length))
+        .map_err(|_| "format-worker response length does not fit this host")?;
+    if length > limit {
+        return Err("format-worker response exceeds protocol limit");
+    }
+    let payload_end = length_end
+        .checked_add(length)
+        .ok_or("format-worker response frame overflow")?;
+    input
+        .get(length_end..payload_end)
+        .ok_or("truncated format-worker response payload")
+}
+
+fn deserialize_bounded<T: for<'de> Deserialize<'de>>(
+    payload: &[u8],
+    limit: usize,
+) -> Result<T, String> {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(u64::try_from(limit).map_err(|_| "format-worker protocol limit overflow")?)
+        .reject_trailing_bytes()
+        .deserialize(payload)
+        .map_err(|error| error.to_string())
 }
 
 fn response_authenticator(
@@ -544,19 +663,19 @@ fn response_authenticator(
 ) -> Result<[u8; 32], String> {
     let encoded = bincode::serialize(&(protocol, identity, image_sha256, result))
         .map_err(|error| error.to_string())?;
-    let mut ipad = [0x36_u8; 64];
-    let mut opad = [0x5c_u8; 64];
+    let mut ipad = Zeroizing::new([0x36_u8; 64]);
+    let mut opad = Zeroizing::new([0x5c_u8; 64]);
     for (index, byte) in key.iter().enumerate() {
         ipad[index] ^= byte;
         opad[index] ^= byte;
     }
     let mut inner = Sha256::new();
-    inner.update(ipad);
+    inner.update(ipad.as_slice());
     inner.update(AUTH_DOMAIN);
     inner.update(encoded);
     let inner = inner.finalize();
     let mut outer = Sha256::new();
-    outer.update(opad);
+    outer.update(opad.as_slice());
     outer.update(inner);
     Ok(outer.finalize().into())
 }
@@ -589,29 +708,11 @@ fn validate_response(
     Ok(image)
 }
 
-fn auth_key_from_environment() -> Result<[u8; AUTH_KEY_BYTES], String> {
-    let descriptor: i32 = std::env::var(AUTH_FD_ENV)
-        .map_err(|_| "missing worker authentication channel".to_owned())?
-        .parse()
-        .map_err(|_| "invalid worker authentication channel".to_owned())?;
-    let path = format!("/proc/self/fd/{descriptor}");
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the trusted worker reads its parent-owned one-shot authentication pipe"
-    )]
-    let mut channel = File::open(path).map_err(|_| "invalid worker authentication channel")?;
-    let mut key = [0_u8; AUTH_KEY_BYTES];
+fn read_auth_key(channel: &mut impl Read) -> Result<Zeroizing<[u8; AUTH_KEY_BYTES]>, String> {
+    let mut key = Zeroizing::new([0_u8; AUTH_KEY_BYTES]);
     channel
-        .read_exact(&mut key)
+        .read_exact(&mut *key)
         .map_err(|_| "invalid worker authentication channel")?;
-    let mut trailing = [0_u8; 1];
-    if channel
-        .read(&mut trailing)
-        .map_err(|_| "invalid worker authentication channel")?
-        != 0
-    {
-        return Err("invalid worker authentication channel".into());
-    }
     Ok(key)
 }
 
@@ -718,9 +819,14 @@ impl Resource {
     reason = "native format-worker IPC owns its process standard streams"
 )]
 pub fn run_format_worker() -> Result<(), String> {
-    let auth_key = auth_key_from_environment()?;
-    let request: Request =
-        bincode::deserialize_from(std::io::stdin()).map_err(|error| error.to_string())?;
+    let mut request_channel = std::io::stdin();
+    let auth_key = read_auth_key(&mut request_channel)?;
+    let request_bytes = read_frame(
+        &mut request_channel,
+        REQUEST_PREFIX,
+        MAX_WORKER_REQUEST_BYTES,
+    )?;
+    let request: Request = deserialize_bounded(&request_bytes, MAX_WORKER_REQUEST_BYTES)?;
     if request.protocol != PROTOCOL {
         return Err("unsupported format-worker protocol".into());
     }
@@ -752,7 +858,13 @@ pub fn run_format_worker() -> Result<(), String> {
         result,
         authenticator,
     };
-    bincode::serialize_into(std::io::stdout(), &response).map_err(|error| error.to_string())
+    let mut response_channel = std::io::stdout().lock();
+    let response_bytes = bincode::serialize(&response).map_err(|error| error.to_string())?;
+    if response_bytes.len() > MAX_WORKER_RESPONSE_BYTES {
+        return Err("format-worker response exceeds protocol limit".into());
+    }
+    write_frame(&mut response_channel, RESPONSE_PREFIX, &response_bytes)
+        .map_err(|error| error.to_string())
 }
 
 const fn engine_tag(engine: EngineMode) -> u8 {
@@ -795,10 +907,63 @@ fn decode_source_kind(tag: u8) -> Result<RegisteredSourceKind, String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::{Seek, SeekFrom};
     use std::os::unix::process::ExitStatusExt;
     use std::sync::Barrier;
     use tempfile::TempDir;
     use umber_fetch::FormatCacheStore;
+
+    #[test]
+    fn test_image_bootstrap_selects_exactly_one_worker_entry() {
+        let mut command = Command::new("/proc/self/exe");
+        configure_worker_command(&mut command);
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            arguments,
+            [
+                "umber_format_worker_bootstrap",
+                "--exact",
+                "--test-threads=1",
+            ]
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(name, _)| *name == TEST_WORKER_ENV)
+                .and_then(|(_, value)| value),
+            Some(std::ffi::OsStr::new("1"))
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "adversarial executable-selection test owns a temporary native filesystem layout"
+    )]
+    fn current_image_attestation_ignores_stale_and_wrong_siblings() {
+        let root = TempDir::new().expect("temporary executable layout");
+        let trusted_path = root.path().join("current-image");
+        let sibling_path = root.path().join("umber");
+        fs::write(&trusted_path, b"trusted-current-image").expect("trusted image");
+        fs::write(&sibling_path, b"stale-same-version-worker").expect("stale sibling");
+
+        let mut anchored =
+            open_trusted_current_image(trusted_path.to_str().expect("utf8 path")).expect("open");
+        let replacement_path = root.path().join("replacement");
+        fs::write(&replacement_path, b"replacement-after-open").expect("replacement image");
+        fs::rename(&replacement_path, &trusted_path).expect("replace pathname");
+        fs::write(&sibling_path, b"wrong-build-worker").expect("replace wrong sibling");
+
+        let mut selected = Vec::new();
+        anchored.seek(SeekFrom::Start(0)).expect("rewind");
+        anchored.read_to_end(&mut selected).expect("read anchor");
+        assert_eq!(selected, b"trusted-current-image");
+        assert_ne!(selected, fs::read(&sibling_path).expect("read sibling"));
+    }
 
     #[test]
     fn forged_decoder_valid_response_cannot_publish() {
@@ -847,6 +1012,53 @@ mod tests {
                 .is_none(),
             "a forged decoder-valid worker response must leave no cache entry"
         );
+    }
+
+    #[test]
+    fn request_and_response_frames_are_bounded_before_payload_allocation() {
+        let mut valid = Vec::new();
+        write_frame(&mut valid, REQUEST_PREFIX, b"request").expect("write request");
+        assert_eq!(
+            read_frame(&mut valid.as_slice(), REQUEST_PREFIX, 7).expect("read request"),
+            b"request"
+        );
+
+        for malformed in [
+            REQUEST_PREFIX[..REQUEST_PREFIX.len() - 1].to_vec(),
+            [REQUEST_PREFIX, &[1, 2, 3]].concat(),
+            [REQUEST_PREFIX, &8_u64.to_le_bytes(), b"short"].concat(),
+            [REQUEST_PREFIX, &u64::MAX.to_le_bytes()].concat(),
+        ] {
+            assert!(read_frame(&mut malformed.as_slice(), REQUEST_PREFIX, 7).is_err());
+        }
+
+        let response = [
+            b"harness noise".as_slice(),
+            RESPONSE_PREFIX,
+            &4_u64.to_le_bytes(),
+            b"body",
+        ]
+        .concat();
+        assert_eq!(
+            find_frame(&response, RESPONSE_PREFIX, 4).expect("response frame"),
+            b"body"
+        );
+        assert!(find_frame(&response, RESPONSE_PREFIX, 3).is_err());
+        assert!(find_frame(&response[..response.len() - 1], RESPONSE_PREFIX, 4).is_err());
+
+        let mut malformed_request = vec![0_u8; 4 + 32 + 1];
+        malformed_request.extend_from_slice(&u64::MAX.to_le_bytes());
+        assert!(
+            deserialize_bounded::<Request>(&malformed_request, malformed_request.len()).is_err()
+        );
+    }
+
+    #[test]
+    fn authentication_key_reads_are_exact_and_zeroizing() {
+        assert!(read_auth_key(&mut [0_u8; AUTH_KEY_BYTES - 1].as_slice()).is_err());
+        let bytes = [0x5a_u8; AUTH_KEY_BYTES];
+        let key = read_auth_key(&mut bytes.as_slice()).expect("complete key");
+        assert_eq!(*key, bytes);
     }
 
     #[test]
@@ -1181,7 +1393,10 @@ mod tests {
         let mut child = helper("head -c 262144 /dev/zero >&2; printf response");
         let output = collect(
             &mut child,
-            guards(Duration::from_secs(2), 64 * 1024 * 1024),
+            // This regression owns bounded concurrent pipe draining, not an
+            // allocation ceiling. Before `exec`, the helper may transiently
+            // inherit the test process's suite-dependent resident mappings.
+            guards(Duration::from_secs(2), u64::MAX),
             1024,
             262144,
         )
@@ -1212,7 +1427,8 @@ mod tests {
         let identity = recipe.identity().expect("identity").key().bytes();
         let bytes = bincode::serialize(&Request::from_recipe(&recipe, identity).expect("request"))
             .expect("encode");
-        let decoded: Request = bincode::deserialize(&bytes).expect("decode");
+        let decoded: Request =
+            deserialize_bounded(&bytes, MAX_WORKER_REQUEST_BYTES).expect("decode");
         let rebuilt = decoded.into_recipe().expect("recipe");
         assert_eq!(
             rebuilt.identity().expect("identity").key().bytes(),
