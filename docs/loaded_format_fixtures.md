@@ -108,10 +108,14 @@ runtime episode. Live meanings are reconstructed from the profile registry
 after decode rather than serialized function pointers or an ambient executor.
 
 The loaded runner accepts a root source and typed resources, sets finite
-cumulative command fuel, and returns structured semantic output. It has no
-`dump_format` method and no dump flag. The compatibility fresh runner remains
-an explicitly named test seam used only for the small fresh-versus-loaded
-matrix; it is not an automatic fallback from a cache or load failure.
+cumulative command fuel, and returns structured semantic output. Its retained
+result includes the job-local ordered mode transitions and exact fatal
+terminal state; neither participates in immutable format identity. A TeX
+fatal stop is a completed job outcome rather than a worker, guard, or runner
+failure. It has no `dump_format` method and no dump flag. The compatibility
+fresh runner remains an explicitly named test seam used only for the small
+fresh-versus-loaded matrix; it is not an automatic fallback from a cache or
+load failure.
 
 The recipe's source and typed resource closure belong to format construction
 and therefore participate in the format-cache identity. Inputs and TFMs

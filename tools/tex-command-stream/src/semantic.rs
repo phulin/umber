@@ -1359,10 +1359,10 @@ fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, S
         observations: recorder.0,
         counts,
         universe: loaded.universe,
-        mode_transitions: vec![Mode::Vertical],
+        mode_transitions: loaded.result.mode_transitions,
         artifacts,
         dvi,
-        fatal: None,
+        fatal: loaded.result.fatal,
     })
 }
 

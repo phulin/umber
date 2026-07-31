@@ -214,6 +214,70 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
     assert!(channels.stream(StreamChannel::Effects).is_empty());
 }
 
+#[test]
+fn raw_tex82_loaded_preserves_nontrivial_mode_transitions() {
+    let case: Case = serde_json::from_value(serde_json::json!({
+        "id": "raw-loaded-mode-transitions",
+        "property_id": "tex82.main-control.loaded-job-outcomes",
+        "profile": "raw-tex82-loaded",
+        "source": "raw-loaded-mode-transitions.tex",
+        "provenance": {
+            "authority": "tex.web",
+            "manifest": "tests/tex82-oracle-manifest.txt",
+            "sections": [1027, 1090, 1138]
+        },
+        "projection": {
+            "kind": "execution-boundaries",
+            "include_mode_transitions": true
+        },
+        "expected": [],
+        "expectation": {"kind": "pass"}
+    }))
+    .expect("bounded loaded-mode regression case is valid");
+
+    let run = execute(br"a\par b\par\end", &case).expect("loaded mode sequence completes");
+
+    assert_eq!(
+        run.mode_transitions,
+        [
+            tex_exec::Mode::Vertical,
+            tex_exec::Mode::Horizontal,
+            tex_exec::Mode::Vertical,
+            tex_exec::Mode::Horizontal,
+            tex_exec::Mode::Vertical,
+        ]
+    );
+}
+
+#[test]
+fn raw_tex82_loaded_preserves_fatal_completion_and_channel_status() {
+    let case: Case = serde_json::from_value(serde_json::json!({
+        "id": "raw-loaded-fatal",
+        "property_id": "tex82.main-control.loaded-job-outcomes",
+        "profile": "raw-tex82-loaded",
+        "source": "raw-loaded-fatal.tex",
+        "interaction_mode": "nonstopmode",
+        "provenance": {
+            "authority": "tex.web",
+            "manifest": "tests/tex82-oracle-manifest.txt",
+            "sections": [81, 93, 360]
+        },
+        "projection": {"kind": "state", "count_registers": [0]},
+        "expected": [],
+        "expectation": {"kind": "pass"}
+    }))
+    .expect("bounded loaded-fatal regression case is valid");
+
+    let run = execute(br"\input unavailable", &case)
+        .expect("TeX fatal completion remains a completed loaded run");
+
+    assert!(run.fatal.is_some());
+    assert_eq!(
+        CapturedChannels::capture(&run).status,
+        format!("fatal:{}", run.fatal.expect("fatal state").label())
+    );
+}
+
 fn compare_declared_channels(declared: &DeclaredCase, run: &SemanticRun) -> Vec<ChannelFailure> {
     let contract = declared
         .case

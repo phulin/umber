@@ -212,6 +212,7 @@ pub struct CanonicalEngineSession<'a> {
     artifact_cursor: usize,
     effect_cursor: usize,
     no_progress_limit: u8,
+    mode_transitions: Vec<tex_exec::Mode>,
 }
 
 impl<'a> CanonicalEngineSession<'a> {
@@ -230,6 +231,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
 
@@ -253,6 +255,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
 
@@ -273,6 +276,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
 
@@ -404,6 +408,7 @@ impl<'a> CanonicalEngineSession<'a> {
                     return Ok(CanonicalSessionState::NeedResource(need));
                 }
                 CanonicalStepResult::Progress(step) => {
+                    self.record_current_mode();
                     self.publish_completed_boundaries(checkpoints)?;
                     if checkpoints.stop_requested() {
                         return Err(CanonicalSessionError::CooperativeStopRequested);
@@ -495,6 +500,7 @@ impl<'a> CanonicalEngineSession<'a> {
                     return Ok(CanonicalSessionState::NeedResource(need));
                 }
                 CanonicalStepResult::Progress(step) => {
+                    self.record_current_mode();
                     self.publish_completed_boundaries(checkpoints)?;
                     if checkpoints.stop_requested() {
                         return Err(CanonicalSessionError::CooperativeStopRequested);
@@ -717,6 +723,13 @@ impl<'a> CanonicalEngineSession<'a> {
         Ok(())
     }
 
+    fn record_current_mode(&mut self) {
+        let mode = self.control.current_mode();
+        if self.mode_transitions.last() != Some(&mode) {
+            self.mode_transitions.push(mode);
+        }
+    }
+
     fn publish_checkpoint(
         &mut self,
         boundary: EngineBoundary,
@@ -776,6 +789,8 @@ impl<'a> CanonicalEngineSession<'a> {
         self.effect_cursor = self.stores.world().effect_records().len();
         Ok(CanonicalSessionState::Complete(RunResult {
             terminal_text: crate::uncommitted_terminal_text(self.stores),
+            mode_transitions: self.mode_transitions.clone(),
+            fatal: self.control.fatal_error(),
             artifacts: artifacts.to_vec(),
             dvi_pages,
             committed_artifacts: committed_artifacts

@@ -384,6 +384,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
     ) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
         let mut committed_steps = 0_u64;
+        let mut mode_transitions = vec![self.canonical.current_mode()];
         if let Some(sink) = checkpoints
             && sink.wants_checkpoint(EngineBoundary::JobStart)
         {
@@ -402,6 +403,10 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         }
         while let MainControlStep::Continue = self.step_canonical()? {
             committed_steps = committed_steps.saturating_add(1);
+            let mode = self.canonical.current_mode();
+            if mode_transitions.last() != Some(&mode) {
+                mode_transitions.push(mode);
+            }
         }
         let committed = self.stores.world().artifact_commits();
         let receipts = self.canonical.take_prepared_dvi_pages();
@@ -421,6 +426,8 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.artifact_cursor = committed.len();
         Ok(RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
+            mode_transitions,
+            fatal: self.canonical.fatal_error(),
             artifacts: run_artifacts.to_vec(),
             dvi_pages: receipts
                 .into_iter()
@@ -442,6 +449,8 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.artifact_cursor = committed.len();
         RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
+            mode_transitions: Vec::new(),
+            fatal: None,
             artifacts: stats.shipped_artifacts,
             dvi_pages: stats.dvi_pages,
             committed_artifacts: self.stores.world().committed_artifacts()
@@ -870,6 +879,11 @@ impl FontResolver for FileFontResolver {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunResult {
     pub terminal_text: String,
+    /// Ordered canonical execution modes, including the initial mode and each
+    /// distinct mode reached after a committed main-control step.
+    pub mode_transitions: Vec<tex_exec::Mode>,
+    /// TeX82's defined fatal terminal state, distinct from runner failure.
+    pub fatal: Option<tex_command::FatalError>,
     pub artifacts: Vec<ContentHash>,
     /// Precompiled page-local DVI bodies aligned with `artifacts`.
     pub dvi_pages: Vec<DviPagePlan>,

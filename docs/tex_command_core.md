@@ -3825,10 +3825,13 @@ state, an `InputStack`, or an expanded-token delivery API.
 Completion publishes one authoritative `RunResult` from committed receipts:
 effects from the session's effect cursor, artifact hashes and bytes from its
 artifact cursor, and prepared DVI pages aligned one-for-one with those
-artifacts. TeX82 §1335's effective INITEX `\dump` is also a committed
-main-control receipt. The host may serialize a format only when that receipt
-is present; it must not infer dump intent by examining source bytes or retired
-executor statistics.
+artifacts. It also retains the initial mode and every distinct mode reached
+after a committed main-control step, plus TeX82 §93's exact fatal terminal
+state when §81 ends the job through `jump_out`. That fatal state is successful
+semantic completion, not a runner error. TeX82 §1335's effective INITEX
+`\dump` is also a committed main-control receipt. The host may serialize a
+format only when that receipt is present; it must not infer dump intent by
+examining source bytes or retired executor statistics.
 
 Native virtual compilation and editor/fixed-point checkpoint persistence are
 separate host boundaries. They adopt this contract in their ordered migration
