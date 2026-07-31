@@ -1,0 +1,85 @@
+# Loaded Format Fixture Substrate
+
+Status: implemented first slice for raw TeX82 command-semantic fixtures
+
+## Scope
+
+`FormatRecipe`, `FormatFixture`, and `ensure_format` are the native fixture
+boundary for generated Umber formats. A recipe describes every input that can
+change the image or the meaning of a loaded run. A fixture is a validated image
+plus that recipe identity. Construction and loaded execution are separate
+operations: construction alone may execute a source containing `\dump`, and
+the loaded runner cannot invoke format dumping.
+
+The first recipe is raw TeX82. Its construction source contains only `\dump`;
+it does not load Plain TeX or install Plain macros. Later raw e-TeX and pdfTeX
+recipes, and package formats such as LaTeX, extend the same data model rather
+than adding profile-specific cache branches.
+
+## Identity
+
+The cache key is a canonical, domain-separated encoding of:
+
+- format-container schema, ABI, and lookup-configuration fingerprints;
+- command-state and command-observation schema versions;
+- stable engine profile bytes and primitive-registry fingerprint;
+- the format producer-contract version;
+- ordered construction sources and typed resources, including logical names,
+  kinds, byte lengths, and SHA-256 hashes;
+- distribution identity and fixed TeX job clock;
+- cumulative command fuel, wall-time, and resident-set limits; and
+- relevant build configuration.
+
+The encoding contains no Cargo target directory, executable path, checkout
+path, temporary path, or host cache path. Changing any semantic or generation
+guard input selects a disjoint key.
+
+## Construction
+
+`ensure_format` first asks `FormatCacheStore` for a validated entry. On a miss,
+it creates a memory `World` with the recipe clock, installs the selected fresh
+primitive profile, and drives a retained `CanonicalEngineSession` with the
+ordered source and typed-resource closure. Command fuel is enforced in the
+engine. The fixture harness also carries finite cumulative wall-time and RSS
+limits; process-level tests run below `scripts/run-umber-guarded.py` so those
+two limits remain independently enforced if engine progress stops.
+
+After a successful construction episode, the quiescent `Universe` produces a
+schema-validated deterministic image. `FormatCacheStore` writes an entry to a
+same-directory temporary file, syncs it, and publishes with a no-clobber
+rename. Racing publishers accept the already-valid winner. A partial temporary
+file is never visible; a stale, truncated, mismatched, checksum-invalid, or
+decoder-invalid destination is removed and regenerated.
+
+Generated entries live only in the platform cache or an explicitly supplied
+test cache. They are ignored runtime data and are never fixture authorities in
+Git.
+
+## Loading and execution
+
+A `FormatFixture` loads by decoding its validated bytes into a fresh `World`
+and `Universe`, then reinstalling the selected profile's live primitive
+implementations. The returned `LoadedFormatSession` owns that fresh universe
+until it constructs one retained `CanonicalEngineSession` for a job.
+
+Only immutable format state crosses the boundary. The format container excludes
+the host `World`, open input and output state, interaction and runtime controls,
+effect journal, provenance records, checkpoints, artifacts, and memoized or
+state-hash caches. Loading therefore cannot inherit a construction host or
+runtime episode. Live meanings are reconstructed from the profile registry
+after decode rather than serialized function pointers or an ambient executor.
+
+The loaded runner accepts a root source and typed resources, sets finite
+cumulative command fuel, and returns structured semantic output. It has no
+`dump_format` method and no dump flag. The compatibility fresh runner remains
+an explicitly named test seam used only for the small fresh-versus-loaded
+matrix; it is not an automatic fallback from a cache or load failure.
+
+## Verification
+
+The substrate tests cover identity invalidation, byte-identical independent
+builds, cache failure atomicity, concurrent publication, corrupt-entry
+recovery, format schema and exclusion properties, live-registry reload, one
+representative command-semantic loaded case, and one explicit fresh-versus-
+loaded semantic-state invariant. Every engine execution has positive finite
+fuel, and all actual test runs use the repository timeout/RSS guard.
