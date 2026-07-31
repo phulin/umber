@@ -1369,7 +1369,6 @@ impl Stores {
             .map_err(|_| FontParameterError::TooManyFonts {
                 maximum: crate::font::MAX_FONT_DIMEN_FONT_ID,
             })?;
-        self.fonts.observe_dvi_definition(id);
         if self.env.font_param_len(id) == 0 && id != NULL_FONT {
             self.initialize_font_banks(id, parameter_count, &parameters);
         }
@@ -1519,12 +1518,6 @@ impl Stores {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.font(id).fontname_text()
-    }
-
-    #[must_use]
-    pub fn observe_dvi_font_emission(&self, id: FontId) -> u32 {
-        let id = self.resolve_stored_font(id);
-        self.fonts.observe_dvi_emission(id)
     }
 
     #[must_use]

@@ -4931,11 +4931,6 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn observe_dvi_font_emission(&self, id: FontId) -> u32 {
-        self.stores.observe_dvi_font_emission(id)
-    }
-
-    #[must_use]
     pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
         self.stores.font_identifier_symbol(id)
     }

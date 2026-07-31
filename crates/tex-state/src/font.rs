@@ -8,7 +8,6 @@ use crate::state_hash::StateHashFragment;
 use crate::world::ContentHash;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
 pub use tex_fonts::metrics::{
     CharMetrics, CharTag, ExtensibleRecipe, FontConstruction, FontContentHash, FontMetrics,
     FontMetricsSource, FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
@@ -93,16 +92,7 @@ pub(crate) struct FontStoreMark {
     pub(crate) len: u32,
     pub(crate) identifier_writes_len: u32,
     pub(crate) expansion_writes_len: u32,
-    dvi_number_writes_len: u32,
-    dvi_emission_writes_len: u32,
     identities: IdentityMark,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct DviNumberWrite {
-    font: FontId,
-    displaced: Option<FontId>,
-    previous_next: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -143,15 +133,6 @@ pub(crate) struct FontStore {
     font_hash_fragments: Vec<usize>,
     complete_hash_fragments: Vec<StateHashFragment>,
     exact_immutable_identities: Vec<ContentHash>,
-    dvi_numbers: Vec<u32>,
-    dvi_number_owners: Vec<FontId>,
-    dvi_number_seen: Vec<bool>,
-    /// Output use is discovered through immutable page traversal. The lock
-    /// protects only runtime pin/log state; semantic font data remains frozen.
-    dvi_number_emitted: Mutex<Vec<bool>>,
-    dvi_emission_writes: Mutex<Vec<FontId>>,
-    dvi_number_writes: Vec<DviNumberWrite>,
-    next_dvi_number: u32,
     identities: IdentityAllocator,
 }
 
@@ -169,23 +150,6 @@ impl Clone for FontStore {
             font_hash_fragments: self.font_hash_fragments.clone(),
             complete_hash_fragments: self.complete_hash_fragments.clone(),
             exact_immutable_identities: self.exact_immutable_identities.clone(),
-            dvi_numbers: self.dvi_numbers.clone(),
-            dvi_number_owners: self.dvi_number_owners.clone(),
-            dvi_number_seen: self.dvi_number_seen.clone(),
-            dvi_number_emitted: Mutex::new(
-                self.dvi_number_emitted
-                    .lock()
-                    .expect("DVI emission lock")
-                    .clone(),
-            ),
-            dvi_emission_writes: Mutex::new(
-                self.dvi_emission_writes
-                    .lock()
-                    .expect("DVI emission lock")
-                    .clone(),
-            ),
-            dvi_number_writes: self.dvi_number_writes.clone(),
-            next_dvi_number: self.next_dvi_number,
             identities: self.identities.fork(),
         }
     }
@@ -232,13 +196,6 @@ impl FontStore {
             font_hash_fragments: vec![0],
             complete_hash_fragments: vec![complete_hash_fragment],
             exact_immutable_identities: vec![exact_immutable_identity],
-            dvi_numbers: vec![0],
-            dvi_number_owners: Vec::new(),
-            dvi_number_seen: vec![true],
-            dvi_number_emitted: Mutex::new(vec![false]),
-            dvi_emission_writes: Mutex::new(Vec::new()),
-            dvi_number_writes: Vec::new(),
-            next_dvi_number: 0,
             identities: IdentityAllocator::new(1),
         }
     }
@@ -321,21 +278,6 @@ impl FontStore {
             font_hash_fragments,
             complete_hash_fragments,
             exact_immutable_identities,
-            dvi_numbers: (0..count).map(|raw| raw.saturating_sub(1)).collect(),
-            dvi_number_owners: (1..count)
-                .map(|raw| {
-                    FontId::from_identity(
-                        identities
-                            .identity_at(raw)
-                            .expect("frozen font slot is live"),
-                    )
-                })
-                .collect(),
-            dvi_number_seen: (0..count).map(|raw| raw == 0).collect(),
-            dvi_number_emitted: Mutex::new(vec![false; count as usize]),
-            dvi_emission_writes: Mutex::new(Vec::new()),
-            dvi_number_writes: Vec::new(),
-            next_dvi_number: 0,
             identities,
         })
     }
@@ -381,64 +323,10 @@ impl FontStore {
             ));
         self.exact_immutable_identities
             .push(exact_immutable_identity);
-        self.dvi_numbers.push(id.raw() - 1);
-        self.dvi_number_owners.push(id);
-        self.dvi_number_seen.push(false);
-        self.dvi_number_emitted
-            .get_mut()
-            .expect("DVI emission lock")
-            .push(false);
         if deduplicate {
             self.by_key.insert(key, id);
         }
         Ok(id)
-    }
-
-    pub(crate) fn observe_dvi_definition(&mut self, id: FontId) {
-        assert!(self.contains(id), "font id is not live");
-        let slot = id.raw() as usize;
-        if self.dvi_number_seen[slot] {
-            return;
-        }
-        let number = self.next_dvi_number;
-        let displaced = self.dvi_number_owners[number as usize];
-        let previous = self.dvi_numbers[slot];
-        let displaced = if self.dvi_number_emitted.lock().expect("DVI emission lock")
-            [displaced.raw() as usize]
-        {
-            None
-        } else {
-            self.dvi_numbers[displaced.raw() as usize] = previous;
-            self.dvi_number_owners[previous as usize] = displaced;
-            self.dvi_numbers[slot] = number;
-            self.dvi_number_owners[number as usize] = id;
-            Some(displaced)
-        };
-        self.dvi_number_seen[slot] = true;
-        self.dvi_number_writes.push(DviNumberWrite {
-            font: id,
-            displaced,
-            previous_next: number,
-        });
-        self.next_dvi_number += 1;
-    }
-
-    pub(crate) fn dvi_number(&self, id: FontId) -> u32 {
-        assert!(self.contains(id), "font id is not live");
-        self.dvi_numbers[id.raw() as usize]
-    }
-
-    pub(crate) fn observe_dvi_emission(&self, id: FontId) -> u32 {
-        assert!(self.contains(id), "font id is not live");
-        let mut emitted = self.dvi_number_emitted.lock().expect("DVI emission lock");
-        if !emitted[id.raw() as usize] {
-            emitted[id.raw() as usize] = true;
-            self.dvi_emission_writes
-                .lock()
-                .expect("DVI emission lock")
-                .push(id);
-        }
-        self.dvi_number(id)
     }
 
     pub(crate) fn set_identifier(
@@ -593,15 +481,6 @@ impl FontStore {
                 .expect("font identifier write log exceeds u32 entries"),
             expansion_writes_len: u32::try_from(self.expansion_writes.len())
                 .expect("font expansion write log exceeds u32 entries"),
-            dvi_number_writes_len: u32::try_from(self.dvi_number_writes.len())
-                .expect("DVI font-number write log exceeds u32 entries"),
-            dvi_emission_writes_len: u32::try_from(
-                self.dvi_emission_writes
-                    .lock()
-                    .expect("DVI emission lock")
-                    .len(),
-            )
-            .expect("DVI font-emission write log exceeds u32 entries"),
             identities: self.identities.watermark(),
         }
     }
@@ -634,52 +513,11 @@ impl FontStore {
         }
         self.expansion_writes
             .truncate(mark.expansion_writes_len as usize);
-        for write in self.dvi_number_writes[mark.dvi_number_writes_len as usize..]
-            .iter()
-            .rev()
-            .copied()
-        {
-            let number = write.previous_next;
-            if let Some(displaced) = write.displaced {
-                let previous = self.dvi_numbers[displaced.raw() as usize];
-                self.dvi_numbers[write.font.raw() as usize] = previous;
-                self.dvi_number_owners[previous as usize] = write.font;
-                self.dvi_numbers[displaced.raw() as usize] = number;
-                self.dvi_number_owners[number as usize] = displaced;
-            }
-            self.dvi_number_seen[write.font.raw() as usize] = false;
-            self.next_dvi_number = write.previous_next;
-        }
-        self.dvi_number_writes
-            .truncate(mark.dvi_number_writes_len as usize);
-        for font in self
-            .dvi_emission_writes
-            .get_mut()
-            .expect("DVI emission lock")[mark.dvi_emission_writes_len as usize..]
-            .iter()
-            .copied()
-        {
-            self.dvi_number_emitted
-                .get_mut()
-                .expect("DVI emission lock")[font.raw() as usize] = false;
-        }
-        self.dvi_emission_writes
-            .get_mut()
-            .expect("DVI emission lock")
-            .truncate(mark.dvi_emission_writes_len as usize);
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
         self.expansion_specs.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
         self.complete_hash_fragments.truncate(mark.len as usize);
-        self.dvi_numbers.truncate(mark.len as usize);
-        self.dvi_number_seen.truncate(mark.len as usize);
-        self.dvi_number_emitted
-            .get_mut()
-            .expect("DVI emission lock")
-            .truncate(mark.len as usize);
-        self.dvi_number_owners
-            .truncate(mark.len.saturating_sub(1) as usize);
         self.exact_immutable_identities.truncate(mark.len as usize);
         self.by_key.retain(|_, id| id.raw() < mark.len);
     }
@@ -937,88 +775,6 @@ mod tests {
 
         let clone = store.clone();
         assert_eq!(clone.testing_hash_fragment_counts(), (2, 2, 2));
-    }
-
-    #[test]
-    fn loaded_font_numbers_follow_first_job_definition_without_redefining_duplicates() {
-        let mut source = FontStore::new();
-        let first_font = test_font();
-        let mut second_font = test_font();
-        second_font = LoadedFont::new(
-            "second",
-            PathBuf::from("second"),
-            ContentHash::from_bytes(b"second").bytes(),
-            second_font.checksum(),
-            second_font.design_size(),
-            second_font.size(),
-            second_font.parameters().to_vec(),
-            second_font.metrics().clone(),
-        );
-        let first = source.intern(first_font.clone()).expect("first font");
-        let second = source.intern(second_font.clone()).expect("second font");
-        let rows = vec![
-            (source.get(NULL_FONT).clone(), None, None),
-            (source.get(first).clone(), None, None),
-            (source.get(second).clone(), None, None),
-        ];
-        let interner = crate::interner::Interner::new();
-        let mut loaded = FontStore::from_frozen(rows, &interner).expect("loaded font prefix");
-
-        let second = loaded.intern(second_font.clone()).expect("reused second");
-        loaded.observe_dvi_definition(second);
-        assert_eq!(loaded.dvi_number(second), 0);
-        let repeated = loaded.intern(second_font).expect("same-job duplicate");
-        loaded.observe_dvi_definition(repeated);
-        assert_eq!(repeated, second);
-        assert_eq!(loaded.dvi_number(repeated), 0);
-
-        let mark = loaded.watermark();
-        let first = loaded.intern(first_font).expect("reused first");
-        loaded.observe_dvi_definition(first);
-        assert_eq!(loaded.dvi_number(first), 1);
-        loaded.truncate_to(mark);
-        assert_eq!(loaded.dvi_number(first), 1);
-        assert_eq!(loaded.dvi_number(second), 0);
-    }
-
-    #[test]
-    fn emitted_format_font_is_not_renumbered_by_a_later_definition() {
-        let mut source = FontStore::new();
-        let first_font = test_font();
-        let mut second_font = test_font();
-        second_font = LoadedFont::new(
-            "second",
-            PathBuf::from("second"),
-            ContentHash::from_bytes(b"second").bytes(),
-            second_font.checksum(),
-            second_font.design_size(),
-            second_font.size(),
-            second_font.parameters().to_vec(),
-            second_font.metrics().clone(),
-        );
-        let first = source.intern(first_font.clone()).expect("first font");
-        let second = source.intern(second_font.clone()).expect("second font");
-        let rows = vec![
-            (source.get(NULL_FONT).clone(), None, None),
-            (source.get(first).clone(), None, None),
-            (source.get(second).clone(), None, None),
-        ];
-        let interner = crate::interner::Interner::new();
-        let mut loaded = FontStore::from_frozen(rows, &interner).expect("loaded font prefix");
-
-        let first = loaded.intern(first_font).expect("reused first");
-        let mark = loaded.watermark();
-        assert_eq!(loaded.observe_dvi_emission(first), 0);
-        let second = loaded.intern(second_font).expect("reused second");
-        loaded.observe_dvi_definition(second);
-
-        assert_eq!(loaded.dvi_number(first), 0);
-        assert_eq!(loaded.dvi_number(second), 1);
-
-        loaded.truncate_to(mark);
-        loaded.observe_dvi_definition(second);
-        assert_eq!(loaded.dvi_number(first), 1);
-        assert_eq!(loaded.dvi_number(second), 0);
     }
 
     fn test_font() -> LoadedFont {

@@ -1248,7 +1248,7 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
     if let Some(id) = emission.font_slots[slot] {
         return id;
     }
-    let id = stores.observe_dvi_font_emission(font);
+    let id = font.raw().checked_sub(1).expect("FontId is one-based");
     let loaded = stores.font(font);
     let construction = match loaded.construction() {
         tex_fonts::FontConstruction::Loaded => FontResourceConstruction::Loaded,

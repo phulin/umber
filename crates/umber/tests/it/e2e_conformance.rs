@@ -850,6 +850,105 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
     })
 }
 
+#[allow(clippy::disallowed_methods)] // Acquires one isolated staged raw TeX82 job.
+fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("resolve {}: {error}", path.display()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("input has no parent: {}", path.display()))?;
+    let source_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| format!("input name is not UTF-8: {}", path.display()))?
+        .to_owned();
+    let source: Arc<[u8]> = fs::read(&path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?
+        .into();
+    let mut entries = fs::read_dir(parent)
+        .map_err(|error| format!("read staged directory {}: {error}", parent.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read staged directory entry: {error}"))?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let mut resources = Vec::new();
+    for entry in entries {
+        if !entry
+            .file_type()
+            .map_err(|error| format!("inspect {}: {error}", entry.path().display()))?
+            .is_file()
+            || entry.path() == path
+        {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let bytes: Arc<[u8]> = fs::read(entry.path())
+            .map_err(|error| format!("read {}: {error}", entry.path().display()))?
+            .into();
+        if name.ends_with(".tfm") {
+            resources.push(LoadedFormatResource::Tfm {
+                logical_name: name,
+                bytes,
+            });
+        } else if name.ends_with(".tex") || name.ends_with(".inc") {
+            resources.push(LoadedFormatResource::Input {
+                logical_name: name.clone(),
+                resolved_name: format!("./{name}"),
+                source_kind: RegisteredSourceKind::Generated,
+                bytes,
+            });
+        }
+    }
+    let recipe = FormatRecipe::raw_tex82();
+    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
+        .map_err(|error| format!("raw TeX82 persistent format provider failed: {error}"))?;
+    let prepared = provider
+        .prepare(&recipe)
+        .map_err(|error| format!("raw TeX82 format preparation failed: {error}"))?;
+    let mut observers = TripObservers::default();
+    let loaded = provider
+        .run(
+            &prepared,
+            PreparedFormatJob {
+                engine: EngineMode::Tex82,
+                backend: OutputCapability::Dvi,
+                clock: PLAIN_CLOCK,
+                interaction: tex_state::InteractionMode::Nonstop,
+                error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
+                    .expect("canonical raw TeX82 context widths"),
+                guards: plain_guards(),
+                source_name: source_name.clone(),
+                source_kind: RegisteredSourceKind::Generated,
+                source: Arc::clone(&source),
+                resources,
+                terminal_input: Vec::new(),
+                observer: &mut observers,
+            },
+        )
+        .map_err(|error| format!("raw TeX82 loaded job failed: {error}"))?;
+    let dvi = (!loaded.result.dvi_pages.is_empty())
+        .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let (terminal, log) = transcript_channels(&loaded.result.effects);
+    Ok(InProcessRun {
+        dvi,
+        provenance: loaded.universe.provenance_stats(),
+        macro_provenance: loaded.universe.macro_invocation_provenance_stats(),
+        terminal,
+        log,
+        capture: PhaseCapture::Live(LiveCapture {
+            root: LiveSource {
+                name: source_name,
+                source: loaded.root_source,
+                bytes: source,
+            },
+            observations: observers.into_captured(),
+            outcome: LiveSessionOutcome::Completed,
+        }),
+    })
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // Verifies repository-pinned fixture bytes.
 fn plain_recipe_has_exact_pinned_ordered_closure_and_stable_identity() {
@@ -965,19 +1064,12 @@ fn plain_job_split_types_non_preload_resources() {
 }
 
 #[test]
-fn all_plain_routes_share_persistent_identity_and_fresh_jobs() {
+fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
     let source = include_str!("e2e_conformance.rs");
     for route in [
         "e2e_conformance_story",
         "e2e_conformance_gentle",
         "e2e_conformance_story_canonical",
-        "canonical_ligature_group_boundaries_match_reference_dvi",
-        "canonical_rule_space_factor_reset_matches_reference_dvi",
-        "canonical_alignment_leading_tabskip_matches_reference_dvi",
-        "canonical_rule_follows_pending_characters_in_reference_dvi",
-        "canonical_relax_breaks_ligatures_in_reference_dvi",
-        "canonical_display_equation_number_preserves_formula_dvi",
-        "canonical_math_group_singleton_ord_matches_reference_dvi",
         "e2e_conformance_gentle_canonical",
     ] {
         let body = source
@@ -987,12 +1079,38 @@ fn all_plain_routes_share_persistent_identity_and_fresh_jobs() {
             .split_once("\n}")
             .expect("bounded route body")
             .0;
-        assert!(
-            body.contains("run_plain_fixture_case")
-                || body.contains("run_file_in_process_canonical"),
-            "route {route} must reach the shared Plain provider"
-        );
+        assert!(body.contains("run_plain_fixture_case"));
     }
+    for route in [
+        "canonical_ligature_group_boundaries_match_reference_dvi",
+        "canonical_rule_space_factor_reset_matches_reference_dvi",
+        "canonical_alignment_leading_tabskip_matches_reference_dvi",
+        "canonical_rule_follows_pending_characters_in_reference_dvi",
+        "canonical_relax_breaks_ligatures_in_reference_dvi",
+        "canonical_display_equation_number_preserves_formula_dvi",
+        "canonical_math_group_singleton_ord_matches_reference_dvi",
+    ] {
+        let body = source
+            .split_once(&format!("fn {route}()"))
+            .unwrap_or_else(|| panic!("route {route} exists"))
+            .1
+            .split_once("\n}")
+            .expect("bounded route body")
+            .0;
+        assert!(body.contains("run_file_in_process_canonical"));
+    }
+    assert_ne!(
+        FormatRecipe::raw_tex82()
+            .identity()
+            .expect("raw identity")
+            .key(),
+        plain_format_recipe(&test_support::repository_root())
+            .expect("Plain recipe")
+            .identity()
+            .expect("Plain identity")
+            .key(),
+        "raw TeX82 and Plain construction identities must remain disjoint"
+    );
     let shared = source
         .split_once("fn run_file_with_plain_format(")
         .expect("shared Plain runner")
@@ -1215,6 +1333,12 @@ fn canonical_error_message(
 /// Runs one staged document as a fresh job loaded from the shared persistent
 /// repository-pinned Plain format and returns its assembled DVI bytes.
 fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
+    run_file_with_raw_tex82_format(path)?
+        .dvi
+        .ok_or_else(|| "canonical Umber run did not produce DVI".to_owned())
+}
+
+fn run_file_in_process_plain_canonical(path: &Path) -> Result<Vec<u8>, String> {
     run_file_with_plain_format(path)?
         .dvi
         .ok_or_else(|| "canonical Umber run did not produce DVI".to_owned())
@@ -1225,7 +1349,7 @@ fn run_plain_fixture_case_canonical(document: &str, gate: &GateAssets) {
         &gate.repo_root,
         document,
         &gate.oracle,
-        run_file_in_process_canonical,
+        run_file_in_process_plain_canonical,
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
 }
