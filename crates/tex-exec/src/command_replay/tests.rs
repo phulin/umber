@@ -4012,6 +4012,8 @@ fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
         universe.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot, target },
+            // web2c's `[53.1374]` `\openout` log notice.
+            EffectRecord::StreamWrite { sink: tex_state::PrintSink::Log, .. },
             EffectRecord::StreamWrite { sink: tex_state::PrintSink::Stream(write_slot), text },
             EffectRecord::StreamClose { slot: close_slot },
         ] if *slot == StreamSlot::new(2)
@@ -4041,7 +4043,11 @@ fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
         }
         assert!(matches!(
             universe.world().effect_records(),
-            [EffectRecord::StreamOpen { slot, .. }] if *slot == StreamSlot::new(0)
+            [
+                EffectRecord::StreamOpen { slot, .. },
+                // web2c's `[53.1374]` `\openout` log notice.
+                EffectRecord::StreamWrite { sink: tex_state::PrintSink::Log, .. },
+            ] if *slot == StreamSlot::new(0)
         ));
     }
 

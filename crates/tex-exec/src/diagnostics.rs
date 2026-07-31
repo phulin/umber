@@ -1,5 +1,7 @@
 //! Diagnostic and log-writing primitives.
 
+use std::fmt::Write as _;
+
 use tex_expand::{
     get_x_token_with_context, meaning_text, scan_dimen::DimensionDiagnostic,
     scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
@@ -958,4 +960,51 @@ fn is_space(token: Token) -> bool {
             ..
         }
     )
+}
+
+/// web2c's `[53.1374]` change to tex.web: a successful `\openout` announces
+/// the file it opened.
+///
+/// ```text
+/// if log_opened and texmf_yesno('log_openout') then begin
+///   old_setting:=selector;
+///   if (tracing_online<=0) then selector:=log_only
+///   else selector:=term_and_log;
+///   print_nl("\openout"); print_int(j); print(" = `");
+///   print_file_name(cur_name,cur_area,cur_ext); print("'.");
+///   print_nl(""); print_ln;
+///   selector:=old_setting;
+/// end;
+/// ```
+///
+/// The name is a literal backslash in the WEB string, not `print_esc`, so it
+/// does not follow `\escapechar`. The closing `print_nl("")` plus `print_ln`
+/// is what leaves the blank line the reference log shows after the notice.
+///
+/// Neither guard survives into Umber. `log_opened` is constantly true here --
+/// see `tex_state::print`'s module documentation -- and `log_openout` is a
+/// `texmf.cnf` knob whose distributed value is `t`, which is the setting the
+/// pinned oracle logs were captured under.
+///
+/// The whole notice is written as one record rather than one per `print`
+/// call: it is a fixed announcement with no interleaving, and the stream
+/// tests that assert on `World::effect_records` are about stream
+/// transitions, not about how many `print` calls compose a fixed line.
+pub(crate) fn report_openout(stores: &mut tex_state::Universe, stream: u8, path: &str) {
+    let terminal = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE) > 0;
+    let sink = if terminal {
+        tex_state::PrintSink::TerminalAndLog
+    } else {
+        tex_state::PrintSink::Log
+    };
+    let bufs = stores.world().stream_bufs();
+    // §62's `print_nl` guard for the selector this notice installs.
+    let line_is_open = !bufs.log_partial_line().is_empty()
+        || (terminal && !bufs.terminal_partial_line().is_empty());
+    let mut text = String::new();
+    if line_is_open {
+        text.push('\n');
+    }
+    let _ = write!(text, "\\openout{stream} = `{path}'.\n\n");
+    stores.world_mut().write_text(sink, &text);
 }

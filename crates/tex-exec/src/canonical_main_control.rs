@@ -11919,10 +11919,11 @@ fn apply_scanned_step(
                     return Err(ExecError::PdfExtensionInDviMode(name));
                 }
                 ImmediateExtension::OpenOut { stream, file_name } => {
-                    stores.world_mut().open_out(
-                        StreamSlot::new(stream),
-                        replay_openout_target(file_name.packed()),
-                    );
+                    let target = replay_openout_target(file_name.packed());
+                    stores
+                        .world_mut()
+                        .open_out(StreamSlot::new(stream), target.clone());
+                    crate::diagnostics::report_openout(stores, stream, &target);
                 }
                 ImmediateExtension::Write { stream, tokens } => {
                     let sink = replay_write_sink(stream);

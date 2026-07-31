@@ -396,6 +396,11 @@ fn immediate_openout_write_closeout_append_world_effect_records() {
         stores.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot, target },
+            // web2c's `[53.1374]` `\openout` log notice.
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Log,
+                ..
+            },
             EffectRecord::StreamWrite {
                 sink: tex_state::PrintSink::Stream(write_slot),
                 text
@@ -426,6 +431,8 @@ fn immediate_openout_defaults_an_extensionless_name_at_execution() {
         stores.world().effect_records(),
         [
             EffectRecord::StreamOpen { target, .. },
+            // web2c's `[53.1374]` `\openout` log notice.
+            EffectRecord::StreamWrite { .. },
             EffectRecord::StreamWrite { .. },
             EffectRecord::StreamClose { .. },
         ] if target.path() == std::path::Path::new("tripos.tex")
@@ -458,6 +465,8 @@ fn newlinechar_is_honored_by_message_and_immediate_write() {
             EffectRecord::StreamWrite { .. },
             EffectRecord::StreamWrite { .. },
             EffectRecord::StreamOpen { .. },
+            // web2c's `[53.1374]` `\openout` log notice.
+            EffectRecord::StreamWrite { .. },
             EffectRecord::StreamWrite {
                 sink: tex_state::PrintSink::Stream(write_slot),
                 text

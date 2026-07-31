@@ -308,6 +308,10 @@ fn append_whatsit_effect(
                 .world_mut()
                 .set_last_stream_open_context(output_open_context);
             open_out_occurrences.push((effects.len(), stores.world().effect_pos()));
+            // web2c's `[53.1374]` log notice, which follows `write_open[j]:=
+            // true`. It has to come after the context attach above, which
+            // requires the `StreamOpen` record to still be the last effect.
+            crate::diagnostics::report_openout(stores, slot.raw(), &path);
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),
                 path,

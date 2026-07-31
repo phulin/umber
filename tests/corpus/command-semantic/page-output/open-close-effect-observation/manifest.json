@@ -33,15 +33,7 @@
         "events": 146,
         "status": "clean",
         "terminal": { "kind": "file" },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.21",
-          "mismatch": {
-            "line": 3,
-            "expected": "(./open-close-effect-observation.tex [0",
-            "actual": "(./open-close-effect-observation.tex [0] )"
-          }
-        },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },
