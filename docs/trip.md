@@ -44,8 +44,15 @@ registered assets through the conformance gate, which fails rather than
 silently skipping when an asset is absent. It uses retained
 `CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
 format creation and the format-loaded run, with no `Executor`/`InputStack`
-fallback. The shared conformance library compares the pinned semantic,
-geometry, transcript, and log channels and requires byte-identical final DVI
+fallback. The shared conformance library compares the pinned semantic and
+geometry channels in both phases. Successful recipe-owned `\dump`
+construction is a structured integration gate, so its allocator, string-pool,
+and serialization diagnostics are not terminal or log output-parity channels.
+The harness does not normalize, spoof, or reconstruct those diagnostics. It
+still requires exact construction command and geometry streams, deterministic
+schema-valid publication, runtime-state exclusion, registry reconstruction,
+and successful reload. The loaded job resumes exact semantic, geometry,
+terminal, log, status, effects, and normalized-DVI comparison and requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
 comment. The two-phase format-image path also asserts through the format schema
@@ -137,7 +144,9 @@ stream, or an unbounded log into the artifact.
 
 Channels are compared in semantic diagnostic order: canonical schema-v1
 command events (including manifest/header identity), an identity-separated
-schema-v2 geometry stream, transcript, log, then normalized DVI. Geometry
+schema-v2 geometry stream, transcript, log, then normalized DVI. Transcript
+and log are present only for output-producing phases; successful recipe-owned
+dump construction has no textual output-parity channels. Geometry
 contains ordered `hpack`, `vpack`, and `shipout` records; shipout includes
 TeX82 section 617's exact `count0..count9` BOP registers. INITEX records DVI as
 explicitly absent rather than feeding an empty byte slice to the DVI

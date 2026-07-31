@@ -513,7 +513,10 @@ commit the fetched CTAN files. The registered Cargo gate fails with
 materialization instructions when a required source, TFM, or oracle is absent.
 The ignored `e2e_conformance_trip_canonical` direct-profile probe and
 `e2e_conformance_etrip` Cargo integration test share an in-process two-phase
-format-create/format-load helper and then apply
+format-create/format-load helper. Successful recipe-owned dump construction
+compares exact command and geometry channels plus structured publication and
+reload invariants, excluding implementation-internal terminal and log
+diagnostics. Loaded execution retains exact terminal and log comparison and applies
 the same preamble-comment-only, byte-identical final-DVI assertion used by
 Story and Gentle. They never invoke an Umber subprocess.
 Run TRIP with

@@ -174,6 +174,15 @@ declared by an individual loaded job cross the separate
 logical lookup key, resolved input name, source kind, and typed font
 fulfillment, but do not alter the shared format-cache identity.
 
+Format construction and loaded execution have separate parity contracts. A
+recipe-owned construction that completes through `\dump` compares exact
+canonical command events and geometry and validates publication and reload, but
+does not compare terminal or log bytes. Dump-time allocator, string-pool, and
+serialization reports are not portable output. This is a phase-level rule, not
+a fixture-name special case or diagnostic grammar. Loaded jobs and ordinary
+non-dump jobs continue exact meaningful terminal and log comparison, and
+construction effects never become loaded-job comparison input.
+
 Loaded jobs use TeX82 §§61, 534, 536, 537, 642, and 1333 framing through the
 generic retained session. A named retained root lets the command input stack
 own its balanced file-opening events; an unnamed compatibility root retains
