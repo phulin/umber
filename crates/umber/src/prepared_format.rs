@@ -67,8 +67,8 @@ impl PreparedFormatProvider {
         let actual = fixture.engine_mode();
         if job.engine != actual {
             return Err(FormatFixtureError::ProviderProfileMismatch {
-                expected: job.engine,
-                actual,
+                expected: actual,
+                actual: job.engine,
             });
         }
         if job.backend == OutputCapability::Pdf && !job.engine.supports_pdf_output() {

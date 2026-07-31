@@ -4,6 +4,7 @@
 )]
 
 use std::fs;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -137,6 +138,43 @@ fn concurrent_providers_construct_once_and_recover_corruption() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn competing_provider_processes_construct_once() {
+    let cache = TempDir::new().expect("cache");
+    let markers = TempDir::new().expect("construction markers");
+    let executable = std::env::current_exe().expect("current test executable");
+    let mut children = Vec::new();
+    for _ in 0..6 {
+        children.push(
+            Command::new(&executable)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "prepared_format::tests::process_prepared_format_worker",
+                ])
+                .env("UMBER_PREPARED_FORMAT_CACHE_ROOT", cache.path())
+                .env("UMBER_PREPARED_FORMAT_MARKER_ROOT", markers.path())
+                .spawn()
+                .expect("spawn provider process"),
+        );
+    }
+    for mut child in children {
+        assert!(child.wait().expect("wait for provider process").success());
+    }
+
+    assert_eq!(
+        fs::read_dir(markers.path())
+            .expect("construction markers")
+            .count(),
+        1,
+        "exactly one process may launch format construction"
+    );
+    provider(&cache)
+        .prepare(&FormatRecipe::raw_tex82())
+        .expect("published entry remains authenticated");
+}
+
 #[test]
 fn provider_fails_closed_for_cache_profile_backend_and_guards() {
     let unavailable = TempDir::new().expect("parent");
@@ -157,7 +195,10 @@ fn provider_fails_closed_for_cache_profile_backend_and_guards() {
     request.engine = EngineMode::ETex;
     assert!(matches!(
         provider.run(&fixture, request),
-        Err(FormatFixtureError::ProviderProfileMismatch { .. })
+        Err(FormatFixtureError::ProviderProfileMismatch {
+            expected: EngineMode::Tex82,
+            actual: EngineMode::ETex,
+        })
     ));
 
     let mut recorder = Recorder::default();
@@ -193,11 +234,14 @@ fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
         .expect("prepare");
 
     let mut first_observer = Recorder::default();
-    let mut first_job = job(b"\\count0=123\\end\n", &mut first_observer);
+    let mut first_job = job(
+        b"\\count0=123\\read0 to \\terminalcommand \\terminalcommand \\end\n",
+        &mut first_observer,
+    );
     first_job.clock = clock(2041);
-    first_job.terminal_input.push("unused first input".into());
+    first_job.terminal_input.push("\\count0=321".into());
     let first = provider.run(&fixture, first_job).expect("first loaded job");
-    assert_eq!(first.universe.count(0), 123);
+    assert_eq!(first.universe.count(0), 321);
     assert_eq!(first.universe.world().job_clock().year, 2041);
 
     let mut second_observer = Recorder::default();
@@ -210,4 +254,30 @@ fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
     assert_eq!(second.universe.world().job_clock().year, 2042);
     assert!(!first_observer.0.is_empty());
     assert!(!second_observer.0.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "subprocess-only helper"]
+fn process_prepared_format_worker() {
+    let (Some(cache_root), Some(marker_root)) = (
+        std::env::var_os("UMBER_PREPARED_FORMAT_CACHE_ROOT"),
+        std::env::var_os("UMBER_PREPARED_FORMAT_MARKER_ROOT"),
+    ) else {
+        return;
+    };
+    let spawns = Arc::new(AtomicUsize::new(0));
+    PreparedFormatProvider::with_store(
+        FormatCacheStore::new(cache_root),
+        launcher().with_spawn_counter(Arc::clone(&spawns)),
+    )
+    .prepare(&FormatRecipe::raw_tex82())
+    .expect("process provider preparation");
+    if spawns.load(Ordering::SeqCst) == 1 {
+        fs::write(
+            std::path::PathBuf::from(marker_root).join(std::process::id().to_string()),
+            b"constructed",
+        )
+        .expect("record construction winner");
+    }
 }
