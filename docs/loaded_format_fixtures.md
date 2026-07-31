@@ -197,8 +197,9 @@ fulfillment, but do not alter the shared format-cache identity.
 
 Format construction and loaded execution have separate parity contracts. A
 recipe-owned construction that completes through `\dump` compares exact
-canonical command events and geometry and validates publication and reload, but
-does not compare terminal or log bytes. Dump-time allocator, string-pool, and
+canonical command events, retains advisory geometry comparison, and validates
+publication and reload, but does not compare terminal or log bytes. Geometry
+differences are reported and counted without affecting acceptance. Dump-time allocator, string-pool, and
 serialization reports are not portable output. This is a phase-level rule, not
 a fixture-name special case or diagnostic grammar. Loaded jobs and ordinary
 non-dump jobs continue exact meaningful terminal and log comparison, and

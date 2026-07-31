@@ -749,7 +749,7 @@ fn compare_trip_phase(
     let (expected_terminal, actual_terminal) =
         phase_contract.text_channel(&expected_terminal, &run.terminal);
     let (expected_log, actual_log) = phase_contract.text_channel(&expected_log, &run.log);
-    let report = write_trip_triage_artifact(
+    let verdict = write_trip_triage_artifact(
         &target_dir(root).join("conformance-triage"),
         TripTriageInput {
             label: &label,
@@ -781,7 +781,7 @@ fn compare_trip_phase(
         },
     )
     .expect("write bounded TRIP triage artifact");
-    assert_trip_channels_match(report);
+    assert_trip_channels_match(&verdict);
 }
 
 /// Phase-level parity policy for canonical format fixtures.
@@ -836,9 +836,13 @@ fn loaded_and_ordinary_phases_retain_exact_text_channels() {
 }
 
 #[allow(clippy::disallowed_methods)] // Failure reporting reads the bounded triage artifact.
-fn assert_trip_channels_match(report: Option<PathBuf>) {
-    if let Some(path) = report {
-        let content = fs::read_to_string(&path)
+fn assert_trip_channels_match(verdict: &parity_harness::TripTriageVerdict) {
+    if verdict.gating_mismatch {
+        let path = verdict
+            .artifact
+            .as_ref()
+            .expect("a gating mismatch writes a bounded report");
+        let content = fs::read_to_string(path)
             .unwrap_or_else(|error| format!("unable to read triage report: {error}"));
         panic!(
             "TRIP compared-channel mismatch; report: {}\n{}",
@@ -855,7 +859,7 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
         expected: TripTriageChannels<'_>,
         actual: TripTriageChannels<'_>,
     ) -> String {
-        let report = write_trip_triage_artifact(
+        let verdict = write_trip_triage_artifact(
             root,
             TripTriageInput {
                 label: "negative-control",
@@ -873,7 +877,7 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
             },
         )
         .expect("write negative-control report");
-        let panic = std::panic::catch_unwind(|| assert_trip_channels_match(report))
+        let panic = std::panic::catch_unwind(|| assert_trip_channels_match(&verdict))
             .expect_err("channel mismatch must fail");
         panic
             .downcast_ref::<String>()
@@ -900,14 +904,6 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
             "command_events",
             TripTriageChannels {
                 command_events: Some(b""),
-                ..base
-            },
-            base,
-        ),
-        (
-            "geometry_events",
-            TripTriageChannels {
-                geometry_events: Some(b""),
                 ..base
             },
             base,
@@ -940,6 +936,54 @@ fn trip_channel_mismatch_controls_fail_at_the_caller_boundary() {
             "{message}"
         );
     }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Reads the bounded host-side triage artifact.
+fn trip_geometry_only_mismatch_is_reported_but_non_gating() {
+    let temp = tempfile::tempdir().expect("geometry control directory");
+    let base = TripTriageChannels {
+        initialization_events: None,
+        command_events: None,
+        geometry_events: None,
+        transcript: b"transcript",
+        log: b"log",
+        dvi: None,
+    };
+    let verdict = write_trip_triage_artifact(
+        temp.path(),
+        TripTriageInput {
+            label: "geometry-advisory-control",
+            phase: "bounded",
+            expected_source: TripTriageSource {
+                name: "expected",
+                identity: "expected-id",
+            },
+            actual_source: TripTriageSource {
+                name: "actual",
+                identity: "actual-id",
+            },
+            expected: TripTriageChannels {
+                geometry_events: Some(b""),
+                ..base
+            },
+            actual: base,
+        },
+    )
+    .expect("write advisory report");
+    assert!(!verdict.gating_mismatch);
+    assert!(verdict.advisory_geometry_mismatch);
+    let report = fs::read_to_string(verdict.artifact.as_ref().expect("advisory report path"))
+        .expect("read advisory report");
+    assert!(
+        report.contains("status: advisory-geometry-mismatch"),
+        "{report}"
+    );
+    assert!(
+        report.contains("geometry.policy: advisory-non-gating"),
+        "{report}"
+    );
+    assert_trip_channels_match(&verdict);
 }
 
 fn assert_format_image_contract(format: &[u8], engine: EngineMode) {

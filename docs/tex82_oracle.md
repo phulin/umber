@@ -21,10 +21,12 @@ that pins event order and signed scaled-point values. The microfixture covers
 an explicit hbox and vbox, a font-independent paragraph line packed to
 `\hsize`, an explicit shipment, and the end-of-job page-builder shipment. The
 hooks observe the single finalized seams from tex.web §§633, 668, and 664:
-`hpack`, `vpackage`, then `ship_out`. The native differential gate replays
+`hpack`, `vpackage`, then `ship_out`. The native differential tracer replays
 this source with schema-v2 observation enabled and compares only the same
-detached geometry projection. It reports dimension and page-total mutations as
-`geometry_mismatch` with both signed scaled-point records.
+detached geometry projection. It reports and counts dimension and page-total
+mutations as advisory, non-gating `geometry_mismatch` diagnostics with both
+signed scaled-point records. Geometry equality never changes conformance
+acceptance; command-v1 and ordinary output channels retain their gates.
 
 No Gentle or other full document is part of this differential fixture. To run
 the exhaustive full-document diagnostic manually after its local prerequisites

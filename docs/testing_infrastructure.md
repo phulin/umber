@@ -1182,7 +1182,8 @@ schema v1. The run is fully hermetic (no external corpus, distribution, or live
 TeX tool required) and never invokes a reference engine.
 
 The native correctness suite runs this committed-microfixture comparison and
-requires `CLEAN`; its `committed_tex82_command_traces_are_clean` test uses the
+requires gating command channels to be `CLEAN`; its
+`committed_tex82_command_traces_are_clean` test uses the
 committed-only runner, which validates the fixture inventory before replaying
 it. An absent or drifted committed fixture therefore fails explicitly rather
 than making the gate look clean. Selection also enforces a structural
@@ -1196,8 +1197,10 @@ runner, so the routine suite does not replay Plain, Story, Gentle, TRIP, or any
 other full document. The committed geometry microfixture is deliberately
 font-independent and covers explicit packaging, paragraph line packing, an
 explicit shipment, and end-of-job page-builder shipment. Controlled hpack and
-shipout mutations gate `geometry_mismatch` diagnostics, including both
-expected and actual signed scaled-point values.
+shipout mutations produce separately counted, explicitly non-gating
+`geometry_mismatch` diagnostics, including both expected and actual signed
+scaled-point values. Geometry collection, expected streams, and comparison
+remain intact, but geometry differences never change the tracer verdict.
 
 It reports a ranked WORKLIST, not just the first divergence:
 
@@ -1205,8 +1208,9 @@ Every run that happened prints its report, ending with a `VERDICT:` line
 naming the outcome and the exit status carrying it. The status answers one
 question: whether the printed totals are the whole truth.
 
-- Exit `0` (`CLEAN`): every registered fixture was compared to exhaustion and
-  none diverged. The report is still printed, because a check that prints
+- Exit `0` (`CLEAN`): every gating command fixture was compared to exhaustion
+  and none diverged. Advisory geometry differences, if any, are counted and
+  labeled separately. The report is still printed, because a check that prints
   nothing cannot be told apart from a check that did not run.
 - Exit `1` (`DIVERGED`): every registered fixture was compared to exhaustion,
   so the divergence total is exact. Prints up to `--max-divergences` ordered

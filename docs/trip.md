@@ -44,14 +44,15 @@ registered assets through the conformance gate, which fails rather than
 silently skipping when an asset is absent. It uses retained
 `CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
 format creation and the format-loaded run, with no `Executor`/`InputStack`
-fallback. The shared conformance library compares the pinned semantic and
-geometry channels in both phases. Successful recipe-owned `\dump`
+fallback. The shared conformance library gates the pinned semantic channels
+and retains advisory geometry comparison in both phases. Successful recipe-owned `\dump`
 construction is a structured integration gate, so its allocator, string-pool,
 and serialization diagnostics are not terminal or log output-parity channels.
 The harness does not normalize, spoof, or reconstruct those diagnostics. It
-still requires exact construction command and geometry streams, deterministic
+still requires exact construction command streams, deterministic
 schema-valid publication, runtime-state exclusion, registry reconstruction,
-and successful reload. The loaded job resumes exact semantic, geometry,
+and successful reload. Geometry differences remain visible and countable in a
+non-gating report. The loaded job resumes exact semantic,
 terminal, log, status, effects, and normalized-DVI comparison and requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
@@ -142,17 +143,19 @@ SHA-256 identities for canonical command events, terminal transcript, log, and
 preamble-comment-normalized DVI. It never copies an output channel, an event
 stream, or an unbounded log into the artifact.
 
-Channels are compared in semantic diagnostic order: canonical schema-v1
-command events (including manifest/header identity), an identity-separated
-schema-v2 geometry stream, transcript, log, then normalized DVI. Transcript
+Gating channels are compared in semantic diagnostic order: canonical schema-v1
+command events (including manifest/header identity), transcript, log, then
+normalized DVI. The identity-separated schema-v2 geometry stream is compared
+and counted independently as advisory diagnostics. Transcript
 and log are present only for output-producing phases; successful recipe-owned
 dump construction has no textual output-parity channels. Geometry
 contains ordered `hpack`, `vpack`, and `shipout` records; shipout includes
 TeX82 section 617's exact `count0..count9` BOP registers. INITEX records DVI as
 explicitly absent rather than feeding an empty byte slice to the DVI
 normalizer. `earliest.channel`, `earliest.position`,
-`earliest.expected`, and `earliest.actual` describe only the first difference
-in that order. Event context is a serialized `NormalizedEvent`; textual and
+`earliest.expected`, and `earliest.actual` describe the first gating difference,
+or the first geometry difference when geometry is the only mismatch. The
+report labels geometry policy as advisory and non-gating. Event context is a serialized `NormalizedEvent`; textual and
 DVI context is escaped and bounded, and EOF is explicit. This makes a report
 reproducible from the same comparison inputs while preserving the distinction
 between a command-semantic failure and later output evidence.

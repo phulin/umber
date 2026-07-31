@@ -254,9 +254,11 @@ document and [Testing Infrastructure](testing_infrastructure.md):
 - **gate**: a check that must pass before a divergence issue closes (§5):
   `cargo test -q --tests`, `scripts/check.sh`, and the byte-exact
   `e2e_conformance_story_canonical` test.
-- **divergence**: a point where Umber's canonical behavior differs from an
-  oracle -- a semantic event mismatch reported by the differential tracer, or
-  a DVI byte mismatch reported by the parity harness.
+- **divergence**: a gating point where Umber's canonical behavior differs from
+  an oracle -- a command semantic event mismatch reported by the differential
+  tracer, or a DVI byte mismatch reported by the parity harness. Geometry-v2
+  differences remain reported and countable advisory diagnostics and do not
+  change conformance acceptance.
 - **first-failure locator**: `crates/umber/examples/first_failure_locator.rs`
   (§2 step 2). Runs a document through the canonical engine end-to-end and
   reports where execution first stopped -- an error or a panic. It proves

@@ -5,7 +5,8 @@ mod trip_triage;
 
 pub use trip_observer::{TripGeometryObserver, TripObservers, TripProfileObserver};
 pub use trip_triage::{
-    TripTriageChannels, TripTriageInput, TripTriageSource, write_trip_triage_artifact,
+    TripTriageChannels, TripTriageInput, TripTriageSource, TripTriageVerdict,
+    write_trip_triage_artifact,
 };
 
 use std::fmt::Write as _;

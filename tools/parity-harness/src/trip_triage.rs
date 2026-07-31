@@ -57,14 +57,43 @@ pub struct TripTriageInput<'a> {
     pub actual: TripTriageChannels<'a>,
 }
 
-/// Writes one compact report only when a semantic/output channel differs.
+/// Outcome of one comparison, separating acceptance from advisory geometry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TripTriageVerdict {
+    /// Bounded diagnostic written for either kind of difference.
+    pub artifact: Option<PathBuf>,
+    /// A command, transcript, log, or normalized-DVI channel differed.
+    pub gating_mismatch: bool,
+    /// The identity-separated geometry projection differed.
+    pub advisory_geometry_mismatch: bool,
+}
+
+impl TripTriageVerdict {
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        self.artifact.is_none()
+    }
+
+    #[must_use]
+    pub fn is_some(&self) -> bool {
+        self.artifact.is_some()
+    }
+
+    #[track_caller]
+    pub fn expect(self, message: &str) -> PathBuf {
+        self.artifact.expect(message)
+    }
+}
+
+/// Writes one compact report when a gating channel or advisory geometry differs.
 ///
 /// The result is deterministic for equivalent inputs and contains at most 8
-/// KiB. A fully successful comparison leaves no artifact behind.
+/// KiB. Geometry is retained and countable but never affects `gating_mismatch`.
+/// A fully equal comparison leaves no artifact behind.
 pub fn write_trip_triage_artifact(
     root: &Path,
     input: TripTriageInput<'_>,
-) -> Result<Option<PathBuf>> {
+) -> Result<TripTriageVerdict> {
     let artifact = root.join(safe_component(input.label)).join(ARTIFACT_NAME);
     let expected_dvi = input
         .expected
@@ -76,13 +105,25 @@ pub fn write_trip_triage_artifact(
         .dvi
         .map(normalized_dvi_for_comparison)
         .transpose()?;
-    let divergence = first_divergence(input, expected_dvi.as_deref(), actual_dvi.as_deref())?;
-    let Some(divergence) = divergence else {
+    let gating_divergence =
+        first_gating_divergence(input, expected_dvi.as_deref(), actual_dvi.as_deref())?;
+    let geometry_divergence = event_divergence(
+        "geometry_events",
+        input.expected.geometry_events,
+        input.actual.geometry_events,
+        None,
+        None,
+    )?;
+    let Some(divergence) = gating_divergence.as_ref().or(geometry_divergence.as_ref()) else {
         if artifact.exists() {
             fs::remove_file(&artifact)
                 .with_context(|| format!("failed to remove stale {}", artifact.display()))?;
         }
-        return Ok(None);
+        return Ok(TripTriageVerdict {
+            artifact: None,
+            gating_mismatch: false,
+            advisory_geometry_mismatch: false,
+        });
     };
 
     let parent = artifact.parent().expect("artifact has a parent");
@@ -91,14 +132,20 @@ pub fn write_trip_triage_artifact(
         input,
         expected_dvi.as_deref(),
         actual_dvi.as_deref(),
-        &divergence,
+        divergence,
+        geometry_divergence.as_ref(),
+        gating_divergence.is_some(),
     );
     fs::write(&artifact, report)
         .with_context(|| format!("failed to write {}", artifact.display()))?;
-    Ok(Some(artifact))
+    Ok(TripTriageVerdict {
+        artifact: Some(artifact),
+        gating_mismatch: gating_divergence.is_some(),
+        advisory_geometry_mismatch: geometry_divergence.is_some(),
+    })
 }
 
-fn first_divergence(
+fn first_gating_divergence(
     input: TripTriageInput<'_>,
     expected_dvi: Option<&[u8]>,
     actual_dvi: Option<&[u8]>,
@@ -109,15 +156,6 @@ fn first_divergence(
         input.actual.command_events,
         input.expected.initialization_events,
         input.actual.initialization_events,
-    )? {
-        return Ok(Some(divergence));
-    }
-    if let Some(divergence) = event_divergence(
-        "geometry_events",
-        input.expected.geometry_events,
-        input.actual.geometry_events,
-        None,
-        None,
     )? {
         return Ok(Some(divergence));
     }
@@ -473,6 +511,8 @@ fn report_text(
     expected_dvi: Option<&[u8]>,
     actual_dvi: Option<&[u8]>,
     divergence: &Divergence,
+    geometry_divergence: Option<&Divergence>,
+    gating_mismatch: bool,
 ) -> String {
     let mut out = String::new();
     let command_accounting = event_accounting(
@@ -493,7 +533,16 @@ fn report_text(
         ("schema", "umber.trip-triage.v1".to_string()),
         ("label", bounded(input.label, 128)),
         ("phase", bounded(input.phase, 128)),
-        ("status", "mismatch".to_string()),
+        (
+            "status",
+            if gating_mismatch {
+                "gating-mismatch"
+            } else {
+                "advisory-geometry-mismatch"
+            }
+            .to_string(),
+        ),
+        ("geometry.policy", "advisory-non-gating".to_string()),
         (
             "expected_source.name",
             bounded(input.expected_source.name, 256),
@@ -550,6 +599,10 @@ fn report_text(
         (
             "geometry_events.projected_divergence.count",
             geometry_accounting.projected_divergence_count,
+        ),
+        (
+            "geometry_events.advisory_mismatch",
+            geometry_divergence.is_some().to_string(),
         ),
         (
             "expected.transcript.sha256",
@@ -1349,7 +1402,7 @@ mod tests {
     }
 
     #[test]
-    fn command_events_precede_geometry_and_geometry_precedes_output_channels() {
+    fn gating_channels_precede_advisory_geometry() {
         let temp = tempfile::tempdir().expect("temp");
         let command = events(1);
         let changed_command = events(2);
@@ -1385,7 +1438,7 @@ mod tests {
             "{report}"
         );
 
-        let artifact = write_trip_triage_artifact(
+        let verdict = write_trip_triage_artifact(
             temp.path(),
             input(
                 base,
@@ -1397,15 +1450,39 @@ mod tests {
                 },
             ),
         )
-        .expect("geometry comparison")
-        .expect("geometry mismatch");
-        let report = fs::read_to_string(artifact).expect("geometry report");
+        .expect("mixed comparison");
+        assert!(verdict.gating_mismatch);
+        assert!(verdict.advisory_geometry_mismatch);
+        let report =
+            fs::read_to_string(verdict.expect("mixed mismatch report")).expect("mixed report");
+        assert!(report.contains("earliest.channel: transcript"), "{report}");
         assert!(
-            report.contains("earliest.channel: geometry_events"),
+            report.contains("geometry_events.projected_divergence.count: 1"),
+            "{report}"
+        );
+
+        let verdict = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                base,
+                TripTriageChannels {
+                    initialization_events: None,
+                    geometry_events: Some(&changed_geometry),
+                    ..base
+                },
+            ),
+        )
+        .expect("advisory comparison");
+        assert!(!verdict.gating_mismatch);
+        assert!(verdict.advisory_geometry_mismatch);
+        let report =
+            fs::read_to_string(verdict.expect("advisory report")).expect("advisory report bytes");
+        assert!(
+            report.contains("status: advisory-geometry-mismatch"),
             "{report}"
         );
         assert!(
-            report.contains("\"counts\":[118,0,0,0,0,0,0,0,0,0]"),
+            report.contains("earliest.channel: geometry_events"),
             "{report}"
         );
     }

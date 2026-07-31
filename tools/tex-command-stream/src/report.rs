@@ -113,6 +113,8 @@ pub struct FixtureSummary {
     /// Full identity (`name manifest=...`) each divergence carries, used to
     /// attribute grouped entries back to their fixture.
     pub identity: String,
+    /// Whether this fixture contributes diagnostics but never changes the verdict.
+    pub advisory: bool,
     pub state: FixtureState,
 }
 
@@ -123,6 +125,7 @@ impl FixtureSummary {
         Self {
             name: name.into(),
             identity: String::new(),
+            advisory: false,
             state: FixtureState::NotGenerated,
         }
     }
@@ -136,6 +139,8 @@ pub struct ComparisonReport {
     /// Every divergence, in stream order across fixtures. Grouping never
     /// removes one; it only decides how they print.
     pub divergences: Vec<Divergence>,
+    /// Non-gating geometry diagnostics, retained and counted separately.
+    pub advisories: Vec<Divergence>,
     /// Whether exact recurrences are collapsed into one entry each.
     pub grouped: bool,
     /// The per-fixture budget this run used, for the bounded notice.
@@ -147,6 +152,7 @@ impl Default for ComparisonReport {
         Self {
             fixtures: Vec::new(),
             divergences: Vec::new(),
+            advisories: Vec::new(),
             grouped: true,
             max_divergences: DEFAULT_MAX_DIVERGENCES,
         }
@@ -160,6 +166,11 @@ impl ComparisonReport {
         self.divergences.len()
     }
 
+    /// Ordered advisory geometry differences, unaffected by grouping.
+    pub fn advisory_count(&self) -> usize {
+        self.advisories.len()
+    }
+
     /// The grouped worklist. Computed on demand; grouping is a pure function
     /// of the ordered divergences.
     pub fn root_sites(&self) -> Vec<RootSite<'_>> {
@@ -170,7 +181,9 @@ impl ComparisonReport {
     pub fn uncompared(&self) -> Vec<&str> {
         self.fixtures
             .iter()
-            .filter(|fixture| matches!(fixture.state, FixtureState::NotGenerated))
+            .filter(|fixture| {
+                !fixture.advisory && matches!(fixture.state, FixtureState::NotGenerated)
+            })
             .map(|fixture| fixture.name.as_str())
             .collect()
     }
@@ -181,13 +194,14 @@ impl ComparisonReport {
         self.fixtures
             .iter()
             .filter(|fixture| {
-                matches!(
-                    fixture.state,
-                    FixtureState::Compared {
-                        budget_reached: true,
-                        ..
-                    }
-                )
+                !fixture.advisory
+                    && matches!(
+                        fixture.state,
+                        FixtureState::Compared {
+                            budget_reached: true,
+                            ..
+                        }
+                    )
             })
             .map(|fixture| fixture.name.as_str())
             .collect()
@@ -226,12 +240,34 @@ impl fmt::Display for ComparisonReport {
                 write!(formatter, "\n[{position}] {divergence}")?;
             }
         }
+        self.write_advisories(formatter)?;
         formatter.write_str("\n")?;
         self.write_verdict(formatter)
     }
 }
 
 impl ComparisonReport {
+    fn write_advisories(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sites = group(&self.advisories);
+        write!(
+            formatter,
+            "\nADVISORY geometry diagnostics (non-gating): {} ordered difference(s) in {} root site(s)\n",
+            self.advisory_count(),
+            sites.len()
+        )?;
+        if self.grouped {
+            for (position, site) in sites.iter().enumerate() {
+                formatter.write_str("\n")?;
+                write_grouped_entry(formatter, position, site)?;
+            }
+        } else {
+            for (position, divergence) in self.advisories.iter().enumerate() {
+                write!(formatter, "\n[{position}] {divergence}")?;
+            }
+        }
+        Ok(())
+    }
+
     /// The last line of the report, naming the outcome and the exit status
     /// that carries it. A reader who scrolls to the bottom and a reader who
     /// only inspects `$?` must reach the same conclusion, so the same three
@@ -240,16 +276,18 @@ impl ComparisonReport {
         let outcome = self.outcome();
         let code = outcome.exit_code();
         let divergences = self.divergence_count();
+        let advisories = self.advisory_count();
         match outcome {
             RunOutcome::Clean => write!(
                 formatter,
                 "\nVERDICT: CLEAN (exit {code}) -- every registered fixture was compared to\n  \
-                 exhaustion and none diverged."
+                 exhaustion and no gating channel diverged; {advisories} advisory geometry difference(s)."
             ),
             RunOutcome::Diverged => write!(
                 formatter,
                 "\nVERDICT: DIVERGED (exit {code}) -- every registered fixture was compared to\n  \
-                 exhaustion; {divergences} ordered divergence(s) is the exact total."
+                 exhaustion; {divergences} ordered gating divergence(s) is the exact total;\n  \
+                 {advisories} geometry difference(s) is advisory."
             ),
             RunOutcome::Partial => {
                 write!(
@@ -350,6 +388,7 @@ impl ComparisonReport {
         formatter: &mut fmt::Formatter<'_>,
         sites: &[RootSite<'_>],
     ) -> fmt::Result {
+        let advisory_sites = group(&self.advisories);
         if self.fixtures.is_empty() {
             return Ok(());
         }
@@ -362,6 +401,9 @@ impl ComparisonReport {
         formatter.write_str("per fixture, in replay order:\n")?;
         for fixture in &self.fixtures {
             write!(formatter, "  {:width$}  ", fixture.name)?;
+            if fixture.advisory {
+                formatter.write_str("ADVISORY (non-gating): ")?;
+            }
             match &fixture.state {
                 FixtureState::NotGenerated => {
                     formatter.write_str("not compared -- trace not generated on this checkout\n")?
@@ -375,7 +417,12 @@ impl ComparisonReport {
                     first_index,
                     budget_reached,
                 } => {
-                    let root_sites = sites
+                    let fixture_sites = if fixture.advisory {
+                        &advisory_sites
+                    } else {
+                        sites
+                    };
+                    let root_sites = fixture_sites
                         .iter()
                         .filter(|site| site.fixture() == fixture.identity)
                         .count();

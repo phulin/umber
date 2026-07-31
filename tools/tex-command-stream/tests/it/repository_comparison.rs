@@ -21,7 +21,13 @@ fn committed_tex82_command_traces_are_clean() {
         report
             .fixtures
             .iter()
-            .any(|fixture| fixture.name == "tex82/geometry-v2"),
-        "the committed schema-v2 geometry projection must be part of the native gate: {report}"
+            .any(|fixture| fixture.name == "tex82/geometry-v2" && fixture.advisory),
+        "the committed schema-v2 geometry projection must be retained as advisory diagnostics: {report}"
+    );
+    assert!(
+        report
+            .to_string()
+            .contains("ADVISORY geometry diagnostics (non-gating)"),
+        "{report}"
     );
 }

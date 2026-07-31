@@ -58,6 +58,7 @@ fn report(grouped: bool) -> ComparisonReport {
         fixtures: vec![FixtureSummary {
             name: "tex82/case".into(),
             identity: IDENTITY.into(),
+            advisory: false,
             state: FixtureState::Compared {
                 divergences: divergences.len(),
                 budgeted: divergences.len(),
@@ -66,6 +67,7 @@ fn report(grouped: bool) -> ComparisonReport {
             },
         }],
         divergences,
+        advisories: Vec::new(),
         grouped,
         max_divergences: 20,
     }
@@ -171,6 +173,7 @@ fn a_clean_fixture_is_listed_with_zero_rather_than_omitted() {
     report.fixtures.push(FixtureSummary {
         name: "tex82/document-clean-v1".into(),
         identity: "tex82/document-clean-v1 manifest=def".into(),
+        advisory: false,
         state: FixtureState::Compared {
             divergences: 0,
             budgeted: 0,
@@ -249,6 +252,7 @@ fn a_clean_run_still_prints_a_verdict_rather_than_nothing() {
         fixtures: vec![FixtureSummary {
             name: "tex82/case".into(),
             identity: IDENTITY.into(),
+            advisory: false,
             state: FixtureState::Compared {
                 divergences: 0,
                 budgeted: 0,
@@ -267,11 +271,46 @@ fn a_clean_run_still_prints_a_verdict_rather_than_nothing() {
 }
 
 #[test]
+fn geometry_only_difference_is_visible_but_does_not_change_the_verdict() {
+    let mut report = report(true);
+    let geometry_difference = report.divergences.remove(0);
+    report.advisories.push(geometry_difference);
+    report.divergences.clear();
+    report.fixtures[0].advisory = true;
+    report.fixtures[0].state = FixtureState::Compared {
+        divergences: 1,
+        budgeted: 1,
+        first_index: Some(1),
+        budget_reached: false,
+    };
+
+    assert_eq!(report.outcome(), RunOutcome::Clean);
+    assert_eq!(report.outcome().exit_code(), 0);
+    assert_eq!(report.divergence_count(), 0);
+    assert_eq!(report.advisory_count(), 1);
+    let rendered = report.to_string();
+    assert!(rendered.contains("ADVISORY (non-gating)"), "{rendered}");
+    assert!(
+        rendered.contains("1 advisory geometry difference(s)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("VERDICT: CLEAN (exit 0)"), "{rendered}");
+}
+
+#[test]
+fn command_difference_remains_gating() {
+    let report = report(true);
+    assert_eq!(report.outcome(), RunOutcome::Diverged);
+    assert_eq!(report.outcome().exit_code(), 1);
+}
+
+#[test]
 fn the_long_index_list_wraps_without_dropping_an_occurrence() {
     let divergences: Vec<Divergence> = (0..200).map(|index| mismatch(index, 98)).collect();
     let report = ComparisonReport {
         fixtures: Vec::new(),
         divergences,
+        advisories: Vec::new(),
         grouped: true,
         max_divergences: 20,
     };
@@ -281,7 +320,7 @@ fn the_long_index_list_wraps_without_dropping_an_occurrence() {
         .split("Every occurrence, by oracle event index:")
         .nth(1)
         .expect("index list")
-        .split("\nVERDICT:")
+        .split("\nADVISORY geometry diagnostics")
         .next()
         .expect("index list before the verdict");
     let printed: Vec<usize> = list

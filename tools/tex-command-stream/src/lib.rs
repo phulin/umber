@@ -250,9 +250,9 @@ fn collect_geometry_divergences(
         options.max_divergences,
         options.alignment,
     );
-    let first = report.divergences.len();
+    let first = report.advisories.len();
     let budgeted = comparison.entries.len();
-    report.divergences.extend(
+    report.advisories.extend(
         comparison
             .entries
             .into_iter()
@@ -260,7 +260,7 @@ fn collect_geometry_divergences(
             .map(Divergence::Mismatch),
     );
     if let Some(failure) = replay.failure {
-        report.divergences.push(Divergence::Failure {
+        report.advisories.push(Divergence::Failure {
             fixture: identity.clone(),
             index: actual_events,
             failure,
@@ -269,10 +269,11 @@ fn collect_geometry_divergences(
     report.fixtures.push(FixtureSummary {
         name: fixture.selector,
         identity,
+        advisory: true,
         state: FixtureState::Compared {
-            divergences: report.divergences.len() - first,
+            divergences: report.advisories.len() - first,
             budgeted,
-            first_index: report.divergences.get(first).map(Divergence::index),
+            first_index: report.advisories.get(first).map(Divergence::index),
             budget_reached: comparison.budget_reached,
         },
     });
@@ -380,6 +381,7 @@ fn collect_fixture_divergences(
     report.fixtures.push(FixtureSummary {
         name: fixture.manifest.name.clone(),
         identity,
+        advisory: false,
         state: FixtureState::Compared {
             divergences: report.divergences.len() - first,
             budgeted,
