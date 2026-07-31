@@ -37,14 +37,22 @@ guard input selects a disjoint key.
 ## Construction
 
 `ensure_format` first asks `FormatCacheStore` for a validated entry. On a miss,
-it creates a memory `World` with the recipe clock, installs the selected fresh
-primitive profile, and drives a retained `CanonicalEngineSession` with the
-ordered source and typed-resource closure. Command fuel is enforced in the
-engine. The fixture harness checks cumulative wall-time and RSS after every
-committed canonical command step and cooperatively interrupts the retained
-session before it can return success. Platforms without a supported RSS
-counter reject construction explicitly. Process-level tests additionally run
-below `scripts/run-umber-guarded.py`.
+it sends the complete recipe to a dedicated native worker process. The request
+contains the expected cache identity; the worker reconstructs the recipe and
+recomputes that identity before creating a memory `World`, installing the
+selected fresh primitive profile, and driving the retained
+`CanonicalEngineSession`. The ordered typed-resource closure and finite
+command-fuel limit remain inside that worker.
+
+The parent samples worker wall time and RSS independently of command return or
+cooperative engine checkpoints. It kills and reaps the worker when either
+bound is exceeded, so one non-returning or allocating command cannot hold the
+fixture harness. A crash or malformed response publishes nothing and a later
+call starts an independent worker. The response repeats the recipe identity
+and authenticates the image bytes with SHA-256; the parent checks both and
+performs a complete frozen-format decode before cache publication. Platforms
+without supported RSS supervision reject construction explicitly. These
+internal guards complement the outer `scripts/run-umber-guarded.py` defense.
 
 After a successful construction episode, the quiescent `Universe` produces a
 schema-validated deterministic image. `FormatCacheStore` writes an entry to a

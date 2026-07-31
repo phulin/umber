@@ -228,7 +228,7 @@ pub fn ensure_format(
             image,
         });
     }
-    let image = construct_format(recipe)?;
+    let image = crate::format_worker::construct(recipe)?;
     cache.store(&identity, &image)?;
     let image = cache
         .load(&identity)?
@@ -239,7 +239,9 @@ pub fn ensure_format(
     })
 }
 
-fn construct_format(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError> {
+pub(crate) fn construct_format_in_worker(
+    recipe: &FormatRecipe,
+) -> Result<Vec<u8>, FormatFixtureError> {
     recipe.guards.validate()?;
     let mut universe = Universe::with_world(World::memory_with_clock(recipe.clock));
     recipe.engine.prepare_initex(&mut universe);
@@ -510,6 +512,11 @@ pub enum FormatFixtureError {
     Cache(FormatCacheError),
     Session(Box<CanonicalSessionError>),
     Fuel(tex_command::CommandFuelLimitError),
+    WorkerSpawn(String),
+    WorkerProtocol(String),
+    WorkerIdentityMismatch,
+    WorkerCrashed(Option<i32>),
+    Worker(String),
 }
 
 impl fmt::Display for FormatFixtureError {

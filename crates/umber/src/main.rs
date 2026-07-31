@@ -17,6 +17,15 @@ mod format_cache_cli;
 mod watch;
 
 fn main() -> ExitCode {
+    if env::args().nth(1).as_deref() == Some("__format-worker") {
+        return match umber::run_format_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("umber format worker: {error}");
+                ExitCode::from(70)
+            }
+        };
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

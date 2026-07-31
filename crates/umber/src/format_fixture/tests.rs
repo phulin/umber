@@ -152,7 +152,7 @@ fn construction_failure_publishes_no_entry() {
     recipe.construction_source = Arc::from(&b"\\end\n"[..]);
     assert!(matches!(
         ensure_format(&cache, &recipe),
-        Err(FormatFixtureError::ConstructionDidNotDump)
+        Err(FormatFixtureError::Worker(_))
     ));
     assert!(
         cache
@@ -170,7 +170,7 @@ fn construction_fuel_interrupts_a_cyclic_macro() {
     recipe.construction_source = Arc::from(&b"\\def\\loop{\\loop}\\loop"[..]);
     assert!(matches!(
         ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe),
-        Err(FormatFixtureError::Session(_))
+        Err(FormatFixtureError::Worker(_))
     ));
 }
 

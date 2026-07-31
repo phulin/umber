@@ -1388,12 +1388,14 @@ name = "umber"
 version = "0.1.0"
 dependencies = [
  "bib-engine",
+ "bincode",
  "flate2",
  "hayro-syntax",
  "md-5",
  "parity-harness",
  "png",
  "proptest",
+ "serde",
  "sha2",
  "tempfile",
  "test-support",
