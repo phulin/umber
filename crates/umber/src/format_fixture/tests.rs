@@ -4,6 +4,7 @@ use std::thread;
 use tempfile::TempDir;
 use tex_command::{CommandObservation, CommandObserver};
 use tex_state::env::banks::IntParam;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 
 use super::*;
 
@@ -152,6 +153,37 @@ fn independent_raw_builds_are_byte_identical_and_cache_reload_is_fresh() {
 }
 
 #[test]
+fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
+    let cache_root = TempDir::new().expect("cache");
+    let cache = FormatCacheStore::new(cache_root.path());
+    let recipe = FormatRecipe::raw_etex26();
+    let first = ensure_format(&cache, &recipe).expect("raw e-TeX construction");
+    let second = ensure_format(&cache, &recipe).expect("raw e-TeX cache hit");
+    assert_eq!(first.image(), second.image());
+
+    let loaded = second.load(test_world()).expect("raw e-TeX load");
+    assert_eq!(
+        loaded.universe.primitive_meaning("unexpanded"),
+        Some(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::Unexpanded
+        ))
+    );
+    assert_eq!(
+        loaded.universe.primitive_meaning("showtokens"),
+        Some(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::ShowTokens
+        ))
+    );
+    assert_eq!(loaded.universe.primitive_meaning("pdfprimitive"), None);
+    assert!(loaded.universe.world().effect_records().is_empty());
+    assert!(loaded.universe.world().artifact_commits().is_empty());
+    let provenance = loaded.universe.provenance_stats();
+    assert_eq!(provenance.origin_records(), 0);
+    assert_eq!(provenance.source_regions(), 0);
+    assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
+}
+
+#[test]
 fn construction_failure_publishes_no_entry() {
     let cache_root = TempDir::new().expect("cache");
     let cache = FormatCacheStore::new(cache_root.path());
@@ -280,6 +312,39 @@ fn explicit_fresh_seam_matches_loaded_semantic_state() {
     let (fresh, fresh_observations) =
         run_explicit_fresh_compatibility(&recipe, "equivalence.tex", source);
     assert_eq!(loaded.universe.count(0), fresh.count(0));
+    assert_eq!(loaded_observations.0, fresh_observations);
+}
+
+#[test]
+fn raw_etex_fresh_and_loaded_match_extension_state_and_observations() {
+    // e-TeX manual §3.6 makes \tracingassigns extension-owned mutable state;
+    // matching it and the canonical observations exercises both restored
+    // unexpandable assignment and expandable \numexpr meanings.
+    let source = Arc::from(&b"\\tracingassigns=7\\count0=\\numexpr 2+3\\relax\\end\n"[..]);
+    let recipe = FormatRecipe::raw_etex26();
+    let cache_root = TempDir::new().expect("cache");
+    let fixture =
+        ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw e-TeX");
+    let mut loaded_observations = Recorder::default();
+    let loaded = fixture
+        .load(test_world())
+        .expect("load")
+        .run(
+            "etex-equivalence.tex",
+            Arc::clone(&source),
+            &[],
+            &mut loaded_observations,
+        )
+        .expect("loaded e-TeX run");
+
+    let (fresh, fresh_observations) =
+        run_explicit_fresh_compatibility(&recipe, "etex-equivalence.tex", source);
+    assert_eq!(loaded.universe.count(0), 5);
+    assert_eq!(loaded.universe.count(0), fresh.count(0));
+    assert_eq!(
+        loaded.universe.int_param(IntParam::TRACING_ASSIGNS),
+        fresh.int_param(IntParam::TRACING_ASSIGNS)
+    );
     assert_eq!(loaded_observations.0, fresh_observations);
 }
 

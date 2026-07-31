@@ -112,6 +112,31 @@ impl FormatRecipe {
         }
     }
 
+    /// Hermetic raw e-TeX 2.6 image: TeX82 and e-TeX primitives, without Plain.
+    #[must_use]
+    pub fn raw_etex26() -> Self {
+        Self {
+            engine: EngineMode::ETex,
+            format_name: "raw-etex26".into(),
+            construction_source_name: "raw-etex26.ini".into(),
+            construction_source: Arc::from(&b"\\dump\n"[..]),
+            resources: Vec::new(),
+            distribution_identity: Arc::from(&b"repository-raw-etex26-v1"[..]),
+            clock: JobClock {
+                time: 12 * 60,
+                second: 0,
+                day: 1,
+                month: 3,
+                year: 2026,
+            },
+            guards: FormatGenerationGuards {
+                command_fuel: 100_000,
+                wall_time: Duration::from_secs(10),
+                resident_bytes: 512 * 1024 * 1024,
+            },
+        }
+    }
+
     pub fn identity(&self) -> Result<FormatCacheIdentity, FormatFixtureError> {
         self.guards.validate()?;
         let profile = self.engine.command_profile();

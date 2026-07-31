@@ -1,6 +1,6 @@
 # Loaded Format Fixture Substrate
 
-Status: implemented first slice for raw TeX82 command-semantic fixtures
+Status: implemented raw TeX82 and raw e-TeX 2.6 recipes
 
 ## Scope
 
@@ -11,10 +11,12 @@ plus that recipe identity. Construction and loaded execution are separate
 operations: construction alone may execute a source containing `\dump`, and
 the loaded runner cannot invoke format dumping.
 
-The first recipe is raw TeX82. Its construction source contains only `\dump`;
-it does not load Plain TeX or install Plain macros. Later raw e-TeX and pdfTeX
-recipes, and package formats such as LaTeX, extend the same data model rather
-than adding profile-specific cache branches.
+The public raw TeX82 and raw e-TeX 2.6 recipes each have a construction source
+containing only `\dump`; neither loads Plain TeX nor installs Plain macros. The
+e-TeX recipe selects the extended canonical INITEX profile, so construction
+installs the exact TeX82 plus e-TeX primitive registry and no pdfTeX layer.
+Later raw pdfTeX recipes and package formats such as LaTeX extend the same data
+model rather than adding profile-specific cache branches.
 
 ## Identity
 
@@ -129,6 +131,14 @@ and `Universe`, then reinstalling the selected profile's live primitive
 implementations. The returned `LoadedFormatFixture` owns that fresh universe
 until it constructs one retained `CanonicalEngineSession` for a job.
 
+Raw e-TeX reload uses the generic `EngineMode::ETex` registry reconstruction:
+TeX82 and e-TeX expandable and unexpandable meanings are registered as live
+implementations, while pdfTeX-only meanings remain absent. A missing or wrong
+profile, primitive registry, semantic schema, producer contract, source,
+resource closure, fixed clock, guard set, or build configuration selects a
+different cache identity or fails validation; loading never guesses a legacy
+profile.
+
 Only immutable format state crosses the boundary. The format container excludes
 the host `World`, open input and output state, interaction and runtime controls,
 effect journal, provenance records, checkpoints, artifacts, and memoized or
@@ -165,10 +175,13 @@ descriptor.
 The substrate tests cover identity invalidation, byte-identical independent
 builds, cache failure atomicity, concurrent publication, corrupt-entry
 recovery, adversarial symlink authority, format schema and exclusion
-properties, live-registry reload, the ordinary
+properties, raw TeX82 and raw e-TeX cache reuse and live-registry reload, the ordinary
 `main-control/hyphenation-data` corpus case through raw-TeX82 loaded execution,
 declared loaded-job `\input` and TFM replay with exact output-channel
-assertions, and one explicit fresh-versus-loaded semantic-state invariant. TeX82
+assertions, and one explicit fresh-versus-loaded semantic-state invariant per
+raw profile. The e-TeX invariant uses extension-owned integer state and
+canonical observations, so it proves that restored live meanings operate on
+the same immutable base without comparing construction terminal or log. TeX82
 §§1250–1252 make that first migrated case a useful loaded-state witness:
 dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
