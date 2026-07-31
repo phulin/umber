@@ -5213,6 +5213,26 @@ fn canonical_etex_text_directions_follow_texxet_state() {
 }
 
 #[test]
+fn canonical_etex_direction_in_vbox_starts_a_paragraph() {
+    // TeX82 §1090 backs up a vertical-mode `valign` command before
+    // `new_graf`; e-TeX 2.6 [53a.3826--3883] gives `\beginL` that command
+    // code, so the direction and following kern belong to a paragraph line.
+    let stores = run_canonical_etex(r"\setbox0=\vbox{\TeXXeTstate=1\beginL\kern1pt\par}\end");
+    let box0 = stores.box_reg(0).expect("vbox should be assigned");
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
+        panic!("register 0 should hold a vbox");
+    };
+    assert!(
+        stores
+            .nodes(vbox.children)
+            .testing_decoded()
+            .iter()
+            .any(|node| matches!(node, Node::HList(_))),
+        "vertical-mode direction must be retried inside a paragraph"
+    );
+}
+
+#[test]
 fn canonical_showtokens_scans_unexpanded_balanced_general_text() {
     // e-TeX 2.6 etex.ch [17.3623--3671] uses scan_general_text, then the
     // TeX82 §1297 token_show/common-ending diagnostic path.

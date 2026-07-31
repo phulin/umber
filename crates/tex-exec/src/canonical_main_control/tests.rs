@@ -34,6 +34,23 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
+    // TeX82 §1090 keys this transition by the `valign` command code, and
+    // e-TeX 2.6 [53a.3826--3883] assigns that code to all four directions.
+    for primitive in [
+        UnexpandablePrimitive::VAlign,
+        UnexpandablePrimitive::BeginL,
+        UnexpandablePrimitive::EndL,
+        UnexpandablePrimitive::BeginR,
+        UnexpandablePrimitive::EndR,
+    ] {
+        assert!(starts_paragraph_in_vertical_mode(
+            Meaning::UnexpandablePrimitive(primitive)
+        ));
+    }
+}
+
+#[test]
 fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
     // e-TeX 2.6 etex.ch §24.362 inserts a non-null \everyeof token list
     // before retiring the pseudo-file, including while \edef is defining.

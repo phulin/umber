@@ -5333,7 +5333,15 @@ fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::HSs
                 | UnexpandablePrimitive::HFilNeg
                 // `vmode+valign`: §265's `primitive("valign",valign,0)`.
+                // e-TeX 2.6 [53a.3826--3883] deliberately gives all four
+                // text-direction primitives this same command code with
+                // nonzero modifiers. TeX §1090 dispatches by command code,
+                // so they also start a paragraph before their hmode action.
                 | UnexpandablePrimitive::VAlign
+                | UnexpandablePrimitive::BeginL
+                | UnexpandablePrimitive::EndL
+                | UnexpandablePrimitive::BeginR
+                | UnexpandablePrimitive::EndR
                 // `vmode+ex_space`: §265's `primitive("␣",ex_space,0)`.
                 | UnexpandablePrimitive::ControlSpace
                 // `vmode+no_boundary`: §265's
