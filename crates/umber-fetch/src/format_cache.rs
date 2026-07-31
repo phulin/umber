@@ -85,6 +85,21 @@ pub struct FormatCacheIdentity {
     job_clock: FormatCacheClock,
 }
 
+/// Complete generic-fixture inputs grouped for construction of a cache identity.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct FormatFixtureIdentity {
+    pub engine_mode: FormatEngineMode,
+    pub distribution_snapshot: FormatFingerprint,
+    pub format_closure: FormatFingerprint,
+    pub source_lock: FormatFingerprint,
+    pub job_clock: FormatCacheClock,
+    pub build_configuration: FormatFingerprint,
+    pub semantic_contract: FormatFingerprint,
+    pub producer_contract: FormatFingerprint,
+    pub resource_closure: FormatFingerprint,
+    pub generation_guards: FormatFingerprint,
+}
+
 impl FormatCacheIdentity {
     /// Creates an identity pinned to the compatibility contract of this build.
     #[must_use]
@@ -115,32 +130,21 @@ impl FormatCacheIdentity {
 
     /// Creates an identity with the complete generic fixture producer contract.
     #[must_use]
-    pub fn fixture(
-        engine_mode: FormatEngineMode,
-        distribution_snapshot: FormatFingerprint,
-        format_closure: FormatFingerprint,
-        source_lock: FormatFingerprint,
-        job_clock: FormatCacheClock,
-        build_configuration: FormatFingerprint,
-        semantic_contract: FormatFingerprint,
-        producer_contract: FormatFingerprint,
-        resource_closure: FormatFingerprint,
-        generation_guards: FormatFingerprint,
-    ) -> Self {
+    pub fn fixture(fixture: FormatFixtureIdentity) -> Self {
         Self {
-            engine_mode,
+            engine_mode: fixture.engine_mode,
             format_schema: Universe::FORMAT_SCHEMA_VERSION,
             format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
             lookup_configuration_fingerprint: Universe::FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
-            distribution_snapshot,
-            format_closure,
-            source_lock,
-            build_configuration,
-            semantic_contract,
-            producer_contract,
-            resource_closure,
-            generation_guards,
-            job_clock,
+            distribution_snapshot: fixture.distribution_snapshot,
+            format_closure: fixture.format_closure,
+            source_lock: fixture.source_lock,
+            build_configuration: fixture.build_configuration,
+            semantic_contract: fixture.semantic_contract,
+            producer_contract: fixture.producer_contract,
+            resource_closure: fixture.resource_closure,
+            generation_guards: fixture.generation_guards,
+            job_clock: fixture.job_clock,
         }
     }
 

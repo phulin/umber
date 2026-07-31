@@ -11,7 +11,7 @@ use tex_exec::{CanonicalResourceNeed, CheckpointSink};
 use tex_state::{JobClock, Universe, World};
 use umber_fetch::{
     FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
-    FormatFingerprint, ValidatedFormatImage,
+    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatImage,
 };
 
 use crate::{
@@ -119,24 +119,24 @@ impl FormatRecipe {
             &PRODUCER_CONTRACT_VERSION.to_le_bytes(),
             self.format_name.as_bytes(),
         ]);
-        Ok(FormatCacheIdentity::fixture(
-            cache_mode(self.engine),
-            FormatFingerprint::sha256(&self.distribution_identity),
-            FormatFingerprint::new(closure),
-            FormatFingerprint::new(source),
-            FormatCacheClock {
+        Ok(FormatCacheIdentity::fixture(FormatFixtureIdentity {
+            engine_mode: cache_mode(self.engine),
+            distribution_snapshot: FormatFingerprint::sha256(&self.distribution_identity),
+            format_closure: FormatFingerprint::new(closure),
+            source_lock: FormatFingerprint::new(source),
+            job_clock: FormatCacheClock {
                 time: self.clock.time,
                 second: self.clock.second,
                 day: self.clock.day,
                 month: self.clock.month,
                 year: self.clock.year,
             },
-            FormatFingerprint::sha256(&self.build_configuration),
-            FormatFingerprint::new(semantic),
-            FormatFingerprint::new(producer),
-            FormatFingerprint::new(resources),
-            FormatFingerprint::new(guards),
-        ))
+            build_configuration: FormatFingerprint::sha256(&self.build_configuration),
+            semantic_contract: FormatFingerprint::new(semantic),
+            producer_contract: FormatFingerprint::new(producer),
+            resource_closure: FormatFingerprint::new(resources),
+            generation_guards: FormatFingerprint::new(guards),
+        }))
     }
 }
 
@@ -181,6 +181,10 @@ impl LoadedFormatFixture {
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_fuel_limit(self.recipe.guards.command_fuel)?;
         session.register_authored_root(source_name, source)?;
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "native format-fixture guard measures host wall time independently of TeX's fixed job clock"
+        )]
         let started = Instant::now();
         let result = session.run_with_observer(
             &mut RecipeResourceHost::new(&self.recipe.resources),
@@ -234,6 +238,10 @@ fn construct_format(recipe: &FormatRecipe) -> Result<Vec<u8>, FormatFixtureError
         &recipe.construction_source_name,
         Arc::clone(&recipe.construction_source),
     )?;
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "native format-fixture guard measures host wall time independently of TeX's fixed job clock"
+    )]
     let started = Instant::now();
     let result = session.run(
         &mut RecipeResourceHost::new(&recipe.resources),
@@ -287,7 +295,7 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                     } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
                         CanonicalResourceFulfillment::input(
                             logical_name,
-                            source_kind.clone(),
+                            *source_kind,
                             Arc::clone(bytes),
                         ),
                     )),
@@ -419,7 +427,7 @@ pub enum FormatFixtureError {
     PublishedEntryMissing,
     Format(String),
     Cache(FormatCacheError),
-    Session(CanonicalSessionError),
+    Session(Box<CanonicalSessionError>),
     Fuel(tex_command::CommandFuelLimitError),
 }
 
@@ -439,7 +447,7 @@ impl From<FormatCacheError> for FormatFixtureError {
 
 impl From<CanonicalSessionError> for FormatFixtureError {
     fn from(error: CanonicalSessionError) -> Self {
-        Self::Session(error)
+        Self::Session(Box::new(error))
     }
 }
 
