@@ -254,6 +254,74 @@ fn startup_input_name(canonical_source_name: &str) -> String {
     format!("./{canonical_source_name}")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TripEngineProfile {
+    Tex82,
+    ETex,
+}
+
+impl TripEngineProfile {
+    fn from_etex(etex: bool) -> Self {
+        if etex { Self::ETex } else { Self::Tex82 }
+    }
+
+    fn recipe(self) -> FormatRecipe {
+        match self {
+            Self::Tex82 => FormatRecipe::raw_tex82(),
+            Self::ETex => FormatRecipe::raw_etex26(),
+        }
+    }
+
+    fn format_name(self) -> &'static str {
+        match self {
+            Self::Tex82 => "umber-tex82-oracle",
+            Self::ETex => "umber-etex26-extended-oracle-clean",
+        }
+    }
+}
+
+fn trip_format_recipe(
+    profile: TripEngineProfile,
+    fixture_name: &str,
+    source_name: &str,
+    source: Arc<[u8]>,
+    tripos: Arc<[u8]>,
+    tfm: Arc<[u8]>,
+) -> FormatRecipe {
+    let mut recipe = profile.recipe();
+    recipe.format_name = profile.format_name().into();
+    recipe.construction_source_name = source_name.to_owned();
+    recipe.construction_source = source;
+    recipe.resources = vec![
+        FormatResource::Input {
+            logical_name: "tripos.tex".into(),
+            source_kind: RegisteredSourceKind::Generated,
+            bytes: tripos,
+        },
+        FormatResource::Tfm {
+            logical_name: format!("{fixture_name}.tfm"),
+            bytes: tfm,
+        },
+    ];
+    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v1"[..]);
+    recipe.clock = JobClock {
+        time: 13 * 60 + 36,
+        second: 0,
+        day: 9,
+        month: 7,
+        year: 2026,
+    };
+    recipe.construction_interaction = tex_state::InteractionMode::Nonstop;
+    recipe.construction_error_context_widths =
+        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths");
+    recipe.guards = FormatGenerationGuards {
+        command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
+        wall_time: Duration::from_secs(1_800),
+        resident_bytes: 6 * 1024 * 1024 * 1024,
+    };
+    recipe
+}
+
 #[test]
 fn canonical_source_identity_selects_startup_input_name_independently_of_staging() {
     assert_eq!(startup_input_name("etrip.tex"), "./etrip.tex");
@@ -261,6 +329,88 @@ fn canonical_source_identity_selects_startup_input_name_independently_of_staging
         startup_input_name("inputs/annual.report.tex"),
         "./inputs/annual.report.tex"
     );
+}
+
+#[test]
+fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
+    for (profile, fixture_name, source_name, engine, format_name) in [
+        (
+            TripEngineProfile::Tex82,
+            "trip",
+            "trip.tex",
+            EngineMode::Tex82,
+            "umber-tex82-oracle",
+        ),
+        (
+            TripEngineProfile::ETex,
+            "etrip",
+            "etrip.tex",
+            EngineMode::ETex,
+            "umber-etex26-extended-oracle-clean",
+        ),
+    ] {
+        let recipe = trip_format_recipe(
+            profile,
+            fixture_name,
+            source_name,
+            Arc::from(&b"fixture source"[..]),
+            Arc::from(&b"tripos"[..]),
+            Arc::from(&b"tfm"[..]),
+        );
+        assert_eq!(recipe.engine, engine);
+        assert_eq!(recipe.engine.command_profile(), engine.command_profile());
+        assert_eq!(recipe.format_name, format_name);
+        assert_eq!(recipe.construction_source_name, source_name);
+        assert!(matches!(
+            &recipe.resources[0],
+            FormatResource::Input {
+                logical_name,
+                source_kind: RegisteredSourceKind::Generated,
+                ..
+            } if logical_name == "tripos.tex"
+        ));
+        assert!(matches!(
+            &recipe.resources[1],
+            FormatResource::Tfm { logical_name, .. }
+                if logical_name == &format!("{fixture_name}.tfm")
+        ));
+        recipe.identity().expect("recipe identity");
+    }
+}
+
+#[test]
+fn two_phase_trip_helper_forbids_private_format_paths() {
+    let source = include_str!("e2e_conformance.rs");
+    let helper = source
+        .rsplit_once("fn run_two_phase_fixture(")
+        .expect("two-phase helper exists")
+        .1
+        .split_once("\n#[test]\n#[ignore = \"manual direct canonical TRIP parity")
+        .expect("two-phase helper has a bounded source region")
+        .0;
+    for forbidden in [
+        "run_file_in_process_captured",
+        "Universe::from_format",
+        ".dump_format(",
+        "construct_format_in_worker",
+    ] {
+        assert!(
+            !helper.contains(forbidden),
+            "two-phase helper must not use private format path {forbidden}"
+        );
+    }
+    for required in [
+        "trip_format_recipe(",
+        "ensure_format(",
+        ".construction_evidence()",
+        ".load(World::memory_with_clock(recipe.clock))",
+        ".run(",
+    ] {
+        assert!(
+            helper.contains(required),
+            "two-phase helper must retain public boundary step {required}"
+        );
+    }
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
@@ -1102,46 +1252,16 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, etex: bool, gate: 
     );
     let tfm: Arc<[u8]> =
         Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).expect("read conformance TFM"));
-    let mut recipe = if etex {
-        FormatRecipe::raw_etex26()
-    } else {
-        FormatRecipe::raw_tex82()
-    };
+    let profile = TripEngineProfile::from_etex(etex);
+    let recipe = trip_format_recipe(
+        profile,
+        fixture_name,
+        source_identity.canonical_name(),
+        Arc::clone(&source_bytes),
+        Arc::clone(&tripos),
+        Arc::clone(&tfm),
+    );
     let engine = recipe.engine;
-    recipe.format_name = if etex {
-        "umber-etex26-extended-oracle-clean".into()
-    } else {
-        "umber-tex82-oracle".into()
-    };
-    recipe.construction_source_name = source_identity.canonical_name().to_owned();
-    recipe.construction_source = Arc::clone(&source_bytes);
-    recipe.resources = vec![
-        FormatResource::Input {
-            logical_name: "tripos.tex".into(),
-            source_kind: RegisteredSourceKind::Generated,
-            bytes: Arc::clone(&tripos),
-        },
-        FormatResource::Tfm {
-            logical_name: format!("{fixture_name}.tfm"),
-            bytes: Arc::clone(&tfm),
-        },
-    ];
-    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v1"[..]);
-    recipe.clock = JobClock {
-        time: 13 * 60 + 36,
-        second: 0,
-        day: 9,
-        month: 7,
-        year: 2026,
-    };
-    recipe.construction_interaction = tex_state::InteractionMode::Nonstop;
-    recipe.construction_error_context_widths =
-        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths");
-    recipe.guards = FormatGenerationGuards {
-        command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
-        wall_time: Duration::from_secs(1_800),
-        resident_bytes: 6 * 1024 * 1024 * 1024,
-    };
     let cache_root = tempfile::tempdir().expect("create authenticated format cache");
     let cache = FormatCacheStore::new(cache_root.path());
     let first = ensure_format(&cache, &recipe, &super::umber_format_worker_launcher())
