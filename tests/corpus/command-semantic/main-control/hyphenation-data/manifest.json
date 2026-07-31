@@ -6,7 +6,7 @@
     {
       "id": "hyphenation-data",
       "property_id": "tex82.assignment.hyphenation-data",
-      "profile": "production",
+      "profile": "raw-tex82-loaded",
       "source": "hyphenation-data.tex",
       "provenance": {
         "authority": "tex.web",
@@ -35,7 +35,7 @@
         "count:0=1"
       ],
       "channels": {
-        "events": 78,
+        "events": 77,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

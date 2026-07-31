@@ -64,7 +64,7 @@ Git.
 
 A `FormatFixture` loads by decoding its validated bytes into a fresh `World`
 and `Universe`, then reinstalling the selected profile's live primitive
-implementations. The returned `LoadedFormatSession` owns that fresh universe
+implementations. The returned `LoadedFormatFixture` owns that fresh universe
 until it constructs one retained `CanonicalEngineSession` for a job.
 
 Only immutable format state crosses the boundary. The format container excludes
@@ -80,13 +80,23 @@ cumulative command fuel, and returns structured semantic output. It has no
 an explicitly named test seam used only for the small fresh-versus-loaded
 matrix; it is not an automatic fallback from a cache or load failure.
 
+Loaded jobs use TeX82 §§61, 534, 536, 537, 642, and 1333 framing through the
+generic retained session. A named retained root lets the command input stack
+own its balanced file-opening events; an unnamed compatibility root retains
+the driver's explicit opening. Completion serializes any prepared DVI pages
+before printing §642's exact byte count, while zero-page jobs supply no DVI
+descriptor.
+
 ## Verification
 
 The substrate tests cover identity invalidation, byte-identical independent
 builds, cache failure atomicity, concurrent publication, corrupt-entry
 recovery, adversarial symlink authority, format schema and exclusion
-properties, live-registry reload, the discovered
-`main-control/final-cleanup-end-or-dump` corpus case through raw-TeX82 loaded
-execution, and one explicit fresh-versus-loaded semantic-state invariant.
+properties, live-registry reload, the ordinary
+`main-control/hyphenation-data` corpus case through raw-TeX82 loaded execution,
+and one explicit fresh-versus-loaded semantic-state invariant. TeX82
+§§1250–1252 make that first migrated case a useful loaded-state witness:
+dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
+canonical events rather than the synthetic fresh-universe path's 78.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.

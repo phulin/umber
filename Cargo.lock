@@ -1188,6 +1188,8 @@ dependencies = [
  "tex-oracle",
  "tex-out",
  "tex-state",
+ "umber",
+ "umber-fetch",
 ]
 
 [[package]]

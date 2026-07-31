@@ -272,6 +272,34 @@ fn explicit_fresh_seam_matches_loaded_semantic_state() {
     assert_eq!(loaded_observations.0, fresh_observations);
 }
 
+#[test]
+fn loaded_page_job_reports_exact_serialized_dvi_length() {
+    let recipe = FormatRecipe::raw_tex82();
+    let cache_root = TempDir::new().expect("cache");
+    let fixture =
+        ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw format");
+    let mut observations = Recorder::default();
+    let run = fixture
+        .load(test_world())
+        .expect("load")
+        .run(
+            "page.tex",
+            Arc::from(&br"\catcode`\{=1 \catcode`\}=2 \shipout\hbox{}\end"[..]),
+            &mut observations,
+        )
+        .expect("loaded page run");
+
+    let dvi = crate::dvi_from_page_plans(&run.result.dvi_pages).expect("DVI serializes");
+    assert_eq!(run.result.dvi_pages.len(), 1);
+    assert!(
+        run.result.terminal_text.contains(&format!(
+            "Output written on page.dvi (1 page, {} bytes).",
+            dvi.len()
+        )),
+        "TeX82 §642 reports the serialized DVI length rather than a placeholder"
+    );
+}
+
 fn run_explicit_fresh_compatibility(
     recipe: &FormatRecipe,
     source_name: &str,

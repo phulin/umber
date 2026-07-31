@@ -202,7 +202,9 @@ pub struct CanonicalEngineSession<'a> {
     stores: &'a mut Universe,
     control: CanonicalMainControl,
     initex: bool,
+    loaded_job_framing: bool,
     root_registered: bool,
+    root_framing_is_command_owned: bool,
     startup_input_name: Option<String>,
     started: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
@@ -221,7 +223,9 @@ impl<'a> CanonicalEngineSession<'a> {
             stores,
             control: CanonicalMainControl::with_profile(profile),
             initex: false,
+            loaded_job_framing: false,
             root_registered: false,
+            root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
             terminated: false,
@@ -242,7 +246,9 @@ impl<'a> CanonicalEngineSession<'a> {
             control: CanonicalMainControl::tex82_initex(stores),
             stores,
             initex: true,
+            loaded_job_framing: false,
             root_registered: false,
+            root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
             terminated: false,
@@ -260,7 +266,9 @@ impl<'a> CanonicalEngineSession<'a> {
             control: CanonicalMainControl::prepared_initex(profile),
             stores,
             initex: true,
+            loaded_job_framing: false,
             root_registered: false,
+            root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
             terminated: false,
@@ -276,6 +284,12 @@ impl<'a> CanonicalEngineSession<'a> {
     /// Configures a positive finite canonical command-work limit.
     pub fn set_fuel_limit(&mut self, limit: u64) -> Result<(), tex_command::CommandFuelLimitError> {
         self.control.set_fuel_limit(limit)
+    }
+
+    /// Declares the immutable format identity used to frame a loaded job.
+    pub fn set_preloaded_format(&mut self, format: tex_exec::PreloadedFormat) {
+        self.control.set_preloaded_format(format);
+        self.loaded_job_framing = true;
     }
 
     #[must_use]
@@ -325,6 +339,7 @@ impl<'a> CanonicalEngineSession<'a> {
         self.control
             .capabilities_mut()
             .set_startup_job_name(startup_input_name);
+        self.root_framing_is_command_owned = source.name().is_some();
         let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());
@@ -369,6 +384,13 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         if !self.started {
             self.started = true;
+            if self.loaded_job_framing {
+                let input = self
+                    .startup_input_name
+                    .as_deref()
+                    .expect("a started session has a root");
+                self.control.begin_job(self.stores, input);
+            }
             self.print_startup_headline();
             self.print_startup_input_opening();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
@@ -426,6 +448,9 @@ impl<'a> CanonicalEngineSession<'a> {
     /// open yet, so this write is terminal-only in both INITEX and
     /// format-loaded sessions.
     fn print_startup_input_opening(&mut self) {
+        if self.root_framing_is_command_owned {
+            return;
+        }
         let startup_input_name = self
             .startup_input_name
             .as_deref()
@@ -450,6 +475,13 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         if !self.started {
             self.started = true;
+            if self.loaded_job_framing {
+                let input = self
+                    .startup_input_name
+                    .as_deref()
+                    .expect("a started session has a root");
+                self.control.begin_job(self.stores, input);
+            }
             self.print_startup_headline();
             self.print_startup_input_opening();
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
@@ -703,6 +735,27 @@ impl<'a> CanonicalEngineSession<'a> {
 
     fn finish(&mut self) -> Result<CanonicalSessionState, CanonicalSessionError> {
         let receipts = self.control.take_prepared_dvi_pages();
+        let dvi_pages = receipts
+            .iter()
+            .cloned()
+            .map(tex_exec::PreparedDviPage::into_plan)
+            .collect::<Vec<DviPagePlan>>();
+        let dvi_output = if !self.loaded_job_framing || dvi_pages.is_empty() {
+            None
+        } else {
+            let dvi = crate::dvi_from_page_plans(&dvi_pages).map_err(|error| {
+                CanonicalSessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(
+                    format!("canonical DVI serialization failed before job framing: {error}"),
+                ))
+            })?;
+            Some(tex_exec::DviJobOutput {
+                file_name: format!("{}.dvi", self.control.capabilities_mut().job_name()),
+                byte_len: dvi.len() as u64,
+            })
+        };
+        if self.loaded_job_framing {
+            self.control.finish_job(self.stores, dvi_output);
+        }
         let commits = self.stores.world().artifact_commits();
         let artifacts = &commits[self.artifact_cursor..];
         if receipts.len() != artifacts.len()
@@ -724,10 +777,7 @@ impl<'a> CanonicalEngineSession<'a> {
         Ok(CanonicalSessionState::Complete(RunResult {
             terminal_text: crate::uncommitted_terminal_text(self.stores),
             artifacts: artifacts.to_vec(),
-            dvi_pages: receipts
-                .into_iter()
-                .map(tex_exec::PreparedDviPage::into_plan)
-                .collect::<Vec<DviPagePlan>>(),
+            dvi_pages,
             committed_artifacts: committed_artifacts
                 [self.artifact_cursor - artifacts.len()..self.artifact_cursor]
                 .to_vec(),

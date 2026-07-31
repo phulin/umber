@@ -184,8 +184,18 @@ impl LoadedFormatFixture {
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let mut session =
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
+        session.set_preloaded_format(tex_exec::PreloadedFormat {
+            name: self.recipe.format_name.clone(),
+            year: self.recipe.clock.year,
+            month: self.recipe.clock.month,
+            day: self.recipe.clock.day,
+        });
         session.set_fuel_limit(self.recipe.guards.command_fuel)?;
-        session.register_authored_root(source_name, source)?;
+        session.register_retained_root(
+            source_name,
+            tex_command::SourceRegistration::new(RegisteredSourceKind::Generated, source)
+                .with_name(format!("./{source_name}")),
+        )?;
         let guards = GuardCheckpoints::new(self.recipe.guards)?;
         let mut checkpoints = &guards;
         let result = session.run_with_observer(

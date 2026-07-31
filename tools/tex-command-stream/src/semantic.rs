@@ -1073,6 +1073,9 @@ fn terminal_stdin(case: &Case) -> Vec<String> {
 }
 
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+    if case.profile == SessionProfile::RawTex82Loaded {
+        return execute_raw_tex82_loaded(source, case);
+    }
     let mut universe = Universe::new();
     for line in terminal_stdin(case) {
         universe
@@ -1128,19 +1131,7 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             control.set_preloaded_format(dumped_format_identity("production", &universe));
             control
         }
-        SessionProfile::RawTex82Loaded => {
-            let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
-            let image = universe
-                .dump_format()
-                .map_err(|error| format!("raw TeX82 format creation: {error}"))?;
-            universe = Universe::from_format(tex_state::World::memory(), &image)
-                .map_err(|error| format!("raw TeX82 format restore: {error}"))?;
-            tex_command::register_tex82_expandable_primitives(&mut universe);
-            tex_exec::register_unexpandable_primitives(&mut universe);
-            let mut control = CanonicalMainControl::new();
-            control.set_preloaded_format(dumped_format_identity("production", &universe));
-            control
-        }
+        SessionProfile::RawTex82Loaded => unreachable!("loaded profile handled above"),
     };
     for (name, bytes) in &case.inputs {
         // The same kpathsea `./` the root source carries, for the same
@@ -1297,6 +1288,52 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
         }
     }
     Err(format!("exceeded {MAX_STEPS} main-control steps"))
+}
+
+fn execute_raw_tex82_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+    let cache = tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
+    let mut recipe = umber::FormatRecipe::raw_tex82();
+    recipe.format_name = "production".into();
+    let fixture = umber::ensure_format(&umber_fetch::FormatCacheStore::new(cache.path()), &recipe)
+        .map_err(|error| format!("ensure raw TeX82 format: {error}"))?;
+    let mut world = tex_state::World::memory();
+    for line in &case.terminal_lines {
+        world
+            .push_memory_terminal_line(line.clone())
+            .map_err(|error| format!("terminal line registration: {error}"))?;
+    }
+    let mut recorder = Recorder::default();
+    let loaded = fixture
+        .load(world)
+        .and_then(|loaded| loaded.run(&case.source, Arc::<[u8]>::from(source), &mut recorder))
+        .map_err(|error| format!("loaded raw TeX82 run: {error}"))?;
+    let counts = std::array::from_fn(|slot| {
+        loaded
+            .universe
+            .count(u16::try_from(slot).expect("count register index"))
+    });
+    let artifacts = loaded.result.artifacts.clone();
+    let mut dvi = Vec::new();
+    if !loaded.result.dvi_pages.is_empty() {
+        let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+        for page in &loaded.result.dvi_pages {
+            writer
+                .write_page_plan(page)
+                .map_err(|error| format!("loaded DVI page: {error:?}"))?;
+        }
+        dvi = writer
+            .finish()
+            .map_err(|error| format!("loaded DVI finish: {error:?}"))?;
+    }
+    Ok(SemanticRun {
+        observations: recorder.0,
+        counts,
+        universe: loaded.universe,
+        mode_transitions: vec![Mode::Vertical],
+        artifacts,
+        dvi,
+        fatal: None,
+    })
 }
 
 pub fn push_counts(run: &SemanticRun, projection: &Projection, output: &mut Vec<String>) {
