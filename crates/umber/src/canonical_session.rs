@@ -296,6 +296,11 @@ impl<'a> CanonicalEngineSession<'a> {
         self.loaded_job_framing = true;
     }
 
+    /// Selects the engine binary identity used by loaded-job startup framing.
+    pub fn set_framing_dialect(&mut self, dialect: CommandDialect) {
+        self.control.set_framing_dialect(dialect);
+    }
+
     #[must_use]
     pub const fn fuel_limit(&self) -> u64 {
         self.control.fuel_limit()

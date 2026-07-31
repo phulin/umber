@@ -53,6 +53,7 @@ fn guards() -> FormatGenerationGuards {
 fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> PreparedFormatJob<'a> {
     PreparedFormatJob {
         engine: EngineMode::Tex82,
+        framing_dialect: tex_command::CommandDialect::Tex82,
         backend: OutputCapability::Dvi,
         clock: clock(2031),
         interaction: InteractionMode::ErrorStop,

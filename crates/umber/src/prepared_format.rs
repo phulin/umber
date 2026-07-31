@@ -6,6 +6,7 @@ use tex_command::{CommandObserver, RegisteredSourceKind};
 use tex_state::{InteractionMode, JobClock, World};
 use umber_fetch::FormatCacheStore;
 
+use crate::format_fixture::LoadedRunConfiguration;
 use crate::{
     EngineMode, FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe,
     FormatWorkerLauncher, LoadedFormatResource, LoadedFormatRun, OutputCapability, ensure_format,
@@ -14,6 +15,9 @@ use crate::{
 /// One explicit, job-local execution episode for an authenticated format.
 pub struct PreparedFormatJob<'a> {
     pub engine: EngineMode,
+    /// Engine binary identity for startup framing, independent of the
+    /// semantic command profile exercised by the job.
+    pub framing_dialect: tex_command::CommandDialect,
     pub backend: OutputCapability,
     pub clock: JobClock,
     pub interaction: InteractionMode,
@@ -98,7 +102,10 @@ impl PreparedFormatProvider {
             job.source_kind,
             job.source,
             &job.resources,
-            job.guards,
+            LoadedRunConfiguration {
+                guards: job.guards,
+                framing_dialect: job.framing_dialect,
+            },
             job.observer,
         )
     }

@@ -108,6 +108,12 @@ pub struct CanonicalMainControl {
     /// does. `None` leaves the banner to `initex` above. Framing-only: no
     /// execution decision reads it.
     preloaded_format: Option<crate::job::PreloadedFormat>,
+    /// Engine identity used only for §61/§536 startup framing.
+    ///
+    /// Most jobs use the command profile's dialect. Reference-backed jobs may
+    /// deliberately exercise an older semantic profile in a newer engine
+    /// binary, so backend banner identity is an independent typed fact.
+    framing_dialect: Option<tex_command::CommandDialect>,
     /// True after TeX82 §1335 has successfully completed an INITEX `\dump`.
     ///
     /// This is a committed termination receipt for the host boundary; it is
@@ -634,6 +640,9 @@ impl CanonicalMainControl {
     /// banner and `**` line precede the root file's own `(`. See
     /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
+        let dialect = self
+            .framing_dialect
+            .unwrap_or_else(|| self.command_profile().dialect());
         let etex = self.command_profile() == CommandProfile::ETEX26;
         // §534's `**` line is exactly what §313 pseudoprints for the base
         // terminal level; a driver that frames the job here rather than
@@ -645,7 +654,10 @@ impl CanonicalMainControl {
             &mut self.capabilities,
             self.initex,
             self.preloaded_format.as_ref(),
-            etex,
+            crate::job::JobEngineFraming {
+                dialect,
+                extended_mode: etex,
+            },
             first_line,
         );
     }
@@ -666,6 +678,11 @@ impl CanonicalMainControl {
     /// never calls this is framed exactly as before.
     pub fn set_preloaded_format(&mut self, format: crate::job::PreloadedFormat) {
         self.preloaded_format = Some(format);
+    }
+
+    /// Selects the engine binary identity used by startup framing.
+    pub fn set_framing_dialect(&mut self, dialect: tex_command::CommandDialect) {
+        self.framing_dialect = Some(dialect);
     }
 
     /// tex.web §1333 `close_files_and_terminate`'s prints: §642's DVI page

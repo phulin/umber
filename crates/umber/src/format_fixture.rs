@@ -283,6 +283,11 @@ pub struct LoadedFormatFixture {
     universe: Universe,
 }
 
+pub(crate) struct LoadedRunConfiguration {
+    pub guards: FormatGenerationGuards,
+    pub framing_dialect: tex_command::CommandDialect,
+}
+
 impl LoadedFormatFixture {
     /// Selects the job-local TeX interaction mode after format loading.
     ///
@@ -308,12 +313,16 @@ impl LoadedFormatFixture {
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let guards = self.recipe.guards;
+        let framing_dialect = self.recipe.engine.command_profile().dialect();
         self.run_configured(
             source_name,
             RegisteredSourceKind::Generated,
             source,
             resources,
-            guards,
+            LoadedRunConfiguration {
+                guards,
+                framing_dialect,
+            },
             observer,
         )
     }
@@ -324,10 +333,10 @@ impl LoadedFormatFixture {
         source_kind: RegisteredSourceKind,
         source: Arc<[u8]>,
         resources: &[LoadedFormatResource],
-        guards: FormatGenerationGuards,
+        config: LoadedRunConfiguration,
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
-        let guards = guards.validate()?;
+        let guards = config.guards.validate()?;
         let mut session =
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_preloaded_format(tex_exec::PreloadedFormat {
@@ -336,6 +345,7 @@ impl LoadedFormatFixture {
             month: self.recipe.clock.month,
             day: self.recipe.clock.day,
         });
+        session.set_framing_dialect(config.framing_dialect);
         session.set_fuel_limit(guards.command_fuel)?;
         let root_source = session.register_retained_root(
             source_name,

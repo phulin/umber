@@ -1185,6 +1185,7 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     // precede the root file's own `(` (see `crate::job`'s doc comment on
     // `begin_job`). `first_line` echoes what the oracle is invoked with on
     // its command line -- the bare source filename, e.g. `show-box.tex`.
+    control.set_framing_dialect(tex_command::CommandDialect::Pdftex14027);
     control.begin_job(&mut universe, &case.source);
     // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
     // `a_make_name_string` records (and prints) `./show-box.tex` rather than
@@ -1387,6 +1388,7 @@ fn execute_loaded_format(
             &fixture,
             umber::PreparedFormatJob {
                 engine: recipe.engine,
+                framing_dialect: tex_command::CommandDialect::Pdftex14027,
                 backend: umber::OutputCapability::Dvi,
                 clock: tex_state::JobClock::default(),
                 interaction: case.interaction_mode.engine_mode(),

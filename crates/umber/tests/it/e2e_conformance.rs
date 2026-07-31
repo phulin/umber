@@ -517,6 +517,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                     &second,
                     PreparedFormatJob {
                         engine: recipe.engine,
+                        framing_dialect: recipe.engine.command_profile().dialect(),
                         backend: OutputCapability::Dvi,
                         clock: recipe.clock,
                         interaction: tex_state::InteractionMode::Nonstop,
@@ -702,6 +703,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
             &prepared,
             PreparedFormatJob {
                 engine: EngineMode::Tex82,
+                framing_dialect: tex_command::CommandDialect::Tex82,
                 backend: OutputCapability::Dvi,
                 clock: PLAIN_CLOCK,
                 interaction: tex_state::InteractionMode::Nonstop,
@@ -801,6 +803,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
             &prepared,
             PreparedFormatJob {
                 engine: EngineMode::Tex82,
+                framing_dialect: tex_command::CommandDialect::Tex82,
                 backend: OutputCapability::Dvi,
                 clock: PLAIN_CLOCK,
                 interaction: tex_state::InteractionMode::Nonstop,
@@ -1133,6 +1136,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                 &second,
                 PreparedFormatJob {
                     engine: EngineMode::Tex82,
+                    framing_dialect: tex_command::CommandDialect::Tex82,
                     backend: OutputCapability::Dvi,
                     clock: PLAIN_CLOCK,
                     interaction: tex_state::InteractionMode::Nonstop,
@@ -1159,6 +1163,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                 fixture,
                 PreparedFormatJob {
                     engine: EngineMode::Tex82,
+                    framing_dialect: tex_command::CommandDialect::Tex82,
                     backend: OutputCapability::Dvi,
                     clock: PLAIN_CLOCK,
                     interaction: tex_state::InteractionMode::Nonstop,
@@ -1878,6 +1883,7 @@ fn run_two_phase_fixture(
             &prepared,
             PreparedFormatJob {
                 engine,
+                framing_dialect: engine.command_profile().dialect(),
                 backend: OutputCapability::Dvi,
                 clock: recipe.clock,
                 interaction: tex_state::InteractionMode::Nonstop,

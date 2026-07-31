@@ -29,21 +29,40 @@
 //! - §1333 `close_files_and_terminate`: §642's DVI page report and the
 //!   "Transcript written on..." note.
 
-use tex_command::CommandHostCapabilities;
+use tex_command::{CommandDialect, CommandHostCapabilities};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
 
-/// tex.web's `banner`: the reference engine's own start-up string.
+/// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
 /// Byte-for-byte comparison against a pinned reference engine is the whole
 /// point of the minifixture corpus this module was built for (see
 /// `docs/job_framing.md`), so this is the reference engine's banner, not
 /// Umber's name -- the same string `umber::pdf_output` writes as the PDF
-/// `PTEX.Fullbanner`/`PTEX_Fullbanner` key, which is why this is the single
-/// place either crate spells it.
+/// `PTEX.Fullbanner`/`PTEX_Fullbanner` key.
 pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
+
+/// tex.web §2's TeX82 start-up banner, with the pinned distribution suffix.
+pub const TEX82_BANNER: &str = "This is TeX, Version 3.141592653 (TeX Live 2025)";
+
+/// etex.ch §2's e-TeX 2.6 start-up banner, with the pinned distribution suffix.
+pub const ETEX26_BANNER: &str = "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2025)";
+
+fn banner(dialect: CommandDialect) -> &'static str {
+    match dialect {
+        CommandDialect::Tex82 => TEX82_BANNER,
+        CommandDialect::Etex26 => ETEX26_BANNER,
+        CommandDialect::Pdftex14027 => BANNER,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct JobEngineFraming {
+    pub dialect: CommandDialect,
+    pub extended_mode: bool,
+}
 
 /// Enough job state to make [`begin_job`] a one-shot.
 ///
@@ -210,7 +229,7 @@ pub(crate) fn begin_job(
     capabilities: &mut CommandHostCapabilities,
     initex: bool,
     format: Option<&PreloadedFormat>,
-    etex: bool,
+    engine: JobEngineFraming,
     first_line: &str,
 ) {
     if job.started {
@@ -229,7 +248,8 @@ pub(crate) fn begin_job(
     // The banner itself goes out through §54's `wterm`/`wlog`, which do not
     // advance `term_offset`/`file_offset`; it is longer than
     // `max_print_line` and must stay one unbroken line.
-    let terminal_banner = format!("{BANNER}{}\n", terminal_format_ident(format, initex));
+    let banner = banner(engine.dialect);
+    let terminal_banner = format!("{banner}{}\n", terminal_format_ident(format, initex));
     stores
         .world_mut()
         .write_text_unmetered(PrintSink::Terminal, &terminal_banner);
@@ -242,7 +262,7 @@ pub(crate) fn begin_job(
     // `print_nl("**")` break the line.
     stores
         .world_mut()
-        .write_text_unmetered(PrintSink::Log, BANNER);
+        .write_text_unmetered(PrintSink::Log, banner);
     let log_identity = format!(
         "{}{}",
         log_format_ident(format, initex),
@@ -250,7 +270,7 @@ pub(crate) fn begin_job(
     );
     stores.world_mut().write_text(PrintSink::Log, &log_identity);
 
-    if etex {
+    if engine.extended_mode {
         // etex.ch's patch at tex.web §1337 (`init_prim`'s caller, run once
         // right after the terminal banner): `wterm_ln('entering extended
         // mode')`, its own line, before anything else reaches the terminal.

@@ -102,7 +102,10 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         &mut capabilities,
         true,
         None,
-        false,
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Pdftex14027,
+            extended_mode: false,
+        },
         "show-box.tex",
     );
 
@@ -137,17 +140,20 @@ fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star
         &mut capabilities,
         true,
         None,
-        true,
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Etex26,
+            extended_mode: true,
+        },
         "etex.tex",
     );
 
     assert_eq!(
         terminal_text(&stores),
-        format!("{BANNER} (INITEX)\nentering extended mode\n")
+        format!("{ETEX26_BANNER} (INITEX)\nentering extended mode\n")
     );
     assert_eq!(
         log_text(&stores),
-        format!("{BANNER} (INITEX)  9 JUL 2026 13:36\nentering extended mode\n**etex.tex\n")
+        format!("{ETEX26_BANNER} (INITEX)  9 JUL 2026 13:36\nentering extended mode\n**etex.tex\n")
     );
 }
 
@@ -163,7 +169,10 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         &mut capabilities,
         true,
         None,
-        false,
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Pdftex14027,
+            extended_mode: false,
+        },
         "a.tex",
     );
     begin_job(
@@ -172,7 +181,10 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         &mut capabilities,
         true,
         None,
-        false,
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Pdftex14027,
+            extended_mode: false,
+        },
         "a.tex",
     );
 
@@ -350,19 +362,59 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
         &mut capabilities,
         false,
         Some(&format),
-        true,
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Etex26,
+            extended_mode: true,
+        },
         "etex-loaded-state-reset.tex",
     );
 
     assert_eq!(
         terminal_text(&stores),
-        format!("{BANNER} (preloaded format=etex-loaded)\nentering extended mode\n")
+        format!("{ETEX26_BANNER} (preloaded format=etex-loaded)\nentering extended mode\n")
     );
     assert_eq!(
         log_text(&stores),
         format!(
-            "{BANNER} (preloaded format=etex-loaded 2026.7.9)  9 JUL 2026 13:36\n\
+            "{ETEX26_BANNER} (preloaded format=etex-loaded 2026.7.9)  9 JUL 2026 13:36\n\
              entering extended mode\n**etex-loaded-state-reset.tex\n"
         )
     );
+}
+
+#[test]
+fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_text() {
+    let mut stores = Universe::new();
+    let mut job = JobFraming::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let format = PreloadedFormat {
+        name: "trip".to_owned(),
+        year: 2026,
+        month: 7,
+        day: 9,
+    };
+
+    begin_job(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        false,
+        Some(&format),
+        JobEngineFraming {
+            dialect: tex_command::CommandDialect::Tex82,
+            extended_mode: false,
+        },
+        "trip.tex",
+    );
+
+    let terminal = terminal_text(&stores);
+    assert_eq!(
+        terminal,
+        format!("{TEX82_BANNER} (preloaded format=trip)\n")
+    );
+    assert!(!terminal.contains("pdfTeX"));
+    assert!(!terminal.contains("e-TeX"));
+    let log = log_text(&stores);
+    assert!(log.starts_with(TEX82_BANNER));
+    assert!(log.contains("(preloaded format=trip 2026.7.9)"));
 }
