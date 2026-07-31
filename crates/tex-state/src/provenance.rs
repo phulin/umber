@@ -363,6 +363,18 @@ impl ProvenanceStats {
         mem::size_of::<ArchivedOriginRecord>()
     }
 
+    /// Number of record slots sealed into one immutable archive chunk.
+    #[must_use]
+    pub const fn origin_record_archive_chunk_slots(self) -> usize {
+        ORIGIN_RECORD_ARCHIVE_CHUNK
+    }
+
+    /// Number of consecutive process-global keys reserved by one arena lease.
+    #[must_use]
+    pub const fn origin_key_lease_slots(self) -> usize {
+        ORIGIN_KEY_LEASE_LEN as usize
+    }
+
     #[must_use]
     pub const fn origin_record_archive_metadata_retained_bytes(self) -> usize {
         self.origin_record_archive_metadata_retained_bytes

@@ -543,6 +543,13 @@ affine-run capacity fits the bound derived from the 1,024-slot chunk geometry
 and the containers' geometric growth. Origin-list and source-map storage remain
 separately visible in total provenance bytes.
 
+The 1,024-slot chunk and 256-key lease are explicit layout contracts, not
+inputs that a test silently learns from whatever production constants happen
+to be current. The chunk bounds the mutable snapshot tail copied at a fork;
+the lease amortizes the process-global allocator while keeping a fresh,
+unimported job to at most one affine run per lease. Conformance gates pin both
+widths and reject excess fresh-job runs independently of the capacity formula.
+
 This distinction matters for short loaded-format jobs. The source-bootstrap
 and persistent-loaded Story A/B at migration base `8a5726a8` used the same
 engine, staged Story source, clock, runtime configuration, and finite guards:

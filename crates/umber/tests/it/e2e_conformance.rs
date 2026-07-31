@@ -1306,6 +1306,28 @@ fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
                 run.provenance.origin_record_slot_bytes(),
             ));
         }
+        if run.provenance.origin_record_archive_chunk_slots() != 1024 {
+            return Err(format!(
+                "{document} provenance archive chunk has {} slots (layout contract: 1024)",
+                run.provenance.origin_record_archive_chunk_slots(),
+            ));
+        }
+        if run.provenance.origin_key_lease_slots() != 256 {
+            return Err(format!(
+                "{document} provenance key lease has {} slots (layout contract: 256)",
+                run.provenance.origin_key_lease_slots(),
+            ));
+        }
+        let key_run_budget = run
+            .provenance
+            .origin_records()
+            .div_ceil(run.provenance.origin_key_lease_slots());
+        if run.provenance.origin_key_runs() > key_run_budget {
+            return Err(format!(
+                "{document} provenance retained {} affine key runs (fresh-job lease budget: {key_run_budget})",
+                run.provenance.origin_key_runs(),
+            ));
+        }
         if run.provenance.origin_record_retained_bytes() > layout_budget {
             return Err(format!(
                 "{document} origin-record containers retained {} bytes (derived layout budget: {layout_budget})",

@@ -329,11 +329,21 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
 #[test]
 fn origin_record_layout_budget_covers_tail_and_chunk_growth() {
     let mut store = ProvenanceStore::new();
-    for records in 1..=ORIGIN_RECORD_ARCHIVE_CHUNK + 1 {
+    let empty = store.stats();
+    assert_eq!(empty.origin_record_archive_chunk_slots(), 1024);
+    assert_eq!(empty.origin_key_lease_slots(), 256);
+    assert_eq!(empty.origin_record_retained_bytes(), 0);
+    assert_eq!(empty.origin_record_layout_budget_bytes(), 0);
+
+    let mark = store.watermark();
+    for records in 1..=ORIGIN_RECORD_ARCHIVE_CHUNK * 4 + 1 {
         store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
             SyntheticOriginKind::Test,
         )));
-        if matches!(records, 1 | 3 | 4 | 5 | 1023 | 1024 | 1025) {
+        if matches!(
+            records,
+            1 | 3 | 4 | 5 | 1023 | 1024 | 1025 | 4095 | 4096 | 4097
+        ) {
             let stats = store.stats();
             assert!(
                 stats.origin_record_retained_bytes() <= stats.origin_record_layout_budget_bytes(),
@@ -341,6 +351,16 @@ fn origin_record_layout_budget_covers_tail_and_chunk_growth() {
             );
         }
     }
+
+    // Live-length-derived geometry must not excuse capacity retained after a
+    // rollback. This is the non-tautological failure mode the budget guards.
+    store.truncate_to(mark);
+    let rolled_back = store.stats();
+    assert_eq!(rolled_back.origin_records(), 0);
+    assert!(
+        rolled_back.origin_record_retained_bytes()
+            > rolled_back.origin_record_layout_budget_bytes()
+    );
 }
 
 #[test]
