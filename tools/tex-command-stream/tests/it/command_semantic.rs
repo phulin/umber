@@ -57,6 +57,7 @@ fn declared_command_semantic_cases_match() {
     );
     assert_eq!(raw_tex82_format_initializations(), 1);
     assert_eq!(raw_etex26_format_initializations(), 1);
+    assert_eq!(production_pdftex14027_format_initializations(), 1);
 }
 
 #[test]
@@ -149,6 +150,7 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         "etex-diagnostics/etex-loaded-meaning-reassignment",
         "etex-diagnostics/etex-loaded-state-reset",
     ];
+    const PRODUCTION_LOADED: &[&str] = &["main-control/final-cleanup-end-or-dump"];
     const EXCLUDED: &[(&str, SessionProfile)] = &[
         (
             "input-expansion/etex-noexpand-undefined",
@@ -168,10 +170,6 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         ),
     ];
     const MAIN_CONTROL_EXCLUDED: &[(&str, SessionProfile)] = &[
-        (
-            "main-control/final-cleanup-end-or-dump",
-            SessionProfile::Production,
-        ),
         (
             "main-control/hyphenation-data",
             SessionProfile::RawTex82Loaded,
@@ -270,6 +268,17 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
         })
         .collect();
     assert_eq!(etex_loaded, ETEX_LOADED.iter().copied().collect());
+    let production_loaded: BTreeSet<_> = by_name
+        .iter()
+        .filter_map(|(name, case)| {
+            (case.profile.execution_route() == ExecutionRoute::ProductionPdftex14027Loaded)
+                .then_some(name.as_str())
+        })
+        .collect();
+    assert_eq!(
+        production_loaded,
+        PRODUCTION_LOADED.iter().copied().collect()
+    );
     let etex_loaded_cases: Vec<_> = etex_loaded.iter().map(|name| by_name[*name]).collect();
     assert_eq!(
         etex_loaded_cases

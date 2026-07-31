@@ -193,6 +193,7 @@ pub enum SessionProfile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionRoute {
     Fresh,
+    ProductionPdftex14027Loaded,
     RawEtex26Loaded,
     RawTex82Loaded,
 }
@@ -202,8 +203,9 @@ impl SessionProfile {
     pub const fn execution_route(self) -> ExecutionRoute {
         match self {
             Self::EtexLoaded => ExecutionRoute::RawEtex26Loaded,
+            Self::Production => ExecutionRoute::ProductionPdftex14027Loaded,
             Self::RawTex82Loaded => ExecutionRoute::RawTex82Loaded,
-            Self::Initex | Self::EtexInitex | Self::Production => ExecutionRoute::Fresh,
+            Self::Initex | Self::EtexInitex => ExecutionRoute::Fresh,
         }
     }
 }
@@ -1052,26 +1054,6 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
     Ok(declared)
 }
 
-/// The `-fmt` identity this harness's two loaded profiles run under.
-///
-/// The name matches what `scripts/run-minifixture-oracle.sh` passes the
-/// oracle (`-fmt=etex-loaded`, `-fmt=production`), because that is web2c's
-/// `dump_name` and therefore what the reference engine's own terminal banner
-/// prints. The date is read from the session that was just dumped, exactly as
-/// tex.web §1328's `store_fmt_file` reads `\year`/`\month`/`\day` -- it is not
-/// the *oracle's* dump date, which was whatever day the capture ran, so the
-/// log's copy of it is normalized away before comparison
-/// (`channels::normalize_log_clock`).
-fn dumped_format_identity(name: &str, universe: &Universe) -> tex_exec::PreloadedFormat {
-    use tex_state::env::banks::IntParam;
-    tex_exec::PreloadedFormat {
-        name: name.to_owned(),
-        year: universe.int_param(IntParam::YEAR),
-        month: universe.int_param(IntParam::MONTH),
-        day: universe.int_param(IntParam::DAY),
-    }
-}
-
 /// The terminal lines this case's engine run reads, byte-for-byte what the
 /// oracle harness pipes into the reference engine.
 ///
@@ -1091,6 +1073,9 @@ fn terminal_stdin(case: &Case) -> Vec<String> {
 
 pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     match case.profile.execution_route() {
+        ExecutionRoute::ProductionPdftex14027Loaded => {
+            return execute_production_pdftex14027_loaded(source, case);
+        }
         ExecutionRoute::RawEtex26Loaded => return execute_raw_etex26_loaded(source, case),
         ExecutionRoute::RawTex82Loaded => return execute_raw_tex82_loaded(source, case),
         ExecutionRoute::Fresh => {}
@@ -1111,12 +1096,7 @@ pub fn execute(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
         }
         SessionProfile::EtexLoaded => unreachable!("loaded profile handled above"),
-        SessionProfile::Production => {
-            let _initialized = CanonicalMainControl::tex82_initex(&mut universe);
-            let mut control = CanonicalMainControl::new();
-            control.set_preloaded_format(dumped_format_identity("production", &universe));
-            control
-        }
+        SessionProfile::Production => unreachable!("loaded profile handled above"),
         SessionProfile::RawTex82Loaded => unreachable!("loaded profile handled above"),
     };
     for (name, bytes) in &case.inputs {
@@ -1280,6 +1260,9 @@ static RAW_TEX82_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLo
 static RAW_TEX82_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 static RAW_ETEX26_FORMAT: OnceLock<Result<umber::FormatFixture, String>> = OnceLock::new();
 static RAW_ETEX26_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+static PRODUCTION_PDFTEX14027_FORMAT: OnceLock<Result<umber::FormatFixture, String>> =
+    OnceLock::new();
+static PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 
 fn format_worker_launcher() -> umber::FormatWorkerLauncher {
     if std::env::current_exe()
@@ -1339,6 +1322,22 @@ fn shared_raw_etex26_format() -> Result<umber::FormatFixture, String> {
         .clone()
 }
 
+fn shared_production_pdftex14027_format() -> Result<umber::FormatFixture, String> {
+    PRODUCTION_PDFTEX14027_FORMAT
+        .get_or_init(|| {
+            PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS.fetch_add(1, Ordering::Relaxed);
+            let cache =
+                tempfile::TempDir::new().map_err(|error| format!("format cache: {error}"))?;
+            umber::ensure_format(
+                &umber_fetch::FormatCacheStore::new(cache.path()),
+                &umber::FormatRecipe::production_pdftex14027(),
+                &format_worker_launcher(),
+            )
+            .map_err(|error| format!("ensure production pdfTeX 1.40.27 format: {error}"))
+        })
+        .clone()
+}
+
 /// Number of shared raw-TeX82 format initialization episodes in this process.
 ///
 /// This is exposed for the corpus boundary test that proves all loaded jobs
@@ -1354,6 +1353,26 @@ pub fn raw_tex82_format_initializations() -> usize {
 #[must_use]
 pub fn raw_etex26_format_initializations() -> usize {
     RAW_ETEX26_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
+}
+
+/// Number of shared production-pdfTeX format initialization episodes in this process.
+///
+/// This proves the production fixture uses one public recipe identity and image.
+#[must_use]
+pub fn production_pdftex14027_format_initializations() -> usize {
+    PRODUCTION_PDFTEX14027_FORMAT_INITIALIZATIONS.load(Ordering::Relaxed)
+}
+
+fn execute_production_pdftex14027_loaded(
+    source: &[u8],
+    case: &Case,
+) -> Result<SemanticRun, String> {
+    execute_loaded_format(
+        shared_production_pdftex14027_format()?,
+        source,
+        case,
+        "production pdfTeX 1.40.27",
+    )
 }
 
 fn execute_raw_etex26_loaded(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
