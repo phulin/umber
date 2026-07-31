@@ -24,8 +24,8 @@ use tex_state::{JobClock, Universe, World};
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
     CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode,
-    FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource,
-    dvi_from_page_plans, ensure_format,
+    FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource, OutputCapability,
+    PreparedFormatJob, PreparedFormatProvider, dvi_from_page_plans,
 };
 use umber_fetch::FormatCacheStore;
 
@@ -432,6 +432,10 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
         .0;
     for forbidden in [
         "run_file_in_process_captured",
+        "tempfile::tempdir",
+        "FormatCacheStore::new",
+        "ensure_format(",
+        ".load(",
         "Universe::from_format",
         ".dump_format(",
         "construct_format_in_worker",
@@ -443,9 +447,11 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
     }
     for required in [
         "trip_format_recipe(",
-        "ensure_format(",
+        "PreparedFormatProvider::from_environment(",
+        ".prepare(&recipe)",
         ".construction_evidence()",
-        ".load(World::memory_with_clock(recipe.clock))",
+        "PreparedFormatJob {",
+        "let loaded_run = provider",
         ".run(",
     ] {
         assert!(
@@ -453,6 +459,97 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
             "two-phase helper must retain public boundary step {required}"
         );
     }
+}
+
+#[test]
+fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
+    let cache = tempfile::tempdir().expect("scoped provider cache");
+    let launcher = super::umber_format_worker_launcher();
+    let mut identities = Vec::new();
+
+    for (profile, fixture_name) in [
+        (TripEngineProfile::Tex82, "trip"),
+        (TripEngineProfile::ETex, "etrip"),
+    ] {
+        let tripos: Arc<[u8]> = Arc::from(&b"complete input closure"[..]);
+        let tfm: Arc<[u8]> = Arc::from(&b"complete TFM closure"[..]);
+        let recipe = trip_format_recipe(
+            profile,
+            fixture_name,
+            &format!("{fixture_name}.tex"),
+            Arc::from(&b"\\dump\n"[..]),
+            Arc::clone(&tripos),
+            Arc::clone(&tfm),
+        );
+        identities.push(recipe.identity().expect("recipe identity").key());
+        let first_provider = PreparedFormatProvider::with_store(
+            FormatCacheStore::new(cache.path()),
+            launcher.clone(),
+        );
+        let first = first_provider
+            .prepare(&recipe)
+            .expect("cold profile preparation");
+        let second_provider = PreparedFormatProvider::with_store(
+            FormatCacheStore::new(cache.path()),
+            launcher.clone(),
+        );
+        let second = second_provider
+            .prepare(&recipe)
+            .expect("independent warm profile preparation");
+        assert_eq!(first.image(), second.image());
+        assert_eq!(
+            first.construction_evidence(),
+            second.construction_evidence(),
+            "warm entry must retain authenticated construction evidence"
+        );
+
+        for (assignment, expected) in [("\\count0=41\\end\n", 41), ("\\end\n", 0)] {
+            let mut observer = TripObservers::default();
+            let run = second_provider
+                .run(
+                    &second,
+                    PreparedFormatJob {
+                        engine: recipe.engine,
+                        backend: OutputCapability::Dvi,
+                        clock: recipe.clock,
+                        interaction: tex_state::InteractionMode::Nonstop,
+                        error_context_widths: recipe.construction_error_context_widths,
+                        guards: recipe.guards,
+                        source_name: format!("{fixture_name}-provider-control.tex"),
+                        source_kind: RegisteredSourceKind::Generated,
+                        source: Arc::from(assignment.as_bytes()),
+                        resources: vec![
+                            LoadedFormatResource::Input {
+                                logical_name: "tripos.tex".into(),
+                                resolved_name: "./tripos.tex".into(),
+                                source_kind: RegisteredSourceKind::Generated,
+                                bytes: Arc::clone(&tripos),
+                            },
+                            LoadedFormatResource::Tfm {
+                                logical_name: format!("{fixture_name}.tfm"),
+                                bytes: Arc::clone(&tfm),
+                            },
+                        ],
+                        terminal_input: Vec::new(),
+                        observer: &mut observer,
+                    },
+                )
+                .expect("fresh loaded provider job");
+            assert_eq!(run.universe.count(0), expected);
+            assert!(!observer.into_captured().is_empty());
+        }
+    }
+
+    assert_ne!(identities[0], identities[1]);
+    assert_eq!(
+        fs::read_dir(cache.path().join("formats-v2"))
+            .expect("provider cache namespace")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .count(),
+        2,
+        "one authenticated entry must be published for each profile identity"
+    );
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
@@ -1308,19 +1405,14 @@ fn run_two_phase_fixture(
         Arc::clone(&tfm),
     );
     let engine = recipe.engine;
-    let cache_root = tempfile::tempdir().expect("create authenticated format cache");
-    let cache = FormatCacheStore::new(cache_root.path());
-    let first = ensure_format(&cache, &recipe, &super::umber_format_worker_launcher())
-        .unwrap_or_else(|error| panic!("{fixture_name} format creation failed: {error}"));
-    let second = ensure_format(&cache, &recipe, &super::umber_format_worker_launcher())
-        .unwrap_or_else(|error| panic!("{fixture_name} format cache hit failed: {error}"));
-    assert_eq!(first.image(), second.image(), "cache hit image changed");
-    assert_eq!(
-        first.construction_evidence(),
-        second.construction_evidence(),
-        "cache hit construction evidence changed"
-    );
-    let format = second.image().to_vec();
+    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
+        .unwrap_or_else(|error| {
+            panic!("{fixture_name} persistent format provider failed: {error}")
+        });
+    let prepared = provider
+        .prepare(&recipe)
+        .unwrap_or_else(|error| panic!("{fixture_name} format preparation failed: {error}"));
+    let format = prepared.image().to_vec();
     let initex_identity = format!("sha256:{:x}", Sha256::digest(&format));
     let initial = InProcessRun {
         dvi: None,
@@ -1328,7 +1420,7 @@ fn run_two_phase_fixture(
         macro_provenance: MacroInvocationProvenanceStats::default(),
         terminal: Vec::new(),
         log: Vec::new(),
-        capture: PhaseCapture::Detached(second.construction_evidence().clone()),
+        capture: PhaseCapture::Detached(prepared.construction_evidence().clone()),
     };
     compare_trip_phase(
         root,
@@ -1343,13 +1435,6 @@ fn run_two_phase_fixture(
         },
     );
     assert_format_image_contract(&format, engine);
-    let mut loaded_fixture = second
-        .load(World::memory_with_clock(recipe.clock))
-        .expect("load authenticated format into a fresh job world");
-    loaded_fixture.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    loaded_fixture.set_error_context_widths(
-        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths"),
-    );
     let resources = vec![
         LoadedFormatResource::Input {
             logical_name: "tripos.tex".into(),
@@ -1363,12 +1448,24 @@ fn run_two_phase_fixture(
         },
     ];
     let mut observers = TripObservers::default();
-    let loaded_run = loaded_fixture
+    let loaded_run = provider
         .run(
-            source_identity.canonical_name(),
-            Arc::clone(&source_bytes),
-            &resources,
-            &mut observers,
+            &prepared,
+            PreparedFormatJob {
+                engine,
+                backend: OutputCapability::Dvi,
+                clock: recipe.clock,
+                interaction: tex_state::InteractionMode::Nonstop,
+                error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
+                    .expect("canonical TRIP context widths"),
+                guards: recipe.guards,
+                source_name: source_identity.canonical_name().to_owned(),
+                source_kind: RegisteredSourceKind::Generated,
+                source: Arc::clone(&source_bytes),
+                resources,
+                terminal_input: Vec::new(),
+                observer: &mut observers,
+            },
         )
         .unwrap_or_else(|error| panic!("{fixture_name} format-loaded run failed: {error}"));
     let dvi = (!loaded_run.result.dvi_pages.is_empty())
