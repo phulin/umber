@@ -1397,7 +1397,7 @@ impl PrintCommand {
 pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintCommand) -> String {
     match command.meaning {
         Meaning::Undefined => "undefined".to_owned(),
-        Meaning::Relax => "\\relax".to_owned(),
+        Meaning::Relax => print_esc_text(state, "relax"),
         Meaning::Macro { flags, .. } => {
             let mut text = String::new();
             if flags.contains(MeaningFlags::PROTECTED) {

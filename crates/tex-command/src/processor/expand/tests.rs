@@ -2744,6 +2744,37 @@ fn print_cmd_chr_preserves_delivered_command_operands_and_aliases() {
 }
 
 #[test]
+fn print_cmd_chr_relax_uses_live_escapechar() {
+    // TeX82 §§63/227/298: the `relax` case calls `print_esc`, so command
+    // diagnostics must not bake in a backslash.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let symbol = universe.intern("relax").symbol();
+    universe.set_meaning(symbol, Meaning::Relax);
+    universe.set_int_param(
+        tex_state::env::banks::IntParam::ESCAPE_CHAR,
+        i32::from(b'@'),
+    );
+    let command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(symbol)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+
+    assert_eq!(
+        print_cmd_chr_text(
+            &universe.command_context(),
+            PrintCommand::from_current(&command),
+        ),
+        "@relax"
+    );
+}
+
+#[test]
 fn meaning_renderer_covers_register_quantity_and_primitive_families() {
     use tex_state::env::banks::IntParam;
     use tex_state::meaning::{InternalInteger, UnexpandablePrimitive};
