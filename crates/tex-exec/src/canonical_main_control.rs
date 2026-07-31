@@ -11881,7 +11881,11 @@ fn apply_scanned_step(
             // `\show` completion path.
             let context = command.state.output_open_context(&stores.command_context());
             let text = show_tokens_text(stores, tokens.token_list());
-            stores.printer().print(&format!("\n> {text}"));
+            // §1297 opens with §62's `print_nl(">␣")`, whose break is
+            // conditional on a selected sink already having an open column.
+            // An unconditional newline here left a blank line above the
+            // display whenever the file's own `(` had just closed one.
+            stores.printer().print_nl(&format!("> {text}"));
             crate::diagnostics::complete_show(stores, false, Some(context));
             Ok(ReplayStep::Continue)
         }
