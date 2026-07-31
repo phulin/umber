@@ -78,7 +78,7 @@ the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 
 ## Native entry and validation
 
-`umber-fetch::FormatCacheStore` uses `formats-v1/sha256-<key>` below an
+`umber-fetch::FormatCacheStore` uses `formats-v2/sha256-<key>` below an
 explicit root or the platform Umber cache directory. Each path is one atomic
 binary entry containing an entry magic/schema, canonical key preimage, declared
 payload length, payload SHA-256, and the schema-11 format bytes. A same-directory
@@ -86,6 +86,23 @@ temporary file is fully written and synchronized before no-clobber rename, so
 readers see either the old complete entry or the new complete entry. Competing
 publishers validate the winner before accepting it; if a corrupt entry won the
 race, it is removed and publication is retried.
+
+Native storage opens the cache root one component at a time and retains root
+and namespace directory handles. Root components, the namespace, entries,
+locks, temporaries, and quarantines are accessed relative to those handles
+with no-follow semantics; a symlink or non-directory authority component fails
+closed. Per-key advisory locks serialize separate processes and are released
+by the kernel after a crash. Lock files remain as inert key identities so
+unlinking one can never split waiters across different inodes.
+
+Corrupt entries are renamed without replacement to a uniquely owned quarantine
+name while the key lock is held, then unlinked through the same namespace
+handle. Publication synchronizes the payload, uses an atomic no-clobber rename,
+and synchronizes the namespace directory. Interrupted temporary and quarantine
+files are never selected as entries, and an operation removes exactly the
+temporary or quarantine name it created. Platforms without the required
+anchored directory and atomic no-clobber primitives reject native format-cache
+operations rather than falling back to pathname-based I/O.
 
 Every read independently checks file bounds, entry geometry and version, exact
 key metadata, payload length and SHA-256, and finally calls

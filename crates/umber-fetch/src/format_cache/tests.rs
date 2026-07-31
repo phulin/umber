@@ -4,6 +4,7 @@
 )]
 
 use std::fs;
+use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -332,4 +333,148 @@ fn validation_failure_never_replaces_a_live_entry() {
         Err(FormatCacheError::InvalidFormat(_))
     ));
     assert_eq!(fs::read(cache.path(&key)).expect("entry survives"), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn competing_processes_serialize_publication_and_leave_no_temporary_files() {
+    let temp = TempDir::new().expect("tempdir");
+    let executable = std::env::current_exe().expect("current test executable");
+    let mut children = Vec::new();
+    for _ in 0..8 {
+        children.push(
+            Command::new(&executable)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "format_cache::tests::process_cache_worker",
+                ])
+                .env("UMBER_FORMAT_CACHE_WORKER_ROOT", temp.path())
+                .spawn()
+                .expect("spawn cache worker"),
+        );
+    }
+    for mut child in children {
+        assert!(child.wait().expect("wait for cache worker").success());
+    }
+
+    let cache = FormatCacheStore::new(temp.path());
+    assert_eq!(
+        cache
+            .load(&identity(FormatEngineMode::Latex))
+            .expect("load process winner")
+            .expect("process winner")
+            .as_bytes(),
+        format()
+    );
+    let names: Vec<_> = fs::read_dir(temp.path().join(DIRECTORY))
+        .expect("cache namespace")
+        .map(|entry| {
+            entry
+                .expect("cache namespace entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.starts_with("sha256-"))
+            .count(),
+        1
+    );
+    assert!(!names.iter().any(|name| name.starts_with(".tmp-")));
+}
+
+#[cfg(unix)]
+#[test]
+fn crashed_lock_owner_is_recovered_and_corrupt_quarantine_is_exact() {
+    let temp = TempDir::new().expect("tempdir");
+    let executable = std::env::current_exe().expect("current test executable");
+    let status = Command::new(executable)
+        .args([
+            "--ignored",
+            "--exact",
+            "format_cache::tests::process_cache_worker",
+        ])
+        .env("UMBER_FORMAT_CACHE_WORKER_ROOT", temp.path())
+        .env("UMBER_FORMAT_CACHE_WORKER_ABORT_WITH_LOCK", "1")
+        .status()
+        .expect("run crashing cache worker");
+    assert!(!status.success());
+
+    let cache = FormatCacheStore::new(temp.path());
+    let key = identity(FormatEngineMode::Latex);
+    cache
+        .store(&key, &format())
+        .expect("recover abandoned lock");
+    fs::write(cache.path(&key), b"corrupt").expect("install corrupt entry");
+    assert!(
+        cache
+            .load(&key)
+            .expect("quarantine corrupt entry")
+            .is_none()
+    );
+    let names: Vec<_> = fs::read_dir(temp.path().join(DIRECTORY))
+        .expect("cache namespace")
+        .map(|entry| {
+            entry
+                .expect("cache namespace entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert!(!names.iter().any(|name| {
+        name.starts_with(".tmp-") || name.starts_with(".corrupt-") || name.starts_with("sha256-")
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_entry_and_symlinked_root_component_fail_closed() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().expect("tempdir");
+    let outside = TempDir::new().expect("outside");
+    let escaped_root = temp.path().join("escape").join("cache");
+    symlink(outside.path(), temp.path().join("escape")).expect("root-component symlink");
+    assert!(
+        FormatCacheStore::new(&escaped_root)
+            .store(&identity(FormatEngineMode::Latex), &format())
+            .is_err()
+    );
+    assert!(
+        fs::read_dir(outside.path())
+            .expect("outside readable")
+            .next()
+            .is_none()
+    );
+
+    let cache = FormatCacheStore::new(temp.path().join("real"));
+    cache
+        .store(&identity(FormatEngineMode::Latex), &format())
+        .expect("create authority");
+    let key = identity(FormatEngineMode::Latex);
+    fs::remove_file(cache.path(&key)).expect("remove entry");
+    fs::create_dir(cache.path(&key)).expect("replace entry with directory");
+    assert!(cache.load(&key).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "subprocess-only helper"]
+fn process_cache_worker() {
+    let Some(root) = std::env::var_os("UMBER_FORMAT_CACHE_WORKER_ROOT") else {
+        return;
+    };
+    let cache = FormatCacheStore::new(PathBuf::from(root));
+    let key = identity(FormatEngineMode::Latex);
+    if std::env::var_os("UMBER_FORMAT_CACHE_WORKER_ABORT_WITH_LOCK").is_some() {
+        let authority = native::Authority::open(cache.root(), true).expect("worker authority");
+        let _lock = authority.lock(&cache.name(&key)).expect("worker lock");
+        std::process::abort();
+    }
+    cache.store(&key, &format()).expect("worker store");
 }

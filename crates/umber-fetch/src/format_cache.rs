@@ -2,15 +2,20 @@
 
 use std::error::Error;
 use std::fmt;
-use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use sha2::{Digest, Sha256};
 use tex_state::{Universe, World};
 
 use crate::cache::platform_cache_root;
+
+#[cfg(unix)]
+#[path = "format_cache_unix.rs"]
+mod native;
+#[cfg(not(unix))]
+#[path = "format_cache_unsupported.rs"]
+mod native;
 
 const DIRECTORY: &str = "formats-v2";
 const KEY_DOMAIN: &[u8] = b"umber.format-cache.key\0";
@@ -301,8 +306,13 @@ impl FormatCacheStore {
         &self,
         identity: &FormatCacheIdentity,
     ) -> Result<Option<ValidatedFormatImage>, FormatCacheError> {
-        let _lock = self.lock(identity)?;
-        self.load_locked(identity)
+        let authority = self.authority(false)?;
+        let Some(authority) = authority else {
+            return Ok(None);
+        };
+        let name = self.name(identity);
+        let _lock = authority.lock(&name)?;
+        self.load_locked(&authority, &name, identity)
     }
 
     #[allow(
@@ -311,39 +321,32 @@ impl FormatCacheStore {
     )]
     fn load_locked(
         &self,
+        authority: &native::Authority,
+        name: &str,
         identity: &FormatCacheIdentity,
     ) -> Result<Option<ValidatedFormatImage>, FormatCacheError> {
-        let path = self.path(identity);
-        self.validate_authority()?;
-        let before = match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_file() => metadata,
-            Ok(_) => return Err(authority_error(&path, "entry is not a regular file")),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(FormatCacheError::io("inspect", path, error)),
-        };
-        let mut file = match fs::File::open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(FormatCacheError::io("open", path, error)),
+        let path = authority.path(name);
+        let Some(mut file) = authority.open_entry(name)? else {
+            return Ok(None);
         };
         let opened = file
             .metadata()
             .map_err(|error| FormatCacheError::io("inspect", &path, error))?;
-        if !same_file(&before, &opened) {
-            return Err(authority_error(&path, "entry changed while it was opened"));
-        }
         let length = opened.len();
         if length > MAX_FORMAT_BYTES + 4096 {
-            return self.remove_invalid(&path, &opened);
+            authority.quarantine(name)?;
+            return Ok(None);
         }
         let mut entry = Vec::with_capacity(length as usize);
         file.read_to_end(&mut entry)
             .map_err(|error| FormatCacheError::io("read", &path, error))?;
         let Some(payload) = decode_entry(&entry, identity) else {
-            return self.remove_invalid(&path, &opened);
+            authority.quarantine(name)?;
+            return Ok(None);
         };
         if Universe::from_format(World::memory(), payload).is_err() {
-            return self.remove_invalid(&path, &opened);
+            authority.quarantine(name)?;
+            return Ok(None);
         }
         Ok(Some(ValidatedFormatImage(payload.to_vec())))
     }
@@ -363,146 +366,45 @@ impl FormatCacheStore {
         }
         Universe::from_format(World::memory(), format)
             .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
-        let _lock = self.lock(identity)?;
-        if self.load_locked(identity)?.is_some() {
+        let authority = self
+            .authority(true)?
+            .expect("create_namespace=true always returns an authority");
+        let name = self.name(identity);
+        let _lock = authority.lock(&name)?;
+        if self.load_locked(&authority, &name, identity)?.is_some() {
             return Ok(());
         }
-
-        let directory = self.root.join(DIRECTORY);
-        self.validate_root_authority()?;
-        fs::create_dir_all(&directory)
-            .map_err(|error| FormatCacheError::io("create", &directory, error))?;
-        self.validate_authority()?;
-        let destination = self.path(identity);
         let entry = encode_entry(identity, format);
-        let mut temporary = tempfile::NamedTempFile::new_in(&directory)
-            .map_err(|error| FormatCacheError::io("create temporary file in", &directory, error))?;
-        temporary
-            .write_all(&entry)
-            .map_err(|error| FormatCacheError::io("write temporary file in", &directory, error))?;
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|error| FormatCacheError::io("sync temporary file in", &directory, error))?;
         loop {
-            match temporary.persist_noclobber(&destination) {
-                Ok(_) => {
-                    fs::File::open(&directory)
-                        .and_then(|file| file.sync_all())
-                        .map_err(|error| FormatCacheError::io("sync", &directory, error))?;
-                    return Ok(());
-                }
-                Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-                    temporary = error.file;
-                    if self.load_locked(identity)?.is_some() {
-                        return Ok(());
-                    }
-                }
-                Err(error) => {
-                    return Err(FormatCacheError::io(
-                        "rename into",
-                        destination,
-                        error.error,
-                    ));
-                }
+            if authority.publish(&name, &entry)? {
+                return Ok(());
+            }
+            if self.load_locked(&authority, &name, identity)?.is_some() {
+                return Ok(());
             }
         }
     }
 
+    fn name(&self, identity: &FormatCacheIdentity) -> String {
+        format!("sha256-{}", identity.key().hex())
+    }
+
+    #[cfg(test)]
     fn path(&self, identity: &FormatCacheIdentity) -> PathBuf {
-        self.root
-            .join(DIRECTORY)
-            .join(format!("sha256-{}", identity.key().hex()))
+        self.root.join(DIRECTORY).join(self.name(identity))
     }
 
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "this crate is the explicit native host cache I/O boundary"
-    )]
-    fn remove_invalid(
-        &self,
-        path: &Path,
-        opened: &fs::Metadata,
-    ) -> Result<Option<ValidatedFormatImage>, FormatCacheError> {
-        let current = match fs::symlink_metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(FormatCacheError::io("inspect corrupt", path, error)),
-        };
-        if !current.file_type().is_file() || !same_file(opened, &current) {
-            return Err(authority_error(
-                path,
-                "corrupt entry was replaced before quarantine",
-            ));
-        }
-        match fs::remove_file(path) {
-            Ok(()) => Ok(None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(FormatCacheError::io("remove corrupt", path, error)),
-        }
-    }
-
-    fn lock(&self, identity: &FormatCacheIdentity) -> Result<KeyLockGuard, FormatCacheError> {
-        static LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, &'static Mutex<()>>>> =
-            OnceLock::new();
-        let path = self.path(identity);
-        let lock = {
-            let mut locks = LOCKS
-                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-                .lock()
-                .map_err(|_| authority_error(&path, "cache lock registry is poisoned"))?;
-            *locks
-                .entry(path.clone())
-                .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
-        };
-        let guard = lock
-            .lock()
-            .map_err(|_| authority_error(&path, "cache key lock is poisoned"))?;
-        Ok(KeyLockGuard { _guard: guard })
-    }
-
-    fn validate_root_authority(&self) -> Result<(), FormatCacheError> {
-        let mut current = PathBuf::new();
-        for component in self.root.components() {
-            current.push(component.as_os_str());
-            match fs::symlink_metadata(&current) {
-                Ok(metadata) if metadata.file_type().is_dir() => {}
-                Ok(_) => {
-                    return Err(authority_error(
-                        &current,
-                        "cache authority component is not a directory",
-                    ));
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
-                Err(error) => {
-                    return Err(FormatCacheError::io(
-                        "inspect authority component",
-                        &current,
-                        error,
-                    ));
-                }
+    fn authority(&self, create: bool) -> Result<Option<native::Authority>, FormatCacheError> {
+        match native::Authority::open(&self.root, create) {
+            Ok(authority) => Ok(Some(authority)),
+            Err(FormatCacheError::Io { source, .. })
+                if !create && source.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(None)
             }
+            Err(error) => Err(error),
         }
-        Ok(())
     }
-
-    fn validate_authority(&self) -> Result<(), FormatCacheError> {
-        self.validate_root_authority()?;
-        let directory = self.root.join(DIRECTORY);
-        if let Ok(metadata) = fs::symlink_metadata(&directory)
-            && !metadata.file_type().is_dir()
-        {
-            return Err(authority_error(
-                &directory,
-                "cache namespace is not a directory",
-            ));
-        }
-        Ok(())
-    }
-}
-
-struct KeyLockGuard {
-    _guard: MutexGuard<'static, ()>,
 }
 
 fn authority_error(path: &Path, message: &str) -> FormatCacheError {
@@ -511,19 +413,6 @@ fn authority_error(path: &Path, message: &str) -> FormatCacheError {
         path,
         io::Error::new(io::ErrorKind::PermissionDenied, message),
     )
-}
-
-#[cfg(unix)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    left.dev() == right.dev() && left.ino() == right.ino()
-}
-
-#[cfg(not(unix))]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.len() == right.len()
-        && left.modified().ok() == right.modified().ok()
-        && left.created().ok() == right.created().ok()
 }
 
 fn encode_entry(identity: &FormatCacheIdentity, format: &[u8]) -> Vec<u8> {

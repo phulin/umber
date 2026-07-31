@@ -10,5 +10,8 @@ tex-state = { path = "../tex-state" }
 umber-distribution = { path = "../umber-distribution" }
 ureq = { version = "3.3", default-features = false, features = ["rustls"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
 [lints]
 workspace = true
