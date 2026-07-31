@@ -133,24 +133,73 @@ impl LiveCapture {
     }
 }
 
-fn transcript_channels(effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
-    let mut terminal = String::new();
-    let mut log = String::new();
+fn transcript_channels(stores: &Universe, effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
+    // A shipout commits and drains the live effect prefix into the memory
+    // backend. `RunResult::effects` consequently contains only the suffix
+    // after the last commit. TeX82 §§61, 536, 638, and 1333 still define one
+    // ordered terminal/log episode, so parity evidence must join the already
+    // committed prefix to that pending suffix rather than treating the suffix
+    // as the whole transcript.
+    let terminal = stores
+        .world()
+        .memory_terminal_output()
+        .expect("prepared-format jobs use a memory World")
+        .to_vec();
+    let log = stores
+        .world()
+        .memory_log_output()
+        .expect("prepared-format jobs use a memory World")
+        .to_vec();
+    append_transcript_suffix(terminal, log, effects)
+}
+
+fn append_transcript_suffix(
+    mut terminal: Vec<u8>,
+    mut log: Vec<u8>,
+    effects: &[EffectRecord],
+) -> (Vec<u8>, Vec<u8>) {
     for effect in effects {
         let EffectRecord::StreamWrite { sink, text } = effect else {
             continue;
         };
         match sink {
-            PrintSink::Terminal => terminal.push_str(text),
-            PrintSink::Log => log.push_str(text),
+            PrintSink::Terminal => terminal.extend_from_slice(text.as_bytes()),
+            PrintSink::Log => log.extend_from_slice(text.as_bytes()),
             PrintSink::TerminalAndLog => {
-                terminal.push_str(text);
-                log.push_str(text);
+                terminal.extend_from_slice(text.as_bytes());
+                log.extend_from_slice(text.as_bytes());
             }
             PrintSink::Stream(_) => {}
         }
     }
-    (terminal.into_bytes(), log.into_bytes())
+    (terminal, log)
+}
+
+#[test]
+fn transcript_capture_preserves_committed_prefix_before_pending_suffix() {
+    let effects = vec![
+        EffectRecord::StreamWrite {
+            sink: PrintSink::TerminalAndLog,
+            text: "shared-tail".into(),
+        },
+        EffectRecord::StreamWrite {
+            sink: PrintSink::Terminal,
+            text: "-terminal".into(),
+        },
+        EffectRecord::StreamWrite {
+            sink: PrintSink::Log,
+            text: "-log".into(),
+        },
+    ];
+
+    let (terminal, log) = append_transcript_suffix(
+        b"committed-terminal:".to_vec(),
+        b"committed-log:".to_vec(),
+        &effects,
+    );
+
+    assert_eq!(terminal, b"committed-terminal:shared-tail-terminal");
+    assert_eq!(log, b"committed-log:shared-tail-log");
 }
 
 #[test]
@@ -665,7 +714,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
         .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
         .transpose()
         .map_err(|error| error.to_string())?;
-    let (terminal, log) = transcript_channels(&loaded.result.effects);
+    let (terminal, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
     Ok(InProcessRun {
         dvi,
         provenance: loaded.universe.provenance_stats(),
@@ -764,7 +813,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
         .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
         .transpose()
         .map_err(|error| error.to_string())?;
-    let (terminal, log) = transcript_channels(&loaded.result.effects);
+    let (terminal, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
     Ok(InProcessRun {
         dvi,
         provenance: loaded.universe.provenance_stats(),
@@ -1841,7 +1890,7 @@ fn run_two_phase_fixture(
         .then(|| dvi_from_page_plans(&loaded_run.result.dvi_pages))
         .transpose()
         .expect("serialize loaded DVI");
-    let (terminal, log) = transcript_channels(&loaded_run.result.effects);
+    let (terminal, log) = transcript_channels(&loaded_run.universe, &loaded_run.result.effects);
     assert!(
         !terminal
             .windows(b"Beginning to dump on file".len())

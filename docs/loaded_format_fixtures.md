@@ -361,7 +361,10 @@ generic retained session. A named retained root lets the command input stack
 own its balanced file-opening events; an unnamed compatibility root retains
 the driver's explicit opening. Completion serializes any prepared DVI pages
 before printing §642's exact byte count, while zero-page jobs supply no DVI
-descriptor.
+descriptor. Host-side transcript evidence joins the memory World's already
+committed terminal/log prefix to the live effect suffix: §638 shipout may have
+drained startup and diagnostic writes before §1333 appends the job tail, but
+the two storage locations remain one ordered observable channel.
 
 ## Verification
 
