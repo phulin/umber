@@ -137,6 +137,34 @@ impl FormatRecipe {
         }
     }
 
+    /// Hermetic production pdfTeX 1.40.27 image, without a macro format.
+    ///
+    /// Construction runs in pdfTeX INITEX mode and terminates only through
+    /// this recipe-owned `\dump`.
+    #[must_use]
+    pub fn production_pdftex14027() -> Self {
+        Self {
+            engine: EngineMode::PdfTex,
+            format_name: "production-pdftex14027".into(),
+            construction_source_name: "production-pdftex14027.ini".into(),
+            construction_source: Arc::from(&b"\\dump\n"[..]),
+            resources: Vec::new(),
+            distribution_identity: Arc::from(&b"repository-production-pdftex14027-v1"[..]),
+            clock: JobClock {
+                time: 12 * 60,
+                second: 0,
+                day: 1,
+                month: 3,
+                year: 2026,
+            },
+            guards: FormatGenerationGuards {
+                command_fuel: 100_000,
+                wall_time: Duration::from_secs(10),
+                resident_bytes: 512 * 1024 * 1024,
+            },
+        }
+    }
+
     pub fn identity(&self) -> Result<FormatCacheIdentity, FormatFixtureError> {
         self.guards.validate()?;
         let profile = self.engine.command_profile();

@@ -184,6 +184,71 @@ fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
 }
 
 #[test]
+fn production_pdftex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
+    // pdfTeX 1.40.27 change file §8 installs the e-TeX extensions before the
+    // pdfTeX additions. This checks one immutable loaded base and concrete
+    // live witnesses from all three registry layers without admitting any
+    // construction episode state.
+    let cache_root = TempDir::new().expect("cache");
+    let cache = FormatCacheStore::new(cache_root.path());
+    let recipe = FormatRecipe::production_pdftex14027();
+    let first = ensure_format(&cache, &recipe).expect("production pdfTeX construction");
+    let second = ensure_format(&cache, &recipe).expect("production pdfTeX cache hit");
+    assert_eq!(first.image(), second.image());
+    assert_ne!(
+        recipe.identity().expect("pdfTeX identity").key(),
+        FormatRecipe::raw_tex82()
+            .identity()
+            .expect("TeX82 identity")
+            .key()
+    );
+    assert_ne!(
+        recipe.identity().expect("pdfTeX identity").key(),
+        FormatRecipe::raw_etex26()
+            .identity()
+            .expect("e-TeX identity")
+            .key()
+    );
+
+    let loaded = second.load(test_world()).expect("production pdfTeX load");
+    assert_eq!(
+        loaded.universe.primitive_meaning("the"),
+        Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::The))
+    );
+    assert_eq!(
+        loaded.universe.primitive_meaning("unexpanded"),
+        Some(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::Unexpanded
+        ))
+    );
+    assert_eq!(
+        loaded.universe.primitive_meaning("pdfprimitive"),
+        Some(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::PdfPrimitive
+        ))
+    );
+    assert_eq!(
+        loaded.universe.primitive_meaning("pdfsavepos"),
+        Some(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::PdfSavePos
+        ))
+    );
+    assert!(loaded.universe.world().effect_records().is_empty());
+    assert!(loaded.universe.world().artifact_commits().is_empty());
+    let provenance = loaded.universe.provenance_stats();
+    assert_eq!(provenance.origin_records(), 0);
+    assert_eq!(provenance.origin_list_entries(), 0);
+    assert_eq!(provenance.source_regions(), 0);
+    assert_eq!(provenance.generated_source_backings(), 0);
+    assert_eq!(provenance.source_map_bytes(), 0);
+    assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
+    assert_eq!(
+        loaded.universe.interaction_mode(),
+        tex_state::InteractionMode::ErrorStop
+    );
+}
+
+#[test]
 fn construction_failure_publishes_no_entry() {
     let cache_root = TempDir::new().expect("cache");
     let cache = FormatCacheStore::new(cache_root.path());

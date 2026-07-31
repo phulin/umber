@@ -139,6 +139,16 @@ resource closure, fixed clock, guard set, or build configuration selects a
 different cache identity or fails validation; loading never guesses a legacy
 profile.
 
+`FormatRecipe::production_pdftex14027` is the explicit public production
+pdfTeX 1.40.27 recipe. It selects the exact `Pdftex14027` profile and
+fingerprint, prepares the combined TeX82, e-TeX 2.6, and pdfTeX primitive
+registry and parameter defaults in INITEX, and reaches construction completion
+only through its own `\dump`. It uses the same authenticated worker,
+content-addressed cache, validation, and live-registry reconstruction as the
+raw recipes. Its engine mode, prepared-registry hash, source and resource
+closure, schemas, producer/build contract, clock, and positive guard set make
+its identity disjoint from raw TeX82 and raw e-TeX.
+
 Only immutable format state crosses the boundary. The format container excludes
 the host `World`, open input and output state, interaction and runtime controls,
 effect journal, provenance records, checkpoints, artifacts, and memoized or
@@ -185,6 +195,10 @@ the same immutable base without comparing construction terminal or log. TeX82
 §§1250–1252 make that first migrated case a useful loaded-state witness:
 dumping finalizes the trie, so its too-late `\patterns` scan publishes 77
 canonical events rather than the synthetic fresh-universe path's 78.
+The production pdfTeX invariant reuses one cache identity, proves that loaded
+TeX82, e-TeX, and pdfTeX live meanings include `\pdfsavepos`, and verifies that
+the construction world, effects, artifacts, provenance, interaction, and
+clock do not cross into the loaded runtime.
 Every engine execution has positive finite fuel, and all actual test runs use
 the repository timeout/RSS guard.
 
