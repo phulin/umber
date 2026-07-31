@@ -72,24 +72,8 @@
       "channels": {
         "events": 874,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 6,
-            "expected": "Underfull \\hbox (badness 10000) in paragraph at lines 18--18",
-            "actual": "Underfull \\hbox (badness 10000) detected at line 18"
-          }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.16",
-          "mismatch": {
-            "line": 10,
-            "expected": "Underfull \\hbox (badness 10000) in paragraph at lines 18--18",
-            "actual": "Underfull \\hbox (badness 10000) detected at line 18"
-          }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

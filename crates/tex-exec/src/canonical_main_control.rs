@@ -2542,6 +2542,12 @@ impl CanonicalMainControl {
             .expect("display prev_graf overflow");
         self.modes.set_enclosing_vertical_prev_graf(prev);
         self.modes.push(Mode::Horizontal)?;
+        // §1200's `push_nest` sets `mode_line:=line` like every other one, so
+        // the paragraph fragment that follows a display reports its own
+        // over/underfull lines as §663's "in paragraph at lines A--B" rather
+        // than falling back to "detected at line B" for want of a
+        // `pack_begin_line`.
+        stores.push_paragraph_start_line(stores.current_input_line());
         self.modes.current_list_mutation().set_space_factor(1000);
         self.modes
             .current_list_mutation()

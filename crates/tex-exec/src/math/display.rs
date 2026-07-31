@@ -344,6 +344,8 @@ pub(super) fn resume_after_display_alignment(
         }
         Some(traced) => {
             nest.push(Mode::Horizontal)?;
+            // §1200's `push_nest` sets `mode_line:=line`.
+            stores.push_paragraph_start_line(stores.current_input_line());
             nest.current_list_mutation().set_space_factor(1000);
             nest.current_list_mutation()
                 .append(active_directions.iter().copied().map(Node::Direction));
@@ -410,6 +412,8 @@ pub(super) fn resume_after_display(
         .expect("display-math prev_graf overflow");
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     nest.push(Mode::Horizontal)?;
+    // §1200's `push_nest` sets `mode_line:=line` like every other one.
+    stores.push_paragraph_start_line(stores.current_input_line());
     nest.current_list_mutation().set_space_factor(1000);
     nest.current_list_mutation()
         .append(active_directions.iter().copied().map(Node::Direction));
