@@ -777,6 +777,54 @@ mod tests {
         assert_eq!(clone.testing_hash_fragment_counts(), (2, 2, 2));
     }
 
+    #[test]
+    fn frozen_loaded_fonts_keep_slot_order_and_deduplicate_in_place() {
+        let mut source = FontStore::new();
+        let first_font = test_font();
+        let second_font = LoadedFont::new(
+            "second",
+            PathBuf::from("second"),
+            ContentHash::from_bytes(b"second").bytes(),
+            0x8765_4321,
+            first_font.design_size(),
+            first_font.size(),
+            first_font.parameters().to_vec(),
+            first_font.metrics().clone(),
+        );
+        let first = source.intern(first_font.clone()).expect("first font");
+        let second = source.intern(second_font.clone()).expect("second font");
+        let rows = vec![
+            (source.get(NULL_FONT).clone(), None, None),
+            (source.get(first).clone(), None, None),
+            (source.get(second).clone(), None, None),
+        ];
+        let interner = crate::interner::Interner::new();
+        let mut loaded = FontStore::from_frozen(rows, &interner).expect("loaded font prefix");
+
+        assert_eq!(loaded.intern(first_font).expect("reused first").raw(), 1);
+        assert_eq!(loaded.intern(second_font).expect("reused second").raw(), 2);
+        let mark = loaded.watermark();
+        let third = LoadedFont::new(
+            "third",
+            PathBuf::from("third"),
+            ContentHash::from_bytes(b"third").bytes(),
+            0x1020_3040,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(12 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            FontMetrics::default(),
+        );
+        assert_eq!(loaded.intern(third.clone()).expect("third font").raw(), 3);
+        loaded.truncate_to(mark);
+        assert_eq!(
+            loaded
+                .intern(third)
+                .expect("third font after rollback")
+                .raw(),
+            3
+        );
+    }
+
     fn test_font() -> LoadedFont {
         LoadedFont::new(
             "cmr10",

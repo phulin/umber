@@ -1066,6 +1066,8 @@ fn plain_job_split_types_non_preload_resources() {
 #[test]
 fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
     let source = include_str!("e2e_conformance.rs");
+    let repo_root = test_support::repository_root();
+    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
     for route in [
         "e2e_conformance_story",
         "e2e_conformance_gentle",
@@ -1073,7 +1075,7 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
         "e2e_conformance_gentle_canonical",
     ] {
         let body = source
-            .split_once(&format!("fn {route}()"))
+            .split_once(&format!("\nfn {route}()"))
             .unwrap_or_else(|| panic!("route {route} exists"))
             .1
             .split_once("\n}")
@@ -1091,7 +1093,7 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
         "canonical_math_group_singleton_ord_matches_reference_dvi",
     ] {
         let body = source
-            .split_once(&format!("fn {route}()"))
+            .split_once(&format!("\nfn {route}()"))
             .unwrap_or_else(|| panic!("route {route} exists"))
             .1
             .split_once("\n}")
@@ -1099,20 +1101,45 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
             .0;
         assert!(body.contains("run_file_in_process_canonical"));
     }
+    let raw_canonical = source
+        .split_once("\nfn run_file_in_process_canonical(")
+        .expect("raw canonical runner")
+        .1
+        .split_once("\n}")
+        .expect("bounded raw canonical runner")
+        .0;
+    assert!(raw_canonical.contains("run_file_with_raw_tex82_format"));
+    assert!(!raw_canonical.contains("run_file_with_plain_format"));
+    let plain_canonical = source
+        .split_once("\nfn run_file_in_process_plain_canonical(")
+        .expect("Plain canonical runner")
+        .1
+        .split_once("\n}")
+        .expect("bounded Plain canonical runner")
+        .0;
+    assert!(plain_canonical.contains("run_file_with_plain_format"));
+    assert!(!plain_canonical.contains("run_file_with_raw_tex82_format"));
     assert_ne!(
         FormatRecipe::raw_tex82()
             .identity()
             .expect("raw identity")
             .key(),
-        plain_format_recipe(&test_support::repository_root())
+        plain_format_recipe(&repo_root)
             .expect("Plain recipe")
             .identity()
             .expect("Plain identity")
             .key(),
         "raw TeX82 and Plain construction identities must remain disjoint"
     );
+    let raw = FormatRecipe::raw_tex82();
+    assert_eq!(raw.format_name, "raw-tex82");
+    assert_eq!(raw.construction_source.as_ref(), b"\\dump\n");
+    assert!(
+        raw.resources.is_empty(),
+        "raw TeX82 must not hide Plain inputs"
+    );
     let shared = source
-        .split_once("fn run_file_with_plain_format(")
+        .split_once("\nfn run_file_with_plain_format(")
         .expect("shared Plain runner")
         .1
         .split_once("\n#[test]\n#[allow(clippy::disallowed_methods)] // Verifies repository-pinned fixture bytes.\nfn plain_recipe")
@@ -1330,8 +1357,8 @@ fn canonical_error_message(
     }
 }
 
-/// Runs one staged document as a fresh job loaded from the shared persistent
-/// repository-pinned Plain format and returns its assembled DVI bytes.
+/// Runs one self-contained staged fixture as a fresh job loaded from the
+/// shared persistent raw-TeX82 format and returns its assembled DVI bytes.
 fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
     run_file_with_raw_tex82_format(path)?
         .dvi
