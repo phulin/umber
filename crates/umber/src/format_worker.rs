@@ -1009,7 +1009,10 @@ mod tests {
         let mut child = helper("head -c 262144 /dev/zero");
         let output = collect(
             &mut child,
-            guards(Duration::from_secs(2), 64 * 1024 * 1024),
+            // This regression owns bounded concurrent pipe draining, not an
+            // allocation ceiling. Before `exec`, the helper may transiently
+            // inherit the test process's suite-dependent resident mappings.
+            guards(Duration::from_secs(2), u64::MAX),
             262144,
             1024,
         )
