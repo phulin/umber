@@ -491,7 +491,8 @@ impl CommandProcessor<'_> {
                         ch,
                         cat: Catcode::Other,
                     } if ch.is_ascii_digit() => (
-                        self.scan_radix_tail(ch as u8 - b'0', DECIMAL_RADIX)?,
+                        self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?
+                            .0,
                         DECIMAL_RADIX,
                         ScalarRecovery::None,
                     ),
@@ -502,11 +503,25 @@ impl CommandProcessor<'_> {
                     Meaning::CharToken {
                         ch: '\'',
                         cat: Catcode::Other,
-                    } => (self.scan_radix_tail(0, 8)?, 8, ScalarRecovery::None),
+                    } => {
+                        let (value, vacuous) = self.scan_radix_tail(None, 8)?;
+                        if vacuous {
+                            self.missing_number_error();
+                            return Ok((self.inserted_zero_integer(provenance), 8));
+                        }
+                        (value, 8, ScalarRecovery::None)
+                    }
                     Meaning::CharToken {
                         ch: '"',
                         cat: Catcode::Other,
-                    } => (self.scan_radix_tail(0, 16)?, 16, ScalarRecovery::None),
+                    } => {
+                        let (value, vacuous) = self.scan_radix_tail(None, 16)?;
+                        if vacuous {
+                            self.missing_number_error();
+                            return Ok((self.inserted_zero_integer(provenance), 16));
+                        }
+                        (value, 16, ScalarRecovery::None)
+                    }
                     // TeX's `\` character-code form consumes its following token
                     // through raw delivery: that token supplies a character code,
                     // rather than participating in ordinary expansion.  The
@@ -1119,31 +1134,52 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_radix_tail(&mut self, first: u8, radix: u8) -> Result<i32, CommandError> {
-        let mut value = i32::from(first);
+    /// §445's `<Accumulate the constant until cur_tok is not a suitable
+    /// digit>`, plus §444's `vacuous` flag.
+    ///
+    /// `first` is the decimal introducer's own digit, which §444 has already
+    /// accumulated; `'` and `"` pass `None` because §444 consumed them with
+    /// `get_x_token` and no digit has been seen yet. The flag is the second
+    /// result because the two exits differ: §444 ends a constant that scanned
+    /// at least one digit with `else if cur_cmd<>spacer then back_input`,
+    /// absorbing one terminating space, while §446's `back_error` backs the
+    /// terminator up unconditionally before reporting the missing number.
+    fn scan_radix_tail(
+        &mut self,
+        first: Option<u8>,
+        radix: u8,
+    ) -> Result<(i32, bool), CommandError> {
+        let mut value = i32::from(first.unwrap_or(0));
+        let mut vacuous = first.is_none();
         loop {
             let Some(command) = self.get_x_token()? else {
                 break;
             };
             match Self::radix_digit(&command) {
                 Some(digit) if digit < radix => {
+                    vacuous = false;
                     value = value
                         .saturating_mul(i32::from(radix))
                         .saturating_add(i32::from(digit))
                 }
-                // §444's `else if cur_cmd<>spacer then back_input`: a numeric
-                // constant absorbs one terminating space, so replay must not
-                // manufacture a backup transition before publishing it.
                 _ => {
                     let terminator = command.copy_for_backup();
-                    if self.back_input_unless_spacer(command)? {
+                    if vacuous {
+                        // §446's `back_error`, which is `back_input; error`
+                        // and so keeps even a spacer for the caller's report
+                        // to pseudoprint.
+                        self.back_input(command)?;
+                    } else if self.back_input_unless_spacer(command)? {
+                        // A numeric constant absorbs one terminating space,
+                        // so replay must not manufacture a backup transition
+                        // before publishing it.
                         self.last_integer_terminator = Some(terminator);
                     }
                     break;
                 }
             }
         }
-        Ok(value)
+        Ok((value, vacuous))
     }
 
     fn radix_digit(command: &CurrentCommand) -> Option<u8> {

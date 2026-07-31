@@ -713,6 +713,7 @@ impl CanonicalMainControl {
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) {
         crate::job::close_open_parens(stores);
+        crate::job::report_unclosed_groups(stores);
         report_incomplete_conditions(stores, incomplete_conditions);
         crate::job::print_history_note(stores);
         if dump && !self.initex {

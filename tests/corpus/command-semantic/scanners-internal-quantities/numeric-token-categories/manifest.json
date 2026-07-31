@@ -38,16 +38,8 @@
       "channels": {
         "events": 153,
         "status": "clean",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 6, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 13, "expected": "! Missing number, treated as zero.", "actual": "[1.10] )" }
-        },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "file" },
         "effects": { "kind": "empty" }
       },

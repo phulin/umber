@@ -280,6 +280,23 @@ pub(crate) fn close_open_parens(stores: &mut Universe) {
     tex_state::file_framing::print_remaining_file_closes(stores);
 }
 
+/// tex.web §1335's `if cur_level>level_one then begin print_nl("(");
+/// print_esc("end occurred "); print("inside a group at level ");
+/// print_int(cur_level-level_one); print_char(")"); end`.
+///
+/// §1335 spells the escape `\end` whichever of `\end` and `\dump` ended the
+/// job, so this takes no dump flag; the sibling report immediately below it
+/// (`report_incomplete_conditions`) shares that wording for the same reason.
+pub(crate) fn report_unclosed_groups(stores: &mut Universe) {
+    let depth = stores.group_depth();
+    if depth == 0 {
+        return;
+    }
+    stores
+        .printer()
+        .print_nl(&format!("(\\end occurred inside a group at level {depth})"));
+}
+
 /// Records and prints the retained session's already-opened root source.
 ///
 /// The retained driver selects the root before canonical execution starts,

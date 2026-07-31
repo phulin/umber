@@ -292,8 +292,11 @@ fn integer_numeric_tokens_follow_tex82_category_matrix() {
                     cat: Catcode::Letter,
                 },
             ],
+            // §445 admits only uppercase `A`--`F`, so `"a` accumulates no
+            // digit at all and §444's `vacuous` sends it to §446's
+            // `back_error` rather than publishing a silent zero.
             0,
-            ScalarRecovery::None,
+            ScalarRecovery::InsertedZero,
         ),
         (
             vec![
