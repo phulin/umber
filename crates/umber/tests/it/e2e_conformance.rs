@@ -864,6 +864,13 @@ fn plain_recipe_has_exact_pinned_ordered_closure_and_stable_identity() {
         first.construction_source.as_ref(),
         b"\\input plain.tex\n\\dump\n"
     );
+    assert!(
+        !fs::read(repo_root.join("third_party/corpus/plain.tex"))
+            .expect("pinned plain.tex")
+            .windows(b"\\dump".len())
+            .any(|window| window == b"\\dump"),
+        "the recipe-owned dump must be the only Plain construction dump"
+    );
     assert_eq!(first.clock, PLAIN_CLOCK);
     assert_eq!(
         first.construction_interaction,
@@ -990,7 +997,7 @@ fn all_plain_routes_share_persistent_identity_and_fresh_jobs() {
         .split_once("fn run_file_with_plain_format(")
         .expect("shared Plain runner")
         .1
-        .split_once("\n#[test]\nfn plain_recipe")
+        .split_once("\n#[test]\n#[allow(clippy::disallowed_methods)] // Verifies repository-pinned fixture bytes.\nfn plain_recipe")
         .expect("bounded shared Plain runner")
         .0;
     for required in [
