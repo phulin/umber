@@ -814,36 +814,21 @@ impl CommandProcessor<'_> {
         command: CurrentCommand,
     ) -> Result<(), CommandError> {
         self.back_input(command)?;
-        let dollar = TracedTokenWord::pack(
-            Token::Char {
-                ch: '$',
-                cat: Catcode::MathShift,
-            },
-            OriginId::UNKNOWN,
-        );
+        let dollar_token = Token::Char {
+            ch: '$',
+            cat: Catcode::MathShift,
+        };
+        let dollar = TracedTokenWord::pack(dollar_token, OriginId::UNKNOWN);
         let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![dollar])),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
-        if self.is_observed() {
-            // `insert_dollar_sign` calls `back_input` before assigning
-            // `cur_tok`; the push is therefore observed as backup even
-            // though its inserted ownership makes retirement a recovery
-            // transition, mirroring `recover_stop_for_vertical_mode` above.
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: InputTransition::Backup,
-                reason: InputReason::Backup,
-                source_name: None,
-                level: level.0,
-                position: 0,
-            }));
-            self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_token(dollar)],
-            }));
-        }
+        // TeX82 §1047 calls `ins_error`, whose §323 `token_type:=inserted`
+        // reclassifies the level created by `back_input`. Observe that final
+        // canonical ownership, not the helper used to allocate the level.
+        self.observe_inserted_token_recovery(level, dollar_token);
         Ok(())
     }
 

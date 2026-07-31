@@ -1,0 +1,24 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)
+(./missing-math-shift-inserted-input.tex
+! Missing $ inserted.
+<inserted text> 
+                $
+...
+l.1 $$\mkern
+            2mu$$\end
+! Missing $ inserted.
+<inserted text> 
+                $
+...
+l.1 $$\mkern2mu$$\end
+                     
+! Math formula deleted: Insufficient symbol fonts.
+<inserted text> $
+                 
+...
+l.1 $$\mkern2mu$$\end
+                     
+[0] )
+(see the transcript file for additional information)
+Output written on missing-math-shift-inserted-input.dvi (1 page, 128 bytes).
+Transcript written on missing-math-shift-inserted-input.log.

@@ -10887,6 +10887,46 @@ fn canonical_nonscript_outside_math_mode_inserts_missing_dollar_sign() {
 }
 
 #[test]
+fn canonical_missing_math_shift_observes_ins_error_as_inserted_input() {
+    // TeX82 §§323 and 1047: `insert_dollar_sign` assigns the synthesized `$`
+    // to `cur_tok`, then `ins_error` backs it up and changes that input
+    // level's `token_type` from `backed_up` to `inserted`.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\nonscript$}");
+    let mut observations = ObservationRecorder::default();
+
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("missing-math-shift fixture executes")
+        {
+            ReplayStep::End | ReplayStep::EndOfInput => break,
+            ReplayStep::Continue => {}
+        }
+    }
+
+    assert!(observations.0.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [
+                CommandObservation::Input(input),
+                CommandObservation::Recovery(recovery),
+            ] if input.transition == InputTransition::Recovery
+                && input.reason == InputReason::Recovery
+                && recovery.kind == RecoveryKind::InsertedToken
+                && matches!(
+                    recovery.tokens.as_slice(),
+                    [ObservedToken::Character {
+                        character: '$',
+                        catcode: tex_command::Catcode::MathShift,
+                    }]
+                )
+        )
+    }));
+}
+
+#[test]
 fn canonical_par_in_math_closes_math_before_replaying_paragraph_end() {
     // TeX82 §§1046--1047 list `mmode+par_end` under `insert_dollar_sign`.
     // The inserted `$` must close math before the same `\par` is replayed;
