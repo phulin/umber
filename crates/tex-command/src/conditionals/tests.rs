@@ -1095,6 +1095,11 @@ fn noexpand_before_an_active_character_compares_as_that_character() {
 }
 
 #[test]
+fn if_and_ifcat_compare_noexpand_active_characters() {
+    noexpand_before_an_active_character_compares_as_that_character();
+}
+
+#[test]
 fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

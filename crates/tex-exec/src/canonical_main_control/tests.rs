@@ -3723,6 +3723,53 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
     }
 }
 
+#[test]
+fn macro_tenth_parameter_reports_exact_limit_error() {
+    // TeX.web §476 consumes both tokens of the attempted tenth parameter,
+    // reports the fixed limit diagnostic, and continues scanning the
+    // definition. The resulting macro therefore still has exactly the nine
+    // legal parameters and can be called normally.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\def\nine#1#2#3#4#5#6#7#8#9#0{[#1#9]}\message{RESULT:\nine abcdefghi}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    for exact_line in [
+        "! You already have nine parameters.",
+        "I'm going to ignore the # sign you just used,",
+        "as well as the token that followed it.",
+    ] {
+        assert!(
+            terminal.lines().any(|line| line == exact_line),
+            "missing exact diagnostic line {exact_line:?} in {terminal}"
+        );
+    }
+    assert_eq!(
+        terminal
+            .matches("! You already have nine parameters.")
+            .count(),
+        1,
+        "the attempted tenth parameter is diagnosed once: {terminal}"
+    );
+    let nine = stores.symbol("nine").expect("macro target is interned");
+    let meaning = stores
+        .macro_meaning(nine)
+        .expect("the recovered definition is committed");
+    assert_eq!(
+        stores.tokens(meaning.parameter_text()),
+        &(1..=9).map(Token::Param).collect::<Vec<_>>()
+    );
+    assert!(
+        terminal.contains("RESULT:[ai]"),
+        "the recovered nine-parameter macro remains callable: {terminal}"
+    );
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 
