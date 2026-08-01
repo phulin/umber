@@ -4,6 +4,7 @@
 //! levels: recursive expansion can push another condition while an older
 //! condition is still evaluating its operands.
 
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
@@ -462,6 +463,7 @@ impl CommandProcessor<'_> {
             .frame(condition)
             .cloned()
             .ok_or(CommandError::input_invariant())?;
+        self.trace_conditional_enter(&frame);
         self.observe_condition("push", &frame, None);
         match kind {
             ConditionalKind::IfCase => {
@@ -906,6 +908,7 @@ impl CommandProcessor<'_> {
             self.record_extra_delimiter(delimiter);
             return Ok(());
         };
+        self.trace_conditional_close(delimiter, &frame);
         if self
             .command
             .conditions
@@ -1096,7 +1099,87 @@ impl CommandProcessor<'_> {
     #[allow(unused_variables)]
     fn observe_pass_text_branch(&mut self, delimiter: ConditionalDelimiter) {
         if let Some(frame) = self.command.conditions.current().cloned() {
+            self.trace_conditional_close(delimiter, &frame);
             self.observe_condition("branch", &frame, Some(delimiter.canonical_branch().into()));
+        }
+    }
+
+    /// e-TeX 2.6 [28.498]'s extra `show_cur_cmd_chr` fired at conditional
+    /// entry, before the operand scan that may recursively expand another
+    /// conditional: `if tracing_ifs>0 then if tracing_commands<=1 then
+    /// show_cur_cmd_chr`. `frame` is already the pushed top-of-stack entry,
+    /// so its own depth is the level e-TeX displays.
+    ///
+    /// tex.web's `show_cur_cmd_chr` (§299) also prefixes the line with the
+    /// current mode the first time it changes (`shown_mode`). That
+    /// continuity state is owned by the executor's mode nest, which this
+    /// command-core layer does not observe, so the mode prefix is not yet
+    /// rendered here; see `docs/etex_primitives.md`.
+    fn trace_conditional_enter(&mut self, frame: &ConditionFrame) {
+        if !self.tracing_ifs_active() {
+            return;
+        }
+        let level = self.command.conditions.frames.len();
+        let name = self.conditional_kind_text(frame);
+        let mut diagnostic = self.state.begin_diagnostic();
+        diagnostic
+            .print_char('{')
+            .print(&name)
+            .print(": (level ")
+            .print_int(i32::try_from(level).unwrap_or(i32::MAX))
+            .print_char(')');
+        print_if_line(&mut diagnostic, frame.source_line);
+        diagnostic.print_char('}');
+        diagnostic.end(false);
+    }
+
+    /// e-TeX 2.6 [28.494/28.510]'s extra `show_cur_cmd_chr` fired wherever a
+    /// `\or`/`\else`/`\fi` delimiter resolves a conditional's current limb --
+    /// whether it arrives through ordinary expansion (§510, this file's
+    /// `expand_conditional_delimiter`) or is found while skipping unselected
+    /// material (§494's `pass_text` `done:` label, this file's
+    /// `observe_pass_text_branch`). `frame` is the live top-of-stack entry,
+    /// which need not be the frame the enclosing skip was started for.
+    fn trace_conditional_close(&mut self, delimiter: ConditionalDelimiter, frame: &ConditionFrame) {
+        if !self.tracing_ifs_active() {
+            return;
+        }
+        let level = self.command.conditions.frames.len();
+        let delimiter_name =
+            crate::processor::expand::print_esc_text(&self.state, delimiter.canonical_branch());
+        let condition_name = self.conditional_kind_text(frame);
+        let mut diagnostic = self.state.begin_diagnostic();
+        diagnostic
+            .print_char('{')
+            .print(&delimiter_name)
+            .print(": ")
+            .print(&condition_name)
+            .print(" (level ")
+            .print_int(i32::try_from(level).unwrap_or(i32::MAX))
+            .print_char(')');
+        print_if_line(&mut diagnostic, frame.source_line);
+        diagnostic.print_char('}');
+        diagnostic.end(false);
+    }
+
+    /// e-TeX 2.6 [28.498/28.510]'s `if tracing_ifs>0 then if
+    /// tracing_commands<=1 then show_cur_cmd_chr` guard: once
+    /// `\tracingcommands` traces expandable commands at `>1` on its own
+    /// (tex.web §366), that trace already shows this delimiter and the
+    /// extra call here would duplicate it.
+    fn tracing_ifs_active(&self) -> bool {
+        self.state.int_param(IntParam::TRACING_IFS) > 0
+            && self.state.int_param(IntParam::TRACING_COMMANDS) <= 1
+    }
+
+    /// e-TeX's `\unless`-prefixed `print_cmd_chr(if_test,cur_if)` spelling.
+    fn conditional_kind_text(&self, frame: &ConditionFrame) -> String {
+        let name =
+            crate::processor::expand::print_esc_text(&self.state, frame.kind.canonical_name());
+        if frame.inverted {
+            crate::processor::expand::print_esc_text(&self.state, "unless") + &name
+        } else {
+            name
         }
     }
 
@@ -1163,6 +1246,16 @@ impl CommandProcessor<'_> {
                 nested_conditions,
             });
         }
+    }
+}
+
+/// e-TeX 2.6 [49.3715]'s `print_if_line`: `if #<>0 then begin print(" entered
+/// on line "); print_int(#); end`, shared by `\tracingifs` and `\showifs`.
+fn print_if_line(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_>, source_line: u32) {
+    if source_line != 0 {
+        diagnostic
+            .print(" entered on line ")
+            .print_int(i32::try_from(source_line).unwrap_or(i32::MAX));
     }
 }
 

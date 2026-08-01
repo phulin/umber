@@ -24,7 +24,9 @@ Line acquisition is **not** a host capability. tex.web §31's `input_ln` is
 line path. It is the one line source for both of tex.web's callers -- §363's
 `firm_up_the_line` and §483-§486's `\read` -- and §71's `prompt_input(#)`
 prints its own prompt inside the acquisition, so the command core has no
-print channel of its own.
+print channel of its own outside the borrowed
+`tex_state::CommandContext::begin_diagnostic` diagnostic channel
+`\tracingifs` uses (see `src/conditionals.rs`).
 
 ## File Map
 
@@ -142,7 +144,12 @@ print channel of its own.
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, invocation/argument activation ownership, and focused tests.
-- `src/conditionals.rs`: private independent condition-stack machine.
+- `src/conditionals.rs`: private independent condition-stack machine; also
+  renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
+  and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
+  through `tex_state::CommandContext::begin_diagnostic` because tex.web's
+  `show_cur_cmd_chr` fires from inside `conditional`/`pass_text` itself
+  rather than through the executor.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. It also owns TeX82 §482's `read_toks`, which is deliberately

@@ -29,7 +29,9 @@ pub use alignment::{
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
-pub use expand::{PrintCommand, character_command_text, command_token_text, print_cmd_chr_text};
+pub use expand::{
+    PrintCommand, character_command_text, command_token_text, print_cmd_chr_text, print_esc_text,
+};
 pub(crate) use expand::{
     meaning_text, print_cs_text, render_the_value, string_text, token_list_string_text,
 };
