@@ -8765,9 +8765,11 @@ mod tests {
     fn pdf_color_stack_diagnostics_recover_to_default_and_ignore_underflow() {
         let (stores, run) = run(concat!(
             "\\pdfoutput=1",
+            "\\setbox0=\\hbox{\\pdfcolorstack0 pop\\pdfcolorstack0 current}",
+            "\\pdfxform0",
             "\\shipout\\vbox{\\pdfcolorstack-1 current",
             "\\pdfcolorstack999 current\\pdfcolorstack0 pop\\pdfcolorstack0 current",
-            "\\pdfcolorstack0 missing\\hrule width1pt height1pt}\\end",
+            "\\pdfcolorstack0 missing\\pdfrefxform1\\hrule width1pt height1pt}\\end",
         ));
         assert_eq!(run.committed_artifacts.len(), 1);
         let artifact = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
@@ -8781,6 +8783,25 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(color_effects, [b"0 g 0 G", b"0 g 0 G", b"0 g 0 G"]);
+        let form = stores
+            .pdf_form_artifact(1)
+            .expect("underflowing form staged");
+        let form_artifact = tex_out::PageArtifact::from_bytes(form.bytes())
+            .expect("underflowing form artifact decodes");
+        assert_eq!(
+            form_artifact
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_out::PageEffect::PdfColorStack { payload, .. } => {
+                        Some(payload.as_slice())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [b"0 g 0 G"],
+            "ignored form underflow does not consume the following effect anchor"
+        );
         let diagnostics = String::from_utf8_lossy(
             stores
                 .world()
@@ -8790,6 +8811,7 @@ mod tests {
         assert!(diagnostics.contains("Invalid negative color stack number"));
         assert!(diagnostics.contains("Unknown color stack number 999"));
         assert!(diagnostics.contains("pop empty color page stack 0"));
+        assert!(diagnostics.contains("pop empty color form stack 0"));
         assert!(diagnostics.contains("Color stack action is missing"));
     }
 

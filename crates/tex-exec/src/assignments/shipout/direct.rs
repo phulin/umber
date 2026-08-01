@@ -1047,7 +1047,16 @@ fn anchor_for_whatsit(
     suppress_deferred_streams: bool,
     anchor: &mut u32,
 ) -> Result<Option<u32>, ExecError> {
-    let anchored = match whatsit {
+    if !whatsit_is_anchored(whatsit, suppress_deferred_streams) {
+        return Ok(None);
+    }
+    let index = *anchor;
+    *anchor = anchor.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
+    Ok(Some(index))
+}
+
+fn whatsit_is_anchored(whatsit: &Whatsit, suppress_deferred_streams: bool) -> bool {
+    match whatsit {
         Whatsit::Language { .. } | Whatsit::PdfReferenceObject { .. } => false,
         Whatsit::CloseOut { slot: None } => false,
         Whatsit::OpenOut { .. }
@@ -1074,13 +1083,7 @@ fn anchor_for_whatsit(
         | Whatsit::PdfSnapY { .. }
         | Whatsit::PdfSnapYComp { .. } => true,
         Whatsit::PdfRefXForm { .. } | Whatsit::PdfRefXImage { .. } => true,
-    };
-    if !anchored {
-        return Ok(None);
     }
-    let index = *anchor;
-    *anchor = anchor.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
-    Ok(Some(index))
 }
 
 fn permutation_for(overlay: &PageOverlay, list: NodeListId) -> Option<&[usize]> {

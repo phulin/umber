@@ -290,7 +290,7 @@ fn normalize_index(
             }
         }
         NormalizeNode::Whatsit(whatsit) => {
-            let destination = matches!(whatsit, Whatsit::PdfDestination(_));
+            let anchored = whatsit_is_anchored(&whatsit, suppress_deferred_streams);
             let effect_count = overlay.effects.len();
             append_whatsit_effect(
                 stores,
@@ -300,7 +300,7 @@ fn normalize_index(
                 suppress_deferred_streams,
                 location,
             )?;
-            if destination && !suppress_deferred_streams && overlay.effects.len() == effect_count {
+            if anchored && overlay.effects.len() == effect_count {
                 overlay.omitted_whatsits.push((list, index));
             }
         }
