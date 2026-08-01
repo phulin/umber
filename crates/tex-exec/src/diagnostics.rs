@@ -547,8 +547,9 @@ pub(crate) fn execute_message(
         // §58 wrapping `World::write_text` now performs for every printable
         // sink, so this decides only the leading break or space.
         let column = diagnostic_print_column(stores);
+        let max_print_line = stores.printer().max_print_line();
         let mut output = String::new();
-        if column + text.chars().count() > tex_state::print::MAX_PRINT_LINE - 2 {
+        if column + text.chars().count() > max_print_line - 2 {
             output.push('\n');
         } else if column > 0 {
             output.push(' ');

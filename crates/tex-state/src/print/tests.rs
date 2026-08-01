@@ -15,11 +15,35 @@ fn error_context_widths_enforce_tex82_section_3_bounds() {
         Some(ErrorContextWidths {
             error_line: 64,
             half_error_line: 32,
+            max_print_line: 79,
         })
     );
     assert_eq!(ErrorContextWidths::new(64, 29), None);
     assert_eq!(ErrorContextWidths::new(46, 32), None);
     assert_eq!(ErrorContextWidths::new(64, usize::MAX), None);
+}
+
+#[test]
+fn process_print_line_limit_wraps_terminal_and_log_independently() {
+    let mut universe = Universe::new();
+    universe.set_error_context_widths(
+        ErrorContextWidths::new(64, 32)
+            .and_then(|widths| widths.with_max_print_line(72))
+            .expect("valid TRIP print widths"),
+    );
+
+    Printer::new(&mut universe, Selector::TermOnly).print(&"t".repeat(70));
+    Printer::new(&mut universe, Selector::LogOnly).print(&"l".repeat(69));
+    Printer::new(&mut universe, Selector::TermAndLog).print("xyz");
+
+    assert_eq!(
+        sink_text(&universe, PrintSink::Terminal),
+        format!("{}xy\nz", "t".repeat(70))
+    );
+    assert_eq!(
+        sink_text(&universe, PrintSink::Log),
+        format!("{}xyz\n", "l".repeat(69))
+    );
 }
 
 #[test]

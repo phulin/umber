@@ -2819,6 +2819,15 @@ impl World {
     /// each sink actually received, so a call whose two wrappings differ
     /// records one write per sink rather than one shared write.
     pub fn write_text(&mut self, sink: PrintSink, text: &str) {
+        self.write_text_with_line_limit(sink, text, crate::print::MAX_PRINT_LINE);
+    }
+
+    pub(crate) fn write_text_with_line_limit(
+        &mut self,
+        sink: PrintSink,
+        text: &str,
+        max_print_line: usize,
+    ) {
         let (terminal_offset, log_offset) = {
             let bufs = self.stream_bufs();
             (
@@ -2828,16 +2837,16 @@ impl World {
         };
         match sink {
             PrintSink::Terminal => {
-                let wrapped = wrap_print_lines(text, terminal_offset);
+                let wrapped = wrap_print_lines_at(text, terminal_offset, max_print_line);
                 self.record_printable_write(PrintSink::Terminal, wrapped);
             }
             PrintSink::Log => {
-                let wrapped = wrap_print_lines(text, log_offset);
+                let wrapped = wrap_print_lines_at(text, log_offset, max_print_line);
                 self.record_printable_write(PrintSink::Log, wrapped);
             }
             PrintSink::TerminalAndLog => {
-                let terminal = wrap_print_lines(text, terminal_offset);
-                let log = wrap_print_lines(text, log_offset);
+                let terminal = wrap_print_lines_at(text, terminal_offset, max_print_line);
+                let log = wrap_print_lines_at(text, log_offset, max_print_line);
                 if terminal == log {
                     self.record_printable_write(PrintSink::TerminalAndLog, terminal);
                 } else {
@@ -2869,6 +2878,15 @@ impl World {
     /// through §58's independent terminal and transcript line meters; a
     /// numbered `\write` stream remains unmetered.
     pub fn write_encoded_bytes(&mut self, sink: PrintSink, bytes: &[u8]) {
+        self.write_encoded_bytes_with_line_limit(sink, bytes, crate::print::MAX_PRINT_LINE);
+    }
+
+    pub(crate) fn write_encoded_bytes_with_line_limit(
+        &mut self,
+        sink: PrintSink,
+        bytes: &[u8],
+        max_print_line: usize,
+    ) {
         let (terminal_offset, log_offset) = {
             let bufs = self.stream_bufs();
             (
@@ -2878,16 +2896,16 @@ impl World {
         };
         match sink {
             PrintSink::Terminal => {
-                let wrapped = wrap_print_bytes(bytes, terminal_offset);
+                let wrapped = wrap_print_bytes_at(bytes, terminal_offset, max_print_line);
                 self.record_printable_bytes(PrintSink::Terminal, wrapped);
             }
             PrintSink::Log => {
-                let wrapped = wrap_print_bytes(bytes, log_offset);
+                let wrapped = wrap_print_bytes_at(bytes, log_offset, max_print_line);
                 self.record_printable_bytes(PrintSink::Log, wrapped);
             }
             PrintSink::TerminalAndLog => {
-                let terminal = wrap_print_bytes(bytes, terminal_offset);
-                let log = wrap_print_bytes(bytes, log_offset);
+                let terminal = wrap_print_bytes_at(bytes, terminal_offset, max_print_line);
+                let log = wrap_print_bytes_at(bytes, log_offset, max_print_line);
                 if terminal == log {
                     self.record_printable_bytes(PrintSink::TerminalAndLog, terminal);
                 } else {
@@ -3953,10 +3971,9 @@ struct MemoryBackend {
 /// whole string starting from `offset`.
 ///
 /// Returns `text` with a line break inserted wherever the sink's own column
-/// would have reached [`crate::print::MAX_PRINT_LINE`]. A break the text
-/// already carries resets the column, exactly as §57's `print_ln` does.
-fn wrap_print_lines(text: &str, offset: usize) -> String {
-    let limit = crate::print::MAX_PRINT_LINE;
+/// reaches `limit`. A break the text already carries resets the column,
+/// exactly as §57's `print_ln` does.
+fn wrap_print_lines_at(text: &str, offset: usize, limit: usize) -> String {
     if offset + text.chars().count() < limit && !text.contains('\n') {
         return text.to_owned();
     }
@@ -3978,10 +3995,9 @@ fn wrap_print_lines(text: &str, offset: usize) -> String {
     wrapped
 }
 
-/// The byte-domain counterpart of [`wrap_print_lines`]. Every TeX82 output
+/// The byte-domain counterpart of [`wrap_print_lines_at`]. Every TeX82 output
 /// byte is one printed character, including bytes outside UTF-8.
-fn wrap_print_bytes(bytes: &[u8], offset: usize) -> Vec<u8> {
-    let limit = crate::print::MAX_PRINT_LINE;
+fn wrap_print_bytes_at(bytes: &[u8], offset: usize, limit: usize) -> Vec<u8> {
     if offset + bytes.len() < limit && !bytes.contains(&b'\n') {
         return bytes.to_vec();
     }

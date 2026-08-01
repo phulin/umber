@@ -9858,7 +9858,7 @@ fn print_ship_out_marker_open(
         let mut printer = stores.printer();
         let term = printer.terminal_offset();
         let log = printer.log_offset();
-        if term > tex_state::print::MAX_PRINT_LINE.saturating_sub(9) {
+        if term > printer.max_print_line().saturating_sub(9) {
             printer.print_ln();
         } else if term > 0 || log > 0 {
             printer.print_char(' ');
@@ -15168,8 +15168,7 @@ fn render_showifs(conditions: &[tex_command::ActiveCondition]) -> String {
 /// TeX82 §1280's `<Print string s on the terminal>`.
 fn issue_terminal_message(stores: &mut Universe, text: &str) {
     let mut printer = stores.printer();
-    if printer.terminal_offset() + text.chars().count()
-        > tex_state::print::MAX_PRINT_LINE.saturating_sub(2)
+    if printer.terminal_offset() + text.chars().count() > printer.max_print_line().saturating_sub(2)
     {
         printer.print_ln();
     } else if printer.terminal_offset() > 0 || printer.log_offset() > 0 {

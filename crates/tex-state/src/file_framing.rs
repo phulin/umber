@@ -32,7 +32,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::print::{MAX_PRINT_LINE, Printer, Selector};
+use crate::print::{Printer, Selector};
 use crate::universe::Universe;
 
 /// tex.web §54's `open_parens`: how many `(` have been printed with no
@@ -68,7 +68,7 @@ impl FileFraming {
 pub fn print_file_open(universe: &mut Universe, name: &str) {
     let mut printer = universe.printer();
     let term_offset = printer.terminal_offset();
-    if term_offset + name.chars().count() > MAX_PRINT_LINE - 2 {
+    if term_offset + name.chars().count() > printer.max_print_line() - 2 {
         printer.print_ln();
     } else if term_offset > 0 || printer.log_offset() > 0 {
         printer.print_char(' ');

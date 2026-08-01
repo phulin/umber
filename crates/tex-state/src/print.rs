@@ -46,6 +46,7 @@ pub use error_context::{ErrorContextLevel, render_error_context, token_list_repl
 pub struct ErrorContextWidths {
     error_line: usize,
     half_error_line: usize,
+    max_print_line: usize,
 }
 
 impl ErrorContextWidths {
@@ -57,6 +58,7 @@ impl ErrorContextWidths {
             Some(Self {
                 error_line,
                 half_error_line,
+                max_print_line: MAX_PRINT_LINE,
             })
         } else {
             None
@@ -71,6 +73,24 @@ impl ErrorContextWidths {
     #[must_use]
     pub const fn half_error_line(self) -> usize {
         self.half_error_line
+    }
+
+    /// Selects tex.web §3's `max_print_line` independently of the two
+    /// pseudoprint widths. TRIP's canonical build uses 72 while ordinary
+    /// Web2C jobs use 79.
+    #[must_use]
+    pub const fn with_max_print_line(mut self, max_print_line: usize) -> Option<Self> {
+        if max_print_line >= 60 {
+            self.max_print_line = max_print_line;
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub const fn max_print_line(self) -> usize {
+        self.max_print_line
     }
 }
 
@@ -286,7 +306,10 @@ impl<'a> Printer<'a> {
     /// Writes bytes already encoded by the active command profile.
     pub fn print_encoded_bytes(&mut self, bytes: &[u8]) -> &mut Self {
         if let Some(sink) = self.selector.sink() {
-            self.universe.world_mut().write_encoded_bytes(sink, bytes);
+            let max_print_line = self.max_print_line();
+            self.universe
+                .world_mut()
+                .write_encoded_bytes_with_line_limit(sink, bytes, max_print_line);
         }
         self
     }
@@ -300,7 +323,10 @@ impl<'a> Printer<'a> {
 
     fn write_raw(&mut self, text: &str) -> &mut Self {
         if let Some(sink) = self.selector.sink() {
-            self.universe.world_mut().write_text(sink, text);
+            let max_print_line = self.max_print_line();
+            self.universe
+                .world_mut()
+                .write_text_with_line_limit(sink, text, max_print_line);
         }
         self
     }
@@ -388,6 +414,12 @@ impl<'a> Printer<'a> {
             .log_partial_line()
             .chars()
             .count()
+    }
+
+    /// The process-selected tex.web §3 `max_print_line`.
+    #[must_use]
+    pub const fn max_print_line(&self) -> usize {
+        self.universe.error_context_widths().max_print_line()
     }
 
     /// tex.web §62's guard, `(term_offset>0)and(odd(selector))` or

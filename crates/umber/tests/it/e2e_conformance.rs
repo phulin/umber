@@ -313,8 +313,9 @@ fn trip_format_recipe(
         year: 2026,
     };
     recipe.construction_interaction = tex_state::InteractionMode::Nonstop;
-    recipe.construction_error_context_widths =
-        tex_state::print::ErrorContextWidths::new(64, 32).expect("canonical TRIP context widths");
+    recipe.construction_error_context_widths = tex_state::print::ErrorContextWidths::new(64, 32)
+        .and_then(|widths| widths.with_max_print_line(72))
+        .expect("canonical TRIP print widths");
     recipe.guards = FormatGenerationGuards {
         command_fuel: tex_command::DEFAULT_COMMAND_FUEL_LIMIT,
         wall_time: Duration::from_secs(1_800),
@@ -1896,8 +1897,7 @@ fn run_two_phase_fixture(
                 backend: OutputCapability::Dvi,
                 clock: recipe.clock,
                 interaction: tex_state::InteractionMode::Nonstop,
-                error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
-                    .expect("canonical TRIP context widths"),
+                error_context_widths: recipe.construction_error_context_widths,
                 guards: recipe.guards,
                 source_name: source_identity.canonical_name().to_owned(),
                 source_kind: RegisteredSourceKind::Generated,
